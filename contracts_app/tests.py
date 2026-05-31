@@ -18,6 +18,8 @@ from django.urls import reverse
 from django.utils import timezone
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml.ns import qn
+from docx.shared import Cm
 
 from classifiers_app.models import OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
@@ -3285,6 +3287,7 @@ class ContractVariableBindingDisplayTests(TestCase):
     def test_additional_contract_variables_are_seeded_as_computed_fields(self):
         expected = {
             "{{owner}}": "Владелец активов",
+            "{{by_name}}": "Вставка « по заказу {{name}}» при расхождении Заказчика и Владельца активов",
             "{{service_goal_genitive}}": "Цель оказания услуг в родительном падеже",
             "{{specialization}}": "Область специализации",
             "[[services]]": "Многоуровневый список: этапы, состав услуг",
@@ -3510,6 +3513,107 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(lists, {})
         self.assertEqual(replacements["{{deadline_ru}}"], "20 мая 2026 г.")
 
+    def test_deadline_ru_falls_back_to_latest_project_deadline_for_multistage_batch(self):
+        product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+        )
+        project_a = ProjectRegistration.objects.create(
+            number=7006,
+            type=product,
+            name="Первый этап",
+            deadline=date(2026, 6, 30),
+            year=2026,
+            gantt_data={"data": []},
+        )
+        project_b = ProjectRegistration.objects.create(
+            number=7006,
+            type=product,
+            name="Второй этап",
+            deadline=date(2026, 7, 30),
+            year=2026,
+            gantt_data={"data": []},
+        )
+        performer_a = Performer.objects.create(
+            registration=project_a,
+            executor="Петров Петр Петрович",
+            asset_name="Карьер",
+        )
+        performer_b = Performer.objects.create(
+            registration=project_b,
+            executor="Петров Петр Петрович",
+            asset_name="Фабрика",
+        )
+        variables = [ContractVariable(key="{{deadline_ru}}", is_computed=True)]
+
+        replacements, lists = resolve_variables(
+            performer_a,
+            variables,
+            all_performers=[performer_a, performer_b],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{deadline_ru}}"], "30 июля 2026 г.")
+
+    def test_deadline_ru_includes_project_deadline_for_stage_without_gantt_tasks(self):
+        product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+        )
+        project_with_gantt = ProjectRegistration.objects.create(
+            number=7007,
+            type=product,
+            name="Первый этап",
+            deadline=date(2026, 6, 30),
+            year=2026,
+        )
+        project_without_gantt = ProjectRegistration.objects.create(
+            number=7007,
+            type=product,
+            name="Второй этап",
+            deadline=date(2026, 8, 15),
+            year=2026,
+            gantt_data={"data": []},
+        )
+        performer_a = Performer.objects.create(
+            registration=project_with_gantt,
+            executor="Петров Петр Петрович",
+            asset_name="Карьер",
+        )
+        performer_b = Performer.objects.create(
+            registration=project_without_gantt,
+            executor="Петров Петр Петрович",
+            asset_name="Фабрика",
+        )
+        project_with_gantt.gantt_data = {
+            "data": [
+                {
+                    "id": f"managed-performer-{performer_a.pk}",
+                    "managed_source": "performer",
+                    "performer_id": performer_a.pk,
+                    "asset_name": "Карьер",
+                    "deadline": "2026-07-20",
+                },
+            ],
+            "links": [],
+            "meta": {},
+        }
+        project_with_gantt.save(update_fields=["gantt_data"])
+        project_with_gantt.refresh_from_db()
+        performer_a.registration = project_with_gantt
+        variables = [ContractVariable(key="{{deadline_ru}}", is_computed=True)]
+
+        replacements, lists = resolve_variables(
+            performer_a,
+            variables,
+            all_performers=[performer_a, performer_b],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{deadline_ru}}"], "15 августа 2026 г.")
+
     def test_additional_scalar_variables_resolve_from_project_product_and_specialty(self):
         product = Product.objects.create(
             short_name="DD",
@@ -3598,6 +3702,64 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(replacements["{{service_goal_genitive}}"], "Проведения due diligence")
         self.assertEqual(replacements["{{specialization}}"], "горнотехнической экспертизе")
 
+    def test_by_name_is_empty_when_customer_matches_asset_owner(self):
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+        )
+        project = ProjectRegistration.objects.create(
+            number=7013,
+            type=product,
+            name="Проект с одним заказчиком",
+            customer="ООО «Компания»",
+            asset_owner=" ООО «Компания» ",
+            year=2026,
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+        )
+
+        replacements, lists = resolve_variables(
+            performer,
+            [ContractVariable(key="{{by_name}}", is_computed=True)],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{by_name}}"], "")
+
+    def test_by_name_inserts_customer_when_asset_owner_differs(self):
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+        )
+        project = ProjectRegistration.objects.create(
+            number=7014,
+            type=product,
+            name="Проект с заказом",
+            customer="ООО «Компания»",
+            asset_owner="АО «Владелец»",
+            year=2026,
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+        )
+
+        replacements, lists = resolve_variables(
+            performer,
+            [
+                ContractVariable(key="{{name}}", source_section="projects", source_table="registration", source_column="customer"),
+                ContractVariable(key="{{by_name}}", is_computed=True),
+            ],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{name}}"], "ООО «Компания»")
+        self.assertEqual(replacements["{{by_name}}"], " по заказу ООО «Компания»")
+
     def test_services_list_uses_typical_service_compositions_without_assets_or_sections(self):
         product = Product.objects.create(
             short_name="DD",
@@ -3676,11 +3838,156 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(
             lists["[[services]]"],
             [
-                (0, "Сбор данных"),
-                (0, "Анализ геологии"),
-                (0, "Моделирование карьера"),
+                {
+                    "html": "<p>Сбор данных</p><p>Анализ геологии</p>",
+                    "ignore_rich_font": True,
+                    "reset_plain_paragraph_indent": True,
+                },
+                {
+                    "html": "<p>Моделирование карьера</p>",
+                    "ignore_rich_font": True,
+                    "reset_plain_paragraph_indent": True,
+                },
+                {
+                    "html": "<p>Сбор данных</p><p>Анализ геологии</p>",
+                    "ignore_rich_font": True,
+                    "reset_plain_paragraph_indent": True,
+                },
             ],
         )
+
+    def test_contract_services_rich_items_render_lists_and_ignore_source_font(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[services]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[services]]": [
+                    {
+                        "html": (
+                            '<p><strong>Жирный</strong> '
+                            '<span style="color:#ff0000; font-family: Courier New; font-size: 42pt">красный</span></p>'
+                            '<ul><li data-list="dash">Пункт с дефисом</li>'
+                            '<li class="ql-indent-1" data-list="check">Пункт с галочкой</li></ul>'
+                        ),
+                        "ignore_rich_font": True,
+                    }
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        formatted = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Жирный красный")
+        dash_item = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Пункт с дефисом")
+        check_item = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Пункт с галочкой")
+        numbering_xml = generated_doc.part.numbering_part._element.xml
+
+        self.assertTrue(any(run.bold for run in formatted.runs if "Жирный" in run.text))
+        self.assertTrue(any((run.font.color.rgb and str(run.font.color.rgb) == "FF0000") for run in formatted.runs))
+        self.assertNotIn("Courier New", formatted._element.xml)
+        self.assertNotIn('w:sz w:val="84"', formatted._element.xml)
+        self.assertIn('w:lvlText w:val="-"', numbering_xml)
+        self.assertIn("\uf0fc", numbering_xml)
+        self.assertIn("w:numPr", dash_item._element.xml)
+        self.assertIn("w:numPr", check_item._element.xml)
+        self.assertIn('w:ilvl w:val="1"', check_item._element.xml)
+
+    def test_contract_services_stage_and_intro_paragraphs_reset_list_indent(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[services]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[services]]": [
+                    {
+                        "runs": [{"text": "Этап 1: TDD", "bold": True}],
+                        "reset_paragraph_indent": True,
+                    },
+                    {
+                        "html": (
+                            "<p><strong>Картография:</strong></p>"
+                            '<ul><li data-list="bullet">Определение границ</li></ul>'
+                        ),
+                        "ignore_rich_font": True,
+                        "reset_plain_paragraph_indent": True,
+                    },
+                ],
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        stage = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Этап 1: TDD")
+        intro = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Картография:")
+        bullet = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Определение границ")
+
+        for paragraph in (stage, intro):
+            p_pr = paragraph._element.find(qn("w:pPr"))
+            self.assertIsNotNone(p_pr)
+            self.assertIsNone(p_pr.find(qn("w:numPr")))
+            indent = p_pr.find(qn("w:ind"))
+            self.assertIsNotNone(indent)
+            self.assertEqual(indent.get(qn("w:left")), "0")
+            self.assertEqual(indent.get(qn("w:hanging")), "0")
+        self.assertIsNotNone(bullet._element.find(qn("w:pPr")).find(qn("w:numPr")))
+
+    def test_contract_services_plain_text_fallback_renders_plain_paragraphs(self):
+        product = Product.objects.create(short_name="DD", name_en="Due Diligence", name_ru="ДД")
+        project = ProjectRegistration.objects.create(number=7012, type=product, name="Plain services", year=2026)
+        section = TypicalSection.objects.create(
+            product=product,
+            code="GEO",
+            short_name="Geology",
+            name_en="Geology",
+            name_ru="Геология",
+        )
+        TypicalServiceComposition.objects.create(
+            product=product,
+            section=section,
+            service_composition="Сбор данных\nАнализ геологии",
+            position=1,
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            executor="Иванов Иван Иванович",
+            typical_section=section,
+        )
+        _, lists = resolve_variables(
+            performer,
+            [ContractVariable(key="[[services]]", is_computed=True)],
+            all_performers=[performer],
+        )
+        template_doc = Document()
+        template_doc.add_paragraph("[[services]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements=lists,
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        service_paragraphs = [
+            paragraph
+            for paragraph in generated_doc.paragraphs
+            if paragraph.text in {"Сбор данных", "Анализ геологии"}
+        ]
+        self.assertEqual(len(service_paragraphs), 2)
+        for paragraph in service_paragraphs:
+            self.assertNotIn("w:numPr", paragraph._element.xml)
+            self.assertNotIn("ListParagraph", paragraph._element.xml)
 
     def test_multistage_services_and_service_goal_use_stage_order(self):
         product_a = Product.objects.create(
@@ -3774,12 +4081,102 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(
             lists["[[services]]"],
             [
-                (0, "Этап 1: RFR Red Flag Review"),
-                (1, "Обзор рынка"),
-                (0, "Этап 2: TDD Technical Due Diligence"),
-                (1, "Технический анализ"),
+                {
+                    "runs": [{"text": "Этап 1: RFR Red Flag Review", "bold": True}],
+                    "reset_paragraph_indent": True,
+                },
+                {
+                    "html": "<p>Обзор рынка</p>",
+                    "ignore_rich_font": True,
+                    "reset_plain_paragraph_indent": True,
+                    "ordered_numbering_scope": "contract_services_stage_1",
+                },
+                {
+                    "runs": [{"text": "Этап 2: TDD Technical Due Diligence", "bold": True}],
+                    "reset_paragraph_indent": True,
+                },
+                {
+                    "html": "<p>Технический анализ</p>",
+                    "ignore_rich_font": True,
+                    "reset_plain_paragraph_indent": True,
+                    "ordered_numbering_scope": "contract_services_stage_2",
+                },
             ],
         )
+
+    def test_chapters_name_uses_fresh_numbering_after_other_multilevel_list(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[services]]")
+        template_doc.add_paragraph("[[chapters_name]]")
+        template_doc.add_paragraph("[[chapters_name]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[services]]": [(0, "Состав услуг")],
+                "[[chapters_name]]": [(0, "Раздел"), (1, "Подраздел")],
+            },
+            fresh_multilevel_list_keys={"[[chapters_name]]"},
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        service_num_id = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Состав услуг")._p.pPr.numPr.numId.val
+        chapter_paragraphs = [paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Раздел"]
+
+        self.assertEqual(len(chapter_paragraphs), 2)
+        self.assertNotEqual(service_num_id, chapter_paragraphs[0]._p.pPr.numPr.numId.val)
+        self.assertNotEqual(chapter_paragraphs[0]._p.pPr.numPr.numId.val, chapter_paragraphs[1]._p.pPr.numPr.numId.val)
+
+    def test_chapters_name_fourth_level_uses_deeper_indent(self):
+        template_doc = Document()
+        template_doc.add_paragraph("[[chapters_name]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[chapters_name]]": [
+                    (0, "Этап"),
+                    (1, "Актив"),
+                    (2, "Раздел"),
+                    (3, "Подраздел"),
+                ],
+            },
+            fresh_multilevel_list_keys={"[[chapters_name]]"},
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        fourth_level = next(paragraph for paragraph in generated_doc.paragraphs if paragraph.text == "Подраздел")
+        num_pr = fourth_level._element.find(qn("w:pPr")).find(qn("w:numPr"))
+        num_id = num_pr.find(qn("w:numId")).get(qn("w:val"))
+        numbering = generated_doc.part.numbering_part._element
+        num_el = next(
+            element for element in numbering.findall(qn("w:num"))
+            if element.get(qn("w:numId")) == num_id
+        )
+        abstract_num_id = num_el.find(qn("w:abstractNumId")).get(qn("w:val"))
+        abstract_num = next(
+            element for element in numbering.findall(qn("w:abstractNum"))
+            if element.get(qn("w:abstractNumId")) == abstract_num_id
+        )
+        level = next(
+            element for element in abstract_num.findall(qn("w:lvl"))
+            if element.get(qn("w:ilvl")) == "3"
+        )
+        indent = level.find(qn("w:pPr")).find(qn("w:ind"))
+
+        left_twips = int(indent.get(qn("w:left")))
+        hanging_twips = int(indent.get(qn("w:hanging")))
+
+        self.assertEqual(left_twips - hanging_twips, int(round(Cm(2.56).twips)))
+        self.assertEqual(hanging_twips, int(round(Cm(1.63).twips)))
 
     def test_multi_stage_batch_chapters_name_groups_by_stage_and_contract_name_uses_last_stage(self):
         product_a = Product.objects.create(

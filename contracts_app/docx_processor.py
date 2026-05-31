@@ -268,9 +268,17 @@ def _rich_paragraphs_from_item(item) -> list[dict[str, object]] | None:
         if html:
             paragraphs = _rich_paragraphs_from_html(html)
             ordered_numbering_scope = str(item.get("ordered_numbering_scope") or "").strip()
-            if ordered_numbering_scope:
+            ignore_rich_font = bool(item.get("ignore_rich_font"))
+            if ordered_numbering_scope or ignore_rich_font:
                 for paragraph in paragraphs:
-                    paragraph["ordered_numbering_scope"] = ordered_numbering_scope
+                    if ordered_numbering_scope:
+                        paragraph["ordered_numbering_scope"] = ordered_numbering_scope
+                    if ignore_rich_font:
+                        paragraph["ignore_rich_font"] = True
+            if item.get("reset_plain_paragraph_indent"):
+                for paragraph in paragraphs:
+                    if not str(paragraph.get("list_type") or "").strip():
+                        paragraph["reset_paragraph_indent"] = True
             return paragraphs
         runs = item.get("runs")
         if isinstance(runs, list):
@@ -381,6 +389,7 @@ def _append_formatted_run(
     source_rPr,
     *,
     language_code: str | None = None,
+    ignore_font: bool = False,
 ) -> None:
     from docx.oxml import OxmlElement
 
@@ -393,7 +402,8 @@ def _append_formatted_run(
     _set_on_off_property(r_pr, "strike", run_data.get("strike"))
     _set_color_property(r_pr, str(run_data.get("color") or "").strip() or None)
     _set_shading_property(r_pr, str(run_data.get("background") or "").strip() or None)
-    _set_font_property(r_pr, str(run_data.get("font") or "").strip() or None)
+    if not ignore_font:
+        _set_font_property(r_pr, str(run_data.get("font") or "").strip() or None)
     _set_language_property(r_pr, language_code)
     if len(r_pr):
         run_element.append(r_pr)
@@ -474,12 +484,18 @@ def _resolve_rich_item_character_styles(paragraph, rich_items: list[dict[str, ob
     return resolved_items
 
 
-def _apply_paragraph_left_indent(p_pr, left_indent_cm) -> None:
-    if left_indent_cm in (None, ""):
+def _set_paragraph_indent_attr(indent, attr_name: str, value_cm) -> None:
+    if value_cm in (None, ""):
         return
     try:
-        left_twips = int(round(Cm(float(left_indent_cm)).twips))
+        value_twips = int(round(Cm(float(value_cm)).twips))
     except (TypeError, ValueError):
+        return
+    indent.set(qn(f"w:{attr_name}"), str(max(0, value_twips)))
+
+
+def _apply_paragraph_indent(p_pr, *, left_indent_cm=None, hanging_indent_cm=None) -> None:
+    if left_indent_cm in (None, "") and hanging_indent_cm in (None, ""):
         return
     from docx.oxml import OxmlElement
 
@@ -487,7 +503,12 @@ def _apply_paragraph_left_indent(p_pr, left_indent_cm) -> None:
     if indent is None:
         indent = OxmlElement("w:ind")
         p_pr.append(indent)
-    indent.set(qn("w:left"), str(max(0, left_twips)))
+    _set_paragraph_indent_attr(indent, "left", left_indent_cm)
+    _set_paragraph_indent_attr(indent, "hanging", hanging_indent_cm)
+
+
+def _apply_paragraph_left_indent(p_pr, left_indent_cm) -> None:
+    _apply_paragraph_indent(p_pr, left_indent_cm=left_indent_cm)
 
 
 def _apply_contextual_spacing(p_pr, enabled) -> None:
@@ -581,23 +602,51 @@ def _insert_rich_paragraphs(
         paragraph_style_id = str(item.get("paragraph_style_id") or "").strip()
         if paragraph_style == "list_paragraph" and not paragraph_style_id:
             paragraph_style_id = list_paragraph_style_id
+        elif item.get("reset_paragraph_indent") and not paragraph_style_id:
+            paragraph_style_id = list_paragraph_style_id
         elif list_type and not render_plain and not paragraph_style_id:
             paragraph_style_id = builtin_list_paragraph_style_id
         _apply_paragraph_style(p_pr, paragraph_style_id)
         _apply_paragraph_alignment(p_pr, item.get("alignment"))
-        _apply_paragraph_left_indent(p_pr, item.get("left_indent_cm"))
+        if item.get("reset_paragraph_indent"):
+            _apply_paragraph_indent(p_pr, left_indent_cm=0, hanging_indent_cm=0)
+        else:
+            _apply_paragraph_indent(
+                p_pr,
+                left_indent_cm=item.get("left_indent_cm"),
+                hanging_indent_cm=item.get("hanging_indent_cm"),
+            )
         _apply_contextual_spacing(p_pr, item.get("contextual_spacing"))
         if len(p_pr):
             new_p.append(p_pr)
         runs = item.get("runs") if isinstance(item.get("runs"), list) else []
         if runs:
+            ignore_font = bool(item.get("ignore_rich_font"))
             for run_data in runs:
                 if not isinstance(run_data, dict):
-                    _append_formatted_run(new_p, {"text": str(run_data)}, source_rPr, language_code=language_code)
+                    _append_formatted_run(
+                        new_p,
+                        {"text": str(run_data)},
+                        source_rPr,
+                        language_code=language_code,
+                        ignore_font=ignore_font,
+                    )
                     continue
-                _append_formatted_run(new_p, run_data, source_rPr, language_code=language_code)
+                _append_formatted_run(
+                    new_p,
+                    run_data,
+                    source_rPr,
+                    language_code=language_code,
+                    ignore_font=ignore_font,
+                )
         else:
-            _append_formatted_run(new_p, {"text": ""}, source_rPr, language_code=language_code)
+            _append_formatted_run(
+                new_p,
+                {"text": ""},
+                source_rPr,
+                language_code=language_code,
+                ignore_font=bool(item.get("ignore_rich_font")),
+            )
         current_anchor.addnext(new_p)
         current_anchor = new_p
     parent.remove(anchor)
@@ -697,6 +746,7 @@ def _replace_list_in_paragraph(
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
     scoped_rich_ordered_num_ids: dict[str, str] | None = None,
+    fresh_multilevel_list_keys: set[str] | None = None,
 ) -> bool:
     """If the paragraph contains a ``[[list_var]]`` placeholder, replace the
     entire paragraph with a list of items.  Returns True if replaced.
@@ -792,10 +842,22 @@ def _replace_list_in_paragraph(
 
     from docx.oxml import OxmlElement
 
+    occurrence_multilevel_num_id = multilevel_num_id
+    if is_multilevel and key in (fresh_multilevel_list_keys or set()):
+        document = getattr(getattr(paragraph, "part", None), "document", None)
+        if document is not None:
+            try:
+                occurrence_multilevel_num_id = _ensure_multilevel_numbering(
+                    document,
+                    deep_fourth_level_indent=key == "[[chapters_name]]",
+                )
+            except Exception:
+                occurrence_multilevel_num_id = multilevel_num_id
+
     for item in items:
         if is_multilevel:
             level, item_text = item
-            num_id_val = multilevel_num_id
+            num_id_val = occurrence_multilevel_num_id
         else:
             level = 0
             item_text = item
@@ -1304,7 +1366,7 @@ def _ensure_marker_numberings(doc) -> dict[str, str]:
     return num_ids
 
 
-def _ensure_multilevel_numbering(doc) -> str:
+def _ensure_multilevel_numbering(doc, *, deep_fourth_level_indent: bool = False) -> str:
     """Create a new 4-level decimal numbering definition and return its ``numId``.
 
     Levels: ``1.``, ``1.1``, ``1.1.1``, ``1.1.1.1`` with increasing indentation.
@@ -1330,11 +1392,18 @@ def _ensure_multilevel_numbering(doc) -> str:
     ml_type.set(qn("w:val"), "multilevel")
     abstract_num.append(ml_type)
 
+    fourth_level_indent = {
+        # In Word's UI "Left indent" for a hanging numbered paragraph is
+        # displayed as w:left - w:hanging. Store the total XML left value so
+        # the dialog shows 2.56 cm left and 1.63 cm hanging.
+        "indent": str(int(round(Cm(2.56 + 1.63).twips))),
+        "hanging": str(int(round(Cm(1.63).twips))),
+    } if deep_fourth_level_indent else {"indent": "1440", "hanging": "360"}
     level_defs = [
         {"ilvl": "0", "fmt": "decimal", "text": "%1.", "indent": "360", "hanging": "360"},
         {"ilvl": "1", "fmt": "decimal", "text": "%1.%2", "indent": "720", "hanging": "360"},
         {"ilvl": "2", "fmt": "decimal", "text": "%1.%2.%3", "indent": "1080", "hanging": "360"},
-        {"ilvl": "3", "fmt": "decimal", "text": "%1.%2.%3.%4", "indent": "1440", "hanging": "360"},
+        {"ilvl": "3", "fmt": "decimal", "text": "%1.%2.%3.%4", **fourth_level_indent},
     ]
     for ld in level_defs:
         lvl = OxmlElement("w:lvl")
@@ -1529,6 +1598,7 @@ def _process_list_paragraphs(
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
     scoped_rich_ordered_num_ids: dict[str, str] | None = None,
+    fresh_multilevel_list_keys: set[str] | None = None,
 ) -> None:
     for para in list(paragraphs):
         _replace_list_in_paragraph(
@@ -1538,6 +1608,7 @@ def _process_list_paragraphs(
             plain_list_keys, default_language_code,
             rich_ordered_num_id=rich_ordered_num_id,
             scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
+            fresh_multilevel_list_keys=fresh_multilevel_list_keys,
         )
 
 
@@ -1555,6 +1626,7 @@ def _process_tables(
     default_language_code: str | None = None,
     rich_ordered_num_id: str = "",
     scoped_rich_ordered_num_ids: dict[str, str] | None = None,
+    fresh_multilevel_list_keys: set[str] | None = None,
 ) -> None:
     marker_num_ids = marker_num_ids or {}
     for table in tables:
@@ -1574,6 +1646,7 @@ def _process_tables(
                         plain_list_keys, default_language_code,
                         rich_ordered_num_id=rich_ordered_num_id,
                         scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
+                        fresh_multilevel_list_keys=fresh_multilevel_list_keys,
                     )
                 _process_paragraphs(cell.paragraphs, replacements, language_code=default_language_code)
                 _process_tables(
@@ -1582,6 +1655,7 @@ def _process_tables(
                     builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                     rich_ordered_num_id=rich_ordered_num_id,
                     scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
+                    fresh_multilevel_list_keys=fresh_multilevel_list_keys,
                 )
 
 
@@ -1895,6 +1969,7 @@ def process_template(
     list_replacements: dict | None = None,
     plain_list_keys: set[str] | None = None,
     default_language_code: str | None = None,
+    fresh_multilevel_list_keys: set[str] | None = None,
 ) -> bytes:
     """Return modified .docx bytes with all placeholders substituted.
 
@@ -1903,6 +1978,8 @@ def process_template(
     *list_replacements*: mapping ``{"[[key]]": ["item1", ...], ...}``.
     *plain_list_keys*: list placeholders that should be inserted as plain
     paragraphs without bullet formatting.
+    *fresh_multilevel_list_keys*: tuple-list placeholders that should receive
+    a new Word numbering instance for every placeholder occurrence.
     *default_language_code*: language tag to apply to inserted/replaced text
     (for example ``ru-RU``).
     """
@@ -1945,6 +2022,7 @@ def process_template(
             builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
             rich_ordered_num_id=rich_ordered_num_id,
             scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
+            fresh_multilevel_list_keys=fresh_multilevel_list_keys,
         )
 
     _process_paragraphs(doc.paragraphs, replacements, language_code=default_language_code)
@@ -1954,6 +2032,7 @@ def process_template(
         builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
         rich_ordered_num_id=rich_ordered_num_id,
         scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
+        fresh_multilevel_list_keys=fresh_multilevel_list_keys,
     )
 
     for section in doc.sections:
@@ -1976,6 +2055,7 @@ def process_template(
                         builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                         rich_ordered_num_id=rich_ordered_num_id,
                         scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
+                        fresh_multilevel_list_keys=fresh_multilevel_list_keys,
                     )
                 _process_paragraphs(
                     header_footer.paragraphs,
@@ -1988,6 +2068,7 @@ def process_template(
                     builtin_list_paragraph_style_id, plain_list_keys, default_language_code,
                     rich_ordered_num_id=rich_ordered_num_id,
                     scoped_rich_ordered_num_ids=scoped_rich_ordered_num_ids,
+                    fresh_multilevel_list_keys=fresh_multilevel_list_keys,
                 )
 
     out = BytesIO()
