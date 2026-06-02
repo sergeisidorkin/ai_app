@@ -51,10 +51,18 @@
             <div id="perf-asset-list"></div>
           </div>
         </div>
+        <span class="row-order-status text-muted d-none align-self-center" data-row-order-status></span>
       </div>
 
 <div id="performers-main-section" style="overflow-x:auto">
-  <table class="table table-sm align-middle performers-table mb-0">
+  <table class="table table-sm align-middle performers-table mb-0"
+         {% if request.user.is_authenticated and request.user.is_staff %}
+         data-queued-row-order
+         data-row-order-save-url="{% url 'performer_row_order' %}"
+         data-row-order-signature="{{ performer_order_signature }}"
+         data-row-order-context="projects-performers"
+         data-row-order-payload-field="ordered_performer_ids"
+         {% endif %}>
     <colgroup>
       <col class="col-checkbox">  <!-- чекбокс -->
       <col class="col-short-number"> <!-- Номер (44440RU) -->
@@ -112,6 +120,7 @@
     <tbody>
     {% for p in performers %}
       <tr
+        data-row-order-id="{{ p.pk }}"
         data-project-id="{{ p.registration_id }}"
         data-asset-name="{{ p.asset_name }}"
         data-edit-url="{% url 'performer_form_edit' p.pk %}"

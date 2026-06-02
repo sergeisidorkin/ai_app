@@ -245,6 +245,27 @@
     panel.classList.toggle('d-none', !any);
     panel.classList.toggle('d-flex', any);
   }
+  function movePerformerSelectionImmediately(action, checked) {
+    if (
+      !(action === 'up' || action === 'down') ||
+      !window.__queuedRowOrder ||
+      typeof window.__queuedRowOrder.moveSelection !== 'function'
+    ) {
+      return false;
+    }
+    const root = pane();
+    if (!root) return false;
+    return !!window.__queuedRowOrder.moveSelection(root, action, {
+      selectionName: 'performer-select',
+      selectedIds: checked.map((box) => String(box.value)),
+      onAfterMove: function () {
+        updatePerformerMasterState();
+        updateRowHighlight('performer-select');
+        ensurePerformerActionsVisibility();
+        schedulePaymentRequestScrollGapsUpdate();
+      },
+    });
+  }
   function getVisiblePerformerChecks() {
     return getRowChecks('performer-select').filter((checkbox) => {
       const row = checkbox.closest('tr');
@@ -2852,6 +2873,7 @@
     }
 
     if (action === 'up' || action === 'down') {
+      if (movePerformerSelectionImmediately(action, checked)) return;
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -2866,6 +2888,15 @@
       }
       ensurePerformerActionsVisibility();
     }
+  });
+
+  document.body.addEventListener('queued-row-order:conflict', function(e) {
+    const root = pane();
+    const table = e.detail && e.detail.table;
+    if (!root || !table || !root.contains(table)) return;
+    window.__tableSel['performer-select'] = getChecked('performer-select').map((box) => String(box.value));
+    window.__tableSelLast = 'performer-select';
+    document.body.dispatchEvent(new Event('performers-updated'));
   });
 
   // мастер-чекбокс

@@ -40,6 +40,7 @@ urlpatterns = [
     path("projects/performers/<int:pk>/delete/", views.performer_delete, name="performer_delete"),
     path("projects/performers/<int:pk>/move-up/", views.performer_move_up, name="performer_move_up"),
     path("projects/performers/<int:pk>/move-down/", views.performer_move_down, name="performer_move_down"),
+    path("projects/performers/row-order/", views.performer_row_order, name="performer_row_order"),
     path("projects/performers/participation-batch/merge/", views.participation_batch_merge, name="participation_batch_merge"),
     path("projects/performers/participation-batch/split/", views.participation_batch_split, name="participation_batch_split"),
     path("projects/performers/request-confirmation/", views.participation_request, name="participation_request"),

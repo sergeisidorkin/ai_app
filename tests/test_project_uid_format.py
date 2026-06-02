@@ -131,6 +131,76 @@ def test_project_short_uid_uses_contract_project_sequence_digits():
 
 
 @pytest.mark.django_db
+def test_project_stage_sequence_restarts_for_each_contract_project():
+    member = GroupMember.objects.create(
+        short_name="IMC RU 1",
+        country_name="Россия",
+        country_code="643",
+        country_alpha2="RU",
+        position=0,
+    )
+    resequence_group_members(refresh_project_uids=False)
+    first_contract = ContractProjectRegistration.objects.create(
+        number=7401,
+        sub_number=1,
+        group_member=member,
+        name="Contract TK 01",
+    )
+    second_contract = ContractProjectRegistration.objects.create(
+        number=7402,
+        sub_number=2,
+        group_member=member,
+        name="Contract TK 02",
+    )
+
+    first_project = ProjectRegistration.objects.create(
+        number=4444,
+        group_member=member,
+        contract_project_registration=first_contract,
+        position=1,
+        name="Project TK 1",
+    )
+    second_project = ProjectRegistration.objects.create(
+        number=4444,
+        group_member=member,
+        contract_project_registration=second_contract,
+        position=2,
+        name="Project TK 2",
+    )
+    third_project = ProjectRegistration.objects.create(
+        number=4444,
+        group_member=member,
+        contract_project_registration=first_contract,
+        position=3,
+        name="Project TK 3",
+    )
+
+    first_project.refresh_from_db()
+    second_project.refresh_from_db()
+    third_project.refresh_from_db()
+
+    assert first_project.agreement_sequence == 1
+    assert first_project.short_uid == "44440110RU"
+    assert second_project.agreement_sequence == 1
+    assert second_project.short_uid == "44440210RU"
+    assert third_project.agreement_sequence == 2
+    assert third_project.short_uid == "44440120RU"
+
+    third_project.contract_project_registration = second_contract
+    third_project.save(update_fields=["contract_project_registration"])
+    first_project.refresh_from_db()
+    second_project.refresh_from_db()
+    third_project.refresh_from_db()
+
+    assert first_project.agreement_sequence == 1
+    assert first_project.short_uid == "44440110RU"
+    assert second_project.agreement_sequence == 1
+    assert second_project.short_uid == "44440210RU"
+    assert third_project.agreement_sequence == 2
+    assert third_project.short_uid == "44440220RU"
+
+
+@pytest.mark.django_db
 def test_project_short_uid_uses_zero_contract_sequence_when_contract_is_empty():
     member = GroupMember.objects.create(
         short_name="IMC RU 1",

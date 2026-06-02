@@ -51,6 +51,7 @@ from policy_app.models import (
     TypicalSection,
     TypicalSectionSpecialty,
     TypicalServiceComposition,
+    TypicalServiceTerm,
 )
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from proposals_app.models import ProposalRegistration
@@ -2099,6 +2100,7 @@ class ContractsCloudLabelTests(TestCase):
             number=7101,
             sub_number=2,
             contract_number="IMC/7101-RU/05-26",
+            contract_date=date(2026, 5, 20),
             proposal_registration=self.proposal,
             group_member=self.group_member,
             type=self.product,
@@ -2107,6 +2109,7 @@ class ContractsCloudLabelTests(TestCase):
             year=2026,
             evaluation_date=date(2026, 1, 1),
             service_term_months="1.0",
+            preliminary_report_term_unit=ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS,
             preliminary_report_date=date(2026, 2, 15),
             final_report_term_weeks="2.0",
             final_report_date=date(2026, 3, 1),
@@ -2132,6 +2135,9 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'data-col="contract-number"', html=False)
         self.assertContains(response, "Номер договора")
         self.assertContains(response, '<td data-col="contract-number">IMC/7101-RU/05-26</td>', html=False)
+        self.assertContains(response, 'data-col="contract-date"', html=False)
+        self.assertContains(response, "Дата договора")
+        self.assertContains(response, '<td data-col="contract-date">20.05.2026</td>', html=False)
         self.assertContains(response, ">№</th>", html=False)
         self.assertContains(response, "Договор ID")
         self.assertContains(response, 'proposal-split-header-prefix">Заказчик: ', html=False)
@@ -2155,6 +2161,7 @@ class ContractsCloudLabelTests(TestCase):
             content.index("contracts-drafts-table") : content.index("contracts-payment-schedule-table")
         ]
         self.assertIn("contracts-payment-quick-edit me-1", drafts_table_html)
+        self.assertLess(drafts_table_html.index('data-col="contract-number"'), drafts_table_html.index('data-col="contract-date"'))
         self.assertContains(response, "Сроки и порядок платежей")
         self.assertContains(response, 'id="contracts-payment-colpicker-wrap"', html=False)
         self.assertContains(response, 'id="contracts-payment-col-evaluation-date"', html=False)
@@ -2165,7 +2172,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "01.01.2026")
         self.assertContains(response, "15.01.2026")
         self.assertContains(response, "15.02.2026")
-        self.assertContains(response, "1,0")
+        self.assertContains(response, "1,0 мес.")
         self.assertContains(response, "2,0")
         self.assertContains(response, "30%")
         self.assertContains(response, "14")
@@ -2173,6 +2180,137 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "Разрабатывается проект договора")
         self.assertNotContains(response, 'data-contract-project-status', html=False)
         self.assertNotContains(response, 'btn btn-link p-0 reg-status-btn', html=False)
+
+    def test_contracts_development_partial_renders_preliminary_report_units(self):
+        days_contract = ContractProjectRegistration.objects.create(
+            number=7111,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор со сроком в днях",
+            status="Разрабатывается проект договора",
+            year=2026,
+            service_term_months="10.0",
+            preliminary_report_term_unit=ContractProjectRegistration.PreliminaryReportTermUnit.DAYS,
+            preliminary_report_date=date(2026, 1, 20),
+            final_report_term_weeks="1.0",
+            final_report_date=date(2026, 1, 27),
+        )
+        weeks_contract = ContractProjectRegistration.objects.create(
+            number=7112,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор со сроком в неделях",
+            status="Разрабатывается проект договора",
+            year=2026,
+            service_term_months="2.0",
+            preliminary_report_term_unit=ContractProjectRegistration.PreliminaryReportTermUnit.WEEKS,
+            preliminary_report_date=date(2026, 1, 15),
+            final_report_term_weeks="1.0",
+            final_report_date=date(2026, 1, 22),
+        )
+        legacy_contract = ContractProjectRegistration.objects.create(
+            number=7113,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор со старым payload",
+            status="Разрабатывается проект договора",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": str(self.product.pk),
+                    "service_term_months": "1.0",
+                    "preliminary_report_date": "15.02.2026",
+                    "final_report_term_weeks": "1.0",
+                    "final_report_date": "22.02.2026",
+                    "next_stage_delay_days": 0,
+                }
+            ],
+        )
+
+        response = self.client.get(reverse("contracts_development_partial"))
+        rows_by_id = {
+            row["registration_id"]: row
+            for row in response.context["contract_payment_schedule_rows"]
+            if row["registration_id"] in {days_contract.pk, weeks_contract.pk, legacy_contract.pk}
+        }
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(rows_by_id[days_contract.pk]["start_date"], date(2026, 1, 10))
+        self.assertEqual(rows_by_id[weeks_contract.pk]["start_date"], date(2026, 1, 1))
+        self.assertEqual(rows_by_id[legacy_contract.pk]["start_date"], date(2026, 1, 15))
+        self.assertContains(response, "Срок предв. отчёта")
+        self.assertContains(response, '<td data-col="term">10 дн.</td>', html=False)
+        self.assertContains(response, '<td data-col="term">2,0 нед.</td>', html=False)
+        self.assertContains(response, '<td data-col="term">1,0 мес.</td>', html=False)
+
+    def test_contracts_development_partial_renders_final_report_units(self):
+        days_contract = ContractProjectRegistration.objects.create(
+            number=7114,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Итоговый срок в днях",
+            status="Разрабатывается проект договора",
+            year=2026,
+            service_term_months="10.0",
+            preliminary_report_term_unit=ContractProjectRegistration.PreliminaryReportTermUnit.DAYS,
+            preliminary_report_date=date(2026, 1, 20),
+            final_report_term_weeks="10.0",
+            final_report_term_unit=ContractProjectRegistration.FinalReportTermUnit.DAYS,
+        )
+        months_contract = ContractProjectRegistration.objects.create(
+            number=7115,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Итоговый срок в месяцах",
+            status="Разрабатывается проект договора",
+            year=2026,
+            service_term_months="2.0",
+            preliminary_report_term_unit=ContractProjectRegistration.PreliminaryReportTermUnit.WEEKS,
+            preliminary_report_date=date(2026, 1, 15),
+            final_report_term_weeks="1.0",
+            final_report_term_unit=ContractProjectRegistration.FinalReportTermUnit.MONTHS,
+        )
+        legacy_contract = ContractProjectRegistration.objects.create(
+            number=7116,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Итоговый срок из старого payload",
+            status="Разрабатывается проект договора",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": str(self.product.pk),
+                    "service_term_months": "1.0",
+                    "preliminary_report_date": "15.02.2026",
+                    "final_report_term_weeks": "1.0",
+                    "next_stage_delay_days": 0,
+                }
+            ],
+        )
+
+        response = self.client.get(reverse("contracts_development_partial"))
+        rows_by_id = {
+            row["registration_id"]: row
+            for row in response.context["contract_payment_schedule_rows"]
+            if row["registration_id"] in {days_contract.pk, months_contract.pk, legacy_contract.pk}
+        }
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(rows_by_id[days_contract.pk]["final_report_date"], date(2026, 1, 30))
+        self.assertEqual(rows_by_id[months_contract.pk]["final_report_date"], date(2026, 2, 15))
+        self.assertEqual(rows_by_id[legacy_contract.pk]["final_report_date"], date(2026, 2, 22))
+        self.assertContains(response, "Срок итог. отчёта")
+        self.assertContains(response, '<td data-col="final-report-weeks">10 дн.</td>', html=False)
+        self.assertContains(response, '<td data-col="final-report-weeks">1,0 мес.</td>', html=False)
+        self.assertContains(response, '<td data-col="final-report-weeks">1,0 нед.</td>', html=False)
 
     def test_contract_project_registration_defaults_to_draft_status(self):
         contract_project = ContractProjectRegistration.objects.create(
@@ -2409,6 +2547,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'id="contracts-sub-number-input"', html=False)
         self.assertContains(response, 'id="contracts-contract-number-input"', html=False)
         self.assertContains(response, 'name="contract_number"', html=False)
+        self.assertContains(response, 'name="contract_date"', html=False)
         self.assertContains(response, "Договор ID")
         self.assertContains(response, 'id="contracts-project-short-uid-input"', html=False)
         self.assertContains(response, 'id="contracts-project-group-order-map"', html=False)
@@ -2436,11 +2575,46 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "Общий для всех этапов", html=False)
         self.assertContains(response, 'name="payment_schedule_common"', html=False)
         self.assertContains(response, "proposal-terms-table")
+        self.assertContains(response, "proposal-report-terms-table")
+        self.assertContains(response, "proposal-evaluation-terms-table")
         self.assertContains(response, "proposal-payment-schedule-editor")
         self.assertContains(response, "proposal-payment-schedule-editor-body")
         self.assertContains(response, 'name="evaluation_date"', html=False)
+        self.assertContains(response, 'name="evaluation_date_enabled"', html=False)
+        self.assertContains(response, "proposal-stage-evaluation-date-toggle")
+        self.assertContains(response, 'name="source_data_term"', html=False)
+        self.assertContains(response, 'name="source_data_term_enabled"', html=False)
+        self.assertContains(response, 'name="source_data_term_unit"', html=False)
+        self.assertContains(response, 'name="source_data_date"', html=False)
+        self.assertContains(response, 'name="source_data_date_enabled"', html=False)
+        self.assertContains(response, 'name="service_term_months_enabled"', html=False)
+        self.assertContains(response, 'name="preliminary_report_date_enabled"', html=False)
+        self.assertContains(response, 'name="final_report_date_enabled"', html=False)
+        self.assertContains(response, "proposal-stage-final-report-date-toggle")
+        self.assertContains(response, "js-proposal-stage-field-toggle")
+        self.assertContains(response, "proposal-stage-total-source-data-term-unit")
+        self.assertContains(response, "proposal-stage-total-preliminary-term-unit")
+        self.assertContains(response, "proposal-stage-total-final-term-unit")
+        self.assertContains(response, "Дата предоставления данных", html=False)
+        self.assertContains(response, 'name="preliminary_report_term_unit"', html=False)
+        self.assertContains(response, '<option value="months" selected>мес.</option>', html=False)
+        self.assertContains(response, '<option value="days">дн.</option>', html=False)
+        self.assertContains(response, '<option value="weeks">нед.</option>', html=False)
+        self.assertContains(response, 'name="final_report_term_unit"', html=False)
+        self.assertContains(response, '<option value="weeks" selected>нед.</option>', html=False)
         self.assertContains(response, 'id="contract-stage-terms-tbody"', html=False)
+        self.assertContains(response, 'id="contract-stage-evaluation-tbody"', html=False)
         self.assertContains(response, "proposal-stage-terms-row")
+        self.assertContains(response, "proposal-stage-evaluation-row")
+        content = response.content.decode()
+        self.assertIn("contract-date-terms-field", content)
+        self.assertNotIn("contract-date-terms-row", content)
+        self.assertEqual(content.count("js-proposal-report-date-lock"), 7)
+        self.assertLess(content.index("proposal-assets-editor proposal-terms-editor"), content.index('name="contract_date"'))
+        self.assertLess(content.index('name="contract_date"'), content.index("proposal-stage-terms-row"))
+        self.assertLess(content.index('name="contract_date"'), content.index("proposal-terms-table"))
+        self.assertLess(content.index("contract-stage-terms-tbody"), content.index("contract-stage-evaluation-tbody"))
+        self.assertLess(content.index("proposal-evaluation-terms-table"), content.index('name="evaluation_date"'))
         self.assertContains(response, 'name="advance_percent"', html=False)
         self.assertContains(response, 'name="final_report_percent"', html=False)
         self.assertContains(response, self.proposal.short_uid)
@@ -2460,6 +2634,8 @@ class ContractsCloudLabelTests(TestCase):
             {
                 "product_id": self.product.pk,
                 "evaluation_date": "01.01.2026",
+                "source_data_term": "1.0",
+                "source_data_date": "10.01.2026",
                 "service_term_months": "1.5",
                 "preliminary_report_date": "15.02.2026",
                 "final_report_term_weeks": "2.0",
@@ -2488,6 +2664,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, f'value="{self.proposal.number}"', html=False)
         self.assertContains(response, f'option value="{self.proposal.pk}" selected', html=False)
         self.assertContains(response, 'value="01.01.2026"', html=False)
+        self.assertContains(response, 'value="10.01.2026"', html=False)
         self.assertContains(response, 'value="1.5"', html=False)
         self.assertContains(response, 'hx-post="%s"' % reverse("contracts_project_registration_create"), html=False)
 
@@ -2517,6 +2694,8 @@ class ContractsCloudLabelTests(TestCase):
                 {
                     "product_id": self.product.pk,
                     "evaluation_date": "01.06.2026",
+                    "source_data_term": "1.0",
+                    "source_data_date": "01.07.2026",
                     "service_term_months": "3.0",
                     "preliminary_report_date": "01.09.2026",
                     "final_report_term_weeks": "4.0",
@@ -2542,6 +2721,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'value="Новое название из ТКП"', html=False)
         self.assertContains(response, 'value="Новый заказчик из ТКП"', html=False)
         self.assertContains(response, 'value="01.06.2026"', html=False)
+        self.assertContains(response, 'value="01.07.2026"', html=False)
         self.assertContains(
             response,
             'hx-post="%s"' % reverse("contracts_project_registration_edit", args=[contract_project.pk]),
@@ -2578,12 +2758,20 @@ class ContractsCloudLabelTests(TestCase):
                 ContractProjectRegistrationProduct(registration=contract_project, product=second_product, rank=2),
             ]
         )
+        TypicalServiceTerm.objects.create(
+            product=self.product,
+            source_data_weeks=3,
+            preliminary_report_months=Decimal("1.5"),
+            final_report_weeks=2,
+        )
 
         response = self.client.get(reverse("contracts_project_registration_edit", args=[contract_project.pk]))
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertEqual(content.count("proposal-stage-terms-row"), 2)
+        self.assertEqual(content.count("proposal-stage-evaluation-row"), 2)
+        self.assertContains(response, 'value="3.0"', html=False)
         self.assertContains(response, 'value="Этап 1"', html=False)
         self.assertContains(response, 'value="Этап 2"', html=False)
 
@@ -2607,10 +2795,21 @@ class ContractsCloudLabelTests(TestCase):
                 "name": "Договор с этапами",
                 "status": "Разрабатывается проект договора",
                 "year": 2026,
+                "evaluation_date_enabled": ["true", "true"],
                 "evaluation_date": ["01.01.2026", "01.07.2026"],
+                "source_data_term_enabled": ["true", "true"],
+                "source_data_term": ["5", "1.5"],
+                "source_data_term_unit": ["days", "weeks"],
+                "source_data_date_enabled": ["true", "true"],
+                "source_data_date": ["06.01.2026", "11.07.2026"],
+                "service_term_months_enabled": ["true", "true"],
                 "service_term_months": ["1.0", "2.0"],
+                "preliminary_report_term_unit": ["days", "weeks"],
+                "preliminary_report_date_enabled": ["true", "true"],
                 "preliminary_report_date": ["01.02.2026", "01.09.2026"],
                 "final_report_term_weeks": ["2.0", "3.0"],
+                "final_report_term_unit": ["days", "months"],
+                "final_report_date_enabled": ["true", "true"],
                 "final_report_date": ["15.02.2026", "30.09.2026"],
                 "next_stage_delay_days": ["0", "0"],
             },
@@ -2621,7 +2820,152 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(len(created.stage_payloads_json), 2)
         self.assertEqual(created.stage_payloads_json[0]["product_id"], str(self.product.pk))
         self.assertEqual(created.stage_payloads_json[1]["product_id"], str(second_product.pk))
+        self.assertTrue(created.stage_payloads_json[0]["evaluation_date_enabled"])
+        self.assertEqual(created.stage_payloads_json[0]["evaluation_date"], "01.01.2026")
+        self.assertTrue(created.stage_payloads_json[1]["evaluation_date_enabled"])
+        self.assertEqual(created.stage_payloads_json[1]["evaluation_date"], "01.07.2026")
+        self.assertEqual(created.stage_payloads_json[0]["source_data_term"], "5")
+        self.assertTrue(created.stage_payloads_json[0]["source_data_term_enabled"])
+        self.assertEqual(created.stage_payloads_json[0]["source_data_term_unit"], "days")
+        self.assertTrue(created.stage_payloads_json[0]["source_data_date_enabled"])
+        self.assertEqual(created.stage_payloads_json[0]["source_data_date"], "06.01.2026")
+        self.assertEqual(created.stage_payloads_json[1]["source_data_term"], "1.5")
+        self.assertEqual(created.stage_payloads_json[1]["source_data_term_unit"], "weeks")
+        self.assertEqual(created.stage_payloads_json[1]["source_data_date"], "11.07.2026")
+        self.assertTrue(created.stage_payloads_json[1]["service_term_months_enabled"])
+        self.assertTrue(created.stage_payloads_json[1]["preliminary_report_date_enabled"])
+        self.assertEqual(created.source_data_term, Decimal("1.5"))
+        self.assertEqual(created.source_data_term_unit, "weeks")
+        self.assertEqual(created.source_data_date, date(2026, 7, 11))
         self.assertEqual(created.stage_payloads_json[1]["service_term_months"], "2.0")
+        self.assertEqual(created.stage_payloads_json[0]["preliminary_report_term_unit"], "days")
+        self.assertEqual(created.stage_payloads_json[1]["preliminary_report_term_unit"], "weeks")
+        self.assertEqual(created.preliminary_report_term_unit, "weeks")
+        self.assertEqual(created.stage_payloads_json[0]["final_report_term_unit"], "days")
+        self.assertEqual(created.stage_payloads_json[1]["final_report_term_unit"], "months")
+        self.assertTrue(created.stage_payloads_json[1]["final_report_date_enabled"])
+        self.assertEqual(created.final_report_term_unit, "months")
+
+    def test_contracts_project_registration_create_persists_disabled_stage_field_toggles(self):
+        TypicalServiceTerm.objects.create(
+            product=self.product,
+            source_data_weeks=4,
+            preliminary_report_months=Decimal("2.0"),
+            final_report_weeks=1,
+        )
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7014,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Договор с отключенными сроками",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "evaluation_date_enabled": ["false"],
+                "evaluation_date": ["01.01.2026"],
+                "source_data_term_enabled": ["false"],
+                "source_data_term": ["4.0"],
+                "source_data_term_unit": ["weeks"],
+                "source_data_date_enabled": ["false"],
+                "source_data_date": ["29.01.2026"],
+                "service_term_months_enabled": ["false"],
+                "service_term_months": ["2.0"],
+                "preliminary_report_term_unit": ["months"],
+                "preliminary_report_date_enabled": ["false"],
+                "preliminary_report_date": ["29.03.2026"],
+                "final_report_term_weeks": ["1.0"],
+                "final_report_term_unit": ["weeks"],
+                "final_report_date_enabled": ["false"],
+                "final_report_date": ["05.04.2026"],
+                "next_stage_delay_days": ["0"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = ContractProjectRegistration.objects.get(number=7014, name="Договор с отключенными сроками")
+        stage = created.stage_payloads_json[0]
+        self.assertFalse(stage["evaluation_date_enabled"])
+        self.assertEqual(stage["evaluation_date"], "")
+        self.assertFalse(stage["source_data_term_enabled"])
+        self.assertEqual(stage["source_data_term"], "")
+        self.assertFalse(stage["source_data_date_enabled"])
+        self.assertEqual(stage["source_data_date"], "")
+        self.assertFalse(stage["service_term_months_enabled"])
+        self.assertEqual(stage["service_term_months"], "")
+        self.assertFalse(stage["preliminary_report_date_enabled"])
+        self.assertEqual(stage["preliminary_report_date"], "")
+        self.assertFalse(stage["final_report_date_enabled"])
+        self.assertEqual(stage["final_report_date"], "")
+        self.assertIsNone(created.source_data_term)
+        self.assertIsNone(created.evaluation_date)
+        self.assertIsNone(created.source_data_date)
+        self.assertIsNone(created.service_term_months)
+        self.assertIsNone(created.preliminary_report_date)
+        self.assertIsNone(created.final_report_date)
+
+        edit_response = self.client.get(reverse("contracts_project_registration_edit", args=[created.pk]))
+        self.assertContains(edit_response, 'name="evaluation_date_enabled"', html=False)
+        self.assertContains(edit_response, 'name="source_data_term_enabled"', html=False)
+        self.assertContains(edit_response, 'name="final_report_date_enabled"', html=False)
+        self.assertContains(edit_response, 'value="false"', html=False)
+        self.assertNotContains(edit_response, 'value="4.0"', html=False)
+        self.assertNotContains(edit_response, 'value="2.0"', html=False)
+
+    def test_contracts_project_registration_rejects_fractional_preliminary_report_days(self):
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7007,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Договор с дробными днями",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "evaluation_date": ["01.01.2026"],
+                "service_term_months": ["1.5"],
+                "preliminary_report_term_unit": ["days"],
+                "preliminary_report_date": ["03.01.2026"],
+                "final_report_term_weeks": ["2.0"],
+                "final_report_date": ["17.01.2026"],
+                "next_stage_delay_days": ["0"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ContractProjectRegistration.objects.filter(number=7007).exists())
+        self.assertContains(response, "поле «Предварительный отчёт» должно быть целым числом", html=False)
+
+    def test_contracts_project_registration_rejects_fractional_final_report_days(self):
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7008,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Договор с дробными днями итогового отчёта",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "evaluation_date": ["01.01.2026"],
+                "service_term_months": ["1.0"],
+                "preliminary_report_term_unit": ["months"],
+                "preliminary_report_date": ["01.02.2026"],
+                "final_report_term_weeks": ["1.5"],
+                "final_report_term_unit": ["days"],
+                "final_report_date": ["03.02.2026"],
+                "next_stage_delay_days": ["0"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ContractProjectRegistration.objects.filter(number=7008).exists())
+        self.assertContains(response, "поле «Итоговый отчёт» должно быть целым числом", html=False)
 
     def test_contracts_project_registration_create_preserves_duplicate_product_stages(self):
         response = self.client.post(
@@ -3067,6 +3411,7 @@ class ContractsCloudLabelTests(TestCase):
                 "name": "Договорная строка после",
                 "status": "Отправлен проект договора",
                 "year": 2027,
+                "contract_date": "20.05.2026",
                 "evaluation_date": "2026-01-01",
                 "service_term_months": "1.5",
                 "preliminary_report_date": "2026-02-15",
@@ -3081,6 +3426,7 @@ class ContractsCloudLabelTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         contract_project.refresh_from_db()
+        self.assertEqual(contract_project.contract_date, date(2026, 5, 20))
         self.assertEqual(contract_project.evaluation_date, date(2026, 1, 1))
         self.assertEqual(str(contract_project.service_term_months), "1.5")
         self.assertEqual(contract_project.preliminary_report_date, date(2026, 2, 15))

@@ -2172,7 +2172,7 @@ section#templates .alert.alert-info .text-muted {
   border-bottom: 0 !important;
 }
 
-#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-has-next > td:not([data-col="checkbox"]):not([data-col="number"]):not([data-col="tkp-id"]):not([data-col="agreement-type"]):not([data-col="sub-number"]):not([data-col="group"]):not([data-col="project-id"]):not([data-col="contract-number"]) {
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-has-next > td:not([data-col="checkbox"]):not([data-col="number"]):not([data-col="tkp-id"]):not([data-col="agreement-type"]):not([data-col="sub-number"]):not([data-col="group"]):not([data-col="project-id"]):not([data-col="contract-number"]):not([data-col="contract-date"]) {
   background-image: repeating-linear-gradient(
     to right,
     rgba(33, 37, 41, .22) 0,
@@ -2189,7 +2189,8 @@ section#templates .alert.alert-info .text-muted {
 #contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="sub-number"],
 #contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="group"],
 #contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="project-id"],
-#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="contract-number"] {
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="contract-number"],
+#contracts-content-in-development .contracts-drafts-table-wrap tr.contracts-drafts-number-contract-has-next > td[data-col="contract-date"] {
   background-image: repeating-linear-gradient(
     to right,
     rgba(33, 37, 41, .22) 0,

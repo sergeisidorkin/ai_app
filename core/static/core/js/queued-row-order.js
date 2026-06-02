@@ -57,7 +57,7 @@
   }
 
   function getStatusEl(table) {
-    var panel = table && table.closest ? table.closest('[data-worktime-panel], #proposals-pane') : null;
+    var panel = table && table.closest ? table.closest('[data-worktime-panel], #proposals-pane, #performers-pane') : null;
     return (panel || document).querySelector('[data-row-order-status]');
   }
 

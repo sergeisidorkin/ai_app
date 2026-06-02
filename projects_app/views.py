@@ -1945,6 +1945,13 @@ def _performers_context(user=None):
                 or p.pk in dh_notified_ids
             )
 
+    performer_order_signature = _performer_order_signature_for_items(
+        [
+            {"id": p.pk, "registration_id": p.registration_id}
+            for p in performers
+        ]
+    )
+
     if not isinstance(participation_performers, list):
         participation_performers = list(participation_performers)
     from collections import defaultdict
@@ -2004,6 +2011,7 @@ def _performers_context(user=None):
     return {
         "performers": performers,
         "performer_projects": performer_projects,
+        "performer_order_signature": performer_order_signature,
         "participation_performers": participation_performers,
         "participation_display_rows": participation_display_rows,
         "participation_projects": participation_projects,
@@ -2224,14 +2232,25 @@ def _render_performers_updated(request):
     resp[HX_TRIGGER_HEADER] = HX_PERFORMERS_UPDATED_EVENT
     return resp
 
+
+def _performer_order_signature_for_items(items):
+    grouped = defaultdict(list)
+    for item in items:
+        grouped[item["registration_id"]].append(str(item["id"]))
+    return "|".join(
+        f"{registration_id}:{','.join(ids)}"
+        for registration_id, ids in sorted(grouped.items(), key=lambda pair: pair[0] or 0)
+    )
+
+
 @login_required
 @require_http_methods(["GET"])
 def performers_partial(request):
     return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
 
-def _next_performer_position():
-    mx = Performer.objects.aggregate(Max("position")).get("position__max") or 0
-    return mx + 1
+def _next_performer_position(registration_id: int | None = None):
+    filters = {"registration_id": registration_id} if registration_id else None
+    return _next_position(Performer, filters)
 
 
 def _effective_direction_id(typical_section):
@@ -2859,7 +2878,7 @@ def performer_form_create(request):
 
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
-        obj.position = _next_performer_position()
+        obj.position = _next_performer_position(obj.registration_id)
     obj.save()
 
     resp = HttpResponse(status=204)
@@ -3383,37 +3402,135 @@ def performer_delete(request, pk: int):
     p.delete()
     return _render_performers_updated(request)
 
-def _normalize_performer_positions():
-    items = Performer.objects.order_by("position", "id").only("id", "position")
-    for i, it in enumerate(items, start=1):
-        if it.position != i:
-            Performer.objects.filter(pk=it.pk).update(position=i)
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def performer_row_order(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (TypeError, ValueError, UnicodeDecodeError):
+        return JsonResponse({"ok": False, "error": "Некорректный формат порядка исполнителей."}, status=400)
+
+    raw_ids = payload.get("ordered_performer_ids") or []
+    try:
+        ordered_performer_ids = [int(value) for value in raw_ids]
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Порядок исполнителей содержит некорректные идентификаторы."}, status=400)
+    if len(ordered_performer_ids) != len(set(ordered_performer_ids)):
+        return JsonResponse({"ok": False, "error": "Порядок исполнителей содержит дубли."}, status=400)
+
+    base_signature = str(payload.get("base_order_signature") or "")
+    with transaction.atomic():
+        current_items = list(
+            Performer.objects
+            .select_for_update()
+            .order_by("registration_id", "position", "id")
+            .values("id", "registration_id", "position")
+        )
+        current_ids = [item["id"] for item in current_items]
+        current_signature = _performer_order_signature_for_items(current_items)
+        current_registration_by_id = {
+            item["id"]: item["registration_id"]
+            for item in current_items
+        }
+        desired_items = [
+            {"id": performer_id, "registration_id": current_registration_by_id.get(performer_id)}
+            for performer_id in ordered_performer_ids
+        ]
+        desired_signature = _performer_order_signature_for_items(desired_items)
+
+        conflict_payload = {
+            "ok": False,
+            "error": "Порядок исполнителей был изменен. Таблица будет обновлена.",
+            "current_performer_ids": current_ids,
+            "order_signature": current_signature,
+        }
+        if base_signature and base_signature != current_signature:
+            if desired_signature == current_signature:
+                return JsonResponse({"ok": True, "order_signature": current_signature})
+            return JsonResponse(conflict_payload, status=409)
+        if set(ordered_performer_ids) != set(current_ids):
+            return JsonResponse(conflict_payload, status=409)
+
+        grouped_ids = defaultdict(list)
+        for performer_id in ordered_performer_ids:
+            grouped_ids[current_registration_by_id[performer_id]].append(performer_id)
+        for performer_ids in grouped_ids.values():
+            for idx, performer_id in enumerate(performer_ids, start=1):
+                Performer.objects.filter(pk=performer_id).update(position=idx)
+
+    return JsonResponse({"ok": True, "order_signature": desired_signature})
+
+
+def _normalize_performer_positions(registration_id: int | None = None):
+    qs = Performer.objects.values("id", "position", "registration_id")
+    if registration_id:
+        items = list(qs.filter(registration_id=registration_id).order_by("position", "id"))
+        for i, it in enumerate(items, start=1):
+            if it["position"] != i:
+                Performer.objects.filter(pk=it["id"]).update(position=i)
+        return
+
+    cur_registration_id = None
+    buf = []
+    for it in qs.order_by("registration_id", "position", "id"):
+        if cur_registration_id is None:
+            cur_registration_id = it["registration_id"]
+        if it["registration_id"] != cur_registration_id:
+            for i, b in enumerate(buf, start=1):
+                if b["position"] != i:
+                    Performer.objects.filter(pk=b["id"]).update(position=i)
+            cur_registration_id, buf = it["registration_id"], [it]
+        else:
+            buf.append(it)
+    for i, b in enumerate(buf, start=1):
+        if b["position"] != i:
+            Performer.objects.filter(pk=b["id"]).update(position=i)
 
 @login_required
 @require_http_methods(["POST", "GET"])
 def performer_move_up(request, pk: int):
-    _normalize_performer_positions()
-    items = list(Performer.objects.order_by("position", "id").only("id", "position"))
-    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    performer = Performer.objects.filter(pk=pk).values("registration_id").first()
+    if not performer:
+        raise Http404
+    registration_id = performer["registration_id"]
+    _normalize_performer_positions(registration_id)
+    items = list(
+        Performer.objects
+        .filter(registration_id=registration_id)
+        .order_by("position", "id")
+        .values("id", "position")
+    )
+    idx = next((i for i, it in enumerate(items) if it["id"] == pk), None)
     if idx is not None and idx > 0:
         cur, prev = items[idx], items[idx-1]
-        Performer.objects.filter(pk=cur.id).update(position=prev.position)
-        Performer.objects.filter(pk=prev.id).update(position=cur.position)
-        _normalize_performer_positions()
+        Performer.objects.filter(pk=cur["id"]).update(position=prev["position"])
+        Performer.objects.filter(pk=prev["id"]).update(position=cur["position"])
+        _normalize_performer_positions(registration_id)
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ, БЕЗ HX-Trigger
     return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
 
 @login_required
 @require_http_methods(["POST", "GET"])
 def performer_move_down(request, pk: int):
-    _normalize_performer_positions()
-    items = list(Performer.objects.order_by("position", "id").only("id", "position"))
-    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    performer = Performer.objects.filter(pk=pk).values("registration_id").first()
+    if not performer:
+        raise Http404
+    registration_id = performer["registration_id"]
+    _normalize_performer_positions(registration_id)
+    items = list(
+        Performer.objects
+        .filter(registration_id=registration_id)
+        .order_by("position", "id")
+        .values("id", "position")
+    )
+    idx = next((i for i, it in enumerate(items) if it["id"] == pk), None)
     if idx is not None and idx < len(items) - 1:
         cur, nxt = items[idx], items[idx+1]
-        Performer.objects.filter(pk=cur.id).update(position=nxt.position)
-        Performer.objects.filter(pk=nxt.id).update(position=cur.position)
-        _normalize_performer_positions()
+        Performer.objects.filter(pk=cur["id"]).update(position=nxt["position"])
+        Performer.objects.filter(pk=nxt["id"]).update(position=cur["position"])
+        _normalize_performer_positions(registration_id)
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ, БЕЗ HX-Trigger
     return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
 

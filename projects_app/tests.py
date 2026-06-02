@@ -457,6 +457,74 @@ class ProjectRegistrationFormTests(TestCase):
         self.assertEqual(first.agreement_sequence, 1)
         self.assertEqual(second.agreement_sequence, 2)
 
+    def test_project_short_uid_stage_digit_restarts_for_each_contract_project(self):
+        first_contract = ContractProjectRegistration.objects.create(
+            number=7401,
+            sub_number=1,
+            group_member=self.group_member,
+            name="Договор 01",
+        )
+        second_contract = ContractProjectRegistration.objects.create(
+            number=7402,
+            sub_number=2,
+            group_member=self.group_member,
+            name="Договор 02",
+        )
+        first = ProjectRegistration.objects.create(
+            number=55,
+            group_member=self.group_member,
+            contract_project_registration=first_contract,
+            type=self.product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Первый продукт",
+            status="Не начат",
+            position=1,
+        )
+        second = ProjectRegistration.objects.create(
+            number=55,
+            group_member=self.group_member,
+            contract_project_registration=second_contract,
+            type=self.second_product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Второй продукт",
+            status="Не начат",
+            position=2,
+        )
+        third = ProjectRegistration.objects.create(
+            number=55,
+            group_member=self.group_member,
+            contract_project_registration=first_contract,
+            type=self.second_product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Третий продукт",
+            status="Не начат",
+            position=3,
+        )
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        third.refresh_from_db()
+
+        self.assertEqual(first.short_uid, "00550110RU")
+        self.assertEqual(second.short_uid, "00550210RU")
+        self.assertEqual(third.short_uid, "00550120RU")
+        self.assertEqual(first.agreement_sequence, 1)
+        self.assertEqual(second.agreement_sequence, 1)
+        self.assertEqual(third.agreement_sequence, 2)
+
+        third.contract_project_registration = second_contract
+        third.save(update_fields=["contract_project_registration"])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        third.refresh_from_db()
+
+        self.assertEqual(first.short_uid, "00550110RU")
+        self.assertEqual(second.short_uid, "00550210RU")
+        self.assertEqual(third.short_uid, "00550220RU")
+        self.assertEqual(first.agreement_sequence, 1)
+        self.assertEqual(second.agreement_sequence, 1)
+        self.assertEqual(third.agreement_sequence, 2)
+
     def test_form_allows_duplicate_project_identity_values_and_keeps_project_id_unique(self):
         first = ProjectRegistration.objects.create(
             number=4444,
@@ -2789,6 +2857,115 @@ class WorkVolumePerformerCreationTests(TestCase):
             is_staff=True,
         )
         return Employee.objects.create(user=user, patronymic=patronymic)
+
+    def test_performer_move_actions_are_scoped_to_project(self):
+        other_project = ProjectRegistration.objects.create(
+            number=6002,
+            type=self.product,
+            name="Другой проект",
+            year=2026,
+        )
+        first = Performer.objects.create(
+            registration=self.project,
+            executor="Первый исполнитель",
+            position=1,
+        )
+        second = Performer.objects.create(
+            registration=self.project,
+            executor="Второй исполнитель",
+            position=2,
+        )
+        other = Performer.objects.create(
+            registration=other_project,
+            executor="Исполнитель другого проекта",
+            position=1,
+        )
+
+        response = self.client.post(reverse("performer_move_up", args=[second.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            list(
+                Performer.objects
+                .filter(registration=self.project)
+                .order_by("position", "id")
+                .values_list("pk", flat=True)
+            ),
+            [second.pk, first.pk],
+        )
+        other.refresh_from_db()
+        self.assertEqual(other.position, 1)
+
+        response = self.client.post(reverse("performer_move_down", args=[second.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            list(
+                Performer.objects
+                .filter(registration=self.project)
+                .order_by("position", "id")
+                .values_list("pk", flat=True)
+            ),
+            [first.pk, second.pk],
+        )
+
+    def test_performer_row_order_persists_order_within_each_project(self):
+        other_project = ProjectRegistration.objects.create(
+            number=6002,
+            type=self.product,
+            name="Другой проект",
+            year=2026,
+        )
+        first = Performer.objects.create(
+            registration=self.project,
+            executor="Первый исполнитель",
+            position=1,
+        )
+        second = Performer.objects.create(
+            registration=self.project,
+            executor="Второй исполнитель",
+            position=2,
+        )
+        other = Performer.objects.create(
+            registration=other_project,
+            executor="Исполнитель другого проекта",
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("performer_row_order"),
+            data=json.dumps({"ordered_performer_ids": [other.pk, second.pk, first.pk]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ok"], True)
+        self.assertEqual(
+            list(
+                Performer.objects
+                .filter(registration=self.project)
+                .order_by("position", "id")
+                .values_list("pk", flat=True)
+            ),
+            [second.pk, first.pk],
+        )
+        other.refresh_from_db()
+        self.assertEqual(other.position, 1)
+
+    def test_performers_partial_enables_queued_row_order(self):
+        performer = Performer.objects.create(
+            registration=self.project,
+            executor="Исполнитель",
+            position=1,
+        )
+
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "data-queued-row-order", html=False)
+        self.assertContains(response, reverse("performer_row_order"), html=False)
+        self.assertContains(response, 'data-row-order-payload-field="ordered_performer_ids"', html=False)
+        self.assertContains(response, f'data-row-order-id="{performer.pk}"', html=False)
 
     def test_work_volume_form_uses_project_manager_label(self):
         form = WorkVolumeForm()

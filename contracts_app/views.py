@@ -87,7 +87,7 @@ CONTRACT_PAYMENT_SCHEDULE_UI_COLUMNS = [
         "label": "Дата оценки",
     },
     {"picker_value": "start-date", "data_col": "start-date", "source_column": "start_date", "label": "Дата начала"},
-    {"picker_value": "term", "data_col": "term", "source_column": "term", "label": "Срок предв. отчёта, мес."},
+    {"picker_value": "term", "data_col": "term", "source_column": "term", "label": "Срок предв. отчёта"},
     {
         "picker_value": "preliminary-report-date",
         "data_col": "preliminary-report-date",
@@ -98,7 +98,7 @@ CONTRACT_PAYMENT_SCHEDULE_UI_COLUMNS = [
         "picker_value": "final-report-weeks",
         "data_col": "final-report-weeks",
         "source_column": "final_report_term_weeks",
-        "label": "Срок итог. отчёта, нед.",
+        "label": "Срок итог. отчёта",
     },
     {
         "picker_value": "final-report-date",
@@ -1191,6 +1191,92 @@ def _add_contract_schedule_weeks(value, weeks):
     return value + timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
 
 
+def _subtract_contract_schedule_weeks(value, weeks):
+    weeks = _contract_schedule_decimal(weeks)
+    if not value or weeks is None:
+        return value
+    safe_weeks = max(weeks, Decimal("0"))
+    return value - timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
+
+
+def _contract_schedule_preliminary_term_unit(value):
+    raw = str(value or "").strip()
+    valid_units = {choice[0] for choice in ContractProjectRegistration.PreliminaryReportTermUnit.choices}
+    if raw in valid_units:
+        return raw
+    return ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value
+
+
+def _add_contract_schedule_preliminary_term(value, term, unit):
+    term = _contract_schedule_decimal(term)
+    if not value or term is None:
+        return value
+    unit = _contract_schedule_preliminary_term_unit(unit)
+    if unit == ContractProjectRegistration.PreliminaryReportTermUnit.DAYS:
+        return value + timedelta(days=int(max(term, Decimal("0")) + Decimal("0.5")))
+    if unit == ContractProjectRegistration.PreliminaryReportTermUnit.WEEKS:
+        return _add_contract_schedule_weeks(value, term)
+    return _add_contract_schedule_months(value, term)
+
+
+def _subtract_contract_schedule_preliminary_term(value, term, unit):
+    term = _contract_schedule_decimal(term)
+    if not value or term is None:
+        return value
+    unit = _contract_schedule_preliminary_term_unit(unit)
+    if unit == ContractProjectRegistration.PreliminaryReportTermUnit.DAYS:
+        return value - timedelta(days=int(max(term, Decimal("0")) + Decimal("0.5")))
+    if unit == ContractProjectRegistration.PreliminaryReportTermUnit.WEEKS:
+        return _subtract_contract_schedule_weeks(value, term)
+    return _subtract_contract_schedule_months(value, term)
+
+
+def _contract_schedule_preliminary_term_display(value, unit):
+    value = _contract_schedule_decimal(value)
+    if value is None:
+        return ""
+    unit = _contract_schedule_preliminary_term_unit(unit)
+    labels = dict(ContractProjectRegistration.PreliminaryReportTermUnit.choices)
+    if unit == ContractProjectRegistration.PreliminaryReportTermUnit.DAYS:
+        display_value = str(int(max(value, Decimal("0")) + Decimal("0.5")))
+    else:
+        display_value = f"{value:.1f}".replace(".", ",")
+    return f"{display_value} {labels.get(unit, 'мес.')}"
+
+
+def _contract_schedule_final_term_unit(value):
+    raw = str(value or "").strip()
+    valid_units = {choice[0] for choice in ContractProjectRegistration.FinalReportTermUnit.choices}
+    if raw in valid_units:
+        return raw
+    return ContractProjectRegistration.FinalReportTermUnit.WEEKS.value
+
+
+def _add_contract_schedule_final_term(value, term, unit):
+    term = _contract_schedule_decimal(term)
+    if not value or term is None:
+        return value
+    unit = _contract_schedule_final_term_unit(unit)
+    if unit == ContractProjectRegistration.FinalReportTermUnit.DAYS:
+        return value + timedelta(days=int(max(term, Decimal("0")) + Decimal("0.5")))
+    if unit == ContractProjectRegistration.FinalReportTermUnit.MONTHS:
+        return _add_contract_schedule_months(value, term)
+    return _add_contract_schedule_weeks(value, term)
+
+
+def _contract_schedule_final_term_display(value, unit):
+    value = _contract_schedule_decimal(value)
+    if value is None:
+        return ""
+    unit = _contract_schedule_final_term_unit(unit)
+    labels = dict(ContractProjectRegistration.FinalReportTermUnit.choices)
+    if unit == ContractProjectRegistration.FinalReportTermUnit.DAYS:
+        display_value = str(int(max(value, Decimal("0")) + Decimal("0.5")))
+    else:
+        display_value = f"{value:.1f}".replace(".", ",")
+    return f"{display_value} {labels.get(unit, 'нед.')}"
+
+
 def _contract_schedule_base_start_date(today=None):
     current = (today or timezone.localdate()) + timedelta(days=14)
     previous_monday = current - timedelta(days=current.weekday())
@@ -1317,10 +1403,18 @@ def _build_contract_payment_schedule_rows(registrations):
                 if stage_payload.get("service_term_months") not in (None, "")
                 else registration.service_term_months
             )
+            preliminary_report_term_unit = _contract_schedule_preliminary_term_unit(
+                stage_payload.get("preliminary_report_term_unit")
+                or getattr(registration, "preliminary_report_term_unit", "")
+            )
             final_report_term_weeks = _contract_schedule_decimal(
                 stage_payload.get("final_report_term_weeks")
                 if stage_payload.get("final_report_term_weeks") not in (None, "")
                 else registration.final_report_term_weeks
+            )
+            final_report_term_unit = _contract_schedule_final_term_unit(
+                stage_payload.get("final_report_term_unit")
+                or getattr(registration, "final_report_term_unit", "")
             )
             preliminary_report_date = _parse_contract_schedule_date(stage_payload.get("preliminary_report_date"))
             if preliminary_report_date is None:
@@ -1333,13 +1427,25 @@ def _build_contract_payment_schedule_rows(registrations):
                 evaluation_date = registration.evaluation_date
 
             if preliminary_report_date and service_term_months is not None:
-                start_date = _subtract_contract_schedule_months(preliminary_report_date, service_term_months)
+                start_date = _subtract_contract_schedule_preliminary_term(
+                    preliminary_report_date,
+                    service_term_months,
+                    preliminary_report_term_unit,
+                )
             else:
                 start_date = rolling_start_date
             if not preliminary_report_date and service_term_months is not None:
-                preliminary_report_date = _add_contract_schedule_months(start_date, service_term_months)
+                preliminary_report_date = _add_contract_schedule_preliminary_term(
+                    start_date,
+                    service_term_months,
+                    preliminary_report_term_unit,
+                )
             if not final_report_date and preliminary_report_date and final_report_term_weeks is not None:
-                final_report_date = _add_contract_schedule_weeks(preliminary_report_date, final_report_term_weeks)
+                final_report_date = _add_contract_schedule_final_term(
+                    preliminary_report_date,
+                    final_report_term_weeks,
+                    final_report_term_unit,
+                )
             stage_end_date = final_report_date or preliminary_report_date or start_date
             next_delay_days = stage_payload.get("next_stage_delay_days")
             if next_delay_days not in (None, ""):
@@ -1373,8 +1479,18 @@ def _build_contract_payment_schedule_rows(registrations):
                     "evaluation_date": evaluation_date,
                     "start_date": start_date,
                     "service_term_months": service_term_months,
+                    "preliminary_report_term_unit": preliminary_report_term_unit,
+                    "preliminary_report_term_display": _contract_schedule_preliminary_term_display(
+                        service_term_months,
+                        preliminary_report_term_unit,
+                    ),
                     "preliminary_report_date": preliminary_report_date,
                     "final_report_term_weeks": final_report_term_weeks,
+                    "final_report_term_unit": final_report_term_unit,
+                    "final_report_term_display": _contract_schedule_final_term_display(
+                        final_report_term_weeks,
+                        final_report_term_unit,
+                    ),
                     "final_report_date": final_report_date,
                     "advance_percent": _contract_schedule_decimal(
                         stage_payload.get("advance_percent")
