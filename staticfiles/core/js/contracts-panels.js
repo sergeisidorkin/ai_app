@@ -291,7 +291,7 @@
   window.__contractsDraftSel = window.__contractsDraftSel || [];
 
   var CONTRACTS_DRAFTS_COLPICKER = {
-    prefKey: 'contracts:draftsHiddenCols:v6',
+    prefKey: 'contracts:draftsHiddenCols:v7',
     wrapId: 'contracts-drafts-colpicker-wrap',
     btnId: 'contracts-drafts-colpicker-btn',
     menuId: 'contracts-drafts-colpicker-menu',
@@ -312,6 +312,7 @@
 
   var CONTRACTS_DRAFTS_COL_WEIGHTS = {
     'contract-number': 10,
+    'contract-date': 7,
     'type': 6,
     'name': 20,
     'status': 10,
@@ -337,9 +338,9 @@
     'stage': 7,
     'evaluation-date': 8,
     'start-date': 8,
-    'term': 8,
+    'term': 9,
     'preliminary-report-date': 8,
-    'final-report-weeks': 8,
+    'final-report-weeks': 9,
     'final-report-date': 8,
     'advance-percent': 7,
     'advance-term': 7,

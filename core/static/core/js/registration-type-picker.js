@@ -13,8 +13,13 @@ function attachRegistrationProducts(node) {
     delayRowSelector: ".proposal-stage-delay-row",
     totalRowSelector: ".proposal-stage-terms-total-row",
     stageLabelSelector: ".proposal-stage-label-input",
+    sourceDataTermSelector: ".proposal-stage-source-data-term",
+    sourceDataTermUnitSelector: ".proposal-stage-source-data-term-unit",
+    sourceDataDateSelector: ".proposal-stage-source-data-date",
     monthsSelector: ".proposal-stage-service-term-months",
+    preliminaryTermUnitSelector: ".proposal-stage-preliminary-term-unit",
     weeksSelector: ".proposal-stage-final-report-term-weeks",
+    finalTermUnitSelector: ".proposal-stage-final-term-unit",
     preliminarySelector: ".proposal-stage-preliminary-report-date",
     finalSelector: ".proposal-stage-final-report-date",
     delayInputSelector: ".proposal-stage-next-delay-days",
@@ -23,15 +28,22 @@ function attachRegistrationProducts(node) {
     delayRemoveClass: "proposal-stage-delay-remove",
     finalReportWrapClass: "proposal-stage-final-report-wrap",
     delayRowClass: "proposal-stage-delay-row",
-    delayColspan: 4,
+    delayColspan: 5,
+    evaluationRowSelector: ".proposal-stage-evaluation-row",
+    getEvaluationTbody: () => node.querySelector("#contract-stage-evaluation-tbody"),
     getTbody: () => node.querySelector("#contract-stage-terms-tbody"),
   } : {
     termRowSelector: ".registration-contract-terms-row",
     delayRowSelector: ".registration-stage-delay-row",
     totalRowSelector: ".registration-contract-terms-total-row",
     stageLabelSelector: ".registration-contract-stage-label-input",
+    sourceDataTermSelector: "",
+    sourceDataTermUnitSelector: "",
+    sourceDataDateSelector: "",
     monthsSelector: "[name='stage1_weeks']",
+    preliminaryTermUnitSelector: "",
     weeksSelector: "[name='stage2_weeks']",
+    finalTermUnitSelector: "",
     preliminarySelector: ".js-stage1-date",
     finalSelector: ".js-stage2-end",
     delayInputSelector: ".registration-stage-next-delay-days",
@@ -41,6 +53,8 @@ function attachRegistrationProducts(node) {
     finalReportWrapClass: "registration-stage-final-report-wrap",
     delayRowClass: "registration-stage-delay-row",
     delayColspan: 3,
+    evaluationRowSelector: "",
+    getEvaluationTbody: () => null,
     getTbody: () => node.querySelector(".registration-contract-terms-table tbody"),
   };
 
@@ -57,7 +71,11 @@ function attachRegistrationProducts(node) {
 
   const getProductRows = () => Array.from(container.querySelectorAll(".registration-product-row"));
   const getTermsTbody = () => termsConfig.getTbody();
+  const getEvaluationTbody = () => termsConfig.getEvaluationTbody();
   const getTermsRows = () => Array.from(node.querySelectorAll(termsConfig.termRowSelector));
+  const getEvaluationRows = () => termsConfig.evaluationRowSelector
+    ? Array.from(node.querySelectorAll(termsConfig.evaluationRowSelector))
+    : [];
   const getStageDelayRows = () => Array.from(node.querySelectorAll(termsConfig.delayRowSelector));
   const getTermsTotalRow = () => node.querySelector(termsConfig.totalRowSelector);
 
@@ -114,11 +132,52 @@ function attachRegistrationProducts(node) {
     delete clone.dataset.manualDateSource;
     clone.querySelectorAll("input").forEach((input) => {
       delete input.dataset.hasPicker;
+      if (input.type === "checkbox") {
+        input.checked = true;
+        return;
+      }
+      if (input.type === "hidden" && input.name && input.name.endsWith("_enabled")) {
+        input.value = "true";
+        return;
+      }
       if (!input.classList.contains(termsConfig.stageLabelSelector.slice(1))) {
         input.value = "";
       }
     });
+    if (termsConfig.preliminaryTermUnitSelector) {
+      const unitSelect = clone.querySelector(termsConfig.preliminaryTermUnitSelector);
+      if (unitSelect) unitSelect.value = "months";
+    }
+    if (termsConfig.sourceDataTermUnitSelector) {
+      const unitSelect = clone.querySelector(termsConfig.sourceDataTermUnitSelector);
+      if (unitSelect) unitSelect.value = "weeks";
+    }
+    if (termsConfig.finalTermUnitSelector) {
+      const unitSelect = clone.querySelector(termsConfig.finalTermUnitSelector);
+      if (unitSelect) unitSelect.value = "weeks";
+    }
     clone.querySelector(termsConfig.delayActionSlotSelector)?.replaceChildren();
+    return clone;
+  };
+
+  const cloneEvaluationRow = (row) => {
+    const clone = row.cloneNode(true);
+    delete clone.dataset.eventsBound;
+    delete clone.dataset.productId;
+    clone.querySelectorAll("input").forEach((input) => {
+      delete input.dataset.hasPicker;
+      if (input.type === "checkbox") {
+        input.checked = true;
+        return;
+      }
+      if (input.type === "hidden" && input.name && input.name.endsWith("_enabled")) {
+        input.value = "true";
+        return;
+      }
+      if (!input.classList.contains(termsConfig.stageLabelSelector.slice(1))) {
+        input.value = "";
+      }
+    });
     return clone;
   };
 
@@ -129,6 +188,27 @@ function attachRegistrationProducts(node) {
     }
     if (node.__registrationStageCalculatorApi) {
       node.__registrationStageCalculatorApi.sync();
+    }
+  };
+
+  const isStageFieldEnabled = (row, selector) => {
+    if (!selector) return true;
+    const hidden = row.querySelector(selector);
+    return String(hidden?.value || "true").toLowerCase() !== "false";
+  };
+
+  const ensureEvaluationRows = () => {
+    const tbody = getEvaluationTbody();
+    if (!tbody) return;
+    let evaluationRows = getEvaluationRows();
+    const productRows = getProductRows();
+    while (evaluationRows.length < productRows.length && evaluationRows.length) {
+      tbody.appendChild(cloneEvaluationRow(evaluationRows[evaluationRows.length - 1]));
+      evaluationRows = getEvaluationRows();
+    }
+    while (evaluationRows.length > productRows.length && evaluationRows.length > 1) {
+      evaluationRows[evaluationRows.length - 1].remove();
+      evaluationRows = getEvaluationRows();
     }
   };
 
@@ -191,39 +271,77 @@ function attachRegistrationProducts(node) {
 
   const syncTermsRowsWithProducts = () => {
     ensureTermsRows();
+    ensureEvaluationRows();
     const termRows = getTermsRows();
+    const evaluationRows = getEvaluationRows();
     getProductRows().forEach((productRow, index) => {
       const termRow = termRows[index];
       if (!termRow) return;
+      const evaluationRow = evaluationRows[index];
       const productId = String(productRow.querySelector(".registration-product-select")?.value || "").trim();
       const product = productById.get(productId);
-      const previousProductId = String(
-        termRow.dataset.productId || productRow.dataset.selectedProductId || ""
-      );
+      const previousProductId = String(termRow.dataset.productId || "");
       const stageInput = termRow.querySelector(termsConfig.stageLabelSelector);
+      const evaluationStageInput = evaluationRow?.querySelector(termsConfig.stageLabelSelector);
+      const sourceDataTermInput = termsConfig.sourceDataTermSelector
+        ? termRow.querySelector(termsConfig.sourceDataTermSelector)
+        : null;
+      const sourceDataTermUnitSelect = termsConfig.sourceDataTermUnitSelector
+        ? termRow.querySelector(termsConfig.sourceDataTermUnitSelector)
+        : null;
       const monthsInput = termRow.querySelector(termsConfig.monthsSelector);
+      const preliminaryTermUnitSelect = termsConfig.preliminaryTermUnitSelector
+        ? termRow.querySelector(termsConfig.preliminaryTermUnitSelector)
+        : null;
       const weeksInput = termRow.querySelector(termsConfig.weeksSelector);
+      const finalTermUnitSelect = termsConfig.finalTermUnitSelector
+        ? termRow.querySelector(termsConfig.finalTermUnitSelector)
+        : null;
       if (stageInput) stageInput.value = "Этап " + (index + 1);
+      if (evaluationStageInput) evaluationStageInput.value = "Этап " + (index + 1);
       const terms = product?.typical_service_terms || {};
       if (!productId && previousProductId) {
+        if (sourceDataTermInput) sourceDataTermInput.value = "";
+        if (sourceDataTermUnitSelect) sourceDataTermUnitSelect.value = "weeks";
         if (monthsInput) monthsInput.value = "";
+        if (preliminaryTermUnitSelect) preliminaryTermUnitSelect.value = "months";
         if (weeksInput) weeksInput.value = "";
+        if (finalTermUnitSelect) finalTermUnitSelect.value = "weeks";
+        const sourceDataDateInput = termsConfig.sourceDataDateSelector
+          ? termRow.querySelector(termsConfig.sourceDataDateSelector)
+          : null;
         const preliminaryInput = termRow.querySelector(termsConfig.preliminarySelector);
         const finalInput = termRow.querySelector(termsConfig.finalSelector);
+        if (sourceDataDateInput) sourceDataDateInput.value = "";
         if (preliminaryInput) preliminaryInput.value = "";
         if (finalInput) finalInput.value = "";
         termRow.dataset.forceDatesFromTerms = "1";
       }
       if (productId && productId !== previousProductId) {
-        if (monthsInput && terms.preliminary_report_months !== undefined) {
+        if (
+          sourceDataTermInput
+          && terms.source_data_weeks !== undefined
+          && isStageFieldEnabled(termRow, ".proposal-stage-source-data-term-enabled")
+        ) {
+          sourceDataTermInput.value = terms.source_data_weeks || "";
+        }
+        if (sourceDataTermUnitSelect) sourceDataTermUnitSelect.value = "weeks";
+        if (
+          monthsInput
+          && terms.preliminary_report_months !== undefined
+          && isStageFieldEnabled(termRow, ".proposal-stage-service-term-months-enabled")
+        ) {
           monthsInput.value = terms.preliminary_report_months || "";
         }
+        if (preliminaryTermUnitSelect) preliminaryTermUnitSelect.value = terms.preliminary_report_term_unit || "months";
         if (weeksInput && terms.final_report_weeks !== undefined) {
           weeksInput.value = terms.final_report_weeks || "";
         }
+        if (finalTermUnitSelect) finalTermUnitSelect.value = terms.final_report_term_unit || "weeks";
         termRow.dataset.forceDatesFromTerms = "1";
       }
       termRow.dataset.productId = productId;
+      if (evaluationRow) evaluationRow.dataset.productId = productId;
     });
     ensureStageDelayRows();
     syncRegistrationStageTerms();

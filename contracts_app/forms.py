@@ -60,6 +60,41 @@ def _parse_contract_form_date(raw_value):
     return None
 
 
+def _contract_stage_enabled_value(value, default=True):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "off", "no", "нет"}
+
+
+def _normalize_preliminary_report_term_unit(value):
+    raw = str(value or "").strip()
+    valid_units = {choice[0] for choice in ContractProjectRegistration.PreliminaryReportTermUnit.choices}
+    if raw in valid_units:
+        return raw
+    return ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value
+
+
+def _normalize_source_data_term_unit(value):
+    raw = str(value or "").strip()
+    valid_units = {choice[0] for choice in ContractProjectRegistration.SourceDataTermUnit.choices}
+    if raw in valid_units:
+        return raw
+    return ContractProjectRegistration.SourceDataTermUnit.WEEKS.value
+
+
+def _normalize_final_report_term_unit(value):
+    raw = str(value or "").strip()
+    valid_units = {choice[0] for choice in ContractProjectRegistration.FinalReportTermUnit.choices}
+    if raw in valid_units:
+        return raw
+    return ContractProjectRegistration.FinalReportTermUnit.WEEKS.value
+
+
 def _default_contract_evaluation_date(today=None):
     today = today or timezone.now().date()
     if today < date_type(today.year, 7, 1):
@@ -168,6 +203,19 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             }
         ),
     )
+    contract_date = forms.DateField(
+        label="Дата договора",
+        required=False,
+        widget=forms.DateInput(
+            format="%d.%m.%Y",
+            attrs={
+                "type": "text",
+                "class": "form-control js-date",
+                "autocomplete": "off",
+            },
+        ),
+        input_formats=DATE_INPUT_FORMATS,
+    )
     country = forms.ModelChoiceField(
         label="Страна",
         queryset=OKSMCountry.objects.none(),
@@ -245,13 +293,39 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=_date_input_widget(),
         input_formats=DATE_INPUT_FORMATS,
     )
-    service_term_months = forms.DecimalField(
-        label="Срок подготовки Предварительного отчёта, мес.",
+    source_data_term = forms.DecimalField(
+        label="Исходные данные",
         required=False,
         min_value=0,
         max_digits=5,
         decimal_places=1,
         widget=forms.NumberInput(attrs={"min": 0, "step": "0.1"}),
+    )
+    source_data_term_unit = forms.ChoiceField(
+        label="Единица срока предоставления исходных данных",
+        required=False,
+        choices=ContractProjectRegistration.SourceDataTermUnit.choices,
+        initial=ContractProjectRegistration.SourceDataTermUnit.WEEKS,
+    )
+    source_data_date = forms.DateField(
+        label="Дата предоставления данных",
+        required=False,
+        widget=_date_input_widget(),
+        input_formats=DATE_INPUT_FORMATS,
+    )
+    service_term_months = forms.DecimalField(
+        label="Предварительный отчёт",
+        required=False,
+        min_value=0,
+        max_digits=5,
+        decimal_places=1,
+        widget=forms.NumberInput(attrs={"min": 0, "step": "0.1"}),
+    )
+    preliminary_report_term_unit = forms.ChoiceField(
+        label="Единица срока подготовки Предварительного отчёта",
+        required=False,
+        choices=ContractProjectRegistration.PreliminaryReportTermUnit.choices,
+        initial=ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS,
     )
     preliminary_report_date = forms.DateField(
         label="Дата Предварительного отчёта",
@@ -260,12 +334,18 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         input_formats=DATE_INPUT_FORMATS,
     )
     final_report_term_weeks = forms.DecimalField(
-        label="Срок подготовки Итогового отчёта, нед.",
+        label="Итоговый отчёт",
         required=False,
         min_value=0,
         max_digits=5,
         decimal_places=1,
         widget=forms.NumberInput(attrs={"min": 0, "step": "0.1"}),
+    )
+    final_report_term_unit = forms.ChoiceField(
+        label="Единица срока подготовки Итогового отчёта",
+        required=False,
+        choices=ContractProjectRegistration.FinalReportTermUnit.choices,
+        initial=ContractProjectRegistration.FinalReportTermUnit.WEEKS,
     )
     final_report_date = forms.DateField(
         label="Дата Итогового отчёта",
@@ -348,15 +428,17 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = ContractProjectRegistration
         fields = [
-            "number", "proposal_registration", "sub_number", "contract_number", "group_member", "agreement_type", "name",
+            "number", "proposal_registration", "sub_number", "contract_number", "contract_date",
+            "group_member", "agreement_type", "name",
             "status", "year",
             "country", "customer", "identifier", "registration_number", "registration_region",
             "registration_date",
             "asset_owner", "asset_owner_country", "asset_owner_region", "asset_owner_identifier",
             "asset_owner_registration_number", "asset_owner_registration_date", "asset_owner_matches_customer",
             "project_manager",
-            "evaluation_date", "service_term_months", "preliminary_report_date",
-            "final_report_term_weeks", "final_report_date",
+            "evaluation_date", "source_data_term", "source_data_term_unit", "source_data_date",
+            "service_term_months", "preliminary_report_term_unit", "preliminary_report_date",
+            "final_report_term_weeks", "final_report_term_unit", "final_report_date",
             "advance_percent", "advance_term_days", "preliminary_report_percent",
             "preliminary_report_term_days", "final_report_percent", "final_report_term_days",
         ]
@@ -588,9 +670,20 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             "evaluation_date": _format_contract_stage_date(
                 self.initial.get("evaluation_date") or _default_contract_evaluation_date()
             ),
+            "evaluation_date_enabled": True,
+            "source_data_term_enabled": True,
+            "source_data_term": "",
+            "source_data_date_enabled": True,
+            "source_data_term_unit": ContractProjectRegistration.SourceDataTermUnit.WEEKS.value,
+            "source_data_date": "",
+            "service_term_months_enabled": True,
             "service_term_months": "",
+            "preliminary_report_term_unit": ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value,
+            "preliminary_report_date_enabled": True,
             "preliminary_report_date": "",
             "final_report_term_weeks": "",
+            "final_report_term_unit": ContractProjectRegistration.FinalReportTermUnit.WEEKS.value,
+            "final_report_date_enabled": True,
             "final_report_date": "",
             "next_stage_delay_days": "",
             "advance_percent": str(self.fields["advance_percent"].initial or ""),
@@ -613,8 +706,12 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         if term is None:
             return {}
         return {
+            "source_data_term": format(term.source_data_weeks, ".1f"),
+            "source_data_term_unit": ContractProjectRegistration.SourceDataTermUnit.WEEKS.value,
             "service_term_months": format(term.preliminary_report_months, ".1f"),
+            "preliminary_report_term_unit": ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value,
             "final_report_term_weeks": format(term.final_report_weeks, ".1f"),
+            "final_report_term_unit": ContractProjectRegistration.FinalReportTermUnit.WEEKS.value,
         }
 
     def _contract_stage_row_from_payload(self, payload, *, rank, product_id, product, fallback=None, payment_fallback=None):
@@ -622,17 +719,59 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         fallback = fallback or {}
         payment_fallback = payment_fallback or {}
         terms = self._product_typical_terms(product)
+        evaluation_date_enabled = _contract_stage_enabled_value(
+            payload.get("evaluation_date_enabled", fallback.get("evaluation_date_enabled"))
+        )
+        source_data_term_enabled = _contract_stage_enabled_value(
+            payload.get("source_data_term_enabled", fallback.get("source_data_term_enabled"))
+        )
+        source_data_date_enabled = _contract_stage_enabled_value(
+            payload.get("source_data_date_enabled", fallback.get("source_data_date_enabled"))
+        )
+        service_term_months_enabled = _contract_stage_enabled_value(
+            payload.get("service_term_months_enabled", fallback.get("service_term_months_enabled"))
+        )
+        preliminary_report_date_enabled = _contract_stage_enabled_value(
+            payload.get("preliminary_report_date_enabled", fallback.get("preliminary_report_date_enabled"))
+        )
+        final_report_date_enabled = _contract_stage_enabled_value(
+            payload.get("final_report_date_enabled", fallback.get("final_report_date_enabled"))
+        )
         return {
             "rank": rank,
             "product_id": product_id,
             "product_short_label": (getattr(product, "short_name", "") or "").strip(),
-            "evaluation_date": str(payload.get("evaluation_date") or fallback.get("evaluation_date") or ""),
+            "evaluation_date_enabled": evaluation_date_enabled,
+            "evaluation_date": str(
+                payload.get("evaluation_date") or fallback.get("evaluation_date") or ""
+            ) if evaluation_date_enabled else "",
+            "source_data_term_enabled": source_data_term_enabled,
+            "source_data_term": str(
+                payload.get("source_data_term")
+                or fallback.get("source_data_term")
+                or (terms.get("source_data_term") if source_data_term_enabled else "")
+                or ""
+            ),
+            "source_data_date_enabled": source_data_date_enabled,
+            "source_data_term_unit": _normalize_source_data_term_unit(
+                payload.get("source_data_term_unit")
+                or fallback.get("source_data_term_unit")
+                or terms.get("source_data_term_unit")
+            ),
+            "source_data_date": str(payload.get("source_data_date") or fallback.get("source_data_date") or ""),
+            "service_term_months_enabled": service_term_months_enabled,
             "service_term_months": str(
                 payload.get("service_term_months")
                 or fallback.get("service_term_months")
-                or terms.get("service_term_months")
+                or (terms.get("service_term_months") if service_term_months_enabled else "")
                 or ""
             ),
+            "preliminary_report_term_unit": _normalize_preliminary_report_term_unit(
+                payload.get("preliminary_report_term_unit")
+                or fallback.get("preliminary_report_term_unit")
+                or terms.get("preliminary_report_term_unit")
+            ),
+            "preliminary_report_date_enabled": preliminary_report_date_enabled,
             "preliminary_report_date": str(
                 payload.get("preliminary_report_date") or fallback.get("preliminary_report_date") or ""
             ),
@@ -642,7 +781,15 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 or terms.get("final_report_term_weeks")
                 or ""
             ),
-            "final_report_date": str(payload.get("final_report_date") or fallback.get("final_report_date") or ""),
+            "final_report_term_unit": _normalize_final_report_term_unit(
+                payload.get("final_report_term_unit")
+                or fallback.get("final_report_term_unit")
+                or terms.get("final_report_term_unit")
+            ),
+            "final_report_date_enabled": final_report_date_enabled,
+            "final_report_date": str(
+                payload.get("final_report_date") or fallback.get("final_report_date") or ""
+            ) if final_report_date_enabled else "",
             "next_stage_delay_days": str(payload.get("next_stage_delay_days") or ""),
             "advance_percent": self._contract_stage_display_value(
                 payload.get("advance_percent"),
@@ -673,9 +820,20 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     def _build_contract_stage_rows_from_bound_data(self):
         field_names = (
             "evaluation_date",
+            "evaluation_date_enabled",
+            "source_data_term_enabled",
+            "source_data_term",
+            "source_data_term_unit",
+            "source_data_date_enabled",
+            "source_data_date",
+            "service_term_months_enabled",
             "service_term_months",
+            "preliminary_report_term_unit",
+            "preliminary_report_date_enabled",
             "preliminary_report_date",
             "final_report_term_weeks",
+            "final_report_term_unit",
+            "final_report_date_enabled",
             "final_report_date",
             "next_stage_delay_days",
             "advance_percent",
@@ -708,9 +866,50 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "evaluation_date": (
                     rows_map["evaluation_date"][index] if index < len(rows_map["evaluation_date"]) else ""
                 ).strip(),
+                "evaluation_date_enabled": _contract_stage_enabled_value(
+                    rows_map["evaluation_date_enabled"][index]
+                    if index < len(rows_map["evaluation_date_enabled"])
+                    else None
+                ),
+                "source_data_term_enabled": _contract_stage_enabled_value(
+                    rows_map["source_data_term_enabled"][index]
+                    if index < len(rows_map["source_data_term_enabled"])
+                    else None
+                ),
+                "source_data_term": (
+                    rows_map["source_data_term"][index] if index < len(rows_map["source_data_term"]) else ""
+                ).strip(),
+                "source_data_term_unit": _normalize_source_data_term_unit(
+                    rows_map["source_data_term_unit"][index]
+                    if index < len(rows_map["source_data_term_unit"])
+                    else ""
+                ),
+                "source_data_date_enabled": _contract_stage_enabled_value(
+                    rows_map["source_data_date_enabled"][index]
+                    if index < len(rows_map["source_data_date_enabled"])
+                    else None
+                ),
+                "source_data_date": (
+                    rows_map["source_data_date"][index] if index < len(rows_map["source_data_date"]) else ""
+                ).strip(),
+                "service_term_months_enabled": _contract_stage_enabled_value(
+                    rows_map["service_term_months_enabled"][index]
+                    if index < len(rows_map["service_term_months_enabled"])
+                    else None
+                ),
                 "service_term_months": (
                     rows_map["service_term_months"][index] if index < len(rows_map["service_term_months"]) else ""
                 ).strip(),
+                "preliminary_report_term_unit": _normalize_preliminary_report_term_unit(
+                    rows_map["preliminary_report_term_unit"][index]
+                    if index < len(rows_map["preliminary_report_term_unit"])
+                    else ""
+                ),
+                "preliminary_report_date_enabled": _contract_stage_enabled_value(
+                    rows_map["preliminary_report_date_enabled"][index]
+                    if index < len(rows_map["preliminary_report_date_enabled"])
+                    else None
+                ),
                 "preliminary_report_date": (
                     rows_map["preliminary_report_date"][index]
                     if index < len(rows_map["preliminary_report_date"])
@@ -721,6 +920,16 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                     if index < len(rows_map["final_report_term_weeks"])
                     else ""
                 ).strip(),
+                "final_report_term_unit": _normalize_final_report_term_unit(
+                    rows_map["final_report_term_unit"][index]
+                    if index < len(rows_map["final_report_term_unit"])
+                    else ""
+                ),
+                "final_report_date_enabled": _contract_stage_enabled_value(
+                    rows_map["final_report_date_enabled"][index]
+                    if index < len(rows_map["final_report_date_enabled"])
+                    else None
+                ),
                 "final_report_date": (
                     rows_map["final_report_date"][index] if index < len(rows_map["final_report_date"]) else ""
                 ).strip(),
@@ -754,7 +963,23 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                     else ""
                 ).strip(),
             }
-            has_data = any(str(row.get(key) or "").strip() for key in row if key not in {"rank", "product_id"})
+            has_data = any(
+                str(row.get(key) or "").strip()
+                for key in row
+                if key not in {
+                    "rank",
+                    "product_id",
+                    "evaluation_date_enabled",
+                    "source_data_term_enabled",
+                    "source_data_term_unit",
+                    "source_data_date_enabled",
+                    "service_term_months_enabled",
+                    "preliminary_report_term_unit",
+                    "preliminary_report_date_enabled",
+                    "final_report_term_unit",
+                    "final_report_date_enabled",
+                }
+            )
             if product_id or has_data or row_count == 1:
                 rows.append(row)
         return rows or [self._empty_contract_stage_row()]
@@ -767,14 +992,29 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         ordered_products = list(instance.ordered_products())
         stored_stages = list(instance.stage_payloads_json or [])
         instance_fallback = {
+            "evaluation_date_enabled": True,
             "evaluation_date": _format_contract_stage_date(instance.evaluation_date),
+            "source_data_term_enabled": True,
+            "source_data_term": (
+                "" if instance.source_data_term is None else format(instance.source_data_term, ".1f")
+            ),
+            "source_data_term_unit": _normalize_source_data_term_unit(instance.source_data_term_unit),
+            "source_data_date_enabled": True,
+            "source_data_date": _format_contract_stage_date(instance.source_data_date),
+            "service_term_months_enabled": True,
             "service_term_months": (
                 "" if instance.service_term_months is None else format(instance.service_term_months, ".1f")
             ),
+            "preliminary_report_term_unit": _normalize_preliminary_report_term_unit(
+                instance.preliminary_report_term_unit
+            ),
+            "preliminary_report_date_enabled": True,
             "preliminary_report_date": _format_contract_stage_date(instance.preliminary_report_date),
             "final_report_term_weeks": (
                 "" if instance.final_report_term_weeks is None else format(instance.final_report_term_weeks, ".1f")
             ),
+            "final_report_term_unit": _normalize_final_report_term_unit(instance.final_report_term_unit),
+            "final_report_date_enabled": True,
             "final_report_date": _format_contract_stage_date(instance.final_report_date),
         }
         payment_fallback = {
@@ -886,6 +1126,69 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть в диапазоне от 0% до 100%.")
         return parsed
 
+    def _parse_contract_stage_preliminary_report_term_unit(self, value, *, row_index):
+        raw = str(value or "").strip()
+        if not raw:
+            return ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value
+        valid_units = {choice[0] for choice in ContractProjectRegistration.PreliminaryReportTermUnit.choices}
+        if raw not in valid_units:
+            raise forms.ValidationError(
+                f"Этап {row_index}: поле «Единица срока подготовки Предварительного отчёта» заполнено некорректно."
+            )
+        return raw
+
+    def _parse_contract_stage_preliminary_report_term(self, value, *, unit, row_index, field_label):
+        parsed = self._parse_contract_stage_decimal(value, row_index=row_index, field_label=field_label)
+        if (
+            unit == ContractProjectRegistration.PreliminaryReportTermUnit.DAYS.value
+            and parsed is not None
+            and parsed != parsed.to_integral_value()
+        ):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть целым числом.")
+        return parsed.to_integral_value() if unit == ContractProjectRegistration.PreliminaryReportTermUnit.DAYS.value and parsed is not None else parsed
+
+    def _parse_contract_stage_source_data_term_unit(self, value, *, row_index):
+        raw = str(value or "").strip()
+        if not raw:
+            return ContractProjectRegistration.SourceDataTermUnit.WEEKS.value
+        valid_units = {choice[0] for choice in ContractProjectRegistration.SourceDataTermUnit.choices}
+        if raw not in valid_units:
+            raise forms.ValidationError(
+                f"Этап {row_index}: поле «Единица срока предоставления исходных данных» заполнено некорректно."
+            )
+        return raw
+
+    def _parse_contract_stage_source_data_term(self, value, *, unit, row_index, field_label):
+        parsed = self._parse_contract_stage_decimal(value, row_index=row_index, field_label=field_label)
+        if (
+            unit == ContractProjectRegistration.SourceDataTermUnit.DAYS.value
+            and parsed is not None
+            and parsed != parsed.to_integral_value()
+        ):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть целым числом.")
+        return parsed.to_integral_value() if unit == ContractProjectRegistration.SourceDataTermUnit.DAYS.value and parsed is not None else parsed
+
+    def _parse_contract_stage_final_report_term_unit(self, value, *, row_index):
+        raw = str(value or "").strip()
+        if not raw:
+            return ContractProjectRegistration.FinalReportTermUnit.WEEKS.value
+        valid_units = {choice[0] for choice in ContractProjectRegistration.FinalReportTermUnit.choices}
+        if raw not in valid_units:
+            raise forms.ValidationError(
+                f"Этап {row_index}: поле «Единица срока подготовки Итогового отчёта» заполнено некорректно."
+            )
+        return raw
+
+    def _parse_contract_stage_final_report_term(self, value, *, unit, row_index, field_label):
+        parsed = self._parse_contract_stage_decimal(value, row_index=row_index, field_label=field_label)
+        if (
+            unit == ContractProjectRegistration.FinalReportTermUnit.DAYS.value
+            and parsed is not None
+            and parsed != parsed.to_integral_value()
+        ):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть целым числом.")
+        return parsed.to_integral_value() if unit == ContractProjectRegistration.FinalReportTermUnit.DAYS.value and parsed is not None else parsed
+
     @staticmethod
     def _serialize_contract_payload_decimal(value):
         if value is None:
@@ -939,34 +1242,103 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                     row_index=index,
                     field_label="Срок оплаты Итогового отчёта в календарных днях",
                 )
+            source_data_term_enabled = _contract_stage_enabled_value(row.get("source_data_term_enabled"))
+            evaluation_date_enabled = _contract_stage_enabled_value(row.get("evaluation_date_enabled"))
+            source_data_date_enabled = _contract_stage_enabled_value(row.get("source_data_date_enabled"))
+            service_term_months_enabled = _contract_stage_enabled_value(row.get("service_term_months_enabled"))
+            preliminary_report_date_enabled = _contract_stage_enabled_value(
+                row.get("preliminary_report_date_enabled")
+            )
+            final_report_date_enabled = _contract_stage_enabled_value(row.get("final_report_date_enabled"))
+            source_data_term_unit = self._parse_contract_stage_source_data_term_unit(
+                row.get("source_data_term_unit"),
+                row_index=index,
+            )
+            source_data_term = (
+                self._parse_contract_stage_source_data_term(
+                    row.get("source_data_term"),
+                    row_index=index,
+                    field_label=self.fields["source_data_term"].label,
+                    unit=source_data_term_unit,
+                )
+                if source_data_term_enabled
+                else None
+            )
+            preliminary_report_term_unit = self._parse_contract_stage_preliminary_report_term_unit(
+                row.get("preliminary_report_term_unit"),
+                row_index=index,
+            )
+            service_term_months = (
+                self._parse_contract_stage_preliminary_report_term(
+                    row.get("service_term_months"),
+                    row_index=index,
+                    field_label=self.fields["service_term_months"].label,
+                    unit=preliminary_report_term_unit,
+                )
+                if service_term_months_enabled
+                else None
+            )
+            final_report_term_unit = self._parse_contract_stage_final_report_term_unit(
+                row.get("final_report_term_unit"),
+                row_index=index,
+            )
+            final_report_term_weeks = self._parse_contract_stage_final_report_term(
+                row.get("final_report_term_weeks"),
+                row_index=index,
+                field_label=self.fields["final_report_term_weeks"].label,
+                unit=final_report_term_unit,
+            )
             stage_payloads.append(
                 {
                     "rank": index,
                     "product_id": product_id,
-                    "evaluation_date": self._parse_contract_stage_date(
-                        row.get("evaluation_date"),
-                        row_index=index,
-                        field_label=self.fields["evaluation_date"].label,
+                    "evaluation_date_enabled": evaluation_date_enabled,
+                    "evaluation_date": (
+                        self._parse_contract_stage_date(
+                            row.get("evaluation_date"),
+                            row_index=index,
+                            field_label=self.fields["evaluation_date"].label,
+                        )
+                        if evaluation_date_enabled
+                        else None
                     ),
-                    "service_term_months": self._parse_contract_stage_decimal(
-                        row.get("service_term_months"),
-                        row_index=index,
-                        field_label=self.fields["service_term_months"].label,
+                    "source_data_term_enabled": source_data_term_enabled,
+                    "source_data_term": source_data_term,
+                    "source_data_term_unit": source_data_term_unit,
+                    "source_data_date_enabled": source_data_date_enabled,
+                    "source_data_date": (
+                        self._parse_contract_stage_date(
+                            row.get("source_data_date"),
+                            row_index=index,
+                            field_label=self.fields["source_data_date"].label,
+                        )
+                        if source_data_date_enabled
+                        else None
                     ),
-                    "preliminary_report_date": self._parse_contract_stage_date(
-                        row.get("preliminary_report_date"),
-                        row_index=index,
-                        field_label=self.fields["preliminary_report_date"].label,
+                    "service_term_months_enabled": service_term_months_enabled,
+                    "service_term_months": service_term_months,
+                    "preliminary_report_term_unit": preliminary_report_term_unit,
+                    "preliminary_report_date_enabled": preliminary_report_date_enabled,
+                    "preliminary_report_date": (
+                        self._parse_contract_stage_date(
+                            row.get("preliminary_report_date"),
+                            row_index=index,
+                            field_label=self.fields["preliminary_report_date"].label,
+                        )
+                        if preliminary_report_date_enabled
+                        else None
                     ),
-                    "final_report_term_weeks": self._parse_contract_stage_decimal(
-                        row.get("final_report_term_weeks"),
-                        row_index=index,
-                        field_label=self.fields["final_report_term_weeks"].label,
-                    ),
-                    "final_report_date": self._parse_contract_stage_date(
-                        row.get("final_report_date"),
-                        row_index=index,
-                        field_label=self.fields["final_report_date"].label,
+                    "final_report_term_weeks": final_report_term_weeks,
+                    "final_report_term_unit": final_report_term_unit,
+                    "final_report_date_enabled": final_report_date_enabled,
+                    "final_report_date": (
+                        self._parse_contract_stage_date(
+                            row.get("final_report_date"),
+                            row_index=index,
+                            field_label=self.fields["final_report_date"].label,
+                        )
+                        if final_report_date_enabled
+                        else None
                     ),
                     "next_stage_delay_days": self._parse_contract_stage_signed_integer(
                         row.get("next_stage_delay_days"),
@@ -1026,14 +1398,27 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 {
                     "rank": item["rank"],
                     "product_id": str(item["product_id"]),
+                    "evaluation_date_enabled": item["evaluation_date_enabled"],
                     "evaluation_date": _format_contract_stage_date(item["evaluation_date"]),
+                    "source_data_term_enabled": item["source_data_term_enabled"],
+                    "source_data_term": (
+                        "" if item["source_data_term"] is None else str(item["source_data_term"])
+                    ),
+                    "source_data_term_unit": item["source_data_term_unit"],
+                    "source_data_date_enabled": item["source_data_date_enabled"],
+                    "source_data_date": _format_contract_stage_date(item["source_data_date"]),
+                    "service_term_months_enabled": item["service_term_months_enabled"],
                     "service_term_months": (
                         "" if item["service_term_months"] is None else str(item["service_term_months"])
                     ),
+                    "preliminary_report_term_unit": item["preliminary_report_term_unit"],
+                    "preliminary_report_date_enabled": item["preliminary_report_date_enabled"],
                     "preliminary_report_date": _format_contract_stage_date(item["preliminary_report_date"]),
                     "final_report_term_weeks": (
                         "" if item["final_report_term_weeks"] is None else str(item["final_report_term_weeks"])
                     ),
+                    "final_report_term_unit": item["final_report_term_unit"],
+                    "final_report_date_enabled": item["final_report_date_enabled"],
                     "final_report_date": _format_contract_stage_date(item["final_report_date"]),
                     "next_stage_delay_days": item["next_stage_delay_days"] or 0,
                     "payment_schedule_common": self.payment_schedule_common_enabled,
@@ -1050,9 +1435,20 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             ]
             last_stage = stage_payloads[-1]
             instance.evaluation_date = last_stage.get("evaluation_date")
+            instance.source_data_term = last_stage.get("source_data_term")
+            instance.source_data_term_unit = last_stage.get(
+                "source_data_term_unit"
+            ) or ContractProjectRegistration.SourceDataTermUnit.WEEKS.value
+            instance.source_data_date = last_stage.get("source_data_date")
             instance.service_term_months = last_stage.get("service_term_months")
+            instance.preliminary_report_term_unit = last_stage.get(
+                "preliminary_report_term_unit"
+            ) or ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value
             instance.preliminary_report_date = last_stage.get("preliminary_report_date")
             instance.final_report_term_weeks = last_stage.get("final_report_term_weeks")
+            instance.final_report_term_unit = last_stage.get(
+                "final_report_term_unit"
+            ) or ContractProjectRegistration.FinalReportTermUnit.WEEKS.value
             instance.final_report_date = last_stage.get("final_report_date")
             if not self.payment_schedule_common_enabled:
                 instance.advance_percent = last_stage.get("advance_percent")
@@ -1188,14 +1584,25 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         ordered_products = list(proposal.ordered_products())
         stored_stages = list(getattr(proposal, "stage_payloads_json", None) or [])
         proposal_fallback = {
+            "evaluation_date_enabled": True,
             "evaluation_date": _format_contract_stage_date(proposal.evaluation_date),
+            "source_data_term_enabled": True,
+            "source_data_term": "",
+            "source_data_term_unit": ContractProjectRegistration.SourceDataTermUnit.WEEKS.value,
+            "source_data_date_enabled": True,
+            "source_data_date": "",
+            "service_term_months_enabled": True,
             "service_term_months": (
                 "" if proposal.service_term_months is None else format(proposal.service_term_months, ".1f")
             ),
+            "preliminary_report_term_unit": ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value,
+            "preliminary_report_date_enabled": True,
             "preliminary_report_date": _format_contract_stage_date(proposal.preliminary_report_date),
             "final_report_term_weeks": (
                 "" if proposal.final_report_term_weeks is None else format(proposal.final_report_term_weeks, ".1f")
             ),
+            "final_report_term_unit": ContractProjectRegistration.FinalReportTermUnit.WEEKS.value,
+            "final_report_date_enabled": True,
             "final_report_date": _format_contract_stage_date(proposal.final_report_date),
         }
         payment_fallback = {
@@ -1276,6 +1683,7 @@ CONTRACT_PREFILL_FROM_PROPOSAL_FIELDS = [
     "service_term_months",
     "preliminary_report_date",
     "final_report_term_weeks",
+    "final_report_term_unit",
     "final_report_date",
     "advance_percent",
     "advance_term_days",
@@ -1340,6 +1748,7 @@ def build_contract_project_form_from_proposal(proposal, *, registration=None):
         form.initial["number"] = registration.number
         form.initial["status"] = registration.status
         form.initial["contract_number"] = registration.contract_number
+        form.initial["contract_date"] = registration.contract_date
         form.initial["agreement_type"] = registration.agreement_type
     else:
         form.initial["number"] = proposal.number

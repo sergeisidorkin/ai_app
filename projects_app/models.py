@@ -288,16 +288,20 @@ class ProjectRegistration(models.Model):
 
         to_refresh = []
         for group in by_number.values():
-            total = len(group)
-            for index, registration in enumerate(group, start=1):
-                sequence = 0 if total == 1 else index
-                current_sequence = int(registration.agreement_sequence or 0)
-                registration.agreement_sequence = sequence
-                new_uid = registration._build_short_uid()
-                if current_sequence == sequence and registration.short_uid == new_uid:
-                    continue
-                registration.short_uid = f"tmp{registration.pk}{uuid.uuid4().hex[:8]}"
-                to_refresh.append((registration, sequence, new_uid))
+            total_for_number = len(group)
+            by_contract = {}
+            for registration in group:
+                by_contract.setdefault(registration.contract_project_registration_id, []).append(registration)
+            for contract_group in by_contract.values():
+                for index, registration in enumerate(contract_group, start=1):
+                    sequence = 0 if total_for_number == 1 else index
+                    current_sequence = int(registration.agreement_sequence or 0)
+                    registration.agreement_sequence = sequence
+                    new_uid = registration._build_short_uid()
+                    if current_sequence == sequence and registration.short_uid == new_uid:
+                        continue
+                    registration.short_uid = f"tmp{registration.pk}{uuid.uuid4().hex[:8]}"
+                    to_refresh.append((registration, sequence, new_uid))
 
         if not to_refresh:
             return
@@ -315,23 +319,31 @@ class ProjectRegistration(models.Model):
     def save(self, *args, **kwargs):
         old_number = None
         old_position = None
+        old_contract_project_registration_id = None
         if self.pk:
             original = (
                 ProjectRegistration.objects
                 .filter(pk=self.pk)
-                .values("number", "position")
+                .values("number", "position", "contract_project_registration_id")
                 .first()
             )
             if original:
                 old_number = original["number"]
                 old_position = original["position"]
+                old_contract_project_registration_id = original["contract_project_registration_id"]
         member = self._resolved_group_member()
         if member:
             self.group = member.country_alpha2 or self.group
-        if self.agreement_sequence is None or not self.pk:
-            self.agreement_sequence = self._build_agreement_sequence()
-        elif self._needs_agreement_sequence_refresh():
-            self.agreement_sequence = self._build_agreement_sequence()
+        sequence_needs_refresh = self.agreement_sequence is None or not self.pk
+        if not sequence_needs_refresh:
+            sequence_needs_refresh = self._needs_agreement_sequence_refresh()
+        if sequence_needs_refresh:
+            new_sequence = self._build_agreement_sequence()
+            if self.agreement_sequence != new_sequence:
+                self.agreement_sequence = new_sequence
+                update_fields = kwargs.get("update_fields")
+                if update_fields is not None and "agreement_sequence" not in update_fields:
+                    kwargs["update_fields"] = set(update_fields) | {"agreement_sequence"}
         if (
             not self.agreement_number
             and self.group_alpha2 == "RU"
@@ -350,10 +362,23 @@ class ProjectRegistration(models.Model):
         super().save(*args, **kwargs)
         update_fields = kwargs.get("update_fields")
         should_refresh_sequences = update_fields is None or bool(
-            {"number", "position", "group", "group_member", "agreement_sequence", "short_uid"}
+            {
+                "number",
+                "position",
+                "group",
+                "group_member",
+                "contract_project_registration",
+                "agreement_sequence",
+                "short_uid",
+            }
             & set(update_fields)
         )
-        if should_refresh_sequences and (old_number != self.number or old_position != self.position or old_number is None):
+        if should_refresh_sequences and (
+            old_number != self.number
+            or old_position != self.position
+            or old_contract_project_registration_id != self.contract_project_registration_id
+            or old_number is None
+        ):
             self.refresh_number_sequences([old_number, self.number])
 
     def _calculate_stage1_end(self):
@@ -428,8 +453,18 @@ class ProjectRegistration(models.Model):
     def _needs_agreement_sequence_refresh(self):
         if not self.pk:
             return True
-        orig = ProjectRegistration.objects.filter(pk=self.pk).values("number", "position").first()
-        return not orig or orig["number"] != self.number or orig["position"] != self.position
+        orig = (
+            ProjectRegistration.objects
+            .filter(pk=self.pk)
+            .values("number", "position", "contract_project_registration_id")
+            .first()
+        )
+        return (
+            not orig
+            or orig["number"] != self.number
+            or orig["position"] != self.position
+            or orig["contract_project_registration_id"] != self.contract_project_registration_id
+        )
 
     def _build_agreement_sequence(self):
         siblings = list(
@@ -437,14 +472,23 @@ class ProjectRegistration(models.Model):
             .filter(number=self.number)
             .exclude(pk=self.pk)
             .order_by("position", "id")
-            .values_list("position", "id")
+            .values_list("position", "id", "contract_project_registration_id")
         )
         if not siblings:
             return 0
+        same_contract_siblings = [
+            (position, pk)
+            for position, pk, contract_id in siblings
+            if contract_id == self.contract_project_registration_id
+        ]
         if not self.pk:
-            return len(siblings) + 1
+            return len(same_contract_siblings) + 1
         current_key = (self.position or 0, self.pk)
-        earlier = sum(1 for position, pk in siblings if (position or 0, pk) < current_key)
+        earlier = sum(
+            1
+            for position, pk in same_contract_siblings
+            if (position or 0, pk) < current_key
+        )
         return earlier + 1
 
     def _build_short_uid(self):
@@ -953,6 +997,7 @@ def _ensure_performer_rows_for_work_item(instance):
 
     next_position = (
         Performer.objects
+        .filter(registration=instance.project)
         .aggregate(max_pos=Max("position"))
         .get("max_pos") or 0
     )

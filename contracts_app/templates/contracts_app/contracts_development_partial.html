@@ -8,7 +8,7 @@
     <span class="small text-muted text-nowrap">Отображаемые поля:</span>
     <div class="tkp-colpicker" id="contracts-drafts-colpicker-wrap">
       <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="contracts-drafts-colpicker-btn">
-        13 из 23
+        14 из 24
       </button>
       <div class="tkp-colpicker-menu" id="contracts-drafts-colpicker-menu">
         <div class="tkp-colpicker-item">
@@ -24,6 +24,7 @@
         <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="group" id="contracts-drafts-col-group" checked><label class="form-check-label" for="contracts-drafts-col-group">Группа</label></div></div>
         <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="project-id" id="contracts-drafts-col-project-id" checked><label class="form-check-label" for="contracts-drafts-col-project-id">Договор ID</label></div></div>
         <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="contract-number" id="contracts-drafts-col-contract-number" checked><label class="form-check-label" for="contracts-drafts-col-contract-number">Номер договора</label></div></div>
+        <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="contract-date" id="contracts-drafts-col-contract-date" checked><label class="form-check-label" for="contracts-drafts-col-contract-date">Дата договора</label></div></div>
         <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="type" id="contracts-drafts-col-type" checked><label class="form-check-label" for="contracts-drafts-col-type">Тип</label></div></div>
         <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="contracts-drafts-col-name" checked><label class="form-check-label" for="contracts-drafts-col-name">Название</label></div></div>
         <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="contracts-drafts-col-status" checked><label class="form-check-label" for="contracts-drafts-col-status">Статус</label></div></div>
@@ -64,6 +65,7 @@
       <col class="group" data-col="group">
       <col class="project-id" data-col="project-id">
       <col class="contract-number" data-col="contract-number">
+      <col class="contract-date" data-col="contract-date">
       <col class="reg-type" data-col="type">
       <col class="reg-name" data-col="name">
       <col class="reg-status" data-col="status">
@@ -102,6 +104,7 @@
         <th data-col="group">Группа</th>
         <th data-col="project-id">Договор ID</th>
         <th data-col="contract-number">Номер договора</th>
+        <th data-col="contract-date">Дата договора</th>
         <th data-col="type">Тип</th>
         <th class="nowrap" data-col="name">Название</th>
         <th data-col="status">Статус</th>
@@ -151,6 +154,7 @@
           <td data-col="group">{{ r.group_display }}</td>
           <td class="project-id-cell" data-col="project-id">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary contracts-payment-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать договор"></i>{% endif %}<span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
           <td data-col="contract-number">{{ r.contract_number }}</td>
+          <td data-col="contract-date">{{ r.contract_date|date:"d.m.Y" }}</td>
           <td data-col="type">{{ r.type_short_display }}</td>
           <td data-col="name">{{ r.name }}</td>
           <td data-col="status">{{ r.status }}</td>
@@ -169,7 +173,7 @@
           <td data-col="asset-owner-date">{{ r.asset_owner_registration_date|date:"d.m.y" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="24" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="25" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -279,9 +283,9 @@
           <td data-col="stage">{{ row.stage }}</td>
           <td data-col="evaluation-date">{{ row.evaluation_date|date:"d.m.Y" }}</td>
           <td data-col="start-date">{{ row.start_date|date:"d.m.Y" }}</td>
-          <td data-col="term">{{ row.service_term_months|format_decimal_comma:"1" }}</td>
+          <td data-col="term">{{ row.preliminary_report_term_display }}</td>
           <td data-col="preliminary-report-date">{{ row.preliminary_report_date|date:"d.m.Y" }}</td>
-          <td data-col="final-report-weeks">{{ row.final_report_term_weeks|format_decimal_comma:"1" }}</td>
+          <td data-col="final-report-weeks">{{ row.final_report_term_display }}</td>
           <td data-col="final-report-date">{{ row.final_report_date|date:"d.m.Y" }}</td>
           <td data-col="advance-percent">{% if row.advance_percent != None %}{{ row.advance_percent|floatformat:"-2" }}%{% endif %}</td>
           <td data-col="advance-term">{{ row.advance_term_days|default_if_none:"" }}</td>

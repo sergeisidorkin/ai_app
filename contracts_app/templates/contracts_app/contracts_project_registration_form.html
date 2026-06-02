@@ -181,22 +181,57 @@
       <div class="col-12">
         <label class="form-label mb-2">Сроки</label>
         <div class="proposal-assets-editor proposal-terms-editor">
-          <div class="table-responsive">
-            <table class="table table-sm align-middle mb-0 proposal-assets-table proposal-terms-table">
+          <div class="contract-date-terms-field">
+            <label class="form-label">
+              {{ form.contract_date.label }}
+              <i class="bi bi-unlock-fill ms-1 js-proposal-report-date-lock" role="button" title="Заблокировать ввод дат"></i>
+            </label>
+            {{ form.contract_date }}
+          </div>
+          <div class="table-responsive contract-stage-report-terms-group">
+            <table class="table table-sm align-middle mb-0 proposal-assets-table proposal-terms-table proposal-report-terms-table">
               <thead>
                 <tr>
                   <th class="proposal-terms-stage-col">Этапы</th>
-                  <th>{{ form.evaluation_date.label }}</th>
+                  <th>
+                    {{ form.source_data_term.label }}
+                    <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock"
+                       role="button"
+                       title="Разблокировать ввод сроков"
+                       data-stage-field-enabled-selector=".proposal-stage-source-data-term-enabled"></i>
+                  </th>
+                  <th>
+                    {{ form.source_data_date.label }}
+                    <i class="bi bi-unlock-fill ms-1 js-proposal-report-date-lock"
+                       role="button"
+                       title="Заблокировать ввод дат"
+                       data-stage-field-enabled-selector=".proposal-stage-source-data-date-enabled"></i>
+                  </th>
                   <th>
                     {{ form.service_term_months.label }}
-                    <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                    <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock"
+                       role="button"
+                       title="Разблокировать ввод сроков"
+                       data-stage-field-enabled-selector=".proposal-stage-service-term-months-enabled"></i>
                   </th>
-                  <th>{{ form.preliminary_report_date.label }}</th>
+                  <th>
+                    {{ form.preliminary_report_date.label }}
+                    <i class="bi bi-unlock-fill ms-1 js-proposal-report-date-lock"
+                       role="button"
+                       title="Заблокировать ввод дат"
+                       data-stage-field-enabled-selector=".proposal-stage-preliminary-report-date-enabled"></i>
+                  </th>
                   <th>
                     {{ form.final_report_term_weeks.label }}
                     <i class="bi bi-lock-fill ms-1 js-proposal-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
                   </th>
-                  <th>{{ form.final_report_date.label }}</th>
+                  <th>
+                    {{ form.final_report_date.label }}
+                    <i class="bi bi-unlock-fill ms-1 js-proposal-report-date-lock"
+                       role="button"
+                       title="Заблокировать ввод дат"
+                       data-stage-field-enabled-selector=".proposal-stage-final-report-date-enabled"></i>
+                  </th>
                 </tr>
               </thead>
               <tbody id="contract-stage-terms-tbody">
@@ -208,20 +243,141 @@
                       <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Этап {{ stage.rank }}" readonly tabindex="-1">
                     </td>
                     <td>
-                      <input type="text" name="evaluation_date" class="form-control js-date proposal-stage-evaluation-date" value="{{ stage.evaluation_date }}">
+                      <div class="proposal-stage-field-toggle-wrap">
+                        <div class="form-control readonly-field proposal-stage-source-data-term-shell">
+                          <input type="number"
+                                 name="source_data_term"
+                                 min="0"
+                                 step="0.1"
+                                 inputmode="decimal"
+                                 class="proposal-stage-source-data-term"
+                                 value="{{ stage.source_data_term }}"
+                                 readonly
+                                 tabindex="-1">
+                          <select name="source_data_term_unit"
+                                  class="form-select proposal-stage-source-data-term-unit"
+                                  aria-label="Единица срока предоставления исходных данных"
+                                  tabindex="-1">
+                            <option value="days"{% if stage.source_data_term_unit == "days" %} selected{% endif %}>дн.</option>
+                            <option value="weeks"{% if stage.source_data_term_unit == "weeks" %} selected{% endif %}>нед.</option>
+                            <option value="months"{% if stage.source_data_term_unit == "months" %} selected{% endif %}>мес.</option>
+                          </select>
+                        </div>
+                        <input type="hidden" name="source_data_term_enabled" class="proposal-stage-source-data-term-enabled" value="{% if stage.source_data_term_enabled %}true{% else %}false{% endif %}">
+                        <div class="form-check form-switch proposal-stage-field-toggle">
+                          <input type="checkbox"
+                                 class="form-check-input js-proposal-stage-field-toggle proposal-stage-source-data-term-toggle"
+                                 role="switch"
+                                 aria-label="Включить поле Исходные данные"
+                                 data-target-selector=".proposal-stage-source-data-term"
+                                 data-unit-selector=".proposal-stage-source-data-term-unit"
+                                 data-shell-selector=".proposal-stage-source-data-term-shell"
+                                 data-hidden-selector=".proposal-stage-source-data-term-enabled"
+                                 {% if stage.source_data_term_enabled %}checked{% endif %}>
+                        </div>
+                      </div>
                     </td>
                     <td>
-                      <input type="number" name="service_term_months" min="0" step="0.1" class="form-control readonly-field proposal-stage-service-term-months" value="{{ stage.service_term_months }}" readonly tabindex="-1">
+                      <div class="proposal-stage-field-toggle-wrap">
+                        <input type="text" name="source_data_date" class="form-control js-date proposal-stage-source-data-date" value="{{ stage.source_data_date }}">
+                        <input type="hidden" name="source_data_date_enabled" class="proposal-stage-source-data-date-enabled" value="{% if stage.source_data_date_enabled %}true{% else %}false{% endif %}">
+                        <div class="form-check form-switch proposal-stage-field-toggle">
+                          <input type="checkbox"
+                                 class="form-check-input js-proposal-stage-field-toggle proposal-stage-source-data-date-toggle"
+                                 role="switch"
+                                 aria-label="Включить поле Дата предоставления данных"
+                                 data-target-selector=".proposal-stage-source-data-date"
+                                 data-hidden-selector=".proposal-stage-source-data-date-enabled"
+                                 {% if stage.source_data_date_enabled %}checked{% endif %}>
+                        </div>
+                      </div>
                     </td>
                     <td>
-                      <input type="text" name="preliminary_report_date" class="form-control js-date proposal-stage-preliminary-report-date" value="{{ stage.preliminary_report_date }}">
+                      <div class="proposal-stage-field-toggle-wrap">
+                        <div class="form-control readonly-field proposal-stage-preliminary-term-shell">
+                          <input type="number"
+                                 name="service_term_months"
+                                 min="0"
+                                 step="0.1"
+                                 inputmode="decimal"
+                                 class="proposal-stage-service-term-months"
+                                 value="{{ stage.service_term_months }}"
+                                 readonly
+                                 tabindex="-1">
+                          <select name="preliminary_report_term_unit"
+                                  class="form-select proposal-stage-preliminary-term-unit"
+                                  aria-label="Единица срока подготовки Предварительного отчёта"
+                                  tabindex="-1">
+                            <option value="months"{% if stage.preliminary_report_term_unit == "months" %} selected{% endif %}>мес.</option>
+                            <option value="days"{% if stage.preliminary_report_term_unit == "days" %} selected{% endif %}>дн.</option>
+                            <option value="weeks"{% if stage.preliminary_report_term_unit == "weeks" %} selected{% endif %}>нед.</option>
+                          </select>
+                        </div>
+                        <input type="hidden" name="service_term_months_enabled" class="proposal-stage-service-term-months-enabled" value="{% if stage.service_term_months_enabled %}true{% else %}false{% endif %}">
+                        <div class="form-check form-switch proposal-stage-field-toggle">
+                          <input type="checkbox"
+                                 class="form-check-input js-proposal-stage-field-toggle proposal-stage-service-term-months-toggle"
+                                 role="switch"
+                                 aria-label="Включить поле Предварительный отчёт"
+                                 data-target-selector=".proposal-stage-service-term-months"
+                                 data-unit-selector=".proposal-stage-preliminary-term-unit"
+                                 data-shell-selector=".proposal-stage-preliminary-term-shell"
+                                 data-hidden-selector=".proposal-stage-service-term-months-enabled"
+                                 {% if stage.service_term_months_enabled %}checked{% endif %}>
+                        </div>
+                      </div>
                     </td>
                     <td>
-                      <input type="number" name="final_report_term_weeks" min="0" step="0.1" class="form-control readonly-field proposal-stage-final-report-term-weeks" value="{{ stage.final_report_term_weeks }}" readonly tabindex="-1">
+                      <div class="proposal-stage-field-toggle-wrap">
+                        <input type="text" name="preliminary_report_date" class="form-control js-date proposal-stage-preliminary-report-date" value="{{ stage.preliminary_report_date }}">
+                        <input type="hidden" name="preliminary_report_date_enabled" class="proposal-stage-preliminary-report-date-enabled" value="{% if stage.preliminary_report_date_enabled %}true{% else %}false{% endif %}">
+                        <div class="form-check form-switch proposal-stage-field-toggle">
+                          <input type="checkbox"
+                                 class="form-check-input js-proposal-stage-field-toggle proposal-stage-preliminary-report-date-toggle"
+                                 role="switch"
+                                 aria-label="Включить поле Дата Предварительного отчёта"
+                                 data-target-selector=".proposal-stage-preliminary-report-date"
+                                 data-hidden-selector=".proposal-stage-preliminary-report-date-enabled"
+                                 {% if stage.preliminary_report_date_enabled %}checked{% endif %}>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="form-control readonly-field proposal-stage-final-term-shell">
+                        <input type="number"
+                               name="final_report_term_weeks"
+                               min="0"
+                               step="0.1"
+                               inputmode="decimal"
+                               class="proposal-stage-final-report-term-weeks"
+                               value="{{ stage.final_report_term_weeks }}"
+                               readonly
+                               tabindex="-1">
+                        <select name="final_report_term_unit"
+                                class="form-select proposal-stage-final-term-unit"
+                                aria-label="Единица срока подготовки Итогового отчёта"
+                                tabindex="-1">
+                          <option value="days"{% if stage.final_report_term_unit == "days" %} selected{% endif %}>дн.</option>
+                          <option value="weeks"{% if stage.final_report_term_unit == "weeks" %} selected{% endif %}>нед.</option>
+                          <option value="months"{% if stage.final_report_term_unit == "months" %} selected{% endif %}>мес.</option>
+                        </select>
+                      </div>
                     </td>
                     <td class="proposal-stage-final-report-cell">
                       <div class="proposal-stage-final-report-wrap">
-                        <input type="text" name="final_report_date" class="form-control js-date proposal-stage-final-report-date" value="{{ stage.final_report_date }}">
+                        <div class="proposal-stage-field-toggle-wrap proposal-stage-final-report-field-wrap">
+                          <input type="text" name="final_report_date" class="form-control js-date proposal-stage-final-report-date" value="{{ stage.final_report_date }}">
+                          <input type="hidden" name="final_report_date_enabled" class="proposal-stage-final-report-date-enabled" value="{% if stage.final_report_date_enabled %}true{% else %}false{% endif %}">
+                          <div class="form-check form-switch proposal-stage-field-toggle">
+                            <input type="checkbox"
+                                   class="form-check-input js-proposal-stage-field-toggle proposal-stage-final-report-date-toggle"
+                                   role="switch"
+                                   aria-label="Включить поле Дата Итогового отчёта"
+                                   data-target-selector=".proposal-stage-final-report-date"
+                                   data-hidden-selector=".proposal-stage-final-report-date-enabled"
+                                   {% if stage.final_report_date_enabled %}checked{% endif %}>
+                          </div>
+                        </div>
                         <span class="proposal-stage-delay-action-slot">
                           {% if form.stage_rows|length > 1 and not forloop.last %}
                             <button type="button"
@@ -258,7 +414,7 @@
                                   aria-label="Удалить лаг после этапа {{ stage.rank }}">&times;</button>
                         </div>
                       </td>
-                      <td colspan="4"></td>
+                      <td colspan="5"></td>
                     </tr>
                   {% endif %}
                 {% endfor %}
@@ -267,21 +423,82 @@
                     <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Итого" readonly tabindex="-1">
                   </td>
                   <td>
-                    <input type="text" class="form-control readonly-field proposal-stage-total-evaluation-date" value="" readonly tabindex="-1">
+                    <div class="form-control readonly-field proposal-stage-total-term-shell proposal-stage-total-source-data-term-shell">
+                      <input type="number" class="proposal-stage-total-source-data-term" value="" readonly tabindex="-1">
+                      <select class="form-select proposal-stage-total-source-data-term-unit" aria-label="Единица итогового срока предоставления исходных данных">
+                        <option value="days">дн.</option>
+                        <option value="weeks" selected>нед.</option>
+                        <option value="months">мес.</option>
+                      </select>
+                    </div>
                   </td>
                   <td>
-                    <input type="number" class="form-control readonly-field proposal-stage-total-service-term-months" value="" readonly tabindex="-1">
+                    <input type="text" class="form-control readonly-field proposal-stage-total-source-data-date" value="" readonly tabindex="-1">
+                  </td>
+                  <td>
+                    <div class="form-control readonly-field proposal-stage-total-term-shell proposal-stage-total-preliminary-term-shell">
+                      <input type="number" class="proposal-stage-total-service-term-months" value="" readonly tabindex="-1">
+                      <select class="form-select proposal-stage-total-preliminary-term-unit" aria-label="Единица итогового срока подготовки Предварительного отчёта">
+                        <option value="months" selected>мес.</option>
+                        <option value="days">дн.</option>
+                        <option value="weeks">нед.</option>
+                      </select>
+                    </div>
                   </td>
                   <td>
                     <input type="text" class="form-control readonly-field proposal-stage-total-preliminary-report-date" value="" readonly tabindex="-1">
                   </td>
                   <td>
-                    <input type="number" class="form-control readonly-field proposal-stage-total-final-report-term-weeks" value="" readonly tabindex="-1">
+                    <div class="form-control readonly-field proposal-stage-total-term-shell proposal-stage-total-final-term-shell">
+                      <input type="number" class="proposal-stage-total-final-report-term-weeks" value="" readonly tabindex="-1">
+                      <select class="form-select proposal-stage-total-final-term-unit" aria-label="Единица итогового срока подготовки Итогового отчёта">
+                        <option value="days">дн.</option>
+                        <option value="weeks" selected>нед.</option>
+                        <option value="months">мес.</option>
+                      </select>
+                    </div>
                   </td>
                   <td>
                     <input type="text" class="form-control readonly-field proposal-stage-total-final-report-date" value="" readonly tabindex="-1">
                   </td>
                 </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-responsive contract-stage-evaluation-terms-group">
+            <table class="table table-sm align-middle mb-0 proposal-assets-table proposal-terms-table proposal-evaluation-terms-table">
+              <thead>
+                <tr>
+                  <th class="proposal-terms-stage-col">Этапы</th>
+                  <th>{{ form.evaluation_date.label }}</th>
+                </tr>
+              </thead>
+              <tbody id="contract-stage-evaluation-tbody">
+                {% for stage in form.stage_rows %}
+                  <tr class="proposal-stage-evaluation-row"
+                      data-contract-stage-key="{{ stage.rank }}"
+                      data-product-id="{{ stage.product_id|default:'' }}">
+                    <td class="proposal-terms-stage-col">
+                      <input type="text" class="form-control readonly-field proposal-stage-label-input" value="Этап {{ stage.rank }}" readonly tabindex="-1">
+                    </td>
+                    <td>
+                      <div class="proposal-stage-field-toggle-wrap">
+                        <input type="text" name="evaluation_date" class="form-control js-date proposal-stage-evaluation-date" value="{{ stage.evaluation_date }}">
+                        <input type="hidden" name="evaluation_date_enabled" class="proposal-stage-evaluation-date-enabled" value="{% if stage.evaluation_date_enabled %}true{% else %}false{% endif %}">
+                        <div class="form-check form-switch proposal-stage-field-toggle">
+                          <input type="checkbox"
+                                 class="form-check-input js-proposal-stage-field-toggle proposal-stage-evaluation-date-toggle"
+                                 role="switch"
+                                 aria-label="Включить поле Дата оценки"
+                                 data-target-selector=".proposal-stage-evaluation-date"
+                                 data-hidden-selector=".proposal-stage-evaluation-date-enabled"
+                                 data-lock-mode="none"
+                                 {% if stage.evaluation_date_enabled %}checked{% endif %}>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
               </tbody>
             </table>
           </div>
@@ -663,6 +880,9 @@
   #contracts-modal .proposal-payment-schedule-editor-body {
     padding-bottom: 2rem !important;
   }
+  #contracts-modal .proposal-terms-editor {
+    --proposal-stage-field-toggle-space: 2.3rem;
+  }
   #contracts-modal .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row {
     margin-top: 0;
   }
@@ -681,10 +901,44 @@
     overflow-x: auto;
     overflow-y: visible;
   }
+  #contracts-modal .contract-date-terms-field {
+    box-sizing: border-box;
+    margin-left: 0;
+    margin-bottom: .5rem;
+    padding-left: 0;
+    padding-right: .25rem;
+    width: calc(5.5rem + ((100% - 5.5rem) / 6) - var(--proposal-stage-field-toggle-space));
+  }
+  #contracts-modal .contract-stage-report-terms-group {
+    margin-top: 1rem;
+  }
+  #contracts-modal .contract-stage-evaluation-terms-group {
+    margin-top: .75rem;
+  }
   #contracts-modal .proposal-assets-table {
     margin-bottom: 0;
     table-layout: fixed;
     width: 100%;
+  }
+  #contracts-modal .proposal-evaluation-terms-table {
+    width: calc(5.5rem + ((100% - 5.5rem) / 6));
+  }
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-source-data-term,
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-service-term-months,
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-final-report-term-weeks {
+    width: auto;
+  }
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-source-data-term-shell,
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-preliminary-term-shell,
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-source-data-date,
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-preliminary-report-date {
+    width: calc(100% - var(--proposal-stage-field-toggle-space));
+  }
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-final-term-shell {
+    width: 100%;
+  }
+  #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-final-report-date {
+    width: calc(100% - var(--proposal-stage-field-toggle-space) - 2rem);
   }
   #contracts-modal .proposal-terms-table th {
     white-space: nowrap;
@@ -709,7 +963,8 @@
   #contracts-modal .proposal-stage-label-input {
     text-align: center;
   }
-  #contracts-modal .js-proposal-report-terms-lock {
+  #contracts-modal .js-proposal-report-terms-lock,
+  #contracts-modal .js-proposal-report-date-lock {
     cursor: pointer;
     color: #6c757d;
     font-size: .875rem;
@@ -717,37 +972,47 @@
   #contracts-modal .js-proposal-report-terms-lock:hover {
     color: #495057;
   }
+  #contracts-modal .js-proposal-report-terms-lock.is-stage-lock-disabled,
+  #contracts-modal .js-proposal-report-date-lock.is-stage-lock-disabled,
+  #contracts-modal .js-proposal-report-terms-lock.is-stage-lock-disabled:hover,
+  #contracts-modal .js-proposal-report-date-lock.is-stage-lock-disabled:hover {
+    color: #c6ccd2;
+    cursor: default;
+  }
   #contracts-modal .proposal-stage-final-report-wrap {
     display: flex;
     align-items: center;
     gap: .25rem;
   }
-  #contracts-modal .proposal-stage-final-report-wrap .form-control {
+  #contracts-modal .proposal-stage-final-report-field-wrap {
     flex: 1 1 auto;
     min-width: 0;
   }
   #contracts-modal .proposal-stage-delay-action-slot {
-    flex: 0 0 auto;
+    flex: 0 0 1.75rem;
     display: inline-flex;
     align-items: center;
-  }
-  #contracts-modal .proposal-stage-delay-action-slot:empty {
-    display: none;
+    justify-content: center;
+    width: 1.75rem;
   }
   #contracts-modal .proposal-stage-delay-add {
     width: 1.75rem;
     height: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 0;
-    line-height: 1;
-    border: 1px solid #dee2e6;
     color: #6c757d;
-    background: #fff;
+    border: 1px solid #ced4da;
+    background-color: #f8f9fa;
+    font-size: 1.25rem;
+    line-height: 1;
   }
   #contracts-modal .proposal-stage-delay-add:hover,
   #contracts-modal .proposal-stage-delay-add:focus {
-    color: #495057;
-    border-color: #adb5bd;
-    background: #f8f9fa;
+    background-color: #eef1f4;
+    color: #343a40;
+    border-color: #ced4da;
   }
   #contracts-modal .proposal-stage-delay-input-wrap {
     display: flex;
@@ -761,6 +1026,163 @@
   #contracts-modal .proposal-stage-delay-number-shell .proposal-stage-next-delay-days {
     text-align: left;
     padding-right: 2.8rem;
+  }
+  #contracts-modal .proposal-stage-field-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    min-width: 0;
+  }
+  #contracts-modal .proposal-stage-field-toggle-wrap > .form-control,
+  #contracts-modal .proposal-stage-field-toggle-wrap > .proposal-stage-source-data-term-shell,
+  #contracts-modal .proposal-stage-field-toggle-wrap > .proposal-stage-preliminary-term-shell {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  #contracts-modal .proposal-stage-field-toggle {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    box-sizing: border-box;
+    width: 1.8rem;
+    margin: 0;
+    padding: 0 .25rem;
+  }
+  #contracts-modal .proposal-stage-field-toggle .form-check-input {
+    cursor: pointer;
+    flex: 0 0 auto;
+    width: 1.3rem;
+    height: .65rem;
+    margin: 0 !important;
+    background-size: .4875rem .4875rem;
+    background-position: left .08125rem center;
+  }
+  #contracts-modal .proposal-stage-field-toggle .form-check-input:checked {
+    background-position: right .08125rem center;
+    background-color: var(--bs-primary, #0d6efd);
+    border-color: var(--bs-primary, #0d6efd);
+  }
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .form-control,
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-shell,
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-shell {
+    background-color: #fdfdfe !important;
+    border-color: #eef1f4 !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term,
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-service-term-months,
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-unit,
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-unit {
+    background-color: #fdfdfe !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled input::placeholder {
+    color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-unit,
+  #contracts-modal .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-unit {
+    border-left-color: #eef1f4 !important;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23c6ccd2' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+  }
+  #contracts-modal .proposal-stage-source-data-term-shell,
+  #contracts-modal .proposal-stage-preliminary-term-shell,
+  #contracts-modal .proposal-stage-final-term-shell,
+  #contracts-modal .proposal-stage-total-term-shell {
+    display: flex;
+    align-items: stretch;
+    min-width: 10.5rem;
+    padding: 0;
+    overflow: hidden;
+  }
+  #contracts-modal .proposal-stage-source-data-term-shell .proposal-stage-source-data-term,
+  #contracts-modal .proposal-stage-preliminary-term-shell .proposal-stage-service-term-months,
+  #contracts-modal .proposal-stage-final-term-shell .proposal-stage-final-report-term-weeks,
+  #contracts-modal .proposal-stage-total-term-shell .proposal-stage-total-source-data-term,
+  #contracts-modal .proposal-stage-total-term-shell .proposal-stage-total-service-term-months,
+  #contracts-modal .proposal-stage-total-term-shell .proposal-stage-total-final-report-term-weeks {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: auto;
+    padding: .375rem .25rem .375rem .75rem;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    text-align: left;
+  }
+  #contracts-modal .proposal-stage-source-data-term-shell .proposal-stage-source-data-term:focus,
+  #contracts-modal .proposal-stage-preliminary-term-shell .proposal-stage-service-term-months:focus,
+  #contracts-modal .proposal-stage-final-term-shell .proposal-stage-final-report-term-weeks:focus,
+  #contracts-modal .proposal-stage-total-term-shell .proposal-stage-total-source-data-term:focus,
+  #contracts-modal .proposal-stage-total-term-shell .proposal-stage-total-service-term-months:focus,
+  #contracts-modal .proposal-stage-total-term-shell .proposal-stage-total-final-report-term-weeks:focus {
+    outline: 0;
+  }
+  #contracts-modal .proposal-stage-source-data-term-unit,
+  #contracts-modal .proposal-stage-preliminary-term-unit,
+  #contracts-modal .proposal-stage-final-term-unit,
+  #contracts-modal .proposal-stage-total-source-data-term-unit,
+  #contracts-modal .proposal-stage-total-preliminary-term-unit,
+  #contracts-modal .proposal-stage-total-final-term-unit {
+    flex: 0 0 5.5rem;
+    width: 5.5rem;
+    padding: .375rem 2.25rem .375rem .75rem;
+    border: 0;
+    border-left: 1px solid #dee2e6;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    background-color: transparent;
+    background-position: right .75rem center;
+    color: #6c757d;
+    box-shadow: none;
+  }
+  #contracts-modal .proposal-stage-total-source-data-term-unit,
+  #contracts-modal .proposal-stage-total-preliminary-term-unit,
+  #contracts-modal .proposal-stage-total-final-term-unit {
+    background-color: #fff !important;
+    color: #212529 !important;
+  }
+  #contracts-modal .proposal-stage-total-field-disabled,
+  #contracts-modal .proposal-stage-total-term-shell.proposal-stage-total-field-disabled {
+    background-color: #fdfdfe !important;
+    border-color: #eef1f4 !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #contracts-modal .proposal-stage-total-field-disabled input,
+  #contracts-modal .proposal-stage-total-field-disabled select {
+    background-color: #fdfdfe !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #contracts-modal .proposal-stage-total-field-disabled select {
+    border-left-color: #eef1f4 !important;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23c6ccd2' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+  }
+  #contracts-modal .proposal-stage-total-field-disabled input::placeholder {
+    color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #contracts-modal .proposal-stage-source-data-term-unit:focus,
+  #contracts-modal .proposal-stage-preliminary-term-unit:focus,
+  #contracts-modal .proposal-stage-final-term-unit:focus,
+  #contracts-modal .proposal-stage-total-source-data-term-unit:focus,
+  #contracts-modal .proposal-stage-total-preliminary-term-unit:focus,
+  #contracts-modal .proposal-stage-total-final-term-unit:focus {
+    outline: 0;
+  }
+  #contracts-modal .proposal-stage-source-data-term-shell.readonly-field .proposal-stage-source-data-term-unit,
+  #contracts-modal .proposal-stage-preliminary-term-shell.readonly-field .proposal-stage-preliminary-term-unit,
+  #contracts-modal .proposal-stage-final-term-shell.readonly-field .proposal-stage-final-term-unit {
+    pointer-events: none;
   }
   #contracts-modal .proposal-stage-delay-unit {
     position: absolute;

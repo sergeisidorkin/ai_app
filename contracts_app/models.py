@@ -42,6 +42,21 @@ class ContractProjectRegistration(models.Model):
         MAIN = "MAIN", "Основной договор"
         ADDENDUM = "ADDENDUM", "Допсоглашение"
 
+    class PreliminaryReportTermUnit(models.TextChoices):
+        MONTHS = "months", "мес."
+        DAYS = "days", "дн."
+        WEEKS = "weeks", "нед."
+
+    class SourceDataTermUnit(models.TextChoices):
+        DAYS = "days", "дн."
+        WEEKS = "weeks", "нед."
+        MONTHS = "months", "мес."
+
+    class FinalReportTermUnit(models.TextChoices):
+        DAYS = "days", "дн."
+        WEEKS = "weeks", "нед."
+        MONTHS = "months", "мес."
+
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
     number = models.PositiveIntegerField(
         verbose_name="Номер",
@@ -53,6 +68,7 @@ class ContractProjectRegistration(models.Model):
         validators=[MinValueValidator(0), MaxValueValidator(9)],
     )
     contract_number = models.CharField("Номер договора", max_length=100, blank=True, default="")
+    contract_date = models.DateField("Дата договора", null=True, blank=True)
     stage_payloads_json = models.JSONField("Данные этапов договора", default=list, blank=True)
     proposal_registration = models.ForeignKey(
         "proposals_app.ProposalRegistration",
@@ -128,22 +144,49 @@ class ContractProjectRegistration(models.Model):
     )
     year = models.PositiveIntegerField("Год", null=True, blank=True)
     evaluation_date = models.DateField("Дата оценки", null=True, blank=True)
-    service_term_months = models.DecimalField(
-        "Срок подготовки Предварительного отчёта, мес.",
+    source_data_term = models.DecimalField(
+        "Исходные данные",
         max_digits=5,
         decimal_places=1,
         null=True,
         blank=True,
         validators=[MinValueValidator(0)],
     )
-    preliminary_report_date = models.DateField("Дата Предварительного отчёта", null=True, blank=True)
-    final_report_term_weeks = models.DecimalField(
-        "Срок подготовки Итогового отчёта, нед.",
+    source_data_term_unit = models.CharField(
+        "Единица срока предоставления исходных данных",
+        max_length=10,
+        choices=SourceDataTermUnit.choices,
+        default=SourceDataTermUnit.WEEKS,
+    )
+    source_data_date = models.DateField("Дата предоставления данных", null=True, blank=True)
+    service_term_months = models.DecimalField(
+        "Предварительный отчёт",
         max_digits=5,
         decimal_places=1,
         null=True,
         blank=True,
         validators=[MinValueValidator(0)],
+    )
+    preliminary_report_term_unit = models.CharField(
+        "Единица срока подготовки Предварительного отчёта",
+        max_length=10,
+        choices=PreliminaryReportTermUnit.choices,
+        default=PreliminaryReportTermUnit.MONTHS,
+    )
+    preliminary_report_date = models.DateField("Дата Предварительного отчёта", null=True, blank=True)
+    final_report_term_weeks = models.DecimalField(
+        "Итоговый отчёт",
+        max_digits=5,
+        decimal_places=1,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+    )
+    final_report_term_unit = models.CharField(
+        "Единица срока подготовки Итогового отчёта",
+        max_length=10,
+        choices=FinalReportTermUnit.choices,
+        default=FinalReportTermUnit.WEEKS,
     )
     final_report_date = models.DateField("Дата Итогового отчёта", null=True, blank=True)
     advance_percent = models.DecimalField(
