@@ -258,6 +258,7 @@
     return !!window.__queuedRowOrder.moveSelection(root, action, {
       selectionName: 'performer-select',
       selectedIds: checked.map((box) => String(box.value)),
+      rowScopeDataKey: 'projectId',
       onAfterMove: function () {
         updatePerformerMasterState();
         updateRowHighlight('performer-select');

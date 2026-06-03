@@ -30,6 +30,16 @@
       {{ form.pricing_method }}
     </div>
     <div class="mb-3">
+      <label class="form-label">Область специализации</label>
+      <div class="input-group">
+        <span class="input-group-text">{{ form.specialization_area_prefix }}</span>
+        {{ form.specialization_area_suffix }}
+      </div>
+      {% if form.specialization_area_suffix.errors %}
+        <div class="text-danger small mt-1">{{ form.specialization_area_suffix.errors.0 }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
       <label class="form-label">Владелец</label>
       <div class="dropdown" id="expdir-owner-dropdown">
         <button class="form-select text-start" type="button"

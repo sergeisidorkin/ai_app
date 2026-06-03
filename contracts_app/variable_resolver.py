@@ -997,7 +997,7 @@ def _clean_specialization_area(value: str) -> str:
     import re
 
     return re.sub(
-        r"^\s*Специалист\s+по\s*",
+        r"^\s*Специалист(?:ы)?\s+по\s*",
         "",
         str(value or ""),
         count=1,
@@ -1005,19 +1005,18 @@ def _clean_specialization_area(value: str) -> str:
     ).strip()
 
 
-def _computed_specialization(ep, _performer, all_performers) -> str:
-    if not ep:
-        return ""
-
+def _batch_specialty_matches(ep, all_performers):
     expert_specialty_ids = {
         link.specialty_id
         for link in ep.ranked_specialties.select_related("specialty").all()
         if link.specialty_id
     }
     if not expert_specialty_ids:
-        return ""
+        return []
 
+    matches = []
     seen_section_ids = set()
+    seen_specialty_ids = set()
     for performer in all_performers or []:
         section = getattr(performer, "typical_section", None)
         section_id = getattr(section, "pk", None)
@@ -1025,13 +1024,65 @@ def _computed_specialization(ep, _performer, all_performers) -> str:
             continue
         seen_section_ids.add(section_id)
 
-        for link in section.ranked_specialties.select_related("specialty").order_by("rank", "id"):
+        for link in section.ranked_specialties.select_related(
+            "specialty", "specialty__expertise_dir"
+        ).order_by("rank", "id"):
             if link.specialty_id not in expert_specialty_ids:
                 continue
-            specialization = _clean_specialization_area(getattr(link.specialty, "specialization_area", ""))
-            if specialization:
-                return specialization
+            if link.specialty_id in seen_specialty_ids:
+                continue
+            seen_specialty_ids.add(link.specialty_id)
+            matches.append((section, link.specialty))
+    return matches
+
+
+def _batch_expertise_direction_specialization(ep, matches) -> str:
+    profile_direction_id = getattr(ep, "expertise_direction_id", None)
+    if not profile_direction_id:
+        return ""
+
+    for section, specialty in matches:
+        if getattr(section, "expertise_direction_id", None) != profile_direction_id:
+            if getattr(specialty, "expertise_direction_id", None) != profile_direction_id:
+                continue
+            expertise_dir = getattr(specialty, "expertise_dir", None)
+        else:
+            expertise_dir = getattr(section, "expertise_dir", None)
+            if not expertise_dir:
+                expertise_dir = getattr(specialty, "expertise_dir", None)
+        if not expertise_dir:
+            continue
+        specialization = _clean_specialization_area(
+            getattr(expertise_dir, "specialization_area", "")
+        )
+        if specialization:
+            return specialization
     return ""
+
+
+def _computed_specialization(ep, _performer, all_performers) -> str:
+    if not ep:
+        return ""
+
+    matches = _batch_specialty_matches(ep, all_performers)
+    if not matches:
+        return ""
+
+    if len(matches) > 1:
+        expertise_specialization = _batch_expertise_direction_specialization(ep, matches)
+        if expertise_specialization:
+            return expertise_specialization
+
+    specializations = []
+    seen_specializations = set()
+    for _section, specialty in matches:
+        specialization = _clean_specialization_area(
+            getattr(specialty, "specialization_area", "")
+        )
+        if specialization and specialization not in seen_specializations:
+            seen_specializations.add(specialization)
+            specializations.append(specialization)
+    return ", ".join(specializations)
 
 
 def _computed_contract_name(_ep, performer, all_performers) -> str:

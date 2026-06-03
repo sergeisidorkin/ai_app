@@ -56,6 +56,17 @@
     return row && row.hasAttribute('data-row-order-id') && !row.classList.contains('d-none');
   }
 
+  function matchesRowScope(candidate, row, options) {
+    var key = options && options.rowScopeDataKey;
+    if (!key) return true;
+    if (!candidate || !row || !candidate.dataset || !row.dataset) return false;
+    var candidateValue = candidate.dataset[key];
+    var rowValue = row.dataset[key];
+    return candidateValue !== undefined
+      && rowValue !== undefined
+      && String(candidateValue) === String(rowValue);
+  }
+
   function getStatusEl(table) {
     var panel = table && table.closest ? table.closest('[data-worktime-panel], #proposals-pane, #performers-pane') : null;
     return (panel || document).querySelector('[data-row-order-status]');
@@ -290,7 +301,7 @@
       movableRows.forEach(function (row) {
         if (!selectedSet.has(row)) return;
         var prev = row.previousElementSibling;
-        while (prev && !isMovableRow(prev)) {
+        while (prev && (!isMovableRow(prev) || !matchesRowScope(prev, row, options))) {
           prev = prev.previousElementSibling;
         }
         if (prev && !selectedSet.has(prev)) {
@@ -302,7 +313,7 @@
       movableRows.slice().reverse().forEach(function (row) {
         if (!selectedSet.has(row)) return;
         var next = row.nextElementSibling;
-        while (next && !isMovableRow(next)) {
+        while (next && (!isMovableRow(next) || !matchesRowScope(next, row, options))) {
           next = next.nextElementSibling;
         }
         if (next && !selectedSet.has(next)) {

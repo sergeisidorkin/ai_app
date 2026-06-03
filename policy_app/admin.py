@@ -305,12 +305,13 @@ class ExpertiseDirectionAdmin(TimestampedAdmin):
         "short_name",
         "name",
         "pricing_method",
+        "specialization_area",
         "owner_display",
         "updated_at",
     )
     list_editable = ("position",)
     list_display_links = ("short_name",)
-    search_fields = ("name", "short_name", "pricing_method")
+    search_fields = ("name", "short_name", "pricing_method", "specialization_area")
     filter_horizontal = ("owners",)
     ordering = ("position", "id")
     fieldsets = (
@@ -319,6 +320,7 @@ class ExpertiseDirectionAdmin(TimestampedAdmin):
                 "position",
                 ("short_name", "name"),
                 "pricing_method",
+                "specialization_area",
             ),
         }),
         ("Владельцы", {

@@ -52,6 +52,7 @@ COLUMN_REGISTRY = {
                     "short_name": "Краткое имя",
                     "direction_name": "Наименование направления",
                     "cost_calculation": "Расчет стоимости услуг",
+                    "specialization_area": "Область специализации",
                     "owner": "Владелец",
                 },
             },

@@ -46,6 +46,7 @@ from policy_app.models import (
     EXPERT_GROUP,
     LAWYER_GROUP,
     Product,
+    ExpertiseDirection,
     SectionStructure,
     ServiceGoalReport,
     TypicalSection,
@@ -4046,7 +4047,175 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(lists, {})
         self.assertEqual(replacements["{{owner}}"], 'АО "Владелец"')
         self.assertEqual(replacements["{{service_goal_genitive}}"], "Проведения due diligence")
-        self.assertEqual(replacements["{{specialization}}"], "горнотехнической экспертизе")
+        self.assertEqual(
+            replacements["{{specialization}}"],
+            "горнотехнической экспертизе, геологическому анализу",
+        )
+
+    def test_specialization_uses_policy_direction_area_for_multiple_specialties(self):
+        product = Product.objects.create(
+            short_name="DD",
+            display_name="Due Diligence",
+            name_en="Due Diligence",
+            name_ru="ДД",
+        )
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        mining_department = OrgUnit.objects.create(
+            company=group_member,
+            department_name="Горная экспертиза",
+            unit_type="expertise",
+        )
+        geology_department = OrgUnit.objects.create(
+            company=group_member,
+            department_name="Геологическая экспертиза",
+            unit_type="expertise",
+        )
+        mining_direction = ExpertiseDirection.objects.create(
+            short_name="MIN",
+            name="Горная экспертиза",
+            specialization_area="Специалисты по горному анализу",
+            position=1,
+        )
+        geology_direction = ExpertiseDirection.objects.create(
+            short_name="GEO",
+            name="Геологическая экспертиза",
+            specialization_area="Специалисты по геологии",
+            position=2,
+        )
+        project = ProjectRegistration.objects.create(
+            number=7015,
+            type=product,
+            name="Проект с несколькими специальностями",
+            year=2026,
+        )
+        user = get_user_model().objects.create_user(
+            username="multi-specialist@example.com",
+            password="secret",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        employee = Employee.objects.create(user=user, patronymic="Иванович")
+        profile = ExpertProfile.objects.create(
+            employee=employee,
+            expertise_direction=mining_department,
+            position=1,
+        )
+        geology = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            specialization_area="Специалист по геологическому анализу",
+            position=1,
+        )
+        mining = ExpertSpecialty.objects.create(
+            specialty="Горный инженер",
+            specialization_area="Специалист по горнотехнической экспертизе",
+            position=2,
+        )
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=geology, rank=1)
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=mining, rank=2)
+        geology_section = TypicalSection.objects.create(
+            product=product,
+            code="GEO",
+            short_name="Geology",
+            name_en="Geology",
+            name_ru="Геология",
+            expertise_direction=geology_department,
+            expertise_dir=geology_direction,
+            position=1,
+        )
+        mining_section = TypicalSection.objects.create(
+            product=product,
+            code="MIN",
+            short_name="Mining",
+            name_en="Mining",
+            name_ru="Горные работы",
+            expertise_direction=mining_department,
+            expertise_dir=mining_direction,
+            position=2,
+        )
+        TypicalSectionSpecialty.objects.create(section=geology_section, specialty=geology, rank=1)
+        TypicalSectionSpecialty.objects.create(section=mining_section, specialty=mining, rank=1)
+        geology_performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Иванов Иван Иванович",
+            typical_section=geology_section,
+            position=1,
+        )
+        mining_performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Иванов Иван Иванович",
+            typical_section=mining_section,
+            position=2,
+        )
+
+        replacements, lists = resolve_variables(
+            geology_performer,
+            [ContractVariable(key="{{specialization}}", is_computed=True)],
+            all_performers=[geology_performer, mining_performer],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{specialization}}"], "горному анализу")
+
+    def test_specialization_keeps_specialty_area_for_single_specialty(self):
+        product = Product.objects.create(
+            short_name="DD",
+            display_name="Due Diligence",
+            name_en="Due Diligence",
+            name_ru="ДД",
+        )
+        project = ProjectRegistration.objects.create(
+            number=7016,
+            type=product,
+            name="Проект с одной специальностью",
+            year=2026,
+        )
+        user = get_user_model().objects.create_user(
+            username="single-specialist@example.com",
+            password="secret",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        employee = Employee.objects.create(user=user, patronymic="Иванович")
+        profile = ExpertProfile.objects.create(employee=employee, position=1)
+        geology = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            specialization_area="Специалист по геологическому анализу",
+            position=1,
+        )
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=geology, rank=1)
+        geology_section = TypicalSection.objects.create(
+            product=product,
+            code="GEO",
+            short_name="Geology",
+            name_en="Geology",
+            name_ru="Геология",
+            position=1,
+        )
+        TypicalSectionSpecialty.objects.create(section=geology_section, specialty=geology, rank=1)
+        performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Иванов Иван Иванович",
+            typical_section=geology_section,
+            position=1,
+        )
+
+        replacements, lists = resolve_variables(
+            performer,
+            [ContractVariable(key="{{specialization}}", is_computed=True)],
+            all_performers=[performer],
+        )
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{specialization}}"], "геологическому анализу")
 
     def test_by_name_is_empty_when_customer_matches_asset_owner(self):
         product = Product.objects.create(
