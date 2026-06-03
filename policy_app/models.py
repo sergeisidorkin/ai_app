@@ -717,6 +717,9 @@ class ExpertiseDirection(models.Model):
         blank=True,
         default="",
     )
+    specialization_area = models.CharField(
+        "Область специализации", max_length=512, blank=True, default=""
+    )
     owners = models.ManyToManyField(
         "group_app.GroupMember",
         blank=True,

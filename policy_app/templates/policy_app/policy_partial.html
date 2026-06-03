@@ -26,7 +26,8 @@
                 <th style="width:9%">Краткое имя</th>
                 <th style="width:20%">Наименование направления</th>
                 <th>Расчет стоимости услуг</th>
-                <th style="width:50%">Владелец</th>
+                <th>Область специализации</th>
+                <th style="width:35%">Владелец</th>
             </tr>
             </thead>
             <tbody>
@@ -51,10 +52,11 @@
                     <td class="text-nowrap">{{ ed.short_name }}</td>
                     <td>{{ ed.name }}</td>
                     <td class="text-nowrap">{{ ed.get_pricing_method_display }}</td>
+                    <td>{{ ed.specialization_area|default:"—" }}</td>
                     <td class="text-nowrap">{{ ed.owner_display }}</td>
                 </tr>
             {% empty %}
-                <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+                <tr><td colspan="6" class="text-muted">Пока нет данных.</td></tr>
             {% endfor %}
             </tbody>
         </table>

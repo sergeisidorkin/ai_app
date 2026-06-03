@@ -30,6 +30,7 @@ from .models import (
 )
 
 OWNER_GROUP_VALUE = "__group__"
+EXPERTISE_DIRECTION_SPECIALIZATION_AREA_PREFIX = "Специалисты по"
 
 
 def _coerce_positive_int(value):
@@ -844,6 +845,15 @@ class TypicalServiceTermForm(forms.ModelForm):
 
 
 class ExpertiseDirectionForm(forms.ModelForm):
+    specialization_area_suffix = forms.CharField(
+        label="Область специализации",
+        required=False,
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "placeholder": "область специализации",
+        }),
+    )
+
     class Meta:
         model = ExpertiseDirection
         fields = ["name", "short_name", "pricing_method"]
@@ -855,6 +865,17 @@ class ExpertiseDirectionForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.specialization_area_prefix = EXPERTISE_DIRECTION_SPECIALIZATION_AREA_PREFIX
+        current_specialization_area = ""
+        if self.instance and self.instance.pk:
+            current_specialization_area = self.instance.specialization_area or ""
+        current_specialization_area = current_specialization_area.strip()
+        if current_specialization_area.startswith(EXPERTISE_DIRECTION_SPECIALIZATION_AREA_PREFIX):
+            current_specialization_area = current_specialization_area[
+                len(EXPERTISE_DIRECTION_SPECIALIZATION_AREA_PREFIX):
+            ].strip()
+        self.fields["specialization_area_suffix"].initial = current_specialization_area
+
         self.owner_options = list(GroupMember.objects.order_by("position", "id").values("pk", "short_name"))
         self.selected_owner_ids = []
         self.is_group_selected = False
@@ -868,6 +889,12 @@ class ExpertiseDirectionForm(forms.ModelForm):
 
     def save(self, commit=True):
         obj = super().save(commit=False)
+        suffix = (self.cleaned_data.get("specialization_area_suffix") or "").strip()
+        if suffix.startswith(EXPERTISE_DIRECTION_SPECIALIZATION_AREA_PREFIX):
+            suffix = suffix[len(EXPERTISE_DIRECTION_SPECIALIZATION_AREA_PREFIX):].strip()
+        obj.specialization_area = (
+            f"{EXPERTISE_DIRECTION_SPECIALIZATION_AREA_PREFIX} {suffix}" if suffix else ""
+        )
         owner_values = self.data.getlist("owner_ids")
         if OWNER_GROUP_VALUE in owner_values:
             obj.is_group_owner = True

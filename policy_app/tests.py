@@ -299,6 +299,62 @@ class ProductCsvUploadTests(TestCase):
         self.assertContains(response, "Типовые продукты")
         self.assertContains(response, 'id="products-csv-download-btn"', html=False)
 
+    def test_policy_partial_renders_expertise_direction_specialization_area(self):
+        ExpertiseDirection.objects.create(
+            short_name="ГЭ",
+            name="Горная экспертиза",
+            pricing_method="vpm",
+            specialization_area="Специалисты по горным работам",
+            position=1,
+        )
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Направления экспертизы")
+        self.assertContains(response, "Расчет стоимости услуг")
+        self.assertContains(response, "Область специализации")
+        self.assertContains(response, "Специалисты по горным работам")
+
+    def test_expertise_direction_form_renders_specialization_area_suffix(self):
+        response = self.client.get(reverse("expertise_dir_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Область специализации")
+        self.assertContains(response, "Специалисты по")
+        self.assertContains(response, 'name="specialization_area_suffix"', html=False)
+
+    def test_expertise_direction_form_saves_specialization_area_with_locked_prefix(self):
+        response = self.client.post(
+            reverse("expertise_dir_form_create"),
+            {
+                "short_name": "ГЭ",
+                "name": "Горная экспертиза",
+                "pricing_method": "vpm",
+                "specialization_area_suffix": "горным работам",
+                "owner_ids": "__group__",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        direction = ExpertiseDirection.objects.get(short_name="ГЭ")
+        self.assertEqual(direction.specialization_area, "Специалисты по горным работам")
+        self.assertContains(response, "Специалисты по горным работам")
+
+    def test_expertise_direction_edit_form_prefills_specialization_area_suffix(self):
+        direction = ExpertiseDirection.objects.create(
+            short_name="ГЭ",
+            name="Горная экспертиза",
+            specialization_area="Специалисты по горным работам",
+            position=1,
+        )
+
+        response = self.client.get(reverse("expertise_dir_form_edit", args=[direction.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Специалисты по")
+        self.assertContains(response, 'value="горным работам"', html=False)
+
     def test_product_csv_download_exports_current_table_columns(self):
         product = Product.objects.create(
             short_name="AUD",
