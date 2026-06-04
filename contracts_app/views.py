@@ -575,11 +575,12 @@ def _contract_conclusion_detail_sort_key(performer):
 def _contract_conclusion_order_key(performer, representative_order):
     representative_index = representative_order.get(_contract_representative_key(performer))
     detail_key = _contract_conclusion_detail_sort_key(performer)
+    sent_order = 1 if getattr(performer, "contract_sent_at", None) else 0
     if representative_index is not None:
-        return (0, representative_index, *detail_key)
+        return (sent_order, 0, representative_index, *detail_key)
     return (
+        sent_order,
         1,
-        1 if getattr(performer, "contract_sent_at", None) else 0,
         (getattr(performer, "contract_number", "") or "").casefold(),
         (getattr(performer, "executor", "") or "").casefold(),
         1 if getattr(performer, "contract_is_addendum", False) else 0,
