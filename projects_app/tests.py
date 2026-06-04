@@ -2858,6 +2858,30 @@ class WorkVolumePerformerCreationTests(TestCase):
         )
         return Employee.objects.create(user=user, patronymic=patronymic)
 
+    def _create_payment_request_notification(self, *, performers, request_number, recipient=None):
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+            related_section=Notification.RelatedSection.PROJECTS,
+            recipient=recipient or self.user,
+            sender=self.user,
+            project=self.project,
+            title_text=f"Заявка на оплату №{request_number}",
+            payload={"number_of_request": str(request_number)},
+            is_read=False,
+            is_processed=False,
+        )
+        NotificationPerformerLink.objects.bulk_create(
+            [
+                NotificationPerformerLink(
+                    notification=notification,
+                    performer=performer,
+                    position=index,
+                )
+                for index, performer in enumerate(performers, start=1)
+            ]
+        )
+        return notification
+
     def test_performer_move_actions_are_scoped_to_project(self):
         other_project = ProjectRegistration.objects.create(
             number=6002,
@@ -3374,6 +3398,157 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertTrue(response.json()["ok"])
         performer.refresh_from_db()
         self.assertTrue(performer.advance_payment_paid)
+
+    def test_payment_paid_toggle_processes_notification_after_all_request_positions_paid(self):
+        request_number = 501
+        sent_at = timezone.now()
+        advance_performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            advance_payment_request_sent_at=sent_at,
+            advance_payment_request_number=request_number,
+        )
+        final_performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.first_manager_employee,
+            executor=self.first_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            advance_payment_request_sent_at=sent_at - timedelta(days=1),
+            advance_payment_request_number=400,
+            advance_payment_paid=True,
+            final_payment_request_sent_at=sent_at,
+            final_payment_request_number=request_number,
+        )
+        notification = self._create_payment_request_notification(
+            performers=[advance_performer, final_performer],
+            request_number=request_number,
+        )
+
+        response = self.client.post(
+            reverse("payment_paid_toggle"),
+            {
+                "performer_id": str(advance_performer.pk),
+                "kind": "advance",
+                "paid": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        notification.refresh_from_db()
+        self.assertFalse(notification.is_processed)
+
+        response = self.client.post(
+            reverse("payment_paid_toggle"),
+            {
+                "performer_id": str(final_performer.pk),
+                "kind": "final",
+                "paid": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["notifications_changed"], 1)
+        notification.refresh_from_db()
+        self.assertTrue(notification.is_processed)
+        self.assertTrue(notification.is_read)
+        self.assertEqual(Notification.objects.for_user(self.user).pending_attention().count(), 0)
+
+    def test_payment_paid_toggle_reopens_processed_notification_when_payment_disabled(self):
+        request_number = 502
+        sent_at = timezone.now()
+        performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            advance_payment_request_sent_at=sent_at,
+            advance_payment_request_number=request_number,
+            advance_payment_paid=True,
+        )
+        notification = self._create_payment_request_notification(
+            performers=[performer],
+            request_number=request_number,
+        )
+        notification.is_read = True
+        notification.is_processed = True
+        notification.action_at = sent_at
+        notification.action_by = self.user
+        notification.save(update_fields=["is_read", "is_processed", "action_at", "action_by"])
+
+        response = self.client.post(
+            reverse("payment_paid_toggle"),
+            {
+                "performer_id": str(performer.pk),
+                "kind": "advance",
+                "paid": "0",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["notifications_changed"], 1)
+        performer.refresh_from_db()
+        notification.refresh_from_db()
+        self.assertFalse(performer.advance_payment_paid)
+        self.assertFalse(notification.is_processed)
+        self.assertTrue(notification.is_read)
+        self.assertIsNone(notification.action_at)
+        self.assertEqual(Notification.objects.for_user(self.user).pending_attention().count(), 1)
+
+    def test_payment_paid_toggle_updates_contract_batch_and_processes_notification(self):
+        request_number = 503
+        sent_at = timezone.now()
+        contract_batch_id = uuid.uuid4()
+        representative = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=contract_batch_id,
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            advance_payment_request_sent_at=sent_at,
+            advance_payment_request_number=request_number,
+        )
+        sibling = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=contract_batch_id,
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            advance_payment_request_sent_at=sent_at,
+            advance_payment_request_number=request_number,
+        )
+        notification = self._create_payment_request_notification(
+            performers=[representative, sibling],
+            request_number=request_number,
+        )
+
+        response = self.client.post(
+            reverse("payment_paid_toggle"),
+            {
+                "performer_id": str(representative.pk),
+                "kind": "advance",
+                "paid": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["updated"], 2)
+        self.assertEqual(set(payload["row_ids"]), {representative.pk, sibling.pk})
+        representative.refresh_from_db()
+        sibling.refresh_from_db()
+        notification.refresh_from_db()
+        self.assertTrue(representative.advance_payment_paid)
+        self.assertTrue(sibling.advance_payment_paid)
+        self.assertTrue(notification.is_processed)
 
     def test_payment_request_sender_display_formats_initials_without_space(self):
         from projects_app.services.payment_request import payment_request_sender_display
@@ -4574,6 +4749,16 @@ class NextcloudContractProjectFlowTests(TestCase):
         mocked_resolve_variables,
         mocked_ensure_nextcloud_account,
     ):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=1,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
+        self.project.refresh_from_db()
         mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
             self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
         )
@@ -4587,6 +4772,8 @@ class NextcloudContractProjectFlowTests(TestCase):
         self.assertEqual(chunks[-1]["ok"], True, chunks)
 
         self.performer.refresh_from_db()
+        expected_month = timezone.localtime(timezone.now()).strftime("%m-%y")
+        expected_contract_number = f"IMCM/5002/1-ИИ/{expected_month}"
         expected_project_folder = f"{self.project.short_uid} DD Контрактный проект"
         expected_base_path = f"/Corporate Root/02 Договоры/2026/{expected_project_folder}/02 Исполнители"
         expected_folder_path = f"{expected_base_path}/000 Иванов ИИ"
@@ -4625,6 +4812,8 @@ class NextcloudContractProjectFlowTests(TestCase):
         self.assertEqual(self.performer.contract_project_folder_link, "https://cloud.example.com/s/public-doc")
         self.assertEqual(self.performer.contract_project_disk_folder, expected_folder_path)
         self.assertEqual(self.performer.contract_file, expected_docx_name)
+        self.assertEqual(self.performer.contract_number, expected_contract_number)
+        self.assertEqual(mocked_resolve_variables.call_args.args[0].contract_number, expected_contract_number)
         self.assertIsNotNone(self.performer.contract_project_created_at)
         self.assertIsNotNone(self.performer.contract_date)
 

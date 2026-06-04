@@ -253,6 +253,8 @@ class ContractsCloudLabelTests(TestCase):
         self.project.name = "Тест 55"
         self.project.deadline = date(2026, 5, 10)
         self.project.save(update_fields=["name", "deadline"])
+        self.performer.contract_date = date(2026, 5, 20)
+        self.performer.save(update_fields=["contract_date"])
         ProjectRegistrationProduct.objects.create(registration=self.project, product=self.product, rank=1)
         second_project = ProjectRegistration.objects.create(
             number=self.project.number,
@@ -275,6 +277,7 @@ class ContractsCloudLabelTests(TestCase):
             participation_batch_id=participation_batch_id,
             contract_batch_id=uuid.uuid4(),
             contract_number=self.performer.contract_number,
+            contract_date=self.performer.contract_date,
             contract_file=self.performer.contract_file,
             contract_project_disk_folder=self.performer.contract_project_disk_folder,
             agreed_amount=100,
@@ -294,6 +297,8 @@ class ContractsCloudLabelTests(TestCase):
         self.assertIn('<th class="text-nowrap">Этап</th>', correction_table)
         self.assertIn("RFR-TDD", correction_table)
         self.assertIn("15.06.2026", correction_table)
+        self.assertIn("26 дн.", correction_table)
+        self.assertNotIn("-10 дн.", correction_table)
         self.assertIn("70010RU", correction_table)
         self.assertNotIn(f">{self.project.short_uid}<", correction_table)
         self.assertNotIn(f">{second_project.short_uid}<", correction_table)
@@ -344,6 +349,132 @@ class ContractsCloudLabelTests(TestCase):
         self.assertIn('value="RFR Due Diligence"', form_content)
         self.assertIn('value="TDD Technical Due Diligence"', form_content)
         self.assertIn('data-deadline="2026-06-15"', form_content)
+        self.assertIn('value="26 дн."', form_content)
+
+    def test_contract_drafting_orders_same_contract_number_rows_together(self):
+        product_b = Product.objects.create(
+            short_name="RFR",
+            name_en="Resource Review",
+            name_ru="Обзор ресурсов",
+            display_name="Resource Review",
+        )
+        second_project = ProjectRegistration.objects.create(
+            number=self.project.number,
+            group_member=self.group_member,
+            type=product_b,
+            name="Договорный проект",
+            year=2026,
+        )
+        self.project.refresh_from_db()
+        second_project.refresh_from_db()
+
+        frolov_batch_id = self.performer.contract_batch_id
+        self.performer.executor = "Фролов Александр Альбертович"
+        self.performer.contract_number = "IMCM/7001/1-ФА/05-26"
+        self.performer.save(update_fields=["executor", "contract_number"])
+        second_frolov = Performer.objects.create(
+            registration=second_project,
+            employee=self.employee,
+            executor=self.performer.executor,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            contract_batch_id=frolov_batch_id,
+            contract_number=self.performer.contract_number,
+            contract_file=self.performer.contract_file,
+            contract_project_disk_folder=self.performer.contract_project_disk_folder,
+        )
+        other_executor = Performer.objects.create(
+            registration=second_project,
+            employee=self.employee,
+            executor="Фатеев Глеб Сергеевич",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="IMCM/7001/1-ФГ/05-26",
+            contract_file="Договор 7001_Фатеев ГС.docx",
+            contract_project_disk_folder="/Corporate Root/2026/Project/09 Договоры/001 Фатеев ГС",
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        drafting_table = content[
+            content.index('id="contract-drafting-table"'):
+            content.index('id="contract-dispatch-table"')
+        ]
+        first_frolov_pos = drafting_table.index(f'id="contract-drafting-sel-{self.performer.pk}"')
+        second_frolov_pos = drafting_table.index(f'id="contract-drafting-sel-{second_frolov.pk}"')
+        other_executor_pos = drafting_table.index(f'id="contract-drafting-sel-{other_executor.pk}"')
+        self.assertFalse(
+            min(first_frolov_pos, second_frolov_pos)
+            < other_executor_pos
+            < max(first_frolov_pos, second_frolov_pos)
+        )
+        self.assertIn('data-contract-number="IMCM/7001/1-ФА/05-26"', drafting_table)
+        self.assertIn('data-contract-is-addendum="0"', drafting_table)
+        self.assertIn('data-contract-addendum-number="0"', drafting_table)
+
+    def test_contract_conclusion_tables_follow_contract_correction_order(self):
+        self.performer.executor = "Средний Исполнитель"
+        self.performer.contract_batch_id = uuid.UUID("30000000-0000-0000-0000-000000000000")
+        self.performer.contract_number = "MIDDLE-2"
+        self.performer.save(update_fields=["executor", "contract_batch_id", "contract_number"])
+        first_performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor="Первый Исполнитель",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            contract_batch_id=uuid.UUID("10000000-0000-0000-0000-000000000000"),
+            contract_number="ZZZ-3",
+            contract_file="first.docx",
+            contract_project_disk_folder="/Corporate Root/2026/Project/09 Договоры/000 Первый",
+        )
+        second_performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor="Второй Исполнитель",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            contract_batch_id=uuid.UUID("20000000-0000-0000-0000-000000000000"),
+            contract_number="AAA-1",
+            contract_file="second.docx",
+            contract_project_disk_folder="/Corporate Root/2026/Project/09 Договоры/001 Второй",
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        correction_table = content[
+            content.index('class="table table-sm align-middle contracts-table mb-0"'):
+            content.index('id="contracts-edit-btn"')
+        ]
+        drafting_table = content[
+            content.index('id="contract-drafting-table"'):
+            content.index('id="contract-dispatch-table"')
+        ]
+        dispatch_table = content[
+            content.index('id="contract-dispatch-table"'):
+            content.index("</table>", content.index('id="contract-dispatch-table"'))
+        ]
+        expected_ids = [
+            f"contract-sel-{first_performer.pk}",
+            f"contract-sel-{second_performer.pk}",
+            f"contract-sel-{self.performer.pk}",
+        ]
+        correction_positions = [correction_table.index(item) for item in expected_ids]
+        self.assertEqual(correction_positions, sorted(correction_positions))
+
+        drafting_positions = [
+            drafting_table.index(f"contract-drafting-sel-{first_performer.pk}"),
+            drafting_table.index(f"contract-drafting-sel-{second_performer.pk}"),
+            drafting_table.index(f"contract-drafting-sel-{self.performer.pk}"),
+        ]
+        dispatch_positions = [
+            dispatch_table.index(f"contract-dispatch-sel-{first_performer.pk}"),
+            dispatch_table.index(f"contract-dispatch-sel-{second_performer.pk}"),
+            dispatch_table.index(f"contract-dispatch-sel-{self.performer.pk}"),
+        ]
+        self.assertEqual(drafting_positions, sorted(drafting_positions))
+        self.assertEqual(dispatch_positions, sorted(dispatch_positions))
 
     def test_participation_batch_contract_rows_are_separate_by_executor(self):
         participation_batch_id = uuid.uuid4()
@@ -560,6 +691,66 @@ class ContractsCloudLabelTests(TestCase):
             addendum.contract_file,
             f"Договор {self.project.short_uid}_Иванов ИИ_ДС1.docx",
         )
+
+    def test_contract_adjustment_prefills_contract_number_with_contract_project_sub_number(self):
+        from contracts_app.services import prefill_contract_adjustment_fields
+
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
+        self.performer.contract_batch_id = None
+        self.performer.contract_file = ""
+        self.performer.contract_project_disk_folder = ""
+        self.performer.contract_project_created = False
+        self.performer.save(update_fields=[
+            "contract_batch_id",
+            "contract_file",
+            "contract_project_disk_folder",
+            "contract_project_created",
+        ])
+        confirmed_at = timezone.make_aware(datetime(2026, 6, 4, 12, 0))
+
+        prefill_contract_adjustment_fields([self.performer.pk], confirmed_at=confirmed_at)
+
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_number, "IMCM/7001/1-ИИ/06-26")
+
+    def test_contract_adjustment_prefills_legacy_contract_number_when_sub_number_is_zero(self):
+        from contracts_app.services import prefill_contract_adjustment_fields
+
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=0,
+            group_member=self.group_member,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
+        self.performer.contract_batch_id = None
+        self.performer.contract_file = ""
+        self.performer.contract_project_disk_folder = ""
+        self.performer.contract_project_created = False
+        self.performer.save(update_fields=[
+            "contract_batch_id",
+            "contract_file",
+            "contract_project_disk_folder",
+            "contract_project_created",
+        ])
+        confirmed_at = timezone.make_aware(datetime(2026, 6, 4, 12, 0))
+
+        prefill_contract_adjustment_fields([self.performer.pk], confirmed_at=confirmed_at)
+
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_number, "IMCM/7001-ИИ/06-26")
 
     def test_contract_adjustment_prefills_multi_stage_file_name_with_number_display(self):
         from contracts_app.services import contract_project_number_display, prefill_contract_adjustment_fields

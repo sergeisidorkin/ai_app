@@ -15,6 +15,15 @@ def normalize_contract_person_name(value):
     return " ".join(str(value or "").split()).strip()
 
 
+def contract_number_project_part(registration):
+    project_number = getattr(registration, "number", None)
+    contract_project = getattr(registration, "contract_project_registration", None)
+    sub_number = getattr(contract_project, "sub_number", 0) or 0
+    if sub_number:
+        return f"{project_number}/{sub_number}"
+    return str(project_number)
+
+
 def build_contract_number(performer, sent_at, addendum_number=None):
     reg = getattr(performer, "registration", None)
     if not reg or getattr(reg, "group_alpha2", "") != "RU":
@@ -24,7 +33,7 @@ def build_contract_number(performer, sent_at, addendum_number=None):
         return ""
     initials = parts[0][0] + parts[1][0]
     local_dt = timezone.localtime(sent_at)
-    base = f"IMCM/{reg.number}-{initials}/{local_dt:%m-%y}"
+    base = f"IMCM/{contract_number_project_part(reg)}-{initials}/{local_dt:%m-%y}"
     if addendum_number is not None:
         base = f"{base} ДС{addendum_number}"
     return base
@@ -208,6 +217,7 @@ def prefill_contract_adjustment_fields(performer_ids, *, confirmed_at=None):
         Performer.objects
         .select_related(
             "registration",
+            "registration__contract_project_registration",
             "registration__group_member",
             "employee",
             "employee__user",
