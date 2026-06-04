@@ -880,6 +880,89 @@ def check_direction_notifications_completion(performer_ids):
             notification.save(update_fields=["is_processed", "action_at", "updated_at"])
 
 
+def _payment_request_notification_is_paid(notification, request_number):
+    performers = [
+        link.performer
+        for link in notification.performer_links.all()
+        if link.performer_id
+    ]
+    required_checks = []
+    for performer in performers:
+        if performer.advance_payment_request_number == request_number:
+            required_checks.append(bool(performer.advance_payment_paid))
+        if performer.final_payment_request_number == request_number:
+            required_checks.append(bool(performer.final_payment_paid))
+    return bool(required_checks) and all(required_checks)
+
+
+@transaction.atomic
+def sync_payment_request_notifications_for_performers(*, performer_ids, actor=None):
+    performer_ids = [int(value) for value in performer_ids or []]
+    if not performer_ids:
+        return {"changed": 0, "processed": 0, "reopened": 0}
+
+    link_qs = (
+        NotificationPerformerLink.objects
+        .select_related("performer")
+        .order_by("position", "id")
+    )
+    notification_ids = (
+        NotificationPerformerLink.objects
+        .filter(
+            performer_id__in=performer_ids,
+            notification__notification_type=Notification.NotificationType.PROJECT_PAYMENT_REQUEST,
+        )
+        .values_list("notification_id", flat=True)
+        .distinct()
+    )
+    notifications = (
+        Notification.objects
+        .filter(pk__in=notification_ids)
+        .prefetch_related(Prefetch("performer_links", queryset=link_qs))
+    )
+
+    now = timezone.now()
+    result = {"changed": 0, "processed": 0, "reopened": 0}
+    actor_is_authenticated = bool(getattr(actor, "is_authenticated", False))
+    for notification in notifications:
+        try:
+            request_number = int((notification.payload or {}).get("number_of_request") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not request_number:
+            continue
+
+        is_paid = _payment_request_notification_is_paid(notification, request_number)
+        if is_paid == notification.is_processed:
+            continue
+
+        update_fields = ["is_processed"]
+        notification.is_processed = is_paid
+        if is_paid:
+            result["processed"] += 1
+            notification.action_at = now
+            update_fields.append("action_at")
+            if actor_is_authenticated:
+                notification.action_by = actor
+                update_fields.append("action_by")
+            if not notification.is_read:
+                notification.is_read = True
+                notification.read_at = now
+                update_fields += ["is_read", "read_at"]
+                if actor_is_authenticated:
+                    notification.read_by = actor
+                    update_fields.append("read_by")
+        else:
+            result["reopened"] += 1
+            notification.action_at = None
+            notification.action_by = None
+            update_fields += ["action_at", "action_by"]
+
+        notification.save(update_fields=[*update_fields, "updated_at"])
+        result["changed"] += 1
+    return result
+
+
 def _grant_nextcloud_workspace_access_for_confirmed_performers(performer_ids):
     from core.cloud_storage import is_nextcloud_primary
 

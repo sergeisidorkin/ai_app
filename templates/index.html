@@ -2873,6 +2873,7 @@
           const paneUrl     = pane?.getAttribute('data-url');
           const loadingElTpl = document.getElementById('templates-loading');
           const showTplLoading = (show) => loadingElTpl && loadingElTpl.classList.toggle('d-none', !show);
+          if (!tabsUl || !pane || !paneUrl) return;
 
           function getActiveProductShort() {
             const a = sidebar?.querySelector('.list-group-item.active');
@@ -3096,6 +3097,7 @@
           const paneUrl = pane?.getAttribute('data-url');
           const loadingEl = document.getElementById('requests-loading');
           const showReqLoading = (show) => loadingEl && loadingEl.classList.toggle('d-none', !show);
+          if (!tabsUl || !pane || !paneUrl) return;
 
           function getActiveProductShort() {
             const a = sidebar?.querySelector('.list-group-item.active');

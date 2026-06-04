@@ -444,23 +444,24 @@ def _contract_batch_type_display(performers):
 
 
 def _contract_batch_deadline_display(performers):
+    deadline = _contract_batch_deadline_date(performers)
+    return deadline.strftime("%d.%m.%Y") if deadline else ""
+
+
+def _contract_batch_deadline_date(performers):
     deadlines = [
         performer.registration.deadline
         for performer in performers
         if getattr(performer, "registration", None) and performer.registration.deadline
     ]
     if not deadlines:
-        return ""
-    return max(deadlines).strftime("%d.%m.%Y")
+        return None
+    return max(deadlines)
 
 
 def _contract_batch_deadline_iso(performers):
-    deadlines = [
-        performer.registration.deadline
-        for performer in performers
-        if getattr(performer, "registration", None) and performer.registration.deadline
-    ]
-    return max(deadlines).isoformat() if deadlines else ""
+    deadline = _contract_batch_deadline_date(performers)
+    return deadline.isoformat() if deadline else ""
 
 
 def _contract_number_display(project):
@@ -559,6 +560,34 @@ def _contract_representative_rows(performers):
     return representatives
 
 
+def _contract_conclusion_detail_sort_key(performer):
+    project = getattr(performer, "registration", None)
+    return (
+        getattr(project, "number", 0) or 0,
+        _contract_stage(project),
+        getattr(project, "pk", 0) or 0,
+        (getattr(performer, "asset_name", "") or "").casefold(),
+        getattr(performer, "position", 0) or 0,
+        getattr(performer, "pk", 0) or 0,
+    )
+
+
+def _contract_conclusion_order_key(performer, representative_order):
+    representative_index = representative_order.get(_contract_representative_key(performer))
+    detail_key = _contract_conclusion_detail_sort_key(performer)
+    if representative_index is not None:
+        return (0, representative_index, *detail_key)
+    return (
+        1,
+        1 if getattr(performer, "contract_sent_at", None) else 0,
+        (getattr(performer, "contract_number", "") or "").casefold(),
+        (getattr(performer, "executor", "") or "").casefold(),
+        1 if getattr(performer, "contract_is_addendum", False) else 0,
+        getattr(performer, "contract_addendum_number", None) or 0,
+        *detail_key,
+    )
+
+
 def _attach_contract_batch_display_fields(performers):
     performer_list = list(performers)
     contract_batch_ids = {performer.contract_batch_id for performer in performer_list if performer.contract_batch_id}
@@ -603,21 +632,13 @@ def _attach_contract_batch_display_fields(performers):
         performer.contract_number_display = _contract_number_display(first_project)
         performer.contract_stage_display = "" if is_multi_stage else (first_project.short_uid if first_project else "")
         performer.contract_stage_rows = stage_rows
-        performer.contract_project_deadline_display = (
-            _contract_batch_deadline_display(batch_performers)
-            or (
-                performer.registration.deadline.strftime("%d.%m.%Y")
-                if getattr(performer, "registration", None) and performer.registration.deadline
-                else ""
-            )
-        )
-        performer.contract_project_deadline_iso = (
-            _contract_batch_deadline_iso(batch_performers)
-            or (
-                performer.registration.deadline.isoformat()
-                if getattr(performer, "registration", None) and performer.registration.deadline
-                else ""
-            )
+        deadline = _contract_batch_deadline_date(batch_performers)
+        performer.contract_project_deadline_display = deadline.strftime("%d.%m.%Y") if deadline else ""
+        performer.contract_project_deadline_iso = deadline.isoformat() if deadline else ""
+        performer.contract_project_term_days = (
+            (deadline - performer.contract_date).days
+            if deadline and performer.contract_date
+            else None
         )
     return performer_list
 
@@ -666,7 +687,21 @@ def _contracts_context(user=None):
             employee__employment=FREELANCER_LABEL,
         )
         .exclude(executor_trim="")
-        .order_by("registration_id", "executor", "contract_sent_order", "contract_batch_id", "asset_name", "position", "id")
+        .order_by(
+            "contract_sent_order",
+            "contract_number",
+            "executor",
+            "contract_is_addendum",
+            "contract_addendum_number",
+            "contract_batch_id",
+            "participation_batch_id",
+            "registration__number",
+            "registration__agreement_sequence",
+            "registration_id",
+            "asset_name",
+            "position",
+            "id",
+        )
     )
     contract_conclusion_project_ids = (
         contract_conclusion_performers_qs
@@ -721,6 +756,10 @@ def _contracts_context(user=None):
 
     all_performers = list(all_performers)
     contracts = _contract_representative_rows(all_performers)
+    contract_representative_order = {
+        _contract_representative_key(performer): index
+        for index, performer in enumerate(contracts)
+    }
 
     price_map = {}
     for performer in all_performers:
@@ -786,8 +825,14 @@ def _contracts_context(user=None):
     )
 
     contract_drafting_performers = _attach_contract_batch_display_fields(list(contract_conclusion_performers_qs))
+    contract_drafting_performers.sort(
+        key=lambda performer: _contract_conclusion_order_key(performer, contract_representative_order)
+    )
     contract_dispatch_performers = _contract_representative_rows(contract_drafting_performers)
     contract_dispatch_performers = _attach_contract_batch_display_fields(contract_dispatch_performers)
+    contract_dispatch_performers.sort(
+        key=lambda performer: _contract_conclusion_order_key(performer, contract_representative_order)
+    )
     _attach_contract_folder_urls([*contract_drafting_performers, *contract_dispatch_performers, *contracts], user)
 
     return {

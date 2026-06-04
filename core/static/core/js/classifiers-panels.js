@@ -781,7 +781,6 @@
     }
     const targetEl = document.querySelector(cfg.target);
     if (!targetEl) {
-      console.warn('[classifiers] skipped refresh without target:', name, cfg.target);
       return;
     }
     await htmx.ajax('GET', cfg.url + filterQueryString(), {

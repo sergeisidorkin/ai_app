@@ -2029,7 +2029,6 @@
         var perfPane = document.getElementById("performers-pane");
         if (perfPane) {
           perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(r) { allRows.push(r); });
-          perfPane.querySelectorAll(".payment-request-section tbody tr[data-project-id]").forEach(function(r) { allRows.push(r); });
         }
         allRows.forEach(function(row) {
           var pid = row.dataset.projectId || "";
@@ -2061,10 +2060,6 @@
       var perfPane = document.getElementById("performers-pane");
       if (perfPane) {
         perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(row) {
-          var pid = row.dataset.projectId || "";
-          row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
-        });
-        perfPane.querySelectorAll(".payment-request-section tbody tr[data-project-id]").forEach(function(row) {
           var pid = row.dataset.projectId || "";
           row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
         });
@@ -2187,10 +2182,8 @@
 
       window.__perfProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       window.__participationProjectFilter = isAll ? [FILTER_ALL] : values.slice();
-      window.__paymentRequestsProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       syncPerfFilter(values);
       if (typeof window.__syncParticipationProjectFilter === 'function') window.__syncParticipationProjectFilter(values);
-      if (typeof window.__syncPaymentRequestFilter === 'function') window.__syncPaymentRequestFilter(values);
     }
 
     masterChecks.forEach(function(cb) {

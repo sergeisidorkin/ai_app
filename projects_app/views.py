@@ -99,6 +99,7 @@ from notifications_app.services import (
     create_participation_notifications,
     create_payment_request_notifications,
     normalize_delivery_channels,
+    sync_payment_request_notifications_for_performers,
 )
 from proposals_app.document_generation import (
     DOCX_CONTENT_TYPE,
@@ -111,7 +112,7 @@ from contracts_app.docx_processor import (
     insert_floating_image_at_placeholder,
     remove_literal_placeholders,
 )
-from contracts_app.services import build_contract_file_name, contract_executor_short_name
+from contracts_app.services import build_contract_file_name, build_contract_number, contract_executor_short_name
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -3052,21 +3053,6 @@ def participation_request(request):
     )
 
 
-def _build_contract_number(performer, sent_at, addendum_number=None):
-    reg = getattr(performer, "registration", None)
-    if not reg or getattr(reg, "group_alpha2", "") != "RU":
-        return ""
-    parts = (performer.executor or "").split()
-    if len(parts) < 2:
-        return ""
-    initials = parts[0][0] + parts[1][0]
-    local_dt = timezone.localtime(sent_at)
-    base = f"IMCM/{reg.number}-{initials}/{local_dt:%m-%y}"
-    if addendum_number is not None:
-        base = f"{base} ДС{addendum_number}"
-    return base
-
-
 @login_required
 @user_passes_test(staff_required)
 @require_POST
@@ -3373,18 +3359,25 @@ def payment_paid_toggle(request):
 
     field_name = "advance_payment_paid" if kind == "advance" else "final_payment_paid"
     paid_at_field = "advance_payment_paid_at" if kind == "advance" else "final_payment_paid_at"
-    setattr(performer, field_name, paid)
-    if paid:
-        paid_at = timezone.now()
-        setattr(performer, paid_at_field, paid_at)
-    else:
-        paid_at = None
-        setattr(performer, paid_at_field, None)
-    performer.save(update_fields=[field_name, paid_at_field])
+    paid_at = timezone.now() if paid else None
+    payment_performers = _expand_contract_batch_performers([performer])
+    performer_ids = [item.pk for item in payment_performers]
+    with transaction.atomic():
+        updated = Performer.objects.filter(pk__in=performer_ids).update(
+            **{
+                field_name: paid,
+                paid_at_field: paid_at,
+            }
+        )
+        notification_sync = sync_payment_request_notifications_for_performers(
+            performer_ids=performer_ids,
+            actor=request.user,
+        )
 
     return JsonResponse({
         "ok": True,
         "id": performer.pk,
+        "row_ids": performer_ids,
         "kind": kind,
         "paid": paid,
         "paid_at": (
@@ -3392,6 +3385,8 @@ def payment_paid_toggle(request):
             if paid_at
             else ""
         ),
+        "updated": updated,
+        "notifications_changed": notification_sync["changed"],
     })
 
 
@@ -4193,6 +4188,7 @@ def create_contract_project(request):
         Performer.objects
         .select_related(
             "registration", "registration__type", "registration__country",
+            "registration__contract_project_registration",
             "typical_section", "employee", "contract_group_member",
         )
     )
@@ -4585,9 +4581,9 @@ def create_contract_project(request):
                 perf.contract_is_addendum = is_addendum
                 perf.contract_addendum_number = addendum_number
                 existing_contract_number = (perf.contract_number or "").strip()
-                generated_contract_number = _build_contract_number(perf, base_date, addendum_number)
+                generated_contract_number = build_contract_number(perf, base_date, addendum_number)
                 if is_addendum and existing_contract_number:
-                    generated_base_number = _build_contract_number(perf, base_date)
+                    generated_base_number = build_contract_number(perf, base_date)
                     pre_contract_number = (
                         existing_contract_number
                         if existing_contract_number != generated_base_number

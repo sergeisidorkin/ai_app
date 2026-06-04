@@ -691,6 +691,9 @@
       .map((row) => row.querySelector('input[name="contract-dispatch-select"]'))
       .filter((checkbox) => checkbox && !checkbox.disabled);
   }
+  function normalizeContractGroupText(value) {
+    return String(value || '').trim().toLowerCase();
+  }
   function getContractGroupKey(row, includeBatch) {
     if (includeBatch) {
       var participationBatchId = row?.dataset?.participationBatchId || '';
@@ -699,6 +702,36 @@
       if (batchId) return 'batch||' + batchId;
     }
     return (row?.dataset?.projectId || '') + '||' + (row?.dataset?.executor || '');
+  }
+  function getContractDraftingGroupKey(row) {
+    var contractNumber = normalizeContractGroupText(row?.dataset?.contractNumber || '');
+    if (contractNumber) {
+      return [
+        'contract-number',
+        normalizeContractGroupText(row?.dataset?.executor || ''),
+        contractNumber,
+        row?.dataset?.contractIsAddendum === '1' ? '1' : '0',
+        row?.dataset?.contractAddendumNumber || '0',
+      ].join('||');
+    }
+    return getContractGroupKey(row, true);
+  }
+  function getSelectedContractDraftRows() {
+    const selectedGroups = new Set();
+    getVisibleContractChecks()
+      .filter((checkbox) => checkbox.checked && !isContractSentCheckbox(checkbox))
+      .forEach((checkbox) => selectedGroups.add(getContractDraftingGroupKey(checkbox.closest('tr'))));
+
+    if (!selectedGroups.size) return [];
+    return getContractDraftRows().filter((row) => selectedGroups.has(getContractDraftingGroupKey(row)));
+  }
+  function getSelectedContractDraftIds() {
+    const ids = new Set();
+    getSelectedContractDraftRows().forEach((row) => {
+      const checkbox = row.querySelector('input[name="contract-select"]');
+      if (checkbox && !isContractSentCheckbox(checkbox)) ids.add(checkbox.value);
+    });
+    return Array.from(ids);
   }
   function getSelectedContractDispatchIds() {
     const selectedGroups = new Set();
@@ -758,9 +791,7 @@
   function updateContractState() {
     const boxes = getVisibleContractChecks();
     const checked = boxes.filter(b => b.checked);
-    const actionableChecked = checked.filter((box) => !isContractSentCheckbox(box));
     const checkedCount = checked.length;
-    const actionableCheckedCount = actionableChecked.length;
     const master = getContractMaster();
     if (master) {
       master.checked = boxes.length > 0 && checkedCount === boxes.length;
@@ -784,13 +815,18 @@
       requestBtn.disabled = !allDispatchReady;
     }
 
+    const selectedDraftRows = getSelectedContractDraftRows();
+    const selectedDraftIds = getSelectedContractDraftIds();
+    const selectedActionableDraftRows = selectedDraftRows.filter((row) => {
+      const checkbox = row.querySelector('input[name="contract-select"]');
+      return checkbox && !isContractSentCheckbox(checkbox);
+    });
     const createBtn = getCreateContractBtn();
-    if (createBtn) createBtn.disabled = actionableCheckedCount === 0;
+    if (createBtn) createBtn.disabled = selectedDraftIds.length === 0;
 
     const signBtn = getContractSignBtn();
     if (signBtn) {
-      const allReadyToSign = actionableCheckedCount > 0 && actionableChecked.every((box) => {
-        const row = box.closest('tr');
+      const allReadyToSign = selectedDraftIds.length > 0 && selectedActionableDraftRows.every((row) => {
         return row?.dataset?.contractSignReady === '1';
       });
       signBtn.disabled = !allReadyToSign;
@@ -834,7 +870,7 @@
         if (isFilterHidden(row)) return;
         var groupKey = isParticipationTable
           ? getParticipationGroupKey(row)
-          : getContractGroupKey(row, includeContractBatchInGroup);
+          : (isContractDraftingTable ? getContractDraftingGroupKey(row) : getContractGroupKey(row, includeContractBatchInGroup));
         var assetKey = groupKey + '||' + (row.dataset.assetName || '');
         if (groupKey !== prevGroupKey) {
           row.classList.add('group-first');
@@ -2017,25 +2053,8 @@
       label.textContent = normalized.length + ' выбрано';
     }
 
-    function getMasterConstraint() {
-      if (typeof window.__getMasterValues === 'function') {
-        return window.__getMasterValues();
-      }
-      const saved = window.__masterProjectFilter;
-      return Array.isArray(saved) && saved.length ? saved.slice() : [FILTER_ALL];
-    }
-
-    function resolveRowFilterValues(rawValues) {
-      const normalized = normalizeValues(rawValues);
-      const masterValues = getMasterConstraint();
-      if (normalized.includes(FILTER_ALL) && masterValues[0] !== FILTER_ALL) {
-        return masterValues.slice();
-      }
-      return normalized;
-    }
-
     function filterRows(values) {
-      const normalized = resolveRowFilterValues(values);
+      const normalized = normalizeValues(values);
       window.__paymentRequestsProjectFilter = normalized;
       const showAll = normalized.includes(FILTER_ALL) || !normalized.length;
       const selectedProjects = new Set(normalized);
@@ -2058,34 +2077,8 @@
       updatePaymentRequestState();
     }
 
-    function applyConstrainedFilter(values) {
-      const masterValues = getMasterConstraint();
-      const set = new Set(masterValues);
-      const normalized = normalizeValues(values);
-      checks.forEach((cb) => {
-        if (cb.value === FILTER_ALL) {
-          cb.checked = normalized.includes(FILTER_ALL);
-          cb.disabled = false;
-        } else {
-          cb.checked = normalized.includes(cb.value);
-          cb.disabled = !set.has(cb.value);
-        }
-      });
-      updateLabel(normalized);
-      filterRows(normalized);
-    }
-
     function applyFilter(values) {
       const normalized = normalizeValues(values);
-      const masterValues = getMasterConstraint();
-      if (normalized.includes(FILTER_ALL) && masterValues[0] !== FILTER_ALL) {
-        window.__syncPaymentRequestFilter(masterValues);
-        return;
-      }
-      if (masterValues[0] !== FILTER_ALL) {
-        applyConstrainedFilter(normalized);
-        return;
-      }
       checks.forEach((cb) => { cb.disabled = false; });
       syncChecks(normalized);
       updateLabel(normalized);
@@ -2102,36 +2095,24 @@
     }
 
     window.__syncPaymentRequestFilter = function(values) {
-      const source = Array.isArray(values) && values.length ? values.slice() : [FILTER_ALL];
+      const source = normalizeValues(values);
       const isAll = source[0] === FILTER_ALL;
-      const isSingle = !isAll && source.length === 1;
       const set = new Set(source);
       getPaymentRequestSections().forEach((paymentSection) => {
         const sectionChecks = paymentSection.querySelectorAll('.js-payment-request-filter');
         const sectionLabel = paymentSection.querySelector('.js-payment-request-filter-label');
         sectionChecks.forEach((cb) => {
-          if (isAll) {
-            cb.checked = cb.value === FILTER_ALL;
-            cb.disabled = false;
-          } else if (isSingle) {
-            cb.checked = cb.value === source[0];
-            cb.disabled = true;
-          } else if (cb.value === FILTER_ALL) {
-            cb.checked = true;
-            cb.disabled = false;
-          } else {
-            cb.checked = set.has(cb.value);
-            cb.disabled = !set.has(cb.value);
-          }
+          cb.checked = isAll ? cb.value === FILTER_ALL : set.has(cb.value);
+          cb.disabled = false;
         });
         if (!sectionLabel) return;
         if (isAll) {
           sectionLabel.textContent = 'Все';
-        } else if (isSingle) {
+        } else if (source.length === 1) {
           const selected = Array.from(sectionChecks).find((cb) => cb.value === source[0]);
           sectionLabel.textContent = window.getProjectFilterSummaryLabel(selected, '1 проект');
         } else {
-          sectionLabel.textContent = 'Все';
+          sectionLabel.textContent = source.length + ' выбрано';
         }
       });
       filterRows(isAll ? [FILTER_ALL] : source);
@@ -2155,12 +2136,7 @@
       });
     });
 
-    const masterValues = getMasterConstraint();
-    if (masterValues[0] !== FILTER_ALL) {
-      window.__syncPaymentRequestFilter(masterValues);
-    } else {
-      applyFilter(window.__paymentRequestsProjectFilter);
-    }
+    applyFilter(window.__paymentRequestsProjectFilter);
   }
 
   document.addEventListener('click', async (e) => {
@@ -2204,10 +2180,16 @@
           throw new Error(data?.error || 'Не удалось сохранить статус оплаты.');
         }
         if (typeof data.paid === 'boolean') {
-          setPaymentPaidToggleForPerformer(row.dataset.performerId, kind, data.paid, {
-            paidAt: data.paid_at || '',
+          const updatedRowIds = Array.isArray(data.row_ids) && data.row_ids.length
+            ? data.row_ids
+            : [row.dataset.performerId];
+          updatedRowIds.forEach((performerId) => {
+            setPaymentPaidToggleForPerformer(performerId, kind, data.paid, {
+              paidAt: data.paid_at || '',
+            });
           });
         }
+        document.body.dispatchEvent(new Event('notifications-updated'));
       } catch (err) {
         setPaymentPaidToggleForPerformer(row.dataset.performerId, kind, previousOn, {
           paidAt: previousPaidAt,
@@ -2509,7 +2491,8 @@
     if (createContractConfirm && contractRoot && contractRoot.contains(createContractConfirm)) {
       const contractActionRoot = contractRoot;
       const checked = getVisibleContractChecks().filter((cb) => cb.checked && !isContractSentCheckbox(cb));
-      if (!checked.length) return;
+      const performerIds = getSelectedContractDraftIds();
+      if (!checked.length || !performerIds.length) return;
 
       const panel = getContractRequestPanel();
       const createUrl = panel?.dataset?.createContractUrl;
@@ -2525,7 +2508,7 @@
       if (progressEl) progressEl.classList.remove('d-none');
 
       const formData = new FormData();
-      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+      performerIds.forEach((id) => formData.append('performer_ids[]', id));
 
       try {
         const response = await fetch(createUrl, {
@@ -2606,14 +2589,15 @@
     const contractSignBtn = e.target.closest('#contract-sign-btn');
     if (contractSignBtn && contractRoot && contractRoot.contains(contractSignBtn)) {
       const checked = getVisibleContractChecks().filter((cb) => cb.checked && !isContractSentCheckbox(cb));
-      if (!checked.length || contractSignBtn.disabled) return;
+      const performerIds = getSelectedContractDraftIds();
+      if (!checked.length || !performerIds.length || contractSignBtn.disabled) return;
 
       const contractPanel = getContractRequestPanel();
       const signUrl = contractPanel?.dataset?.signContractUrl;
       if (!signUrl) return;
 
       const formData = new FormData();
-      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
+      performerIds.forEach((id) => formData.append('performer_ids[]', id));
 
       const originalHtml = contractSignBtn.innerHTML;
       contractSignBtn.disabled = true;
