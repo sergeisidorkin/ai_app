@@ -8,6 +8,7 @@ from django.test import Client, TestCase, override_settings
 
 from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
+from contracts_app.models import ContractProjectRegistration
 from experts_app.models import ExpertProfile
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import DEPARTMENT_HEAD_GROUP, Product
@@ -1307,6 +1308,92 @@ class CloudStorageStructureMigrationTests(TestCase):
             self.performer.contract_project_disk_folder,
             f"/Corporate Root/02 Договоры/2026/{self.project_folder}/02 Исполнители/000 Иванов ИИ",
         )
+
+    def _prepare_contract_folder_structure_rows(self):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
+        self.project.refresh_from_db()
+        old_project_folder = f"{self.project.short_uid} DD Миграция проекта"
+        old_base = f"/Corporate Root/02 Договоры/2026/{old_project_folder}/02 Исполнители"
+        first_old_folder = f"{old_base}/000 Иванов ИИ"
+        second_old_folder = f"{old_base}/001 Иванов ИИ"
+        Performer.objects.filter(pk=self.performer.pk).update(
+            contract_project_disk_folder=first_old_folder,
+            contract_file=f"Договор {self.project.short_uid}_Иванов ИИ.docx",
+        )
+        second = Performer.objects.create(
+            registration=self.project,
+            executor="Иванов Иван Иванович",
+            contract_project_disk_folder=second_old_folder,
+            contract_file="custom-contract.docx",
+        )
+        new_base = (
+            "/Corporate Root/02 Договоры/2026/"
+            "60010RU DD Миграция проекта/"
+            "6001010RU DD Миграция проекта/02 Исполнители"
+        )
+        return {
+            "first_old_folder": first_old_folder,
+            "second_old_folder": second_old_folder,
+            "first_new_folder": f"{new_base}/6001010RU 001 Иванов ИИ",
+            "second_new_folder": f"{new_base}/6001010RU 002 Иванов ИИ",
+            "old_file": f"Договор {self.project.short_uid}_Иванов ИИ.docx",
+            "new_file": "Договор 6001010RU_Иванов ИИ.docx",
+            "second": second,
+        }
+
+    def test_migrate_contract_folder_structure_dry_run_reports_moves_and_skips_custom_file(self):
+        paths = self._prepare_contract_folder_structure_rows()
+        out = StringIO()
+
+        call_command("migrate_contract_folder_structure", stdout=out)
+
+        output = out.getvalue()
+        self.assertIn("DRY-RUN: 2 folder move(s), 1 file rename(s), 1 skipped file(s).", output)
+        self.assertIn(f"MOVE {paths['first_old_folder']} -> {paths['first_new_folder']}", output)
+        self.assertIn(f"MOVE {paths['second_old_folder']} -> {paths['second_new_folder']}", output)
+        self.assertIn(
+            f"RENAME {paths['first_new_folder']}/{paths['old_file']} -> "
+            f"{paths['first_new_folder']}/{paths['new_file']}",
+            output,
+        )
+        self.assertIn("SKIP projects_app.Performer", output)
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.contract_project_disk_folder, paths["first_old_folder"])
+
+    @patch("nextcloud_app.api.NextcloudApiClient.move_resource")
+    def test_migrate_contract_folder_structure_apply_moves_and_updates_database(self, mocked_move):
+        paths = self._prepare_contract_folder_structure_rows()
+
+        call_command("migrate_contract_folder_structure", "--apply", stdout=StringIO())
+
+        mocked_move.assert_has_calls(
+            [
+                call("cloud-admin", paths["first_old_folder"], paths["first_new_folder"], overwrite=False),
+                call("cloud-admin", paths["second_old_folder"], paths["second_new_folder"], overwrite=False),
+                call(
+                    "cloud-admin",
+                    f"{paths['first_new_folder']}/{paths['old_file']}",
+                    f"{paths['first_new_folder']}/{paths['new_file']}",
+                    overwrite=False,
+                ),
+            ],
+            any_order=False,
+        )
+        self.performer.refresh_from_db()
+        paths["second"].refresh_from_db()
+        self.assertEqual(self.performer.contract_project_disk_folder, paths["first_new_folder"])
+        self.assertEqual(self.performer.contract_file, paths["new_file"])
+        self.assertEqual(paths["second"].contract_project_disk_folder, paths["second_new_folder"])
+        self.assertEqual(paths["second"].contract_file, "custom-contract.docx")
 
 
 @override_settings(

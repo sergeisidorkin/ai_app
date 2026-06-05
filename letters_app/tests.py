@@ -61,6 +61,13 @@ class LetterTemplateVariablesTests(TestCase):
     def test_contract_sending_variables_use_docx_and_pdf_links(self):
         variables = [key for key, _desc in LetterTemplate.TEMPLATE_VARIABLES["contract_sending"]]
 
+        self.assertIn("[project_stages]", variables)
+        self.assertIn("[project_manager]", variables)
+        self.assertIn("[project_deadline]", variables)
+        self.assertIn("{project_deadline}", variables)
+        self.assertIn("[services_list]", variables)
+        self.assertNotIn("{project_manager}", variables)
+        self.assertNotIn("{services_list}", variables)
         self.assertIn("{document_docx_link}", variables)
         self.assertIn("{document_pdf_link}", variables)
         self.assertNotIn("{document_link}", variables)

@@ -119,6 +119,33 @@ def _deliver_notification_email_jobs(email_jobs, *, delivery_channel, email_requ
     return summary
 
 
+def _letter_template_email_recipients(template_type, sender, primary_recipient):
+    recipients = []
+    seen_user_ids = set()
+    if primary_recipient is not None:
+        recipients.append(primary_recipient)
+        seen_user_ids.add(getattr(primary_recipient, "pk", None))
+
+    try:
+        from letters_app.services import get_effective_template
+
+        tpl = get_effective_template(template_type, sender)
+        if not tpl or not getattr(tpl, "pk", None):
+            return recipients
+        cc_users = tpl.cc_recipients.all()
+    except Exception:
+        logger.debug("letters_app CC lookup failed for %s", template_type, exc_info=True)
+        return recipients
+
+    for user in cc_users:
+        user_id = getattr(user, "pk", None)
+        if user_id in seen_user_ids:
+            continue
+        recipients.append(user)
+        seen_user_ids.add(user_id)
+    return recipients
+
+
 def _empty_email_delivery_summary(*, delivery_channel, email_requested=False, attempted=0):
     return {
         "channel": delivery_channel,
@@ -436,6 +463,17 @@ def _project_deadline_display(projects, performers):
         for project in ordered
     ]
     return "\n".join(lines), _service_list_html(lines)
+
+
+def _contract_batch_deadline_display(performers):
+    deadlines = [
+        performer.registration.deadline
+        for performer in performers
+        if getattr(performer, "registration", None) and performer.registration.deadline
+    ]
+    if not deadlines:
+        return "—"
+    return max(deadlines).strftime("%d.%m.%Y")
 
 
 def _service_line(performer, *, include_project=False):
@@ -1219,19 +1257,27 @@ def _payment_request_sender_display(user):
 
 
 def _build_contract_payload(*, recipient, project, performers, request_sent_at, deadline_at, duration_hours, sender=None):
+    projects = []
+    seen_project_ids = set()
+    for performer in performers:
+        performer_project = getattr(performer, "registration", None)
+        if not performer_project or performer_project.pk in seen_project_ids:
+            continue
+        projects.append(performer_project)
+        seen_project_ids.add(performer_project.pk)
+    if not projects and project:
+        projects = [project]
+    project_labels = _unique_project_labels(projects)
     services = [_service_line(performer) for performer in performers]
     agreed_amount = sum((performer.agreed_amount or Decimal("0")) for performer in performers)
 
-    project_label_parts = [project.short_uid]
-    if project.type_short_display:
-        project_label_parts.append(project.type_short_display)
-    if project.name:
-        project_label_parts.append(project.name)
-    project_label = " ".join(part for part in project_label_parts if part)
-
+    project_label = _combined_project_label(projects, project)
     recipient_name = _user_full_name(recipient)
     executor_fio = _short_fio(performers[0].executor) if performers else "—"
-    deadline_label = project.deadline.strftime("%d.%m.%Y") if project.deadline else "—"
+    project_manager, project_manager_html = _project_manager_display(projects)
+    project_stage_lines = _product_stage_lines(projects)
+    project_stages_display, project_stages_html = _stage_lines_display(project_stage_lines)
+    deadline_label = _contract_batch_deadline_display(performers)
 
     currency_code = ""
     for p in performers:
@@ -1256,13 +1302,15 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
             break
 
     deadline_at_label = timezone.localtime(deadline_at).strftime("%H:%M %d.%m.%Y") if deadline_at else "—"
-    services_html = "<ul>" + "".join(f"<li>{s}</li>" for s in services) + "</ul>" if services else "<ul><li>—</li></ul>"
+    services_html = _services_list_html(projects, performers)
 
     title_text = f"Отправлен проект договора по проекту {project_label}".strip()
 
     template_vars = {
         "recipient_name": recipient_name,
         "project_label": project_label,
+        "project_manager": project_manager,
+        "project_stages": project_stages_display,
         "executor": executor_fio,
         "services_list": services_html,
         "agreed_amount": f"{_display_amount(agreed_amount)} {currency_code}".strip(),
@@ -1292,6 +1340,8 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
             )
             body_vars = {
                 **template_vars,
+                "project_manager": project_manager_html,
+                "project_stages": project_stages_html,
                 "document_docx_link": document_docx_link_html,
                 "document_pdf_link": document_pdf_link_html,
                 "document_link": document_docx_link_html,
@@ -1299,7 +1349,14 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
             content_text = render_template(
                 tpl.body_html,
                 body_vars,
-                safe_keys={"services_list", "document_docx_link", "document_pdf_link", "document_link"},
+                safe_keys={
+                    "services_list",
+                    "project_manager",
+                    "project_stages",
+                    "document_docx_link",
+                    "document_pdf_link",
+                    "document_link",
+                },
             )
             if tpl.subject_template:
                 title_text = render_subject(tpl.subject_template, template_vars)
@@ -1312,29 +1369,23 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
             "",
             f"В связи с вашим подтверждением готовности принять участие в проекте {project_label} "
             f"направляем проект договора.",
-            "Состав активов:",
+            f"Проект: {project_label}",
+            "Этапы проекта и продукты:",
+            project_stages_display,
+            f"Срок завершения проекта: {deadline_label}",
+            f"Исполнитель: {executor_fio}",
+            f"Оплата услуг без учета налогов: {_display_amount(agreed_amount)} {currency_code}".strip(),
+            f"Порядок оплаты: {prepayment_display} аванс, {final_payment_display} окончательный платёж",
+            f"Срок исполнения: до {deadline_label}",
+            f"DOCX доступен для скачивания по ссылке: {document_docx_link}",
+            f"PDF доступен для скачивания по ссылке: {document_pdf_link}",
         ]
-        for service in services:
-            content_lines.append(f"- {service}")
-        content_lines.extend(
-            [
-                "",
-                f"Проект: {project_label}",
-                f"Исполнитель: {executor_fio}",
-                f"Оплата услуг без учета налогов: {_display_amount(agreed_amount)} {currency_code}".strip(),
-                f"Порядок оплаты: {prepayment_display} аванс, {final_payment_display} окончательный платёж",
-                f"Срок исполнения: до {deadline_label}",
-                f"DOCX доступен для скачивания по ссылке: {document_docx_link}",
-            ]
-        )
-        if document_pdf_link:
-            content_lines.append(f"PDF доступен для скачивания по ссылке: {document_pdf_link}")
         content_lines.extend(
             [
                 "",
                 (
-                    f"Подписать договор и загрузить подписанную скан-копию в разделе «Договоры» "
-                    f"на сайте imcmontanai.ru необходимо в течение {duration_hours} "
+                    f"Подписать договор в разделе «Договоры» на сайте imcmontanai.ru "
+                    f"необходимо в течение {duration_hours} "
                     f"часов с момента отправки данного сообщения — до {deadline_at_label}."
                 ),
                 "",
@@ -1347,6 +1398,11 @@ def _build_contract_payload(*, recipient, project, performers, request_sent_at, 
     payload = {
         "recipient_name": recipient_name,
         "project_label": project_label,
+        "project_ids": [p.pk for p in projects if p],
+        "project_labels": project_labels,
+        "project_stages": project_stage_lines,
+        "project_stages_display": project_stages_display,
+        "project_manager": project_manager,
         "executor_fio": executor_fio,
         "services": services,
         "agreed_amount_display": _display_amount(agreed_amount),
@@ -1432,23 +1488,26 @@ def create_contract_notifications(
                 ]
             )
             created.append(notification)
+        email_recipients = _letter_template_email_recipients("contract_sending", sender, recipient)
         if DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels:
-            system_email_jobs.append(
+            system_email_jobs.extend(
                 {
-                    "recipient": recipient,
+                    "recipient": email_recipient,
                     "subject": title_text,
                     "content": content_text,
                     "sender": sender,
                 }
+                for email_recipient in email_recipients
             )
         if DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels:
-            connected_email_jobs.append(
+            connected_email_jobs.extend(
                 {
-                    "recipient": recipient,
+                    "recipient": email_recipient,
                     "subject": title_text,
                     "content": content_text,
                     "sender": sender,
                 }
+                for email_recipient in email_recipients
             )
 
     system_email_requested = DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels

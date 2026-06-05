@@ -41,6 +41,7 @@ from .services import gantt_tasks
 
 import json
 import os
+import time
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -50,7 +51,6 @@ from urllib.parse import quote
 from experts_app.models import ExpertProfile
 from core.cloud_storage import (
     CloudStorageNotReadyError,
-    build_project_folder_name,
     build_workspace_folder_tree,
     contains_workspace_project_variable,
     create_basic_project_workspace_stream as routed_create_basic_project_workspace_stream,
@@ -113,6 +113,11 @@ from contracts_app.docx_processor import (
     remove_literal_placeholders,
 )
 from contracts_app.services import build_contract_file_name, build_contract_number, contract_executor_short_name
+from contracts_app.services import (
+    contract_project_folder_name,
+    contract_project_registration_display_id,
+    contract_registration_folder_name,
+)
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
@@ -2508,7 +2513,7 @@ def _contract_resource_parent_path(path: str) -> str:
     return parent or "/"
 
 
-def _resolve_contract_project_nextcloud_file_id(path: str) -> str:
+def _resolve_contract_project_nextcloud_file_id(path: str, *, attempts: int = 1, retry_delay: float = 0) -> str:
     if not is_nextcloud_primary() or not path:
         return ""
 
@@ -2523,15 +2528,20 @@ def _resolve_contract_project_nextcloud_file_id(path: str) -> str:
     if not client.is_configured:
         return ""
 
-    try:
-        items = client.list_resources(client.username, parent_path, limit=1000)
-    except NextcloudApiError:
-        return ""
+    safe_attempts = max(1, int(attempts or 1))
+    for attempt in range(safe_attempts):
+        try:
+            items = client.list_resources(client.username, parent_path, limit=1000)
+        except NextcloudApiError:
+            items = []
 
-    for item in items:
-        item_path = _normalize_nextcloud_contract_resource_path(item.get("path") or "")
-        if item_path == normalized_path:
-            return str(item.get("file_id") or "").strip()
+        for item in items:
+            item_path = _normalize_nextcloud_contract_resource_path(item.get("path") or "")
+            if item_path == normalized_path:
+                return str(item.get("file_id") or "").strip()
+
+        if attempt < safe_attempts - 1 and retry_delay > 0:
+            time.sleep(retry_delay)
     return ""
 
 
@@ -4476,12 +4486,14 @@ def create_contract_project(request):
                 reuse_existing_folder = existing_folder_performer is not None
                 selected_batch_id = next((item.contract_batch_id for item in all_perfs_for_executor if item.contract_batch_id), None)
                 year_str = sanitize_folder_name(str(project.year) if project.year else "Без года")
-                project_folder = build_project_folder_name(project)
+                project_folder = contract_project_folder_name(project, all_perfs_for_executor)
+                contract_folder = contract_registration_folder_name(project, all_perfs_for_executor)
                 base_path = join_cloud_path(
                     disk_root,
                     CONTRACTS_SECTION_FOLDER,
                     year_str,
                     project_folder,
+                    contract_folder,
                     CONTRACTS_PERFORMERS_FOLDER,
                 )
 
@@ -4502,13 +4514,17 @@ def create_contract_project(request):
                         continue
 
                     existing = list_folder_resources(request.user, base_path, limit=1000)
-                    next_number = 0
+                    contract_display_id = contract_project_registration_display_id(project) or "Unknown"
+                    next_number = 1
                     for item in existing:
-                        match = re.match(r"^(\d{3})\s", item.get("name", ""))
+                        match = re.match(
+                            rf"^{re.escape(contract_display_id)}\s+(\d{{3}})\s",
+                            item.get("name", ""),
+                        )
                         if match:
                             next_number = max(next_number, int(match.group(1)) + 1)
 
-                    folder_name = sanitize_folder_name(f"{next_number:03d} {executor_name}")
+                    folder_name = sanitize_folder_name(f"{contract_display_id} {next_number:03d} {executor_name}")
                     folder_path = f"{base_path}/{folder_name}"
 
                     if not cloud_create_folder(request.user, folder_path):
@@ -4648,6 +4664,7 @@ def create_contract_project(request):
                         else:
                             file_update_kwargs = {
                                 "contract_file": upload_name,
+                                "contract_project_file_id": "",
                                 "contract_pdf_file": "",
                                 "contract_pdf_link": "",
                                 "contract_pdf_file_id": "",
@@ -4655,7 +4672,11 @@ def create_contract_project(request):
                                 "contract_signed_pdf_link": "",
                                 "contract_signed_pdf_file_id": "",
                             }
-                            file_id = _resolve_contract_project_nextcloud_file_id(upload_path)
+                            file_id = _resolve_contract_project_nextcloud_file_id(
+                                upload_path,
+                                attempts=3,
+                                retry_delay=0.2,
+                            )
                             if file_id:
                                 file_update_kwargs["contract_project_file_id"] = file_id
                             try:

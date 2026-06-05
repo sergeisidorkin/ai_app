@@ -55,6 +55,11 @@ from .models import (
     ContractVariable,
     _sync_contract_project_registration_primary_product,
 )
+from .services import (
+    contract_batch_type_display,
+    contract_project_number_display,
+    contract_stage_order,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -424,23 +429,11 @@ def _attach_contract_group_members(performers):
 
 
 def _contract_stage(project):
-    return int(getattr(project, "agreement_sequence", 0) or 1)
+    return contract_stage_order(project)
 
 
 def _contract_batch_type_display(performers):
-    items = []
-    seen = set()
-    for performer in performers:
-        project = getattr(performer, "registration", None)
-        if not project:
-            continue
-        project_type = (getattr(project, "type_short_display", "") or "").strip()
-        if not project_type or project_type in seen:
-            continue
-        seen.add(project_type)
-        items.append((_contract_stage(project), project.pk or 0, project_type))
-    items.sort(key=lambda item: (item[0], item[1], item[2]))
-    return "-".join(item[2] for item in items)
+    return contract_batch_type_display(performers)
 
 
 def _contract_batch_deadline_display(performers):
@@ -465,11 +458,7 @@ def _contract_batch_deadline_iso(performers):
 
 
 def _contract_number_display(project):
-    if not project:
-        return ""
-    short_uid = (getattr(project, "short_uid", "") or "").strip()
-    suffix = short_uid[-3:] if len(short_uid) >= 3 else f"{project.group_order_number}{project.group_alpha2}"
-    return f"{project.formatted_number}{suffix}"
+    return contract_project_number_display(project)
 
 
 def _contract_product_display(project):
@@ -1009,16 +998,6 @@ def _resolve_contract_nextcloud_file_id(client, owner_user_id: str, path: str, *
     return str(resource_cache.get(parent_path, {}).get(normalized_path) or "")
 
 
-def _build_contract_child_url(client, parent_path: str, child_name: str) -> str:
-    normalized_parent = _normalize_contract_nextcloud_path(parent_path)
-    clean_child_name = str(child_name or "").strip().strip("/")
-    if not normalized_parent or not clean_child_name:
-        return ""
-    if normalized_parent == "/":
-        return client.build_files_url(f"/{clean_child_name}")
-    return client.build_files_url(f"{normalized_parent.rstrip('/')}/{clean_child_name}")
-
-
 def _build_contract_file_redirect_url(client, file_id: str) -> str:
     clean_file_id = str(file_id or "").strip()
     base_url = str(getattr(client, "base_url", "") or "").strip().rstrip("/")
@@ -1028,6 +1007,7 @@ def _build_contract_file_redirect_url(client, file_id: str) -> str:
 
 
 def _attach_contract_folder_urls(contracts, user=None):
+    nextcloud_primary = is_nextcloud_primary()
     folder_source_by_key = {}
     for performer in contracts:
         path = getattr(performer, "contract_project_disk_folder", "") or ""
@@ -1055,7 +1035,7 @@ def _attach_contract_folder_urls(contracts, user=None):
         path = getattr(performer, "contract_project_disk_folder", "") or ""
         public_url = (getattr(performer, "contract_project_folder_link", "") or "").strip()
         performer.contract_project_folder_url = public_url or build_folder_url(path)
-        performer.contract_project_docx_file_url = (
+        performer.contract_project_docx_file_url = "" if nextcloud_primary else (
             getattr(performer, "contract_project_link", "") or ""
         ).strip()
         performer.contract_project_pdf_file_url = (
@@ -1067,7 +1047,7 @@ def _attach_contract_folder_urls(contracts, user=None):
         if path:
             folder_cache.setdefault(path, performer.contract_project_folder_url)
 
-    if not contracts or not is_nextcloud_primary():
+    if not contracts or not nextcloud_primary:
         return
     if user is None or not getattr(user, "is_authenticated", False):
         return
@@ -1176,8 +1156,6 @@ def _attach_contract_folder_urls(contracts, user=None):
                     editor_url = client.build_files_open_url(file_id, target_path)
                 if not editor_url and file_id:
                     editor_url = _build_contract_file_redirect_url(client, file_id)
-                if not editor_url:
-                    editor_url = _build_contract_child_url(client, target_path, contract_file)
             if editor_url:
                 performer.contract_project_docx_file_url = editor_url
 

@@ -99,6 +99,11 @@
                      id="contract-sel-{{ p.id }}"
                      name="contract-row-select"
                      value="{{ p.id }}"
+                     data-contract-sent="{% if p.contract_sent_at %}1{% else %}0{% endif %}"
+                     {% if p.contract_sent_at %}
+                       disabled
+                       title="Строка недоступна: проект договора уже отправлен"
+                     {% endif %}
                      aria-label="Выделить строку договора">
             </div>
           {% endif %}

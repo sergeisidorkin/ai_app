@@ -1,5 +1,5 @@
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
@@ -297,6 +297,10 @@ class ParticipationBatchNotificationTests(TestCase):
     def test_create_contract_notifications_groups_by_contract_batch(self):
         request_sent_at = timezone.now()
         contract_batch_id = uuid.uuid4()
+        self.project_a.deadline = date(2026, 5, 20)
+        self.project_b.deadline = date(2026, 6, 30)
+        self.project_a.save(update_fields=["deadline"])
+        self.project_b.save(update_fields=["deadline"])
         Performer.objects.filter(pk__in=[self.performer_a.pk, self.performer_b.pk]).update(
             contract_batch_id=contract_batch_id,
         )
@@ -314,7 +318,73 @@ class ParticipationBatchNotificationTests(TestCase):
 
         notification = Notification.objects.get()
         linked_ids = set(notification.performer_links.values_list("performer_id", flat=True))
+        payload = notification.payload
         self.assertEqual(linked_ids, {self.performer_a.pk, self.performer_b.pk})
+        self.assertEqual(payload["project_label"], "81230RU RFR-TDD Тест 55")
+        self.assertEqual(
+            payload["project_stages"],
+            [
+                "Этап 1: RFR Red Flag Review",
+                "Этап 2: TDD Technical Due Diligence",
+            ],
+        )
+        self.assertEqual(payload["project_manager"], "Этап 1: Иванов И.И.\nЭтап 2: Петров П.П.")
+        self.assertEqual(payload["project_deadline_display"], "30.06.2026")
+        self.assertIn(
+            "<p>Этапы проекта и продукты:</p><ul><li>Этап 1: RFR Red Flag Review</li>"
+            "<li>Этап 2: TDD Technical Due Diligence</li></ul>",
+            notification.content_text,
+        )
+        self.assertIn("<p>Срок завершения проекта: 30.06.2026</p>", notification.content_text)
+        self.assertIn("Срок исполнения: до 30.06.2026", notification.content_text)
+        self.assertNotIn("загрузить подписанную скан-копию", notification.content_text)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="noreply@example.com",
+    )
+    def test_contract_system_email_sends_copy_recipients_from_template(self):
+        cc_user = get_user_model().objects.create_user(
+            username="contract-copy@example.com",
+            email="contract-copy@example.com",
+            password="secret",
+            first_name="Анна",
+            is_staff=True,
+        )
+        Employee.objects.create(user=cc_user, patronymic="Андреевна")
+        template = LetterTemplate.objects.create(
+            template_type="contract_sending",
+            user=self.sender,
+            subject_template="Договор {project_label}",
+            body_html="<p>CONTRACT_COPY_MARKER {recipient_name}</p>",
+            is_default=False,
+        )
+        template.cc_recipients.set([cc_user, self.recipient])
+
+        request_sent_at = timezone.now()
+        contract_batch_id = uuid.uuid4()
+        Performer.objects.filter(pk=self.performer_a.pk).update(contract_batch_id=contract_batch_id)
+        self.performer_a.refresh_from_db()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            result = create_contract_notifications(
+                performers=[self.performer_a],
+                sender=self.sender,
+                request_sent_at=request_sent_at,
+                deadline_at=request_sent_at + timedelta(hours=4),
+                duration_hours=4,
+                delivery_channels=["system_email"],
+            )
+
+        recipients = sorted(message.to[0] for message in mail.outbox)
+        self.assertEqual(recipients, ["contract-copy@example.com", "recipient@example.com"])
+        self.assertEqual(result["email_delivery"]["attempted"], 2)
+        self.assertEqual(result["email_delivery"]["sent"], 2)
+        self.assertEqual(
+            result["email_delivery"]["channels"]["system_email"]["attempted"],
+            2,
+        )
+        self.assertTrue(all("CONTRACT_COPY_MARKER" in message.body for message in mail.outbox))
 
     def _ensure_lawyer_user(self):
         lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)

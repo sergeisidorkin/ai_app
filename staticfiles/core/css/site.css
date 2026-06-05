@@ -7961,12 +7961,12 @@ html.worktime-progress-cursor * {
 #contracts-pane table.signing-table col:nth-child(3),
 #contracts-pane table.signing-table thead th:nth-child(3),
 #contracts-pane table.signing-table tbody td:nth-child(3) {
-  width: 100px !important;
-  min-width: 100px !important;
-  max-width: 100px !important;
+  width: auto !important;
+  min-width: max-content !important;
+  max-width: none !important;
   white-space: nowrap !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
 }
 
 #contract-conclusion-section > .table-section-header:first-child,
