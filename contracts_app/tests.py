@@ -160,7 +160,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "Наименование файла DOCX")
         self.assertContains(response, "Наименование файла PDF")
         self.assertContains(response, "Договор 7001_Иванов ИИ.docx")
-        self.assertContains(response, "https://cloud.example.com/s/contract-docx")
+        self.assertNotContains(response, 'href="https://cloud.example.com/s/contract-docx"', html=False)
         self.assertContains(response, "Создать проект договора")
         self.assertContains(response, "Подписать проект договора")
         self.assertContains(response, "Отправить проект договора")
@@ -239,6 +239,23 @@ class ContractsCloudLabelTests(TestCase):
         self.assertIn('value="connected_email"', contract_request_modal)
         self.assertNotIn("Дата отправки запроса", contract_request_modal)
         self.assertNotIn('id="contract-request-sent-at"', contract_request_modal)
+
+    def test_contract_correction_checkbox_is_disabled_after_contract_request(self):
+        self.performer.contract_sent_at = timezone.now()
+        self.performer.save(update_fields=["contract_sent_at"])
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        correction_checkbox_start = content.index(f'id="contract-sel-{self.performer.pk}"')
+        correction_checkbox = content[
+            correction_checkbox_start:
+            content.index("aria-label", correction_checkbox_start)
+        ]
+        self.assertIn('data-contract-sent="1"', correction_checkbox)
+        self.assertIn("disabled", correction_checkbox)
+        self.assertIn("проект договора уже отправлен", correction_checkbox)
 
     def test_contracts_partial_displays_multi_stage_contract_batch_as_single_row(self):
         product_b = Product.objects.create(
@@ -671,7 +688,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertIn('data-contract-dispatch-ready="1"', dispatch_table)
 
     def test_contract_adjustment_prefills_addendum_file_name_with_kind_suffix(self):
-        from contracts_app.services import prefill_contract_adjustment_fields
+        from contracts_app.services import contract_project_registration_display_id, prefill_contract_adjustment_fields
 
         self.performer.contract_project_created = True
         self.performer.save(update_fields=["contract_project_created"])
@@ -689,7 +706,7 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(addendum.contract_addendum_number, 1)
         self.assertEqual(
             addendum.contract_file,
-            f"Договор {self.project.short_uid}_Иванов ИИ_ДС1.docx",
+            f"Договор {contract_project_registration_display_id(self.project)}_Иванов ИИ_ДС1.docx",
         )
 
     def test_contract_adjustment_prefills_contract_number_with_contract_project_sub_number(self):
@@ -753,16 +770,27 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(self.performer.contract_number, "IMCM/7001-ИИ/06-26")
 
     def test_contract_adjustment_prefills_multi_stage_file_name_with_number_display(self):
-        from contracts_app.services import contract_project_number_display, prefill_contract_adjustment_fields
+        from contracts_app.services import prefill_contract_adjustment_fields
 
         product_b = Product.objects.create(
             short_name="TDD",
             name_en="Technical Due Diligence",
             name_ru="ТДД",
         )
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
         second_project = ProjectRegistration.objects.create(
             number=self.project.number,
             group_member=self.group_member,
+            contract_project_registration=contract_project,
             type=product_b,
             name=self.project.name,
             year=2026,
@@ -794,7 +822,7 @@ class ContractsCloudLabelTests(TestCase):
         self.performer.refresh_from_db()
         self.assertEqual(
             self.performer.contract_file,
-            f"Договор {contract_project_number_display(self.project)}_Иванов ИИ.docx",
+            f"Договор {contract_project.short_uid}_Иванов ИИ.docx",
         )
 
     def test_contract_dispatch_column_registry_excludes_signing_note(self):
@@ -1069,6 +1097,13 @@ class ContractsCloudLabelTests(TestCase):
         ]
         self.assertIn('data-contract-sent="0"', drafting_checkbox)
         self.assertNotIn("disabled", drafting_checkbox)
+        correction_checkbox_start = admin_content.index(f'id="contract-sel-{self.performer.pk}"')
+        correction_checkbox = admin_content[
+            correction_checkbox_start:
+            admin_content.index("aria-label", correction_checkbox_start)
+        ]
+        self.assertIn('data-contract-sent="0"', correction_checkbox)
+        self.assertNotIn("disabled", correction_checkbox)
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
@@ -2174,6 +2209,51 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'href="https://cloud.example.com/f/4477"', html=False)
         self.assertContains(response, 'href="https://cloud.example.com/f/4478"', html=False)
         mocked_list_resources.assert_not_called()
+
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_contracts_partial_does_not_render_docx_href_without_file_id(
+        self,
+        mocked_list_user_shares,
+        _mocked_list_resources,
+    ):
+        lawyer_user = get_user_model().objects.create_user(
+            username="lawyer-missing-file-id@example.com",
+            email="lawyer-missing-file-id@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        NextcloudUserLink.objects.create(
+            user=lawyer_user,
+            nextcloud_user_id="nc-lawyer-missing-file-id",
+            nextcloud_username="nc-lawyer-missing-file-id",
+            nextcloud_email=lawyer_user.email,
+        )
+        mocked_list_user_shares.return_value = {
+            self.performer.contract_project_disk_folder: NextcloudShare(
+                share_id="59",
+                path=self.performer.contract_project_disk_folder,
+                share_with="nc-lawyer-missing-file-id",
+                permissions=15,
+                target_path="/Shared/000 Иванов ИИ",
+            )
+        }
+        self.client.force_login(lawyer_user)
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        section = content[
+            content.index('id="contract-conclusion-section"'):
+            content.index("Подписание договора")
+        ]
+        self.assertIn("Договор 7001_Иванов ИИ.docx", section)
+        self.assertNotIn('href="https://cloud.example.com/s/contract-docx"', section)
+        self.assertNotIn("dir=/Shared/000%20%D0%98%D0%B2%D0%B0%D0%BD%D0%BE%D0%B2%20%D0%98%D0%98/", section)
+        self.assertNotIn("openfile=true", section)
 
     def test_contract_template_form_saves_multiple_groups_and_products(self):
         second_group = GroupMember.objects.create(

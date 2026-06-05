@@ -750,6 +750,22 @@
   function isContractSentCheckbox(checkbox) {
     return checkbox?.dataset?.contractSent === '1';
   }
+  function markContractSentCheckboxDisabled(checkbox) {
+    if (!checkbox || !isContractSentCheckbox(checkbox)) return;
+    checkbox.checked = false;
+    checkbox.disabled = true;
+    checkbox.title = 'Строка недоступна: проект договора уже отправлен';
+  }
+  function disableContractCorrectionChecksByIds(ids) {
+    var root = contractPane();
+    if (!root || !ids || !ids.length) return;
+    var idSet = new Set(ids.map(function(id) { return String(id); }));
+    qa('tbody input.form-check-input[name="contract-row-select"]', root).forEach(function(checkbox) {
+      if (!idSet.has(String(checkbox.value))) return;
+      checkbox.dataset.contractSent = '1';
+      markContractSentCheckboxDisabled(checkbox);
+    });
+  }
   function isContractDispatchReadyCheckbox(checkbox) {
     return checkbox?.closest('tr')?.dataset?.contractDispatchReady === '1';
   }
@@ -984,6 +1000,9 @@
 
   function applyContractSentState() {
     var root = contractPane();
+    if (!root) return;
+    qa('tbody input.form-check-input[name="contract-row-select"][data-contract-sent="1"]', root)
+      .forEach(markContractSentCheckboxDisabled);
     var section = root ? root.querySelector('#contract-conclusion-section') : null;
     if (!section) return;
     var tbody = section.querySelector('#contract-drafting-table tbody');
@@ -991,10 +1010,7 @@
     var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
     rows.forEach(function(row) {
       var cb = row.querySelector('input[name="contract-select"]');
-      if (cb && isContractSentCheckbox(cb)) {
-        cb.disabled = true;
-        cb.title = 'Строка недоступна: проект договора уже отправлен';
-      }
+      markContractSentCheckboxDisabled(cb);
     });
     var i = 0;
     while (i < rows.length) {
@@ -2675,6 +2691,7 @@
         window.__tableSel['contract-dispatch-select'] = [];
         window.__tableSel['performer-select'] = (window.__tableSel['performer-select'] || []);
         window.__tableSelLast = null;
+        disableContractCorrectionChecksByIds(performerIds);
 
         const modalEl = contractActionRoot.querySelector('#contract-request-modal');
         const modal = modalEl ? window.bootstrap?.Modal.getInstance(modalEl) : null;

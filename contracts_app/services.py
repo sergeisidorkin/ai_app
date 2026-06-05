@@ -63,6 +63,68 @@ def contract_project_number_display(project):
     return f"{project.formatted_number}{suffix}"
 
 
+def contract_project_registration_display_id(project):
+    if not project:
+        return ""
+    contract_project = getattr(project, "contract_project_registration", None)
+    short_uid = (getattr(contract_project, "short_uid", "") or "").strip()
+    if short_uid:
+        return short_uid
+    project_uid = (getattr(project, "short_uid", "") or "").strip()
+    if len(project_uid) > 7:
+        return f"{project_uid[:6]}{project_uid[7:]}"
+    return project_uid
+
+
+def contract_stage_order(project):
+    return int(getattr(project, "agreement_sequence", 0) or 1)
+
+
+def contract_batch_type_display(performers):
+    items = []
+    seen = set()
+    for performer in performers or []:
+        project = getattr(performer, "registration", None)
+        if not project:
+            continue
+        project_type = (getattr(project, "type_short_display", "") or "").strip()
+        if not project_type or project_type in seen:
+            continue
+        seen.add(project_type)
+        items.append((contract_stage_order(project), getattr(project, "pk", None) or 0, project_type))
+    items.sort(key=lambda item: (item[0], item[1], item[2]))
+    return "-".join(item[2] for item in items)
+
+
+def _contract_batch_name_display(performers, fallback_project=None):
+    for performer in performers or []:
+        project = getattr(performer, "registration", None)
+        name = (getattr(project, "name", "") or "").strip()
+        if name:
+            return name
+    return (getattr(fallback_project, "name", "") or "").strip()
+
+
+def contract_project_folder_name(project, batch_performers=None):
+    type_label = contract_batch_type_display(batch_performers) or (
+        (getattr(project, "type_short_display", "") or "").strip()
+    )
+    name = _contract_batch_name_display(batch_performers, project)
+    return sanitize_folder_name(
+        " ".join(part for part in (contract_project_number_display(project), type_label, name) if part)
+    )
+
+
+def contract_registration_folder_name(project, batch_performers=None):
+    type_label = contract_batch_type_display(batch_performers) or (
+        (getattr(project, "type_short_display", "") or "").strip()
+    )
+    name = _contract_batch_name_display(batch_performers, project)
+    return sanitize_folder_name(
+        " ".join(part for part in (contract_project_registration_display_id(project), type_label, name) if part)
+    )
+
+
 def _has_multiple_contract_stages(performers):
     stage_keys = set()
     for performer in performers or []:
@@ -82,10 +144,7 @@ def build_contract_file_name(
     batch_performers=None,
 ):
     project = getattr(performer, "registration", None)
-    if batch_performers is not None and _has_multiple_contract_stages(batch_performers):
-        project_id = contract_project_number_display(project)
-    else:
-        project_id = str(getattr(project, "short_uid", "") or "") if project else ""
+    project_id = contract_project_registration_display_id(project)
     project_prefix = project_id or "Unknown"
     executor_name = contract_executor_short_name(getattr(performer, "executor", ""))
     ext = extension if str(extension or "").startswith(".") else f".{extension or 'docx'}"

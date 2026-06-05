@@ -4737,7 +4737,7 @@ class NextcloudContractProjectFlowTests(TestCase):
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/public-doc")
     @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/50020RU DD Контрактный проект/5002010RU DD Контрактный проект/02 Исполнители/5002010RU 001 Иванов ИИ")
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
     def test_create_contract_project_uses_nextcloud_and_stores_public_link(
         self,
@@ -4774,10 +4774,11 @@ class NextcloudContractProjectFlowTests(TestCase):
         self.performer.refresh_from_db()
         expected_month = timezone.localtime(timezone.now()).strftime("%m-%y")
         expected_contract_number = f"IMCM/5002/1-ИИ/{expected_month}"
-        expected_project_folder = f"{self.project.short_uid} DD Контрактный проект"
-        expected_base_path = f"/Corporate Root/02 Договоры/2026/{expected_project_folder}/02 Исполнители"
-        expected_folder_path = f"{expected_base_path}/000 Иванов ИИ"
-        expected_docx_name = f"Договор {self.project.short_uid}_Иванов ИИ.docx"
+        expected_project_folder = "50020RU DD Контрактный проект"
+        expected_contract_folder = "5002010RU DD Контрактный проект"
+        expected_base_path = f"/Corporate Root/02 Договоры/2026/{expected_project_folder}/{expected_contract_folder}/02 Исполнители"
+        expected_folder_path = f"{expected_base_path}/5002010RU 001 Иванов ИИ"
+        expected_docx_name = "Договор 5002010RU_Иванов ИИ.docx"
         expected_upload_path = f"{expected_folder_path}/{expected_docx_name}"
 
         mocked_list_resources.assert_any_call("cloud-admin", expected_base_path, limit=1000)
@@ -4787,6 +4788,7 @@ class NextcloudContractProjectFlowTests(TestCase):
                 call("cloud-admin", "/Corporate Root/02 Договоры"),
                 call("cloud-admin", "/Corporate Root/02 Договоры/2026"),
                 call("cloud-admin", f"/Corporate Root/02 Договоры/2026/{expected_project_folder}"),
+                call("cloud-admin", f"/Corporate Root/02 Договоры/2026/{expected_project_folder}/{expected_contract_folder}"),
                 call("cloud-admin", expected_base_path),
                 call("cloud-admin", expected_folder_path),
             ]
@@ -4822,7 +4824,7 @@ class NextcloudContractProjectFlowTests(TestCase):
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/public-doc")
     @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/50020RU DD Контрактный проект/5002000RU DD Контрактный проект/02 Исполнители/5002000RU 001 Иванов ИИ")
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
     def test_create_contract_project_uses_saved_contract_number_and_date(
         self,
@@ -4866,7 +4868,7 @@ class NextcloudContractProjectFlowTests(TestCase):
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/public-doc")
     @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/50020RU DD-RFR Контрактный проект/5002010RU DD-RFR Контрактный проект/02 Исполнители/5002010RU 001 Иванов ИИ")
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
     def test_create_contract_project_expands_participation_batch(
         self,
@@ -4881,10 +4883,25 @@ class NextcloudContractProjectFlowTests(TestCase):
         batch_id = uuid.uuid4()
         self.employee.employment = FREELANCER_LABEL
         self.employee.save(update_fields=["employment"])
+        product_b = Product.objects.create(
+            short_name="RFR",
+            name_en="Review",
+            name_ru="Ревью",
+        )
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=1,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
         second_project = ProjectRegistration.objects.create(
             number=self.project.number,
-            type=self.product,
-            name="Контрактный проект 2",
+            type=product_b,
+            contract_project_registration=contract_project,
+            name="Контрактный проект",
             year=2026,
         )
         second_performer = Performer.objects.create(
@@ -4900,6 +4917,27 @@ class NextcloudContractProjectFlowTests(TestCase):
         mocked_ensure_nextcloud_account.side_effect = lambda user, client=None: (
             self.executor_link if user.pk == self.recipient_user.pk else self.lawyer_link
         )
+        expected_docx_name = "Договор 5002010RU_Иванов ИИ.docx"
+        expected_folder_name = "5002010RU 001 Иванов ИИ"
+        docx_folder_calls = 0
+
+        def list_resources_side_effect(_owner_user_id, path, *, limit=100):
+            nonlocal docx_folder_calls
+            if path.endswith(f"/{expected_folder_name}"):
+                docx_folder_calls += 1
+                if docx_folder_calls == 1:
+                    return []
+                return [
+                    {
+                        "name": expected_docx_name,
+                        "path": f"{path}/{expected_docx_name}",
+                        "type": "file",
+                        "file_id": "docx-file-id",
+                    }
+                ]
+            return []
+
+        mocked_list_resources.side_effect = list_resources_side_effect
 
         response = self.client.post(
             reverse("create_contract_project"),
@@ -4912,14 +4950,17 @@ class NextcloudContractProjectFlowTests(TestCase):
         self.performer.refresh_from_db()
         second_performer.refresh_from_db()
         self.project.refresh_from_db()
-        from contracts_app.services import contract_project_number_display
-
-        expected_docx_name = f"Договор {contract_project_number_display(self.project)}_Иванов ИИ.docx"
         self.assertIsNotNone(self.performer.contract_batch_id)
         self.assertEqual(self.performer.contract_batch_id, second_performer.contract_batch_id)
         self.assertEqual(self.performer.contract_file, expected_docx_name)
         self.assertEqual(second_performer.contract_file, expected_docx_name)
-        self.assertIn(expected_docx_name, mocked_upload_file.call_args.args[1])
+        self.assertEqual(self.performer.contract_project_file_id, "docx-file-id")
+        self.assertEqual(second_performer.contract_project_file_id, "docx-file-id")
+        self.assertEqual(docx_folder_calls, 2)
+        upload_path = mocked_upload_file.call_args.args[1]
+        self.assertIn("/50020RU DD-RFR Контрактный проект/5002010RU DD-RFR Контрактный проект/02 Исполнители/", upload_path)
+        self.assertIn(f"/{expected_folder_name}/", upload_path)
+        self.assertIn(expected_docx_name, upload_path)
         self.assertTrue(self.performer.contract_project_created)
         self.assertTrue(second_performer.contract_project_created)
 
@@ -4928,7 +4969,7 @@ class NextcloudContractProjectFlowTests(TestCase):
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/reused-doc")
     @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/50020RU DD Контрактный проект/5002010RU DD Контрактный проект/02 Исполнители/5002010RU 001 Иванов ИИ")
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
     def test_create_contract_project_reuses_existing_executor_folder_for_regeneration(
         self,
@@ -4940,8 +4981,17 @@ class NextcloudContractProjectFlowTests(TestCase):
         mocked_resolve_variables,
         mocked_ensure_nextcloud_account,
     ):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=1,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
         existing_batch_id = uuid.uuid4()
-        existing_folder_path = "/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ"
+        existing_folder_path = "/Corporate Root/02 Договоры/2026/50020RU DD Контрактный проект/5002010RU DD Контрактный проект/02 Исполнители/5002010RU 001 Иванов ИИ"
         self.performer.contract_batch_id = existing_batch_id
         self.performer.contract_project_created = True
         self.performer.contract_project_disk_folder = existing_folder_path
@@ -4981,10 +5031,10 @@ class NextcloudContractProjectFlowTests(TestCase):
         mocked_upload_file.assert_called_once()
         self.assertEqual(
             mocked_upload_file.call_args.args[1],
-            f"{existing_folder_path}/Договор {self.project.short_uid}_Иванов ИИ.docx",
+            f"{existing_folder_path}/Договор 5002010RU_Иванов ИИ.docx",
         )
         self.assertFalse(
-            any("001 Иванов ИИ" in str(call_args) for call_args in mocked_ensure_folder.call_args_list),
+            any("5002010RU 002 Иванов ИИ" in str(call_args) for call_args in mocked_ensure_folder.call_args_list),
             mocked_ensure_folder.call_args_list,
         )
         self.performer.refresh_from_db()
@@ -5002,8 +5052,8 @@ class NextcloudContractProjectFlowTests(TestCase):
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_public_link_share", return_value="https://cloud.example.com/s/new-doc")
     @patch("nextcloud_app.api.NextcloudApiClient.upload_file", return_value=True)
-    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/5002 DD Контрактный проект/02 Исполнители/000 Иванов ИИ")
-    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[{"name": "000 Иванов ИИ"}])
+    @patch("nextcloud_app.api.NextcloudApiClient.ensure_folder", return_value="/Corporate Root/02 Договоры/2026/50020RU DD Контрактный проект/5002010RU DD Контрактный проект/02 Исполнители/5002010RU 001 Иванов ИИ")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[{"name": "5002010RU 001 Иванов ИИ"}])
     def test_create_contract_project_reuses_sent_batch_folder_when_creating_addendum(
         self,
         mocked_list_resources,
@@ -5014,10 +5064,20 @@ class NextcloudContractProjectFlowTests(TestCase):
         mocked_resolve_variables,
         mocked_ensure_nextcloud_account,
     ):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=1,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
         old_batch_id = uuid.uuid4()
         pending_batch_id = uuid.uuid4()
-        expected_project_folder = f"{self.project.short_uid} DD Контрактный проект"
-        old_folder_path = f"/Corporate Root/02 Договоры/2026/{expected_project_folder}/02 Исполнители/000 Иванов ИИ"
+        expected_project_folder = "50020RU DD Контрактный проект"
+        expected_contract_folder = "5002010RU DD Контрактный проект"
+        old_folder_path = f"/Corporate Root/02 Договоры/2026/{expected_project_folder}/{expected_contract_folder}/02 Исполнители/5002010RU 001 Иванов ИИ"
         self.performer.contract_batch_id = old_batch_id
         self.performer.contract_project_created = True
         self.performer.contract_project_disk_folder = old_folder_path
@@ -5053,7 +5113,7 @@ class NextcloudContractProjectFlowTests(TestCase):
         mocked_upload_file.assert_called_once()
         self.assertEqual(
             mocked_upload_file.call_args.args[1],
-            f"{old_folder_path}/Договор {self.project.short_uid}_Иванов ИИ_ДС1.docx",
+            f"{old_folder_path}/Договор 5002010RU_Иванов ИИ_ДС1.docx",
         )
         self.performer.refresh_from_db()
         addendum_performer.refresh_from_db()
@@ -5064,7 +5124,7 @@ class NextcloudContractProjectFlowTests(TestCase):
         self.assertEqual(addendum_performer.contract_addendum_number, 1)
         self.assertEqual(addendum_performer.contract_project_disk_folder, old_folder_path)
         self.assertEqual(addendum_performer.contract_project_folder_link, "https://cloud.example.com/s/existing-folder")
-        self.assertEqual(addendum_performer.contract_file, f"Договор {self.project.short_uid}_Иванов ИИ_ДС1.docx")
+        self.assertEqual(addendum_performer.contract_file, "Договор 5002010RU_Иванов ИИ_ДС1.docx")
 
     @patch("nextcloud_app.provisioning.ensure_nextcloud_account")
     @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
