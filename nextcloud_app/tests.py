@@ -1395,6 +1395,56 @@ class CloudStorageStructureMigrationTests(TestCase):
         self.assertEqual(paths["second"].contract_project_disk_folder, paths["second_new_folder"])
         self.assertEqual(paths["second"].contract_file, "custom-contract.docx")
 
+    @patch("nextcloud_app.api.NextcloudApiClient.move_resource")
+    def test_migrate_contract_folder_structure_apply_deduplicates_shared_file_rename(self, mocked_move):
+        contract_project = ContractProjectRegistration.objects.create(
+            number=self.project.number,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name=self.project.name,
+            year=2026,
+        )
+        self.project.contract_project_registration = contract_project
+        self.project.save(update_fields=["contract_project_registration"])
+        self.project.refresh_from_db()
+        old_project_folder = f"{self.project.short_uid} DD Миграция проекта"
+        old_folder = f"/Corporate Root/02 Договоры/2026/{old_project_folder}/02 Исполнители/000 Иванов ИИ"
+        old_file = f"Договор {self.project.short_uid}_Иванов ИИ.docx"
+        Performer.objects.filter(pk=self.performer.pk).update(
+            contract_project_disk_folder=old_folder,
+            contract_file=old_file,
+        )
+        second = Performer.objects.create(
+            registration=self.project,
+            executor="Иванов Иван Иванович",
+            contract_project_disk_folder=old_folder,
+            contract_file=old_file,
+        )
+        new_folder = (
+            "/Corporate Root/02 Договоры/2026/"
+            "60010RU DD Миграция проекта/"
+            "6001010RU DD Миграция проекта/02 Исполнители/"
+            "6001010RU 001 Иванов ИИ"
+        )
+        new_file = "Договор 6001010RU_Иванов ИИ.docx"
+
+        call_command("migrate_contract_folder_structure", "--apply", stdout=StringIO())
+
+        self.assertEqual(
+            mocked_move.call_args_list,
+            [
+                call("cloud-admin", old_folder, new_folder, overwrite=False),
+                call("cloud-admin", f"{new_folder}/{old_file}", f"{new_folder}/{new_file}", overwrite=False),
+            ],
+        )
+        self.performer.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(self.performer.contract_project_disk_folder, new_folder)
+        self.assertEqual(second.contract_project_disk_folder, new_folder)
+        self.assertEqual(self.performer.contract_file, new_file)
+        self.assertEqual(second.contract_file, new_file)
+
 
 @override_settings(
     NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",

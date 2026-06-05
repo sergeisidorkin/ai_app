@@ -139,7 +139,7 @@ class Command(BaseCommand):
         return folder_changes, file_renames, skipped_files
 
     def _collect_file_renames(self, performers, label_performers, target_folder_path, skipped_files):
-        renames = []
+        renames_by_path = {}
         for performer in performers:
             old_name = (performer.contract_file or "").strip()
             if not old_name:
@@ -156,16 +156,27 @@ class Command(BaseCommand):
             if old_name not in self._legacy_contract_file_names(performer, label_performers, old_name):
                 skipped_files.append((performer.pk, old_name))
                 continue
-            renames.append(
-                FileRename(
-                    join_cloud_path(target_folder_path, old_name),
-                    join_cloud_path(target_folder_path, new_name),
-                    old_name,
-                    new_name,
-                    (performer.pk,),
+            source_path = join_cloud_path(target_folder_path, old_name)
+            target_path = join_cloud_path(target_folder_path, new_name)
+            key = (source_path, target_path, old_name, new_name)
+            existing = renames_by_path.get(key)
+            if existing is not None:
+                renames_by_path[key] = FileRename(
+                    existing.source_path,
+                    existing.target_path,
+                    existing.old_name,
+                    existing.new_name,
+                    existing.performer_ids + (performer.pk,),
                 )
+                continue
+            renames_by_path[key] = FileRename(
+                source_path,
+                target_path,
+                old_name,
+                new_name,
+                (performer.pk,),
             )
-        return renames
+        return list(renames_by_path.values())
 
     def _legacy_contract_file_names(self, performer, batch_performers, file_name):
         project = getattr(performer, "registration", None)
