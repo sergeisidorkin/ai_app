@@ -1084,6 +1084,7 @@ body .second-sidebar + .flex-grow-1 {
 #info-request-approval-section .form-check-input:disabled,
 .registration-table-wrap .form-check-input:disabled,
 .contract-table-wrap .form-check-input:disabled,
+.contracts-table .form-check-input:disabled,
 .work-table-wrap .form-check-input:disabled,
 .legal-table-wrap .form-check-input:disabled,
 .signing-table .form-check-input:disabled,

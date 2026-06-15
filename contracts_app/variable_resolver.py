@@ -160,6 +160,33 @@ def _contract_str_field(field_name: str):
     return _resolver
 
 
+def _normalized_identifier(value: str) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _contract_identifier_number(ep: ExpertProfile | None, identifier_name: str) -> str:
+    if not ep:
+        return ""
+    target = _normalized_identifier(identifier_name)
+    for details in ep.ordered_contract_details():
+        citizenship = getattr(details, "citizenship_record", None)
+        if _normalized_identifier(getattr(citizenship, "identifier", "")) == target:
+            return str(getattr(citizenship, "number", "") or "")
+    return ""
+
+
+def _contract_inn(ep: ExpertProfile, _p: Performer) -> str:
+    details = _contract_details(ep)
+    value = str(getattr(details, "inn", "") or "") if details else ""
+    return value or _contract_identifier_number(ep, "ИНН")
+
+
+def _contract_snils(ep: ExpertProfile, _p: Performer) -> str:
+    details = _contract_details(ep)
+    value = str(getattr(details, "snils", "") or "") if details else ""
+    return value or _contract_identifier_number(ep, "СНИЛС")
+
+
 def _date_field(field_name: str, fmt: str = "dd.mm.YYYY"):
     """Return a resolver that formats a DateField matching the UI table.
 
@@ -370,8 +397,8 @@ FIELD_MAP: dict[tuple[str, str, str], callable] = {
     ("experts", "contract_details", "tax_rate"): _contract_int_field("tax_rate", "%"),
     ("experts", "contract_details", "citizenship"): _contract_str_field("citizenship"),
     ("experts", "contract_details", "gender"): _gender_display,
-    ("experts", "contract_details", "inn"): _contract_str_field("inn"),
-    ("experts", "contract_details", "snils"): _contract_str_field("snils"),
+    ("experts", "contract_details", "inn"): _contract_inn,
+    ("experts", "contract_details", "snils"): _contract_snils,
     ("experts", "contract_details", "birth_date"): _contract_date_field("birth_date", "dd.mm.YYYY"),
     ("experts", "contract_details", "passport_series"): _contract_str_field("passport_series"),
     ("experts", "contract_details", "passport_number"): _contract_str_field("passport_number"),

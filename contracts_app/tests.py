@@ -4025,6 +4025,81 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(replacements["{{corr_bank_settlement_account}}"], "30101810945250000225")
         self.assertEqual(replacements["{{legacy_bank_swift}}"], "SABRRUMM")
 
+    def test_inn_and_snils_fall_back_to_person_identifier_records(self):
+        user = get_user_model().objects.create_user(
+            username="resolver-identifier-expert",
+            password="secret",
+            first_name="Петр",
+            last_name="Петров",
+        )
+        employee = Employee.objects.create(user=user, patronymic="Петрович")
+        person = PersonRecord.objects.create(
+            last_name="Петров",
+            first_name="Петр",
+            middle_name="Петрович",
+            position=1,
+        )
+        employee.person_record = person
+        employee.save(update_fields=["person_record"])
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        passport = CitizenshipRecord.objects.create(
+            person=person,
+            country=country,
+            status="Гражданство",
+            identifier="Паспорт",
+            number="123456",
+            position=1,
+        )
+        inn = CitizenshipRecord.objects.create(
+            person=person,
+            country=country,
+            identifier="ИНН",
+            number="770123456789",
+            position=2,
+        )
+        snils = CitizenshipRecord.objects.create(
+            person=person,
+            country=country,
+            identifier="СНИЛС",
+            number="123-456-789 00",
+            position=3,
+        )
+        profile = ExpertProfile.objects.create(employee=employee, position=1)
+        ExpertContractDetails.objects.create(expert_profile=profile, citizenship_record=passport)
+        ExpertContractDetails.objects.create(expert_profile=profile, citizenship_record=inn)
+        ExpertContractDetails.objects.create(expert_profile=profile, citizenship_record=snils)
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        project = ProjectRegistration.objects.create(number=7003, type=product, name="Проект", country=country, year=2026)
+        performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Петров Петр Петрович",
+        )
+        variables = [
+            ContractVariable(key="{{inn}}", source_section="contracts", source_table="contract_details", source_column="inn"),
+            ContractVariable(key="{{snils}}", source_section="contracts", source_table="contract_details", source_column="snils"),
+        ]
+
+        replacements, lists = resolve_variables(performer, variables)
+
+        self.assertEqual(lists, {})
+        self.assertEqual(replacements["{{inn}}"], "770123456789")
+        self.assertEqual(replacements["{{snils}}"], "123-456-789 00")
+
     def test_date_variables_use_saved_performer_contract_date(self):
         product = Product.objects.create(
             short_name="DD",
