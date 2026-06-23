@@ -26,29 +26,53 @@
       {% endif %}
     </div>
     <div class="mb-3">
-      <label class="form-label">Сроки предоставления исходных данных, нед.</label>
-      {{ form.source_data_weeks }}
+      <label class="form-label">{{ form.source_data_weeks.label }}</label>
+      <div class="input-group">
+        {{ form.source_data_weeks }}
+        {{ form.source_data_term_unit }}
+      </div>
       {% if form.source_data_weeks.errors %}
         <div class="invalid-feedback d-block">
           {{ form.source_data_weeks.errors|join:", " }}
         </div>
       {% endif %}
+      {% if form.source_data_term_unit.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.source_data_term_unit.errors|join:", " }}
+        </div>
+      {% endif %}
     </div>
     <div class="mb-3">
-      <label class="form-label">Срок подготовки Предварительного отчёта, мес.</label>
-      {{ form.preliminary_report_months }}
+      <label class="form-label">{{ form.preliminary_report_months.label }}</label>
+      <div class="input-group">
+        {{ form.preliminary_report_months }}
+        {{ form.preliminary_report_term_unit }}
+      </div>
       {% if form.preliminary_report_months.errors %}
         <div class="invalid-feedback d-block">
           {{ form.preliminary_report_months.errors|join:", " }}
         </div>
       {% endif %}
+      {% if form.preliminary_report_term_unit.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.preliminary_report_term_unit.errors|join:", " }}
+        </div>
+      {% endif %}
     </div>
     <div class="mb-3">
-      <label class="form-label">Срок подготовки Итогового отчёта, нед.</label>
-      {{ form.final_report_weeks }}
+      <label class="form-label">{{ form.final_report_weeks.label }}</label>
+      <div class="input-group">
+        {{ form.final_report_weeks }}
+        {{ form.final_report_term_unit }}
+      </div>
       {% if form.final_report_weeks.errors %}
         <div class="invalid-feedback d-block">
           {{ form.final_report_weeks.errors|join:", " }}
+        </div>
+      {% endif %}
+      {% if form.final_report_term_unit.errors %}
+        <div class="invalid-feedback d-block">
+          {{ form.final_report_term_unit.errors|join:", " }}
         </div>
       {% endif %}
     </div>

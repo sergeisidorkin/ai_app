@@ -1,17 +1,21 @@
-<div class="modal-header" data-modal-size="xl">
-  <h5 class="modal-title">
-    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
-  </h5>
-  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-</div>
-
+<div id="contracts-drafts-pane"
+     class="contracts-project-form-page contracts-project-form-page--pending"
+     style="visibility: hidden;"
+     aria-busy="true"
+     data-contract-project-form-page="1"
+     data-header-root-label="Договоры"
+     data-header-root-url="{% url 'contracts_development_partial' %}"
+     data-header-current-label="{% if action == "create" %}Новый договор{% else %}{{ registration.short_uid }}{% endif %}"
+     data-header-current-url="{% if action == "create" %}{% url 'contracts_project_registration_create' %}{% else %}{% url 'contracts_project_registration_edit' registration.pk %}{% endif %}">
 <form
   method="post"
+  data-contract-project-form="1"
   data-country-identifier-url="{% url 'identifier_for_country' %}"
   data-country-region-url="{% url 'ler_regions_for_country' %}"
   data-region-autofill-url="{% url 'ler_region_autofill' %}"
   data-ler-search-url="{% url 'ler_search' %}"
   data-prefill-url-template="{% url 'contracts_project_registration_prefill_from_proposal' 0 %}"
+  data-product-autofill-url-template="{% url 'proposal_product_autofill' 0 %}"
   data-registration-id="{% if registration %}{{ registration.pk }}{% endif %}"
   {% if action == "create" %}
     hx-post="{% url 'contracts_project_registration_create' %}"
@@ -19,9 +23,11 @@
     hx-post="{% url 'contracts_project_registration_edit' registration.pk %}"
   {% endif %}
   hx-target="#contracts-drafts-pane"
-  hx-swap="innerHTML">
-  <div class="modal-body modal-body-scroll">
+  hx-swap="outerHTML">
+  <div class="contracts-project-form-body">
     {% csrf_token %}
+    {{ typical_sections_json|json_script:"proposal-typical-sections-data" }}
+    {{ typical_service_compositions_json|json_script:"proposal-typical-service-compositions-data" }}
     {{ form.group_order_map|json_script:"contracts-project-group-order-map" }}
     {{ form.group_alpha2_map|json_script:"contracts-project-group-alpha2-map" }}
     {{ form.proposal_sub_number_map|json_script:"contracts-project-proposal-sub-number-map" }}
@@ -174,6 +180,40 @@
             {{ form.asset_owner_matches_customer.label }}
           </label>
         </div>
+      </div>
+
+      <div class="col-12 contracts-form-section-start">
+        <label class="form-label">{{ form.proposal_project_name.label }}</label>
+        {{ form.proposal_project_name.as_hidden }}
+        <div class="proposal-project-name-composite contracts-proposal-project-name-composite">
+          <input type="text"
+                 class="form-control proposal-project-name-part proposal-project-name-part--prefix"
+                 id="contracts-proposal-project-name-prefix"
+                 placeholder="Название отчета">
+          <input type="text"
+                 class="form-control proposal-project-name-part proposal-project-name-part--suffix"
+                 id="contracts-proposal-project-name-suffix">
+        </div>
+      </div>
+
+      <div class="col-12 contracts-form-section-start">
+        <label class="form-label">{{ form.purpose.label }}</label>
+        {{ form.purpose.as_hidden }}
+        <div class="proposal-project-name-composite proposal-purpose-composite contracts-proposal-purpose-composite">
+          <input type="text"
+                 class="form-control proposal-project-name-part proposal-project-name-part--prefix"
+                 id="contracts-proposal-purpose-prefix"
+                 placeholder="Цель оказания услуг">
+          <input type="text"
+                 class="form-control proposal-project-name-part proposal-project-name-part--suffix"
+                 id="contracts-proposal-purpose-suffix">
+        </div>
+      </div>
+
+      <div id="contract-service-stages-container" class="proposal-stage-blocks-container">
+        {% for stage in form.stage_rows %}
+          {% include "proposals_app/_proposal_stage_service_block.html" with stage=stage %}
+        {% endfor %}
       </div>
       {{ form.project_manager }}
       <div class="w-100"></div>
@@ -634,14 +674,621 @@
       </div>
     {% endif %}
 
-    <div class="modal-footer pb-3">
-      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <div class="d-flex justify-content-start align-items-center gap-2 pt-4 pb-3">
+      <button type="button"
+              class="btn btn-outline-secondary"
+              data-contract-project-form-cancel-btn="1"
+              hx-get="{% url 'contracts_development_partial' %}"
+              hx-target="#contracts-drafts-pane"
+              hx-swap="outerHTML">
+        Отмена
+      </button>
       <button type="submit" class="btn btn-primary">Сохранить</button>
     </div>
   </div>
 </form>
+</div>
 
 <style>
+  #contracts-drafts-pane.contracts-project-form-page {
+    --proposal-stage-field-toggle-space: 2.3rem;
+    --proposal-check-width: 28px;
+    --proposal-left-half-width: 50%;
+    --proposal-right-quarter-width: 12.5%;
+    --proposal-legal-left-col-width: calc((var(--proposal-left-half-width) - var(--proposal-check-width)) / 2);
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-project-form-body {
+    padding-top: 1rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .readonly-field,
+  #contracts-drafts-pane.contracts-project-form-page .readonly-field:disabled,
+  #contracts-drafts-pane.contracts-project-form-page .readonly-field[readonly] {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: #6c757d;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .form-label {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-form-head-row {
+    display: grid;
+    grid-template-columns: repeat(3, 2fr) repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-form-head-row > div,
+  #contracts-drafts-pane.contracts-project-form-page .row > [class*="col-"] {
+    min-width: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-form-section-start,
+  #contracts-drafts-pane.contracts-project-form-page #contract-service-stages-container {
+    margin-top: 1rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-service-block + .proposal-stage-service-block {
+    margin-top: 1rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-customer-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-customer-meta-grid > div {
+    min-width: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner"],
+  #contracts-drafts-pane.contracts-project-form-page form:has([name="asset_owner_matches_customer"]:checked) #reg-asset-owner-country-select,
+  #contracts-drafts-pane.contracts-project-form-page form:has([name="asset_owner_matches_customer"]:checked) #reg-asset-owner-region-select,
+  #contracts-drafts-pane.contracts-project-form-page form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_number"],
+  #contracts-drafts-pane.contracts-project-form-page form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_date"] {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: #6c757d;
+    cursor: default;
+    pointer-events: none;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-project-name-composite {
+    display: flex;
+    width: 100%;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    overflow: hidden;
+    background: #fff;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-project-name-part {
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none !important;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-project-name-part--prefix {
+    flex: 0 0 auto;
+    padding-right: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-project-name-part--suffix {
+    flex: 1 1 auto;
+    padding-left: .2rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-project-name-composite:focus-within {
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 .25rem rgba(13, 110, 253, .25);
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-registration-field-wrap {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-registration-field-wrap .proposal-registration-select-shell {
+    flex: 1;
+    min-width: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-proposal-prefill-btn {
+    flex: 0 0 auto;
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.375rem;
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    box-shadow: none;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-proposal-prefill-btn:hover:not(:disabled):not(.is-loading) {
+    color: #212529;
+    background-color: #f8f9fa;
+    border-color: #ced4da;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-proposal-prefill-btn:disabled {
+    color: #6c757d;
+    background-color: #fff;
+    border-color: #ced4da;
+    opacity: 1;
+    cursor: not-allowed;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-proposal-prefill-btn.is-loading .bi-arrow-clockwise {
+    display: none;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contracts-proposal-prefill-btn.is-loading::after {
+    content: "";
+    width: 1rem;
+    height: 1rem;
+    border: 0.15em solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: contracts-proposal-prefill-spin 0.75s linear infinite;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-registration-select-shell,
+  #contracts-drafts-pane.contracts-project-form-page .group-select-shell,
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-select-shell {
+    position: relative;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-registration-select-shell select,
+  #contracts-drafts-pane.contracts-project-form-page .group-select-shell select,
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-select-shell .registration-product-select {
+    position: relative;
+    z-index: 2;
+    opacity: 0.01;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-registration-select-display,
+  #contracts-drafts-pane.contracts-project-form-page .group-select-display,
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-display {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding: .375rem 2.25rem .375rem .75rem;
+    font: inherit;
+    line-height: inherit;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-registration-select-display.is-placeholder,
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-display.is-placeholder {
+    color: #6c757d;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-registration-select-display::after,
+  #contracts-drafts-pane.contracts-project-form-page .group-select-display::after,
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-display::after {
+    content: "";
+    position: absolute;
+    right: .75rem;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px 12px;
+    opacity: .7;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-type-block {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #f8f9fa;
+    padding: .75rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-assets-editor {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #fff;
+    padding: .75rem;
+    overflow: visible;
+    position: relative;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-type-card {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    background: #fff;
+    padding: .75rem .75rem 1.25rem .75rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-type-head {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) 1.5rem;
+    column-gap: .5rem;
+    align-items: end;
+    margin-bottom: .5rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-type-head-labels {
+    min-width: 0;
+    margin: 0;
+    color: #212529;
+    font-size: .875rem;
+    font-weight: 500;
+    --bs-gutter-y: 0;
+    align-items: center;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-type-head-labels > div {
+    display: block;
+    line-height: 1.5;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-products-container {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-row-inner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: .5rem;
+    align-items: center;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-badge {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    font-size: .65rem;
+    border: 1px solid #6c757d;
+    color: #6c757d;
+    background: transparent;
+    font-weight: 400;
+    font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+    font-variant-numeric: tabular-nums;
+    align-self: center;
+    justify-self: center;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-fields {
+    min-width: 0;
+    margin: 0;
+    --bs-gutter-y: 0;
+    align-items: center;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-remove {
+    flex-shrink: 0;
+    color: #adb5bd;
+    border: none;
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 0 .25rem;
+    align-self: center;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .registration-product-remove:hover {
+    color: #dc3545;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-assets-table {
+    margin-bottom: 0;
+    table-layout: fixed;
+    width: 100%;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-terms-table th {
+    white-space: nowrap;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contract-date-terms-field {
+    box-sizing: border-box;
+    margin-left: 0;
+    margin-bottom: .5rem;
+    padding-left: 0;
+    padding-right: .25rem;
+    width: calc(5.5rem + ((100% - 5.5rem) / 6) - var(--proposal-stage-field-toggle-space));
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contract-stage-report-terms-group {
+    margin-top: 1rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .contract-stage-evaluation-terms-group {
+    margin-top: .75rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-evaluation-terms-table {
+    width: calc(5.5rem + ((100% - 5.5rem) / 6));
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-terms-table .proposal-terms-stage-col {
+    width: 5.5rem;
+    min-width: 5.5rem;
+    max-width: 5.5rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-source-data-term,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-service-term-months,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-final-report-term-weeks {
+    width: auto;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-source-data-term-shell,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-preliminary-term-shell,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-source-data-date,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-preliminary-report-date {
+    box-sizing: border-box;
+    width: calc(100% - var(--proposal-stage-field-toggle-space));
+    min-width: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-final-term-shell {
+    width: 100%;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row .proposal-stage-total-final-report-date {
+    box-sizing: border-box;
+    width: calc(100% - var(--proposal-stage-field-toggle-space) - 2.25rem);
+    min-width: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-terms-table th.proposal-terms-stage-col,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-terms-table td.proposal-terms-stage-col {
+    padding-left: 0 !important;
+    padding-right: .25rem !important;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-terms-table > :not(caption) > * > * {
+    border-top: 0;
+    border-bottom: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-label-input {
+    text-align: center;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .js-proposal-report-terms-lock,
+  #contracts-drafts-pane.contracts-project-form-page .js-proposal-report-date-lock {
+    cursor: pointer;
+    color: #6c757d;
+    font-size: .875rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .js-proposal-report-terms-lock.is-stage-lock-disabled,
+  #contracts-drafts-pane.contracts-project-form-page .js-proposal-report-date-lock.is-stage-lock-disabled,
+  #contracts-drafts-pane.contracts-project-form-page .js-proposal-report-terms-lock.is-stage-lock-disabled:hover,
+  #contracts-drafts-pane.contracts-project-form-page .js-proposal-report-date-lock.is-stage-lock-disabled:hover {
+    color: #c6ccd2;
+    cursor: default;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-final-report-wrap {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-final-report-field-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    min-width: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap > .form-control,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap > .proposal-stage-source-data-term-shell,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap > .proposal-stage-preliminary-term-shell {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    box-sizing: border-box;
+    width: 1.8rem;
+    margin: 0;
+    padding: 0 .25rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle .form-check-input {
+    cursor: pointer;
+    flex: 0 0 auto;
+    width: 1.3rem;
+    height: .65rem;
+    margin: 0 !important;
+    background-size: .4875rem .4875rem;
+    background-position: left .08125rem center;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle .form-check-input:checked {
+    background-position: right .08125rem center;
+    background-color: var(--bs-primary, #0d6efd);
+    border-color: var(--bs-primary, #0d6efd);
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-source-data-term-shell,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-preliminary-term-shell,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-final-term-shell,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-term-shell {
+    display: flex;
+    align-items: stretch;
+    min-width: 10.5rem;
+    padding: 0;
+    overflow: hidden;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-source-data-term-shell .proposal-stage-source-data-term,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-preliminary-term-shell .proposal-stage-service-term-months,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-final-term-shell .proposal-stage-final-report-term-weeks,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-term-shell .proposal-stage-total-source-data-term,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-term-shell .proposal-stage-total-service-term-months,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-term-shell .proposal-stage-total-final-report-term-weeks {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: auto;
+    padding: .375rem .25rem .375rem .75rem;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    text-align: left;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-source-data-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-preliminary-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-final-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-source-data-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-preliminary-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-final-term-unit {
+    flex: 0 0 5.5rem;
+    width: 5.5rem;
+    padding: .375rem 2.25rem .375rem .75rem;
+    border: 0;
+    border-left: 1px solid #dee2e6;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    background-color: transparent;
+    background-position: right .75rem center;
+    color: #6c757d;
+    box-shadow: none;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-source-data-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-preliminary-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-final-term-unit {
+    background-color: #fff !important;
+    color: #212529 !important;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .form-control,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-shell,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-shell,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-field-disabled,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-terms-total-row input.form-control.readonly-field.proposal-stage-total-field-disabled,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-term-shell.proposal-stage-total-field-disabled {
+    background-color: #fdfdfe !important;
+    border-color: #eef1f4 !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-service-term-months,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-field-disabled input,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-field-disabled select {
+    background-color: #fdfdfe !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-unit,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-total-field-disabled select {
+    border-left-color: #eef1f4 !important;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23c6ccd2' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e") !important;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-delay-action-slot {
+    flex: 0 0 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-delay-add {
+    width: 1.75rem;
+    height: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: #6c757d;
+    border: 1px solid #ced4da;
+    background-color: #f8f9fa;
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-delay-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: .3rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-delay-number-shell {
+    position: relative;
+    flex: 0 0 8.5rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-delay-number-shell .proposal-stage-next-delay-days {
+    text-align: left;
+    padding-right: 2.8rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-delay-unit {
+    position: absolute;
+    top: 50%;
+    right: .9rem;
+    transform: translateY(-50%);
+    color: #6c757d;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 2;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-stage-delay-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.5rem;
+    height: 1.75rem;
+    padding: 0;
+    line-height: 1;
+    font-size: 1.25rem;
+    color: #adb5bd;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-inline-percent {
+    position: relative;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-inline-percent input {
+    appearance: textfield;
+    -moz-appearance: textfield;
+    padding-right: 2rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-inline-percent input::-webkit-outer-spin-button,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-inline-percent input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-inline-percent__suffix {
+    position: absolute;
+    top: 50%;
+    right: 0.75rem;
+    transform: translateY(-50%);
+    color: #6c757d;
+    pointer-events: none;
+    z-index: 2;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-asset-add-btn {
+    border: 1px solid #ced4da;
+    background-color: #f8f9fa;
+    color: #495057;
+    font-size: 1rem;
+    padding: .375rem .75rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-asset-add-btn:hover,
+  #contracts-drafts-pane.contracts-project-form-page .proposal-asset-add-btn:focus {
+    background-color: #eef1f4;
+    color: #343a40;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row .form-label:not(.proposal-payment-stage-title) {
+    margin-top: 1rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-payment-stage-block .js-proposal-payment-group > .row:first-child .form-label {
+    margin-top: .5rem;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-service-sections-table thead th {
+    font-weight: 400;
+  }
+  #contracts-drafts-pane.contracts-project-form-page .proposal-service-sections-table .proposal-service-section-header-text {
+    display: inline-block;
+    position: relative;
+    top: -8px;
+  }
+  @media (min-width: 1200px) {
+    #contracts-drafts-pane.contracts-project-form-page .registration-type-head-labels,
+    #contracts-drafts-pane.contracts-project-form-page .registration-product-fields {
+      display: grid;
+      grid-template-columns: calc(25% - 26px) 25% 25% calc(25% + 26px);
+      align-items: center;
+    }
+    #contracts-drafts-pane.contracts-project-form-page .registration-type-head-labels > [class*="col-"],
+    #contracts-drafts-pane.contracts-project-form-page .registration-product-fields > [class*="col-"] {
+      width: auto;
+      max-width: none;
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+      padding-right: calc(var(--bs-gutter-x, 1.5rem) * .5);
+    }
+  }
+  @media (max-width: 1199.98px) {
+    #contracts-drafts-pane.contracts-project-form-page .registration-type-head {
+      display: none;
+    }
+  }
   #contracts-modal .modal-dialog,
   #contracts-modal .modal-dialog.modal-xl {
     --contracts-modal-edge-gap: 1rem;
@@ -719,6 +1366,33 @@
     -webkit-text-fill-color: #6c757d;
     cursor: default;
     pointer-events: none;
+  }
+  #contracts-modal .proposal-project-name-composite {
+    display: flex;
+    width: 100%;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    overflow: hidden;
+    background: #fff;
+  }
+  #contracts-modal .proposal-project-name-part {
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none !important;
+  }
+  #contracts-modal .proposal-project-name-part--prefix {
+    flex: 0 0 auto;
+    padding-right: 0;
+  }
+  #contracts-modal .proposal-project-name-part--suffix {
+    flex: 1 1 auto;
+    padding-left: .2rem;
+  }
+  #contracts-modal .proposal-project-name-composite:focus-within {
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 .25rem rgba(13, 110, 253, .25);
   }
   #contracts-modal .proposal-registration-field-wrap {
     display: flex;
@@ -932,13 +1606,17 @@
   #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-preliminary-term-shell,
   #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-source-data-date,
   #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-preliminary-report-date {
+    box-sizing: border-box;
     width: calc(100% - var(--proposal-stage-field-toggle-space));
+    min-width: 0;
   }
   #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-final-term-shell {
     width: 100%;
   }
   #contracts-modal .proposal-stage-terms-total-row .proposal-stage-total-final-report-date {
-    width: calc(100% - var(--proposal-stage-field-toggle-space) - 2rem);
+    box-sizing: border-box;
+    width: calc(100% - var(--proposal-stage-field-toggle-space) - 2.25rem);
+    min-width: 0;
   }
   #contracts-modal .proposal-terms-table th {
     white-space: nowrap;
@@ -982,7 +1660,7 @@
   #contracts-modal .proposal-stage-final-report-wrap {
     display: flex;
     align-items: center;
-    gap: .25rem;
+    gap: .5rem;
   }
   #contracts-modal .proposal-stage-final-report-field-wrap {
     flex: 1 1 auto;
@@ -1149,6 +1827,7 @@
     color: #212529 !important;
   }
   #contracts-modal .proposal-stage-total-field-disabled,
+  #contracts-modal .proposal-stage-terms-total-row input.form-control.readonly-field.proposal-stage-total-field-disabled,
   #contracts-modal .proposal-stage-total-term-shell.proposal-stage-total-field-disabled {
     background-color: #fdfdfe !important;
     border-color: #eef1f4 !important;
@@ -1419,6 +2098,190 @@
     }
   }
 
+  function normalizeContractProposalFieldPart(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function composeContractProposalField(firstPart, secondPart) {
+    return [firstPart, secondPart]
+      .map(normalizeContractProposalFieldPart)
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  function splitContractProposalField(fullValue, secondPart, fallbackFirstPart) {
+    const full = normalizeContractProposalFieldPart(fullValue);
+    const suffix = normalizeContractProposalFieldPart(secondPart);
+    const fallback = normalizeContractProposalFieldPart(fallbackFirstPart);
+    if (!full) {
+      return { firstPart: fallback, secondPart: "" };
+    }
+    if (suffix && full === suffix) {
+      return { firstPart: "", secondPart: suffix };
+    }
+    if (suffix && full.endsWith(" " + suffix)) {
+      return {
+        firstPart: normalizeContractProposalFieldPart(full.slice(0, full.length - suffix.length)),
+        secondPart: suffix,
+      };
+    }
+    if (fallback && (full === fallback || full.startsWith(fallback + " "))) {
+      return {
+        firstPart: fallback,
+        secondPart: normalizeContractProposalFieldPart(full.slice(fallback.length)),
+      };
+    }
+    return { firstPart: full, secondPart: "" };
+  }
+
+  function getContractProductMeta(form) {
+    const metaEl = form?.querySelector("#registration-type-meta");
+    if (!metaEl) return {};
+    try {
+      const parsed = JSON.parse(metaEl.textContent || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function getContractSelectedProduct(form) {
+    const productId = String(
+      form?.querySelector("#registration-products-container .registration-product-select")?.value || ""
+    ).trim();
+    if (!productId) return null;
+    const products = getContractProductMeta(form).products || [];
+    return Array.isArray(products)
+      ? products.find((product) => String(product?.id || "") === productId) || null
+      : null;
+  }
+
+  function getContractServiceGoalReportEntry(form) {
+    const entry = getContractSelectedProduct(form)?.service_goal_report;
+    return entry && typeof entry === "object" ? entry : null;
+  }
+
+  function syncContractProposalTypeDefaults(form, force) {
+    const projectNameInput = form.querySelector("#contracts-proposal-project-name-prefix");
+    const purposeInput = form.querySelector("#contracts-proposal-purpose-prefix");
+    const entry = getContractServiceGoalReportEntry(form);
+    if (!projectNameInput || !purposeInput || !entry) return;
+
+    if (force || !String(projectNameInput.value || "").trim()) {
+      projectNameInput.value = entry.report_title || "";
+    }
+    if (force || !String(purposeInput.value || "").trim()) {
+      purposeInput.value = entry.service_goal || "";
+    }
+  }
+
+  function initContractCompositeProposalField(form, options) {
+    const hiddenInput = form.querySelector(options.hiddenSelector);
+    const prefixInput = form.querySelector(options.prefixSelector);
+    const suffixInput = form.querySelector(options.suffixSelector);
+    const assetOwnerInput = form.querySelector('input[name="asset_owner"]');
+    if (!hiddenInput || !prefixInput || !suffixInput || !assetOwnerInput || hiddenInput.dataset.compositeBound === "1") {
+      return;
+    }
+    hiddenInput.dataset.compositeBound = "1";
+
+    const measureEl = document.createElement("span");
+    measureEl.style.position = "absolute";
+    measureEl.style.visibility = "hidden";
+    measureEl.style.whiteSpace = "pre";
+    measureEl.style.pointerEvents = "none";
+    measureEl.style.left = "-9999px";
+    measureEl.style.top = "-9999px";
+    document.body.appendChild(measureEl);
+
+    const initialParts = splitContractProposalField(
+      hiddenInput.value,
+      assetOwnerInput.value,
+      options.getFallbackFirstPart()
+    );
+    prefixInput.value = initialParts.firstPart;
+    suffixInput.value = initialParts.secondPart;
+
+    function syncPrefixWidth() {
+      const styles = window.getComputedStyle(prefixInput);
+      const text = prefixInput.value || prefixInput.placeholder || "";
+      measureEl.style.font = styles.font;
+      measureEl.style.fontFamily = styles.fontFamily;
+      measureEl.style.fontSize = styles.fontSize;
+      measureEl.style.fontWeight = styles.fontWeight;
+      measureEl.style.fontStyle = styles.fontStyle;
+      measureEl.style.letterSpacing = styles.letterSpacing;
+      measureEl.style.textTransform = styles.textTransform;
+      measureEl.textContent = text.replace(/ /g, "\u00a0");
+      const paddingLeft = parseFloat(styles.paddingLeft) || 0;
+      const paddingRight = parseFloat(styles.paddingRight) || 0;
+      const width = Math.max(
+        12,
+        Math.ceil(measureEl.getBoundingClientRect().width + paddingLeft + paddingRight + 2)
+      );
+      prefixInput.style.width = width + "px";
+      prefixInput.style.flexBasis = width + "px";
+    }
+
+    function syncCombinedValue() {
+      hiddenInput.value = composeContractProposalField(prefixInput.value, suffixInput.value);
+      syncPrefixWidth();
+    }
+
+    function syncSuffixFromAssetOwner() {
+      suffixInput.value = normalizeContractProposalFieldPart(assetOwnerInput.value);
+      syncCombinedValue();
+    }
+
+    function syncPrefixFromType(force) {
+      options.syncPrefixFromType(force);
+      syncCombinedValue();
+    }
+
+    prefixInput.addEventListener("input", syncCombinedValue);
+    prefixInput.addEventListener("change", syncCombinedValue);
+    suffixInput.addEventListener("input", syncCombinedValue);
+    suffixInput.addEventListener("change", syncCombinedValue);
+    assetOwnerInput.addEventListener("input", syncSuffixFromAssetOwner);
+    assetOwnerInput.addEventListener("change", syncSuffixFromAssetOwner);
+    form.addEventListener("registration-asset-owner-changed", syncSuffixFromAssetOwner);
+    form.addEventListener("registration-customer-changed", syncSuffixFromAssetOwner);
+    form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener("change", syncSuffixFromAssetOwner);
+    form.querySelector("#registration-products-container")?.addEventListener("change", () => {
+      window.setTimeout(() => syncPrefixFromType(true), 0);
+    });
+
+    syncPrefixFromType(false);
+    syncSuffixFromAssetOwner();
+    syncCombinedValue();
+  }
+
+  function initContractCompositeProposalFields(form) {
+    if (!form) return;
+    initContractCompositeProposalField(form, {
+      hiddenSelector: 'input[name="proposal_project_name"]',
+      prefixSelector: "#contracts-proposal-project-name-prefix",
+      suffixSelector: "#contracts-proposal-project-name-suffix",
+      getFallbackFirstPart: function () {
+        return getContractServiceGoalReportEntry(form)?.report_title || "";
+      },
+      syncPrefixFromType: function (force) {
+        syncContractProposalTypeDefaults(form, force);
+      },
+    });
+    initContractCompositeProposalField(form, {
+      hiddenSelector: 'input[name="purpose"]',
+      prefixSelector: "#contracts-proposal-purpose-prefix",
+      suffixSelector: "#contracts-proposal-purpose-suffix",
+      getFallbackFirstPart: function () {
+        return getContractServiceGoalReportEntry(form)?.service_goal || "";
+      },
+      syncPrefixFromType: function (force) {
+        syncContractProposalTypeDefaults(form, force);
+      },
+    });
+  }
+
   function buildContractProjectShortUid(values, maps) {
     const number = Math.max(0, Math.min(9999, parseInt(values.number, 10) || 0));
     const formattedNumber = String(number).padStart(4, "0");
@@ -1498,8 +2361,8 @@
       btn.classList.add("is-loading");
       try {
         await htmx.ajax("GET", url, {
-          target: "#contracts-modal .modal-content",
-          swap: "innerHTML",
+          target: "#contracts-drafts-pane",
+          swap: "outerHTML",
         });
       } finally {
         btn.classList.remove("is-loading");
@@ -1510,43 +2373,161 @@
     syncPrefillButtonState();
   }
 
-  function initCurrentModal() {
-    const modal = document.querySelector("#contracts-modal");
-    if (!modal) return;
-    const form = modal.querySelector("form");
-    attachProposalRegistrationSelectDisplay(form);
-    attachGroupSelectDisplay(form);
-    attachContractProjectShortUidPreview(form);
-    attachProposalPrefillButton(form);
-    if (typeof window.initRegistrationCustomerMeta === "function") {
-      window.initRegistrationCustomerMeta(form, {
-        customerChangedEvent: "registration-customer-changed",
-        assetOwnerChangedEvent: "registration-asset-owner-changed",
+  function contractProductsById(form) {
+    const products = getContractProductMeta(form).products || [];
+    const map = {};
+    if (Array.isArray(products)) {
+      products.forEach((product) => {
+        map[String(product?.id || "")] = product || {};
       });
     }
-    if (typeof window.attachContractPaymentSchedule === "function") {
-      window.attachContractPaymentSchedule(form);
+    return map;
+  }
+
+  function resetContractServiceBlock(block) {
+    delete block.dataset.serviceSectionsBound;
+    delete block.dataset.serviceTextEditorBound;
+    block.__proposalServiceSectionsTableApi = null;
+    block.__proposalServiceTextEditorApi = null;
+    const defaults = {
+      "#proposal-service-sections-payload": "[]",
+      "#proposal-service-sections-editor-state": "[]",
+      "#proposal-service-customer-tz-editor-state": "",
+      "#proposal-service-composition-customer-tz": "",
+      "#proposal-service-composition-mode": "sections",
+    };
+    Object.entries(defaults).forEach(([selector, value]) => {
+      const input = block.querySelector(selector);
+      if (input) input.value = value;
+    });
+    block.querySelector('[name="service_composition"]')?.replaceChildren();
+    const textarea = block.querySelector('[name="service_composition"]');
+    if (textarea) textarea.value = "";
+    const modeToggle = block.querySelector("#proposal-service-mode-toggle");
+    if (modeToggle) modeToggle.checked = false;
+    block.querySelector("#proposal-service-sections-tbody")?.replaceChildren();
+    block.querySelector("#proposal-service-sections-row-actions")?.classList.add("d-none");
+    block.querySelector("#proposal-service-text-modal")?.classList.add("d-none");
+  }
+
+  function updateContractServiceBlockTitle(block, rank, totalStages, shortLabel) {
+    const suffix = totalStages > 1
+      ? `: Этап ${rank}${shortLabel ? ` ${shortLabel}` : ""}`
+      : "";
+    block.querySelectorAll(".proposal-stage-block-title").forEach((node) => {
+      node.textContent = `Состав услуг / техническое задание${suffix}`;
+    });
+  }
+
+  function syncContractServiceStageBlocks(form) {
+    if (!form) return;
+    const container = form.querySelector("#contract-service-stages-container");
+    const productRows = Array.from(form.querySelectorAll("#registration-products-container .registration-product-row"));
+    if (!container || !productRows.length) return;
+    let blocks = Array.from(container.querySelectorAll(".proposal-stage-service-block"));
+    while (blocks.length < productRows.length && blocks.length) {
+      const clone = blocks[blocks.length - 1].cloneNode(true);
+      resetContractServiceBlock(clone);
+      container.appendChild(clone);
+      blocks = Array.from(container.querySelectorAll(".proposal-stage-service-block"));
     }
-    if (typeof window.attachContractStageTerms === "function") {
-      window.attachContractStageTerms(form);
+    while (blocks.length > productRows.length && blocks.length > 1) {
+      blocks[blocks.length - 1].remove();
+      blocks = Array.from(container.querySelectorAll(".proposal-stage-service-block"));
     }
-    if (typeof window.attachRegistrationProducts === "function") {
-      window.attachRegistrationProducts(form);
-    }
-    if (typeof window.initDatepickers === "function") {
-      window.initDatepickers(form);
+
+    const productsMap = contractProductsById(form);
+    const blocksToAutofill = [];
+    blocks.forEach((block, index) => {
+      const rank = index + 1;
+      const productId = String(productRows[index]?.querySelector(".registration-product-select")?.value || "").trim();
+      const product = productsMap[productId] || {};
+      const stageTypeInput = block.querySelector("[data-proposal-stage-type]");
+      const previousProductId = String(stageTypeInput?.value || "").trim();
+      block.dataset.proposalStageKey = String(rank);
+      if (stageTypeInput) stageTypeInput.value = productId;
+      updateContractServiceBlockTitle(block, rank, blocks.length, String(product.short_label || "").trim());
+      if (previousProductId && previousProductId !== productId) {
+        resetContractServiceBlock(block);
+        if (stageTypeInput) stageTypeInput.value = productId;
+        if (productId) blocksToAutofill.push(block);
+      }
+    });
+
+    if (window.ProposalServiceBlocks && typeof window.ProposalServiceBlocks.init === "function") {
+      window.ProposalServiceBlocks.init(form, { autofillEmpty: true });
+      blocksToAutofill.forEach((block) => {
+        window.ProposalServiceBlocks.replaceFromType?.(block, { reason: "contract-product-change" });
+      });
     }
   }
 
-  document.addEventListener("DOMContentLoaded", initCurrentModal);
+  window.syncContractServiceStageBlocks = syncContractServiceStageBlocks;
+
+  function initContractProjectFormPage(root) {
+    const page = root?.matches?.("[data-contract-project-form-page]")
+      ? root
+      : root?.querySelector?.("[data-contract-project-form-page]") || document.querySelector("[data-contract-project-form-page]");
+    if (!page) return;
+    const form = page.querySelector("form");
+    const revealPage = () => {
+      page.classList.remove("contracts-project-form-page--pending");
+      page.style.visibility = "";
+      page.removeAttribute("aria-busy");
+    };
+    if (!form) {
+      revealPage();
+      return;
+    }
+    try {
+      attachProposalRegistrationSelectDisplay(form);
+      attachGroupSelectDisplay(form);
+      attachContractProjectShortUidPreview(form);
+      attachProposalPrefillButton(form);
+      if (typeof window.initRegistrationCustomerMeta === "function") {
+        window.initRegistrationCustomerMeta(form, {
+          customerChangedEvent: "registration-customer-changed",
+          assetOwnerChangedEvent: "registration-asset-owner-changed",
+        });
+      }
+      if (typeof window.attachContractPaymentSchedule === "function") {
+        window.attachContractPaymentSchedule(form);
+      }
+      if (typeof window.attachContractStageTerms === "function") {
+        window.attachContractStageTerms(form);
+      }
+      if (typeof window.attachRegistrationProducts === "function") {
+        window.attachRegistrationProducts(form);
+      }
+      syncContractServiceStageBlocks(form);
+      initContractCompositeProposalFields(form);
+      if (typeof window.initDatepickers === "function") {
+        window.initDatepickers(form);
+      }
+      if (typeof window.updateContractsProjectFormHeader === "function") {
+        window.updateContractsProjectFormHeader();
+      }
+    } finally {
+      if (window.requestAnimationFrame) {
+        window.requestAnimationFrame(revealPage);
+      } else {
+        revealPage();
+      }
+    }
+  }
+  window.initContractProjectFormPage = initContractProjectFormPage;
+
+  document.addEventListener("DOMContentLoaded", () => initContractProjectFormPage());
 
   document.addEventListener("htmx:afterSwap", (event) => {
-    if (!event.detail.target) return;
-    if (!event.detail.target.closest("#contracts-modal")) return;
-    initCurrentModal();
+    const target = event.detail.target;
+    if (!(target instanceof Element)) return;
+    if (target.matches("[data-contract-project-form-page]") || target.querySelector("[data-contract-project-form-page]")) {
+      initContractProjectFormPage(target);
+    }
   });
 
   (function bootstrapImmediately() {
-    initCurrentModal();
+    initContractProjectFormPage();
   })();
 </script>

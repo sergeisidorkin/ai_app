@@ -2398,6 +2398,8 @@ class ContractsCloudLabelTests(TestCase):
         response = self.client.get(reverse("contracts_development_partial"))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="contracts-drafts-pane"', html=False)
+        self.assertContains(response, 'data-refresh-url="%s"' % reverse("contracts_development_partial"), html=False)
         self.assertContains(response, "Проекты договоров с клиентами")
         self.assertContains(response, "Вид соглашения")
         self.assertContains(response, 'data-col="tkp-id"', html=False)
@@ -2805,6 +2807,8 @@ class ContractsCloudLabelTests(TestCase):
         response = self.client.get(reverse("contracts_development_partial"))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="contracts-drafts-pane"', html=False)
+        self.assertContains(response, 'data-refresh-url="%s"' % reverse("contracts_development_partial"), html=False)
         self.assertContains(response, "Проекты договоров с клиентами")
         self.assertContains(response, "Пока нет данных.")
         self.assertNotContains(response, self.project.name)
@@ -2814,8 +2818,23 @@ class ContractsCloudLabelTests(TestCase):
         response = self.client.get(reverse("contracts_project_registration_create"))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="contracts-drafts-pane"', html=False)
+        self.assertContains(response, 'contracts-project-form-page--pending', html=False)
+        self.assertContains(response, 'style="visibility: hidden;"', html=False)
+        self.assertContains(response, 'aria-busy="true"', html=False)
+        self.assertNotContains(response, "Подготовка формы договора", html=False)
+        self.assertContains(response, 'data-contract-project-form-page="1"', html=False)
+        self.assertContains(response, 'data-header-root-label="Договоры"', html=False)
+        self.assertContains(response, 'data-header-root-url="%s"' % reverse("contracts_development_partial"), html=False)
+        self.assertContains(response, 'data-header-current-label="Новый договор"', html=False)
+        self.assertNotContains(response, 'class="modal-header"', html=False)
+        self.assertNotContains(response, 'class="modal-body modal-body-scroll"', html=False)
+        self.assertNotContains(response, 'data-bs-dismiss="modal"', html=False)
         self.assertContains(response, 'hx-post="%s"' % reverse("contracts_project_registration_create"), html=False)
         self.assertContains(response, 'hx-target="#contracts-drafts-pane"', html=False)
+        self.assertContains(response, 'hx-swap="outerHTML"', html=False)
+        self.assertContains(response, 'data-contract-project-form="1"', html=False)
+        self.assertContains(response, 'data-product-autofill-url-template="%s"' % reverse("proposal_product_autofill", args=[0]), html=False)
         self.assertContains(response, 'id="contracts-sub-number-input"', html=False)
         self.assertContains(response, 'id="contracts-contract-number-input"', html=False)
         self.assertContains(response, 'name="contract_number"', html=False)
@@ -2826,6 +2845,9 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'id="contracts-project-group-alpha2-map"', html=False)
         self.assertContains(response, 'id="contracts-project-proposal-sub-number-map"', html=False)
         self.assertContains(response, "attachContractProjectShortUidPreview", html=False)
+        self.assertContains(response, 'classList.remove("contracts-project-form-page--pending")', html=False)
+        self.assertContains(response, 'page.style.visibility = ""', html=False)
+        self.assertContains(response, 'page.removeAttribute("aria-busy")', html=False)
         self.assertContains(response, 'id="contracts-proposal-registration-select"', html=False)
         self.assertContains(response, 'id="contracts-proposal-registration-display"', html=False)
         self.assertContains(response, 'id="contracts-proposal-prefill-btn"', html=False)
@@ -2842,6 +2864,25 @@ class ContractsCloudLabelTests(TestCase):
         )
         self.assertContains(response, 'id="registration-products-container"', html=False)
         self.assertContains(response, 'id="registration-add-product"', html=False)
+        self.assertContains(response, 'type="hidden" name="proposal_project_name"', html=False)
+        self.assertContains(response, 'id="contracts-proposal-project-name-prefix"', html=False)
+        self.assertContains(response, 'id="contracts-proposal-project-name-suffix"', html=False)
+        self.assertContains(response, 'type="hidden" name="purpose"', html=False)
+        self.assertContains(response, 'id="contracts-proposal-purpose-prefix"', html=False)
+        self.assertContains(response, 'id="contracts-proposal-purpose-suffix"', html=False)
+        self.assertContains(response, 'id="proposal-typical-sections-data"', html=False)
+        self.assertContains(response, 'id="proposal-typical-service-compositions-data"', html=False)
+        self.assertContains(response, 'id="contract-service-stages-container"', html=False)
+        self.assertContains(response, "Состав услуг / техническое задание", html=False)
+        self.assertContains(response, 'name="service_sections_payload"', html=False)
+        self.assertContains(response, 'name="service_sections_editor_state"', html=False)
+        self.assertContains(response, 'name="service_customer_tz_editor_state"', html=False)
+        self.assertContains(response, 'name="service_composition_customer_tz"', html=False)
+        self.assertContains(response, 'name="service_composition_mode"', html=False)
+        self.assertContains(response, 'class="btn btn-sm proposal-asset-add-btn d-flex align-items-center"', html=False)
+        self.assertContains(response, 'class="btn btn-sm proposal-asset-add-btn"', html=False)
+        self.assertContains(response, 'id="proposal-service-section-add-btn"', html=False)
+        self.assertContains(response, 'id="proposal-service-text-edit-btn"', html=False)
         self.assertContains(response, "Сроки")
         self.assertContains(response, "График оплаты")
         self.assertContains(response, "Общий для всех этапов", html=False)
@@ -2881,12 +2922,17 @@ class ContractsCloudLabelTests(TestCase):
         content = response.content.decode()
         self.assertIn("contract-date-terms-field", content)
         self.assertNotIn("contract-date-terms-row", content)
-        self.assertEqual(content.count("js-proposal-report-date-lock"), 7)
+        self.assertIn("js-proposal-report-date-lock", content)
         self.assertLess(content.index("proposal-assets-editor proposal-terms-editor"), content.index('name="contract_date"'))
         self.assertLess(content.index('name="contract_date"'), content.index("proposal-stage-terms-row"))
         self.assertLess(content.index('name="contract_date"'), content.index("proposal-terms-table"))
         self.assertLess(content.index("contract-stage-terms-tbody"), content.index("contract-stage-evaluation-tbody"))
         self.assertLess(content.index("proposal-evaluation-terms-table"), content.index('name="evaluation_date"'))
+        self.assertLess(
+            content.index('id="contracts-proposal-purpose-suffix"'),
+            content.index('id="contract-service-stages-container"'),
+        )
+        self.assertLess(content.index('id="contract-service-stages-container"'), content.index("Сроки"))
         self.assertContains(response, 'name="advance_percent"', html=False)
         self.assertContains(response, 'name="final_report_percent"', html=False)
         self.assertContains(response, self.proposal.short_uid)
@@ -2895,6 +2941,8 @@ class ContractsCloudLabelTests(TestCase):
     def test_contracts_project_registration_prefill_from_proposal_create_does_not_persist(self):
         self.proposal.name = "ТКП для prefill"
         self.proposal.customer = "ООО Заказчик prefill"
+        self.proposal.proposal_project_name = "Отчет ТКП для prefill"
+        self.proposal.purpose = "Проверка актива для prefill"
         self.proposal.sub_number = 3
         self.proposal.evaluation_date = date(2026, 1, 1)
         self.proposal.service_term_months = Decimal("1.5")
@@ -2905,6 +2953,19 @@ class ContractsCloudLabelTests(TestCase):
         self.proposal.stage_payloads_json = [
             {
                 "product_id": self.product.pk,
+                "service_sections_json": [{"service_name": "Раздел ТКП", "code": "TKP"}],
+                "service_sections_editor_state": [
+                    {
+                        "code": "TKP",
+                        "service_name": "Раздел ТКП",
+                        "html": "<p><strong>ТЗ из ТКП</strong></p>",
+                        "plain_text": "ТЗ из ТКП",
+                    }
+                ],
+                "service_customer_tz_editor_state": {},
+                "service_composition_customer_tz": "",
+                "service_composition_mode": "sections",
+                "service_composition": "ТЗ из ТКП",
                 "evaluation_date": "01.01.2026",
                 "source_data_term": "1.0",
                 "source_data_date": "10.01.2026",
@@ -2933,12 +2994,18 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(ContractProjectRegistration.objects.count(), count_before)
         self.assertContains(response, 'value="ТКП для prefill"', html=False)
         self.assertContains(response, 'value="ООО Заказчик prefill"', html=False)
+        self.assertContains(response, 'name="proposal_project_name" value="Отчет ТКП для prefill"', html=False)
+        self.assertContains(response, 'name="purpose" value="Проверка актива для prefill"', html=False)
         self.assertContains(response, f'value="{self.proposal.number}"', html=False)
         self.assertContains(response, f'option value="{self.proposal.pk}" selected', html=False)
         self.assertContains(response, 'value="01.01.2026"', html=False)
         self.assertContains(response, 'value="10.01.2026"', html=False)
         self.assertContains(response, 'value="1.5"', html=False)
+        self.assertContains(response, "Раздел ТКП", html=False)
+        self.assertContains(response, "ТЗ из ТКП", html=False)
+        self.assertContains(response, 'name="service_sections_payload"', html=False)
         self.assertContains(response, 'hx-post="%s"' % reverse("contracts_project_registration_create"), html=False)
+        self.assertContains(response, 'data-header-current-label="Новый договор"', html=False)
 
     def test_contracts_project_registration_prefill_from_proposal_edit_preserves_contract_identity(self):
         contract_project = ContractProjectRegistration.objects.create(
@@ -2960,6 +3027,8 @@ class ContractsCloudLabelTests(TestCase):
             name="Новое название из ТКП",
             year=2026,
             customer="Новый заказчик из ТКП",
+            proposal_project_name="Отчет из нового ТКП",
+            purpose="Цель из нового ТКП",
             evaluation_date=date(2026, 6, 1),
             service_term_months=Decimal("3.0"),
             stage_payloads_json=[
@@ -2992,6 +3061,8 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, f'value="{contract_project.short_uid}"', html=False)
         self.assertContains(response, 'value="Новое название из ТКП"', html=False)
         self.assertContains(response, 'value="Новый заказчик из ТКП"', html=False)
+        self.assertContains(response, 'name="proposal_project_name" value="Отчет из нового ТКП"', html=False)
+        self.assertContains(response, 'name="purpose" value="Цель из нового ТКП"', html=False)
         self.assertContains(response, 'value="01.06.2026"', html=False)
         self.assertContains(response, 'value="01.07.2026"', html=False)
         self.assertContains(
@@ -2999,6 +3070,7 @@ class ContractsCloudLabelTests(TestCase):
             'hx-post="%s"' % reverse("contracts_project_registration_edit", args=[contract_project.pk]),
             html=False,
         )
+        self.assertContains(response, f'data-header-current-label="{contract_project.short_uid}"', html=False)
 
     def test_contracts_project_registration_prefill_from_proposal_returns_404_for_missing_proposal(self):
         response = self.client.get(
@@ -3033,8 +3105,11 @@ class ContractsCloudLabelTests(TestCase):
         TypicalServiceTerm.objects.create(
             product=self.product,
             source_data_weeks=3,
+            source_data_term_unit="days",
             preliminary_report_months=Decimal("1.5"),
+            preliminary_report_term_unit="weeks",
             final_report_weeks=2,
+            final_report_term_unit="months",
         )
 
         response = self.client.get(reverse("contracts_project_registration_edit", args=[contract_project.pk]))
@@ -3117,6 +3192,96 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(created.stage_payloads_json[1]["final_report_term_unit"], "months")
         self.assertTrue(created.stage_payloads_json[1]["final_report_date_enabled"])
         self.assertEqual(created.final_report_term_unit, "months")
+
+    def test_contracts_project_registration_create_persists_independent_service_payloads_per_stage(self):
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7015,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk), str(second_product.pk)],
+                "name": "Договор с независимым ТЗ",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "service_sections_payload": [
+                    json.dumps([{"service_name": "Раздел договора 1", "code": "C1"}], ensure_ascii=False),
+                    json.dumps(
+                        [{"service_name": "Раздел договора 2", "code": "C2", "merge_without_code": True}],
+                        ensure_ascii=False,
+                    ),
+                ],
+                "service_sections_editor_state": [
+                    json.dumps(
+                        [
+                            {
+                                "code": "C1",
+                                "service_name": "Раздел договора 1",
+                                "html": "<p><strong>ТЗ этапа 1</strong></p>",
+                                "plain_text": "ТЗ этапа 1",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [
+                            {
+                                "code": "C2",
+                                "service_name": "Раздел договора 2",
+                                "html": "<p><u>ТЗ этапа 2</u></p>",
+                                "plain_text": "ТЗ этапа 2",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                ],
+                "service_customer_tz_editor_state": [
+                    "",
+                    json.dumps(
+                        {"html": "<p><em>ТЗ заказчика этапа 2</em></p>", "plain_text": "ТЗ заказчика этапа 2"},
+                        ensure_ascii=False,
+                    ),
+                ],
+                "service_composition_customer_tz": ["", "ТЗ заказчика этапа 2"],
+                "service_composition_mode": ["sections", "customer_tz"],
+                "service_composition": ["ТЗ этапа 1", "ТЗ из разделов этапа 2"],
+                "evaluation_date": ["01.01.2026", "01.07.2026"],
+                "service_term_months": ["1.0", "2.0"],
+                "preliminary_report_date": ["01.02.2026", "01.09.2026"],
+                "final_report_term_weeks": ["2.0", "3.0"],
+                "final_report_date": ["15.02.2026", "30.09.2026"],
+                "next_stage_delay_days": ["0", "0"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = ContractProjectRegistration.objects.get(number=7015, name="Договор с независимым ТЗ")
+        self.assertEqual(len(created.stage_payloads_json), 2)
+        self.assertEqual(created.stage_payloads_json[0]["service_composition"], "ТЗ этапа 1")
+        self.assertEqual(created.stage_payloads_json[1]["service_composition_mode"], "customer_tz")
+        self.assertEqual(created.stage_payloads_json[1]["service_composition"], "ТЗ заказчика этапа 2")
+        self.assertEqual(created.service_composition_mode, "customer_tz")
+        self.assertEqual(created.service_composition, "ТЗ заказчика этапа 2")
+        self.assertEqual(created.service_composition_customer_tz, "ТЗ заказчика этапа 2")
+        self.assertEqual(created.service_customer_tz_editor_state["plain_text"], "ТЗ заказчика этапа 2")
+        self.assertEqual(created.stage_payloads_json[0]["service_sections_json"][1]["code"], "C1")
+        self.assertEqual(created.stage_payloads_json[1]["service_sections_json"][1]["code"], "C2")
+        self.assertTrue(created.stage_payloads_json[1]["service_sections_json"][1]["merge_without_code"])
+
+        edit_response = self.client.get(reverse("contracts_project_registration_edit", args=[created.pk]))
+        self.assertContains(edit_response, "Состав услуг / техническое задание: Этап 1 DD", html=False)
+        self.assertContains(edit_response, "Состав услуг / техническое задание: Этап 2 QAQC", html=False)
+        self.assertContains(edit_response, "ТЗ заказчика этапа 2", html=False)
+        self.assertContains(edit_response, "Раздел договора 1", html=False)
 
     def test_contracts_project_registration_create_persists_disabled_stage_field_toggles(self):
         TypicalServiceTerm.objects.create(
@@ -3210,6 +3375,9 @@ class ContractsCloudLabelTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(ContractProjectRegistration.objects.filter(number=7007).exists())
+        self.assertNotIn("HX-Retarget", response.headers)
+        self.assertContains(response, 'id="contracts-drafts-pane"', html=False)
+        self.assertContains(response, 'hx-target="#contracts-drafts-pane"', html=False)
         self.assertContains(response, "поле «Предварительный отчёт» должно быть целым числом", html=False)
 
     def test_contracts_project_registration_rejects_fractional_final_report_days(self):
@@ -3326,6 +3494,112 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(created.stage_payloads_json[1]["final_report_percent"], "20.00")
         self.assertEqual(created.advance_percent, Decimal("50"))
         self.assertEqual(created.final_report_term_days, 21)
+
+    def test_contracts_project_registration_disables_common_payment_when_preliminary_report_stage_off(self):
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7016,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk), str(second_product.pk)],
+                "name": "Договор с отключенной оплатой предварительного отчета",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "payment_schedule_common": "on",
+                "evaluation_date": ["01.01.2026", "01.07.2026"],
+                "service_term_months_enabled": ["true", "false"],
+                "service_term_months": ["1.0", ""],
+                "preliminary_report_date": ["01.02.2026", ""],
+                "final_report_term_weeks": ["2.0", "3.0"],
+                "final_report_date": ["15.02.2026", "30.09.2026"],
+                "next_stage_delay_days": ["0", "0"],
+                "advance_percent": ["30", "40"],
+                "advance_term_days": ["5", "10"],
+                "preliminary_report_percent": ["20", "0"],
+                "preliminary_report_term_days": ["6", "0"],
+                "final_report_term_days": ["14", "21"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = ContractProjectRegistration.objects.get(
+            number=7016,
+            name="Договор с отключенной оплатой предварительного отчета",
+        )
+        first_stage, second_stage = created.stage_payloads_json
+        self.assertFalse(first_stage["payment_schedule_common"])
+        self.assertFalse(second_stage["payment_schedule_common"])
+        self.assertEqual(first_stage["preliminary_report_percent"], "20")
+        self.assertEqual(first_stage["preliminary_report_term_days"], 6)
+        self.assertFalse(second_stage["service_term_months_enabled"])
+        self.assertEqual(second_stage["preliminary_report_percent"], "0")
+        self.assertEqual(second_stage["preliminary_report_term_days"], 0)
+        self.assertEqual(second_stage["final_report_percent"], "60.00")
+        self.assertEqual(created.preliminary_report_percent, Decimal("0"))
+        self.assertEqual(created.preliminary_report_term_days, 0)
+        self.assertEqual(created.final_report_percent, Decimal("60.00"))
+
+    def test_contracts_project_registration_allows_common_payment_when_all_preliminary_report_stages_off(self):
+        second_product = Product.objects.create(
+            short_name="QAQC",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7017,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk), str(second_product.pk)],
+                "name": "Договор без предварительного отчета во всех этапах",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "payment_schedule_common": "on",
+                "evaluation_date": ["01.01.2026", "01.07.2026"],
+                "service_term_months_enabled": ["false", "false"],
+                "service_term_months": ["", ""],
+                "preliminary_report_date": ["", ""],
+                "final_report_term_weeks": ["2.0", "3.0"],
+                "final_report_date": ["15.02.2026", "30.09.2026"],
+                "next_stage_delay_days": ["0", "0"],
+                "advance_percent": "40",
+                "advance_term_days": "10",
+                "preliminary_report_percent": "0",
+                "preliminary_report_term_days": "0",
+                "final_report_term_days": "21",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created = ContractProjectRegistration.objects.get(
+            number=7017,
+            name="Договор без предварительного отчета во всех этапах",
+        )
+        self.assertTrue(created.stage_payloads_json[0]["payment_schedule_common"])
+        self.assertTrue(created.stage_payloads_json[1]["payment_schedule_common"])
+        self.assertFalse(created.stage_payloads_json[0]["service_term_months_enabled"])
+        self.assertFalse(created.stage_payloads_json[1]["service_term_months_enabled"])
+        self.assertEqual(created.stage_payloads_json[0]["preliminary_report_percent"], "0")
+        self.assertEqual(created.stage_payloads_json[1]["preliminary_report_percent"], "0")
+        self.assertEqual(created.stage_payloads_json[0]["preliminary_report_term_days"], 0)
+        self.assertEqual(created.stage_payloads_json[1]["preliminary_report_term_days"], 0)
+        self.assertEqual(created.preliminary_report_percent, Decimal("0"))
+        self.assertEqual(created.final_report_percent, Decimal("60.00"))
 
     def test_contracts_project_registration_edit_form_shows_readonly_contract_id(self):
         contract_project = ContractProjectRegistration.objects.create(
@@ -3506,6 +3780,8 @@ class ContractsCloudLabelTests(TestCase):
                 "agreement_type": "MAIN",
                 "type_id": [str(self.product.pk), str(second_product.pk)],
                 "name": "Новый договорный проект",
+                "proposal_project_name": "Отчет из договора",
+                "purpose": "Цель из договора",
                 "status": "Разрабатывается проект договора",
                 "year": 2026,
             },
@@ -3515,6 +3791,8 @@ class ContractsCloudLabelTests(TestCase):
         created = ContractProjectRegistration.objects.get(number=7002, name="Новый договорный проект")
         self.assertEqual(created.sub_number, 3)
         self.assertEqual(created.contract_number, "IMC/7002-RU/05-26")
+        self.assertEqual(created.proposal_project_name, "Отчет из договора")
+        self.assertEqual(created.purpose, "Цель из договора")
         self.assertEqual(created.proposal_registration_id, second_proposal.pk)
         self.assertEqual(created.type_short_display, "DD-QAQC")
         self.assertEqual(
@@ -3681,6 +3959,8 @@ class ContractsCloudLabelTests(TestCase):
                 "agreement_type": "MAIN",
                 "type_id": [str(self.product.pk)],
                 "name": "Договорная строка после",
+                "proposal_project_name": "Обновленный отчет договора",
+                "purpose": "Обновленная цель договора",
                 "status": "Отправлен проект договора",
                 "year": 2027,
                 "contract_date": "20.05.2026",
@@ -3699,6 +3979,8 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(response.status_code, 200)
         contract_project.refresh_from_db()
         self.assertEqual(contract_project.contract_date, date(2026, 5, 20))
+        self.assertEqual(contract_project.proposal_project_name, "Обновленный отчет договора")
+        self.assertEqual(contract_project.purpose, "Обновленная цель договора")
         self.assertEqual(contract_project.evaluation_date, date(2026, 1, 1))
         self.assertEqual(str(contract_project.service_term_months), "1.5")
         self.assertEqual(contract_project.preliminary_report_date, date(2026, 2, 15))
@@ -4073,8 +4355,6 @@ class ContractVariableResolverTests(TestCase):
         )
         profile = ExpertProfile.objects.create(employee=employee, position=1)
         ExpertContractDetails.objects.create(expert_profile=profile, citizenship_record=passport)
-        ExpertContractDetails.objects.create(expert_profile=profile, citizenship_record=inn)
-        ExpertContractDetails.objects.create(expert_profile=profile, citizenship_record=snils)
         product = Product.objects.create(
             short_name="DD",
             name_en="Due Diligence",

@@ -119,9 +119,12 @@ TYPICAL_SERVICE_COMPOSITION_XLSX_HEADERS = [
 TYPICAL_SERVICE_COMPOSITION_EDITOR_STATE_HEADER = "Состояние редактора (JSON)"
 TYPICAL_SERVICE_TERM_CSV_HEADERS = [
     "Продукт",
-    "Сроки предоставления исходных данных, нед.",
-    "Срок подготовки Предварительного отчёта, мес.",
-    "Срок подготовки Итогового отчёта, нед.",
+    "Сроки предоставления исходных данных",
+    "Единица срока предоставления исходных данных",
+    "Срок подготовки Предварительного отчёта",
+    "Единица срока подготовки Предварительного отчёта",
+    "Срок подготовки Итогового отчёта",
+    "Единица срока подготовки Итогового отчёта",
 ]
 TYPICAL_SERVICE_TERM_GANTT_VERSION = 1
 TYPICAL_SERVICE_TERM_GANTT_SERVICE_SECTION_TYPE = "service_section"
@@ -2256,15 +2259,59 @@ def _add_typical_service_term_gantt_months(start_date, months):
     return whole_date + timedelta(days=extra_days)
 
 
+def _normalize_typical_service_term_unit(value, default):
+    raw = str(value or "").strip()
+    return raw if raw in TypicalServiceTerm.TermUnit.values else default
+
+
+def _typical_service_term_duration_days(value, unit):
+    term_value = max(Decimal(value or 0), Decimal("0"))
+    unit = _normalize_typical_service_term_unit(unit, TypicalServiceTerm.TermUnit.WEEKS)
+    if unit == TypicalServiceTerm.TermUnit.DAYS:
+        return int(term_value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    if unit == TypicalServiceTerm.TermUnit.MONTHS:
+        return int((term_value * Decimal("30")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return int((term_value * Decimal("7")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _add_typical_service_term_gantt_term(start_date, value, unit):
+    unit = _normalize_typical_service_term_unit(unit, TypicalServiceTerm.TermUnit.WEEKS)
+    if unit == TypicalServiceTerm.TermUnit.MONTHS:
+        return _add_typical_service_term_gantt_months(start_date, value)
+    return start_date + timedelta(days=_typical_service_term_duration_days(value, unit))
+
+
+def _typical_service_term_days_to_value(days, unit):
+    safe_days = max(int(days or 0), 0)
+    unit = _normalize_typical_service_term_unit(unit, TypicalServiceTerm.TermUnit.WEEKS)
+    if unit == TypicalServiceTerm.TermUnit.DAYS:
+        return Decimal(safe_days)
+    if unit == TypicalServiceTerm.TermUnit.MONTHS:
+        return (Decimal(safe_days) / Decimal("30")).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return (Decimal(safe_days) / Decimal("7")).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+
 def _serialize_typical_service_term_gantt_date(value):
     return value.isoformat()
 
 
 def _default_typical_service_term_gantt_data(term):
     base_date = _typical_service_term_gantt_base_date()
-    source_data_end = base_date + timedelta(days=int(getattr(term, "source_data_weeks", 0) or 0) * 7)
-    preliminary_end = _add_typical_service_term_gantt_months(source_data_end, term.preliminary_report_months)
-    final_end = preliminary_end + timedelta(days=int(term.final_report_weeks or 0) * 7)
+    source_data_end = _add_typical_service_term_gantt_term(
+        base_date,
+        getattr(term, "source_data_weeks", 0),
+        getattr(term, "source_data_term_unit", TypicalServiceTerm.TermUnit.WEEKS),
+    )
+    preliminary_end = _add_typical_service_term_gantt_term(
+        source_data_end,
+        term.preliminary_report_months,
+        getattr(term, "preliminary_report_term_unit", TypicalServiceTerm.TermUnit.MONTHS),
+    )
+    final_end = _add_typical_service_term_gantt_term(
+        preliminary_end,
+        term.final_report_weeks,
+        getattr(term, "final_report_term_unit", TypicalServiceTerm.TermUnit.WEEKS),
+    )
     prefix = f"typical-service-term-{term.pk}"
     return {
         "data": [
@@ -2916,7 +2963,13 @@ def _find_typical_service_term_system_task(dated_tasks, system_key):
     return None
 
 
-def _calculate_typical_service_term_durations(dated_tasks):
+def _calculate_typical_service_term_durations(
+    dated_tasks,
+    *,
+    source_data_unit=TypicalServiceTerm.TermUnit.WEEKS,
+    preliminary_unit=TypicalServiceTerm.TermUnit.MONTHS,
+    final_unit=TypicalServiceTerm.TermUnit.WEEKS,
+):
     source_data_task = _find_typical_service_term_system_task(dated_tasks, "source_data")
     preliminary_task = _find_typical_service_term_system_task(dated_tasks, "preliminary_report")
     final_task = _find_typical_service_term_system_task(dated_tasks, "final_report")
@@ -2933,13 +2986,10 @@ def _calculate_typical_service_term_durations(dated_tasks):
     source_data_days = max((source_data_end - source_data_start).days, 0)
     preliminary_days = max((preliminary_end - preliminary_start).days, 0)
     final_days = max((final_end - final_start).days, 0)
-    source_data_weeks = int((Decimal(source_data_days) / Decimal("7")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    preliminary_months = (Decimal(preliminary_days) / Decimal("30")).quantize(
-        Decimal("0.1"),
-        rounding=ROUND_HALF_UP,
-    )
-    final_weeks = int((Decimal(final_days) / Decimal("7")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    return max(source_data_weeks, 0), preliminary_months, max(final_weeks, 0)
+    source_data_value = _typical_service_term_days_to_value(source_data_days, source_data_unit)
+    preliminary_value = _typical_service_term_days_to_value(preliminary_days, preliminary_unit)
+    final_value = _typical_service_term_days_to_value(final_days, final_unit)
+    return source_data_value, preliminary_value, final_value
 
 
 def _typical_service_term_specialty_options():
@@ -3038,8 +3088,14 @@ def _typical_service_term_gantt_response_payload(term):
             "id": term.pk,
             "product": term.product.short_name,
             "source_data_weeks": term.source_data_weeks,
+            "source_data_term_unit": term.source_data_term_unit,
+            "source_data_display": term.source_data_display,
             "preliminary_report_months": term.preliminary_report_months_display,
+            "preliminary_report_term_unit": term.preliminary_report_term_unit,
+            "preliminary_report_display": term.preliminary_report_display,
             "final_report_weeks": term.final_report_weeks,
+            "final_report_term_unit": term.final_report_term_unit,
+            "final_report_display": term.final_report_display,
         },
     }
 
@@ -3141,7 +3197,12 @@ def typical_service_term_gantt(request, pk: int):
             specialty_options,
             executor_options,
         )
-        source_data_weeks, preliminary_months, final_weeks = _calculate_typical_service_term_durations(dated_tasks)
+        source_data_weeks, preliminary_months, final_weeks = _calculate_typical_service_term_durations(
+            dated_tasks,
+            source_data_unit=term.source_data_term_unit,
+            preliminary_unit=term.preliminary_report_term_unit,
+            final_unit=term.final_report_term_unit,
+        )
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
@@ -3160,6 +3221,62 @@ def typical_service_term_delete(request, pk: int):
     term = get_object_or_404(TypicalServiceTerm, pk=pk)
     term.delete()
     return _render_policy_updated(request)
+
+
+def _typical_service_term_unit_label(unit):
+    return dict(TypicalServiceTerm.TermUnit.choices).get(unit, "")
+
+
+def _parse_typical_service_term_csv_unit(raw, *, default, row_index, field_label):
+    value = str(raw or "").strip().lower().replace("\u00a0", " ")
+    value = " ".join(value.split())
+    if not value:
+        return default
+    aliases = {
+        "days": TypicalServiceTerm.TermUnit.DAYS,
+        "day": TypicalServiceTerm.TermUnit.DAYS,
+        "дн": TypicalServiceTerm.TermUnit.DAYS,
+        "дн.": TypicalServiceTerm.TermUnit.DAYS,
+        "день": TypicalServiceTerm.TermUnit.DAYS,
+        "дни": TypicalServiceTerm.TermUnit.DAYS,
+        "weeks": TypicalServiceTerm.TermUnit.WEEKS,
+        "week": TypicalServiceTerm.TermUnit.WEEKS,
+        "нед": TypicalServiceTerm.TermUnit.WEEKS,
+        "нед.": TypicalServiceTerm.TermUnit.WEEKS,
+        "неделя": TypicalServiceTerm.TermUnit.WEEKS,
+        "недели": TypicalServiceTerm.TermUnit.WEEKS,
+        "months": TypicalServiceTerm.TermUnit.MONTHS,
+        "month": TypicalServiceTerm.TermUnit.MONTHS,
+        "мес": TypicalServiceTerm.TermUnit.MONTHS,
+        "мес.": TypicalServiceTerm.TermUnit.MONTHS,
+        "месяц": TypicalServiceTerm.TermUnit.MONTHS,
+        "месяцы": TypicalServiceTerm.TermUnit.MONTHS,
+    }
+    unit = aliases.get(value)
+    if unit:
+        return unit
+    raise ValueError(f"Строка {row_index}: некорректная единица для поля «{field_label}» — «{raw}».")
+
+
+def _parse_typical_service_term_csv_decimal(raw, *, unit, row_index, field_label):
+    value = str(raw or "").strip().replace("\u00a0", "").replace(" ", "")
+    if not value:
+        value = "0"
+    try:
+        parsed = Decimal(value.replace(",", "."))
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"Строка {row_index}: некорректный срок «{field_label}» — «{raw}».")
+    if parsed < 0:
+        raise ValueError(f"Строка {row_index}: срок «{field_label}» не может быть отрицательным.")
+    if unit == TypicalServiceTerm.TermUnit.DAYS and parsed != parsed.to_integral_value():
+        raise ValueError(f"Строка {row_index}: срок «{field_label}» в днях должен быть целым числом.")
+    return parsed.to_integral_value() if unit == TypicalServiceTerm.TermUnit.DAYS else parsed
+
+
+def _format_typical_service_term_csv_decimal(value, unit):
+    if unit == TypicalServiceTerm.TermUnit.DAYS:
+        return str(int(Decimal(value or 0)))
+    return format(Decimal(value or 0), ".1f").replace(".", ",")
 
 
 @login_required
@@ -3208,9 +3325,7 @@ def typical_service_term_csv_upload(request):
             continue
         if len(row) < 3:
             warnings.append(
-                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3 или 4: "
-                "Продукт, Сроки предоставления исходных данных, нед., "
-                "Срок подготовки Предварительного отчёта, мес., Срок подготовки Итогового отчёта, нед.)."
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 3, 4 или 7)."
             )
             continue
 
@@ -3220,36 +3335,58 @@ def typical_service_term_csv_upload(request):
             warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
             continue
 
-        has_source_data_column = len(row) >= 4
-        source_data_raw = row[1].strip() if has_source_data_column else "0"
-        preliminary_raw = row[2].strip() if has_source_data_column else row[1].strip()
-        final_raw = row[3].strip() if has_source_data_column else row[2].strip()
-
         try:
-            source_data_weeks = int(source_data_raw or "0")
-        except (TypeError, ValueError):
-            warnings.append(f"Строка {i}: некорректный срок исходных данных «{source_data_raw}».")
-            continue
-        if source_data_weeks < 0:
-            warnings.append(f"Строка {i}: срок исходных данных не может быть отрицательным.")
-            continue
+            if len(row) >= 7:
+                source_data_raw = row[1].strip()
+                source_data_unit = _parse_typical_service_term_csv_unit(
+                    row[2],
+                    default=TypicalServiceTerm.TermUnit.WEEKS,
+                    row_index=i,
+                    field_label="Сроки предоставления исходных данных",
+                )
+                preliminary_raw = row[3].strip()
+                preliminary_unit = _parse_typical_service_term_csv_unit(
+                    row[4],
+                    default=TypicalServiceTerm.TermUnit.MONTHS,
+                    row_index=i,
+                    field_label="Срок подготовки Предварительного отчёта",
+                )
+                final_raw = row[5].strip()
+                final_unit = _parse_typical_service_term_csv_unit(
+                    row[6],
+                    default=TypicalServiceTerm.TermUnit.WEEKS,
+                    row_index=i,
+                    field_label="Срок подготовки Итогового отчёта",
+                )
+            else:
+                has_source_data_column = len(row) >= 4
+                source_data_raw = row[1].strip() if has_source_data_column else "0"
+                preliminary_raw = row[2].strip() if has_source_data_column else row[1].strip()
+                final_raw = row[3].strip() if has_source_data_column else row[2].strip()
+                source_data_unit = TypicalServiceTerm.TermUnit.WEEKS
+                preliminary_unit = TypicalServiceTerm.TermUnit.MONTHS
+                final_unit = TypicalServiceTerm.TermUnit.WEEKS
 
-        try:
-            preliminary_report_months = Decimal(preliminary_raw.replace(",", "."))
-        except (InvalidOperation, ValueError):
-            warnings.append(f"Строка {i}: некорректный срок предварительного отчёта «{preliminary_raw}».")
-            continue
-        if preliminary_report_months < 0:
-            warnings.append(f"Строка {i}: срок предварительного отчёта не может быть отрицательным.")
-            continue
-
-        try:
-            final_report_weeks = int(final_raw)
-        except (TypeError, ValueError):
-            warnings.append(f"Строка {i}: некорректный срок итогового отчёта «{final_raw}».")
-            continue
-        if final_report_weeks < 0:
-            warnings.append(f"Строка {i}: срок итогового отчёта не может быть отрицательным.")
+            source_data_weeks = _parse_typical_service_term_csv_decimal(
+                source_data_raw,
+                unit=source_data_unit,
+                row_index=i,
+                field_label="Сроки предоставления исходных данных",
+            )
+            preliminary_report_months = _parse_typical_service_term_csv_decimal(
+                preliminary_raw,
+                unit=preliminary_unit,
+                row_index=i,
+                field_label="Срок подготовки Предварительного отчёта",
+            )
+            final_report_weeks = _parse_typical_service_term_csv_decimal(
+                final_raw,
+                unit=final_unit,
+                row_index=i,
+                field_label="Срок подготовки Итогового отчёта",
+            )
+        except ValueError as exc:
+            warnings.append(str(exc))
             continue
 
         try:
@@ -3258,8 +3395,11 @@ def typical_service_term_csv_upload(request):
             if was_created:
                 item = TypicalServiceTerm(product=product, position=_next_position(TypicalServiceTerm))
             item.source_data_weeks = source_data_weeks
+            item.source_data_term_unit = source_data_unit
             item.preliminary_report_months = preliminary_report_months
+            item.preliminary_report_term_unit = preliminary_unit
             item.final_report_weeks = final_report_weeks
+            item.final_report_term_unit = final_unit
             item.save()
             if was_created:
                 created += 1
@@ -3293,9 +3433,15 @@ def typical_service_term_csv_download(request):
         writer.writerow(
             [
                 term.product.short_name,
-                term.source_data_weeks,
-                term.preliminary_report_months_display,
-                term.final_report_weeks,
+                _format_typical_service_term_csv_decimal(term.source_data_weeks, term.source_data_term_unit),
+                _typical_service_term_unit_label(term.source_data_term_unit),
+                _format_typical_service_term_csv_decimal(
+                    term.preliminary_report_months,
+                    term.preliminary_report_term_unit,
+                ),
+                _typical_service_term_unit_label(term.preliminary_report_term_unit),
+                _format_typical_service_term_csv_decimal(term.final_report_weeks, term.final_report_term_unit),
+                _typical_service_term_unit_label(term.final_report_term_unit),
             ]
         )
 

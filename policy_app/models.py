@@ -653,26 +653,55 @@ class TypicalServiceComposition(models.Model):
 
 
 class TypicalServiceTerm(models.Model):
+    class TermUnit(models.TextChoices):
+        DAYS = "days", "дн."
+        WEEKS = "weeks", "нед."
+        MONTHS = "months", "мес."
+
     product = models.ForeignKey(
         Product,
         verbose_name="Продукт",
         on_delete=models.CASCADE,
         related_name="typical_service_terms",
     )
-    source_data_weeks = models.PositiveIntegerField(
-        "Сроки предоставления исходных данных, нед.",
-        default=0,
-    )
-    preliminary_report_months = models.DecimalField(
-        "Срок подготовки Предварительного отчёта, мес.",
+    source_data_weeks = models.DecimalField(
+        "Сроки предоставления исходных данных",
         max_digits=6,
         decimal_places=1,
         default=0,
         validators=[MinValueValidator(0)],
     )
-    final_report_weeks = models.PositiveIntegerField(
-        "Срок подготовки Итогового отчёта, нед.",
+    source_data_term_unit = models.CharField(
+        "Единица срока предоставления исходных данных",
+        max_length=10,
+        choices=TermUnit.choices,
+        default=TermUnit.WEEKS,
+    )
+    preliminary_report_months = models.DecimalField(
+        "Срок подготовки Предварительного отчёта",
+        max_digits=6,
+        decimal_places=1,
         default=0,
+        validators=[MinValueValidator(0)],
+    )
+    preliminary_report_term_unit = models.CharField(
+        "Единица срока подготовки Предварительного отчёта",
+        max_length=10,
+        choices=TermUnit.choices,
+        default=TermUnit.MONTHS,
+    )
+    final_report_weeks = models.DecimalField(
+        "Срок подготовки Итогового отчёта",
+        max_digits=6,
+        decimal_places=1,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
+    final_report_term_unit = models.CharField(
+        "Единица срока подготовки Итогового отчёта",
+        max_length=10,
+        choices=TermUnit.choices,
+        default=TermUnit.WEEKS,
     )
     gantt_data = models.JSONField(
         "Диаграмма Гантта",
@@ -692,14 +721,35 @@ class TypicalServiceTerm(models.Model):
     def __str__(self):
         return (
             f"{self.product.short_name} / "
-            f"{self.source_data_weeks} нед. / "
-            f"{self.preliminary_report_months} мес. / "
-            f"{self.final_report_weeks} нед."
+            f"{self.source_data_display} / "
+            f"{self.preliminary_report_display} / "
+            f"{self.final_report_display}"
         )
+
+    @property
+    def source_data_display(self):
+        return self._format_term_display(self.source_data_weeks, self.source_data_term_unit)
 
     @property
     def preliminary_report_months_display(self):
         return format(self.preliminary_report_months, ".1f").replace(".", ",")
+
+    @property
+    def preliminary_report_display(self):
+        return self._format_term_display(self.preliminary_report_months, self.preliminary_report_term_unit)
+
+    @property
+    def final_report_display(self):
+        return self._format_term_display(self.final_report_weeks, self.final_report_term_unit)
+
+    @classmethod
+    def _format_term_display(cls, value, unit):
+        unit = unit if unit in cls.TermUnit.values else cls.TermUnit.WEEKS
+        if unit == cls.TermUnit.DAYS:
+            display_value = str(int(value or 0))
+        else:
+            display_value = format(value or 0, ".1f").replace(".", ",")
+        return f"{display_value} {dict(cls.TermUnit.choices).get(unit, '')}".strip()
 
 
 class ExpertiseDirection(models.Model):

@@ -1928,6 +1928,7 @@
           var DEFAULT_CONTRACTS_SECTION = '{% if is_expert %}in-progress{% else %}in-development{% endif %}';
 
           var sidebar = document.getElementById('contracts-second-sidebar-list');
+          var sidebarAside = sidebar ? sidebar.closest('aside.second-sidebar') : null;
           var titleEl = document.getElementById('contracts-section-title');
           var masterDropdown = document.getElementById('contracts-master-project-filter-dropdown');
           var masterList = document.getElementById('contracts-master-filter-projects-list');
@@ -1945,6 +1946,50 @@
             var link = sidebar.querySelector('[data-contracts-section="' + key + '"]');
             if (link) link.classList.add('active');
           }
+
+          function currentContractsSectionKey() {
+            var active = sidebar ? sidebar.querySelector('.list-group-item.active') : null;
+            return (active && active.dataset.contractsSection) || DEFAULT_CONTRACTS_SECTION;
+          }
+
+          function updateContractsProjectFormHeader() {
+            var pane = document.getElementById('contracts-drafts-pane');
+            var rootLabel = (pane && pane.dataset.headerRootLabel) || 'Договоры';
+            var rootUrl = (pane && pane.dataset.headerRootUrl) || '';
+            var currentLabel = (pane && pane.dataset.headerCurrentLabel) || '';
+            var currentUrl = (pane && pane.dataset.headerCurrentUrl) || '';
+            var isFormPage = !!currentLabel;
+
+            if (sidebarAside) {
+              sidebarAside.classList.toggle('d-none', isFormPage);
+              if (isFormPage) {
+                sidebarAside.style.setProperty('display', 'none', 'important');
+              } else {
+                sidebarAside.style.removeProperty('display');
+              }
+            }
+            if (masterDropdown) masterDropdown.classList.toggle('d-none', isFormPage || currentContractsSectionKey() !== 'in-progress');
+            if (statusDropdown) statusDropdown.classList.toggle('d-none', isFormPage || currentContractsSectionKey() !== 'in-progress');
+
+            if (!titleEl) return;
+            if (!isFormPage) {
+              titleEl.textContent = CONTRACTS_TITLES[currentContractsSectionKey()] || '';
+              return;
+            }
+
+            var rootHrefAttrs = rootUrl
+              ? ' href="#contracts" hx-get="' + rootUrl + '" hx-target="#contracts-drafts-pane" hx-swap="outerHTML"'
+              : '';
+            var currentHrefAttrs = currentUrl
+              ? ' href="#contracts" hx-get="' + currentUrl + '" hx-target="#contracts-drafts-pane" hx-swap="outerHTML"'
+              : '';
+            titleEl.innerHTML = ''
+              + '<a class="proposal-header-link" ' + rootHrefAttrs + '>' + rootLabel + '</a>'
+              + '<span class="proposal-header-separator"> / </span>'
+              + '<a class="proposal-header-link" ' + currentHrefAttrs + '>' + currentLabel + '</a>';
+            if (window.htmx) window.htmx.process(titleEl);
+          }
+          window.updateContractsProjectFormHeader = updateContractsProjectFormHeader;
 
           function getContractsMasterChecks() {
             return masterDropdown ? Array.from(masterDropdown.querySelectorAll('.js-contracts-master-filter')) : [];
@@ -2256,6 +2301,7 @@
             if (titleEl) titleEl.textContent = CONTRACTS_TITLES[key] || '';
             if (masterDropdown) masterDropdown.classList.toggle('d-none', key !== 'in-progress');
             if (statusDropdown) statusDropdown.classList.toggle('d-none', key !== 'in-progress');
+            updateContractsProjectFormHeader();
             if (key === 'in-progress') scheduleContractsMasterRefresh();
             if (key === 'performer-execution') {
               window.dispatchEvent(new CustomEvent('contracts:payment-request-shown'));
@@ -2325,6 +2371,20 @@
             var pane = document.getElementById('contracts-pane');
             if (!pane || !(e.target === pane || pane.contains(e.target))) return;
             scheduleContractsMasterRefresh();
+          });
+
+          document.body.addEventListener('htmx:afterSwap', function(e) {
+            var target = e.target;
+            if (!(target instanceof Element)) return;
+            if (target.id !== 'contracts-drafts-pane' && !target.querySelector('#contracts-drafts-pane')) return;
+            window.setTimeout(updateContractsProjectFormHeader, 0);
+          });
+
+          document.body.addEventListener('htmx:afterSettle', function(e) {
+            var target = e.target;
+            if (!(target instanceof Element)) return;
+            if (target.id !== 'contracts-drafts-pane' && !target.querySelector('#contracts-drafts-pane')) return;
+            updateContractsProjectFormHeader();
           });
 
           document.body.addEventListener('contract-project-filter-updated', function(e) {

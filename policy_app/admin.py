@@ -273,8 +273,11 @@ class TypicalServiceTermAdmin(TimestampedAdmin):
     list_display = (
         "position",
         "product",
+        "source_data_display",
         "preliminary_report_months",
+        "preliminary_report_term_unit",
         "final_report_weeks",
+        "final_report_term_unit",
         "updated_at",
     )
     list_editable = ("position",)
@@ -288,8 +291,9 @@ class TypicalServiceTermAdmin(TimestampedAdmin):
             "fields": (
                 "position",
                 "product",
-                "preliminary_report_months",
-                "final_report_weeks",
+                ("source_data_weeks", "source_data_term_unit"),
+                ("preliminary_report_months", "preliminary_report_term_unit"),
+                ("final_report_weeks", "final_report_term_unit"),
             ),
         }),
         ("Служебные поля", {

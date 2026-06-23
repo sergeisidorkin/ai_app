@@ -57,8 +57,64 @@
     });
   }
 
+  function isPreliminaryReportStageEnabled(row) {
+    const hidden = row?.querySelector(".proposal-stage-service-term-months-enabled");
+    return String(hidden?.value || "true").toLowerCase() !== "false";
+  }
+
+  function setPreliminaryPaymentFieldsLocked(scope, locked) {
+    if (!scope) return;
+    ["preliminary_report_percent", "preliminary_report_term_days"].forEach(function (fieldName) {
+      const input = scope.querySelector('[name="' + fieldName + '"]');
+      if (!input) return;
+      if (locked) {
+        input.value = "0";
+        input.readOnly = true;
+        input.setAttribute("readonly", "");
+        input.tabIndex = -1;
+        input.classList.add("readonly-field");
+      } else {
+        input.readOnly = false;
+        input.removeAttribute("readonly");
+        input.removeAttribute("tabindex");
+        input.classList.remove("readonly-field");
+      }
+    });
+  }
+
+  function syncPreliminaryReportPaymentState(form) {
+    const toggle = form.querySelector('input[type="checkbox"][name="payment_schedule_common"]');
+    const termRows = qa(".proposal-stage-terms-row", form);
+    const paymentBlocks = qa(".proposal-payment-stage-block", form);
+    const preliminaryStates = termRows.map(isPreliminaryReportStageEnabled);
+    const hasMixedPreliminaryStages = preliminaryStates.length > 1 && preliminaryStates.some(function (state) {
+      return state !== preliminaryStates[0];
+    });
+    if (toggle) {
+      if (hasMixedPreliminaryStages) {
+        toggle.checked = false;
+      }
+      toggle.disabled = hasMixedPreliminaryStages;
+      toggle.classList.toggle("is-contract-payment-common-blocked", hasMixedPreliminaryStages);
+    }
+
+    const isCommon = !toggle || toggle.checked;
+    setPreliminaryPaymentFieldsLocked(
+      form.querySelector(".js-proposal-payment-common-fields"),
+      isCommon && termRows.length > 0 && !isPreliminaryReportStageEnabled(termRows[0])
+    );
+    paymentBlocks.forEach(function (block, index) {
+      const termRow = termRows[index];
+      setPreliminaryPaymentFieldsLocked(
+        block,
+        !isCommon && !!termRow && !isPreliminaryReportStageEnabled(termRow)
+      );
+    });
+  }
+
   function syncPaymentScheduleMode(form) {
     const toggle = form.querySelector('input[type="checkbox"][name="payment_schedule_common"]');
+    syncPreliminaryReportPaymentState(form);
     const commonFields = form.querySelector(".js-proposal-payment-common-fields");
     const stageFields = form.querySelector(".js-proposal-payment-stage-fields");
     const isCommon = !toggle || toggle.checked;
@@ -81,6 +137,7 @@
     if (!isCommon) {
       copyPaymentDefaultsFromFirstStage(form);
     }
+    syncPreliminaryReportPaymentState(form);
     syncAllFinalReportPercents(form);
   }
 
@@ -167,6 +224,11 @@
       if (target.name !== "advance_percent" && target.name !== "preliminary_report_percent") return;
       const group = target.closest(".js-proposal-payment-group");
       syncFinalReportPercent(group || node);
+    });
+
+    node.addEventListener("change", function (event) {
+      if (!event.target?.classList?.contains("proposal-stage-service-term-months-toggle")) return;
+      syncPaymentScheduleMode(node);
     });
 
     syncPaymentScheduleMode(node);

@@ -164,12 +164,34 @@ def _normalized_identifier(value: str) -> str:
     return " ".join(str(value or "").split()).casefold()
 
 
+def _ordered_person_citizenships(person):
+    if not person:
+        return []
+    prefetched = getattr(person, "_prefetched_objects_cache", {}).get("citizenships")
+    records = list(prefetched if prefetched is not None else person.citizenships.all())
+    records.sort(
+        key=lambda item: (
+            not getattr(item, "is_active", False),
+            getattr(item, "position", 0),
+            getattr(item, "pk", 0),
+        )
+    )
+    return records
+
+
 def _contract_identifier_number(ep: ExpertProfile | None, identifier_name: str) -> str:
     if not ep:
         return ""
     target = _normalized_identifier(identifier_name)
+    employee = getattr(ep, "employee", None)
+    person = getattr(employee, "person_record", None) if employee else None
     for details in ep.ordered_contract_details():
         citizenship = getattr(details, "citizenship_record", None)
+        if person is None:
+            person = getattr(citizenship, "person", None)
+        if _normalized_identifier(getattr(citizenship, "identifier", "")) == target:
+            return str(getattr(citizenship, "number", "") or "")
+    for citizenship in _ordered_person_citizenships(person):
         if _normalized_identifier(getattr(citizenship, "identifier", "")) == target:
             return str(getattr(citizenship, "number", "") or "")
     return ""
@@ -1175,11 +1197,12 @@ def resolve_variables(
     if performer.employee_id:
         expert = (
             ExpertProfile.objects
-            .select_related("employee__user", "country", "region",
+            .select_related("employee__user", "employee__person_record", "country", "region",
                             "expertise_direction", "grade")
             .prefetch_related(
                 "contract_details_records__citizenship_record",
                 "contract_details_records__citizenship_record__person",
+                "employee__person_record__citizenships",
             )
             .filter(employee_id=performer.employee_id)
             .first()

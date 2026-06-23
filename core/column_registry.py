@@ -126,8 +126,9 @@ COLUMN_REGISTRY = {
                 "label": "Типовые сроки оказания услуг",
                 "columns": {
                     "product": "Продукт",
-                    "preliminary_report_months": "Срок подготовки Предварительного отчёта, мес.",
-                    "final_report_weeks": "Срок подготовки Итогового отчёта, нед.",
+                    "source_data_weeks": "Сроки предоставления исходных данных",
+                    "preliminary_report_months": "Срок подготовки Предварительного отчёта",
+                    "final_report_weeks": "Срок подготовки Итогового отчёта",
                 },
             },
             "grades": {

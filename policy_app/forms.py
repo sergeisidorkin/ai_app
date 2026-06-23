@@ -2,6 +2,7 @@ from django import forms
 from django.contrib.auth.models import User
 from django.db.models import Q
 from django.utils import timezone
+from decimal import Decimal
 import json
 
 from classifiers_app.models import OKVCurrency
@@ -801,8 +802,27 @@ class TypicalServiceTermForm(forms.ModelForm):
         queryset=Product.objects.all(),
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+    source_data_weeks = CommaDecimalField(
+        label="Сроки предоставления исходных данных",
+        min_value=0,
+        decimal_places=1,
+        max_digits=6,
+        required=False,
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "inputmode": "decimal",
+            "placeholder": "0,0",
+        }),
+    )
+    source_data_term_unit = forms.ChoiceField(
+        label="Единица срока предоставления исходных данных",
+        choices=TypicalServiceTerm.TermUnit.choices,
+        required=False,
+        initial=TypicalServiceTerm.TermUnit.WEEKS,
+        widget=forms.Select(attrs={"class": "form-select typical-service-term-unit-select"}),
+    )
     preliminary_report_months = CommaDecimalField(
-        label="Срок подготовки Предварительного отчёта, мес.",
+        label="Срок подготовки Предварительного отчёта",
         min_value=0,
         decimal_places=1,
         max_digits=6,
@@ -812,36 +832,76 @@ class TypicalServiceTermForm(forms.ModelForm):
             "placeholder": "0,0",
         }),
     )
-    source_data_weeks = forms.IntegerField(
-        label="Сроки предоставления исходных данных, нед.",
-        min_value=0,
+    preliminary_report_term_unit = forms.ChoiceField(
+        label="Единица срока подготовки Предварительного отчёта",
+        choices=TypicalServiceTerm.TermUnit.choices,
         required=False,
-        widget=forms.NumberInput(attrs={
+        initial=TypicalServiceTerm.TermUnit.MONTHS,
+        widget=forms.Select(attrs={"class": "form-select typical-service-term-unit-select"}),
+    )
+    final_report_weeks = CommaDecimalField(
+        label="Срок подготовки Итогового отчёта",
+        min_value=0,
+        decimal_places=1,
+        max_digits=6,
+        widget=forms.TextInput(attrs={
             "class": "form-control",
-            "min": "0",
-            "step": "1",
-            "placeholder": "0",
+            "inputmode": "decimal",
+            "placeholder": "0,0",
         }),
+    )
+    final_report_term_unit = forms.ChoiceField(
+        label="Единица срока подготовки Итогового отчёта",
+        choices=TypicalServiceTerm.TermUnit.choices,
+        required=False,
+        initial=TypicalServiceTerm.TermUnit.WEEKS,
+        widget=forms.Select(attrs={"class": "form-select typical-service-term-unit-select"}),
     )
 
     class Meta:
         model = TypicalServiceTerm
-        fields = ["product", "source_data_weeks", "preliminary_report_months", "final_report_weeks"]
-        widgets = {
-            "final_report_weeks": forms.NumberInput(attrs={
-                "class": "form-control",
-                "min": "0",
-                "step": "1",
-                "placeholder": "0",
-            }),
-        }
+        fields = [
+            "product",
+            "source_data_weeks",
+            "source_data_term_unit",
+            "preliminary_report_months",
+            "preliminary_report_term_unit",
+            "final_report_weeks",
+            "final_report_term_unit",
+        ]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         _configure_policy_product_field(self.fields["product"])
 
     def clean_source_data_weeks(self):
-        return self.cleaned_data.get("source_data_weeks") or 0
+        return self.cleaned_data.get("source_data_weeks") or Decimal("0")
+
+    def clean_source_data_term_unit(self):
+        return self._clean_term_unit("source_data_term_unit", TypicalServiceTerm.TermUnit.WEEKS)
+
+    def clean_preliminary_report_term_unit(self):
+        return self._clean_term_unit("preliminary_report_term_unit", TypicalServiceTerm.TermUnit.MONTHS)
+
+    def clean_final_report_term_unit(self):
+        return self._clean_term_unit("final_report_term_unit", TypicalServiceTerm.TermUnit.WEEKS)
+
+    def clean(self):
+        cleaned = super().clean()
+        for value_field, unit_field in (
+            ("source_data_weeks", "source_data_term_unit"),
+            ("preliminary_report_months", "preliminary_report_term_unit"),
+            ("final_report_weeks", "final_report_term_unit"),
+        ):
+            value = cleaned.get(value_field)
+            unit = cleaned.get(unit_field)
+            if unit == TypicalServiceTerm.TermUnit.DAYS and value is not None and value != value.to_integral_value():
+                self.add_error(value_field, "Для единицы «дн.» значение должно быть целым числом.")
+        return cleaned
+
+    def _clean_term_unit(self, field_name, default):
+        raw = str(self.cleaned_data.get(field_name) or "").strip()
+        return raw if raw in TypicalServiceTerm.TermUnit.values else default
 
 
 class ExpertiseDirectionForm(forms.ModelForm):
