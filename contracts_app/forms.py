@@ -1,3 +1,4 @@
+import json
 from datetime import date as date_type, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -9,7 +10,15 @@ from django.utils import timezone
 
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry
 from group_app.models import GroupMember
-from policy_app.models import Product, TypicalSection, TypicalServiceTerm
+from policy_app.models import (
+    Product,
+    SYSTEM_DSC_SECTION_CODE,
+    SYSTEM_DSC_SECTION_DEFAULTS,
+    TypicalSection,
+    TypicalServiceTerm,
+    ensure_system_dsc_section,
+    is_system_dsc_code,
+)
 from projects_app.forms import (
     BootstrapMixin,
     DATE_INPUT_FORMATS,
@@ -100,6 +109,35 @@ def _default_contract_evaluation_date(today=None):
     if today < date_type(today.year, 7, 1):
         return date_type(today.year, 1, 1)
     return date_type(today.year, 6, 1)
+
+
+def _contract_payload_bool(value):
+    if value is True:
+        return True
+    raw = str(value or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _contract_is_dsc_payload_item(item, product=None):
+    if not isinstance(item, dict):
+        return False
+    if item.get("is_system_dsc") is True:
+        return True
+    return is_system_dsc_code(item.get("code"))
+
+
+def _contract_system_dsc_payload(product):
+    if product is None:
+        return None
+    section = ensure_system_dsc_section(product)
+    if section is None:
+        return None
+    return {
+        "service_name": section.name_ru or SYSTEM_DSC_SECTION_DEFAULTS["name_ru"],
+        "code": section.code or SYSTEM_DSC_SECTION_CODE,
+    }
+
+
 GROUP_ALL_VALUE = "__all__"
 
 
@@ -287,6 +325,45 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         required=False,
         initial=True,
     )
+    proposal_project_name = forms.CharField(
+        label="Наименование проекта",
+        required=False,
+        widget=forms.TextInput(),
+    )
+    purpose = forms.CharField(
+        label="Цель оказания услуг",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 1}),
+    )
+    service_composition = forms.CharField(
+        label="Состав услуг",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+    service_sections_payload = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-sections-payload"}),
+    )
+    service_sections_editor_state = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-sections-editor-state"}),
+    )
+    service_customer_tz_editor_state = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-customer-tz-editor-state"}),
+    )
+    service_composition_customer_tz = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-composition-customer-tz"}),
+    )
+    service_composition_mode = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("sections", "Разделы"),
+            ("customer_tz", "ТЗ Заказчика"),
+        ],
+        widget=forms.HiddenInput(attrs={"id": "proposal-service-composition-mode"}),
+    )
     evaluation_date = forms.DateField(
         label="Дата оценки",
         required=False,
@@ -435,6 +512,8 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             "registration_date",
             "asset_owner", "asset_owner_country", "asset_owner_region", "asset_owner_identifier",
             "asset_owner_registration_number", "asset_owner_registration_date", "asset_owner_matches_customer",
+            "proposal_project_name", "purpose",
+            "service_composition", "service_composition_customer_tz", "service_composition_mode",
             "project_manager",
             "evaluation_date", "source_data_term", "source_data_term_unit", "source_data_date",
             "service_term_months", "preliminary_report_term_unit", "preliminary_report_date",
@@ -646,11 +725,24 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         if self.is_bound:
             if "payment_schedule_common" not in self.data:
                 return True
-            return self.fields["payment_schedule_common"].widget.value_from_datadict(
+            enabled = self.fields["payment_schedule_common"].widget.value_from_datadict(
                 self.data,
                 self.files,
                 "payment_schedule_common",
             )
+            if enabled:
+                type_ids = _contract_request_list(self.data, "type_id")
+                preliminary_flags = _contract_request_list(self.data, "service_term_months_enabled")
+                row_count = max(len(type_ids), len(preliminary_flags), 1)
+                preliminary_states = [
+                    _contract_stage_enabled_value(
+                        preliminary_flags[index] if index < len(preliminary_flags) else None
+                    )
+                    for index in range(row_count)
+                ]
+                if row_count > 1 and any(state != preliminary_states[0] for state in preliminary_states):
+                    return False
+            return enabled
         stored_stages = list(getattr(self.instance, "stage_payloads_json", None) or [])
         if any(isinstance(payload, dict) and payload.get("payment_schedule_common") is False for payload in stored_stages):
             return False
@@ -667,6 +759,12 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             "rank": rank,
             "product_id": product_id,
             "product_short_label": product_short_label,
+            "service_sections_payload": "[]",
+            "service_sections_editor_state": "[]",
+            "service_customer_tz_editor_state": "",
+            "service_composition_customer_tz": "",
+            "service_composition_mode": "sections",
+            "service_composition": "",
             "evaluation_date": _format_contract_stage_date(
                 self.initial.get("evaluation_date") or _default_contract_evaluation_date()
             ),
@@ -707,11 +805,13 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             return {}
         return {
             "source_data_term": format(term.source_data_weeks, ".1f"),
-            "source_data_term_unit": ContractProjectRegistration.SourceDataTermUnit.WEEKS.value,
+            "source_data_term_unit": _normalize_source_data_term_unit(term.source_data_term_unit),
             "service_term_months": format(term.preliminary_report_months, ".1f"),
-            "preliminary_report_term_unit": ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value,
+            "preliminary_report_term_unit": _normalize_preliminary_report_term_unit(
+                term.preliminary_report_term_unit
+            ),
             "final_report_term_weeks": format(term.final_report_weeks, ".1f"),
-            "final_report_term_unit": ContractProjectRegistration.FinalReportTermUnit.WEEKS.value,
+            "final_report_term_unit": _normalize_final_report_term_unit(term.final_report_term_unit),
         }
 
     def _contract_stage_row_from_payload(self, payload, *, rank, product_id, product, fallback=None, payment_fallback=None):
@@ -741,6 +841,45 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             "rank": rank,
             "product_id": product_id,
             "product_short_label": (getattr(product, "short_name", "") or "").strip(),
+            "service_sections_payload": json.dumps(
+                payload.get("service_sections_json")
+                if isinstance(payload.get("service_sections_json"), list)
+                else fallback.get("service_sections_json") or [],
+                ensure_ascii=False,
+            ),
+            "service_sections_editor_state": json.dumps(
+                payload.get("service_sections_editor_state")
+                if isinstance(payload.get("service_sections_editor_state"), list)
+                else fallback.get("service_sections_editor_state") or [],
+                ensure_ascii=False,
+            ),
+            "service_customer_tz_editor_state": json.dumps(
+                payload.get("service_customer_tz_editor_state")
+                if isinstance(payload.get("service_customer_tz_editor_state"), dict)
+                else fallback.get("service_customer_tz_editor_state") or {},
+                ensure_ascii=False,
+            )
+            if (
+                payload.get("service_customer_tz_editor_state")
+                or fallback.get("service_customer_tz_editor_state")
+            )
+            else "",
+            "service_composition_customer_tz": str(
+                payload.get("service_composition_customer_tz")
+                or fallback.get("service_composition_customer_tz")
+                or ""
+            ),
+            "service_composition_mode": str(
+                payload.get("service_composition_mode")
+                or fallback.get("service_composition_mode")
+                or "sections"
+            )
+            or "sections",
+            "service_composition": str(
+                payload.get("service_composition")
+                or fallback.get("service_composition")
+                or ""
+            ),
             "evaluation_date_enabled": evaluation_date_enabled,
             "evaluation_date": str(
                 payload.get("evaluation_date") or fallback.get("evaluation_date") or ""
@@ -819,6 +958,12 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def _build_contract_stage_rows_from_bound_data(self):
         field_names = (
+            "service_sections_payload",
+            "service_sections_editor_state",
+            "service_customer_tz_editor_state",
+            "service_composition_customer_tz",
+            "service_composition_mode",
+            "service_composition",
             "evaluation_date",
             "evaluation_date_enabled",
             "source_data_term_enabled",
@@ -863,6 +1008,37 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "rank": len(rows) + 1,
                 "product_id": product_id,
                 "product_short_label": (getattr(product, "short_name", "") or "").strip(),
+                "service_sections_payload": (
+                    rows_map["service_sections_payload"][index]
+                    if index < len(rows_map["service_sections_payload"])
+                    else "[]"
+                ),
+                "service_sections_editor_state": (
+                    rows_map["service_sections_editor_state"][index]
+                    if index < len(rows_map["service_sections_editor_state"])
+                    else "[]"
+                ),
+                "service_customer_tz_editor_state": (
+                    rows_map["service_customer_tz_editor_state"][index]
+                    if index < len(rows_map["service_customer_tz_editor_state"])
+                    else ""
+                ),
+                "service_composition_customer_tz": (
+                    rows_map["service_composition_customer_tz"][index]
+                    if index < len(rows_map["service_composition_customer_tz"])
+                    else ""
+                ),
+                "service_composition_mode": (
+                    rows_map["service_composition_mode"][index]
+                    if index < len(rows_map["service_composition_mode"])
+                    else "sections"
+                ).strip()
+                or "sections",
+                "service_composition": (
+                    rows_map["service_composition"][index]
+                    if index < len(rows_map["service_composition"])
+                    else ""
+                ),
                 "evaluation_date": (
                     rows_map["evaluation_date"][index] if index < len(rows_map["evaluation_date"]) else ""
                 ).strip(),
@@ -992,6 +1168,12 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         ordered_products = list(instance.ordered_products())
         stored_stages = list(instance.stage_payloads_json or [])
         instance_fallback = {
+            "service_sections_json": instance.service_sections_json or [],
+            "service_sections_editor_state": instance.service_sections_editor_state or [],
+            "service_customer_tz_editor_state": instance.service_customer_tz_editor_state or {},
+            "service_composition_customer_tz": instance.service_composition_customer_tz or "",
+            "service_composition_mode": instance.service_composition_mode or "sections",
+            "service_composition": instance.service_composition or "",
             "evaluation_date_enabled": True,
             "evaluation_date": _format_contract_stage_date(instance.evaluation_date),
             "source_data_term_enabled": True,
@@ -1195,18 +1377,177 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             return ""
         return str(value)
 
+    def _load_contract_stage_json(self, raw, *, row_index, field_label, expected_type, default):
+        raw = str(raw or "").strip()
+        if not raw:
+            return default
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» передано в некорректном формате.")
+        if not isinstance(value, expected_type):
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» передано в некорректном формате.")
+        return value
+
+    def _prepend_system_dsc_service_section(self, items, product):
+        dsc_payload = _contract_system_dsc_payload(product)
+        filtered = []
+        seen = set()
+        for item in items:
+            if _contract_is_dsc_payload_item(item, product):
+                continue
+            key = (str(item.get("code") or "").strip() or str(item.get("service_name") or "").strip()).lower()
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            filtered.append(item)
+        return ([dsc_payload] if dsc_payload else []) + filtered
+
+    def _normalize_editor_state_for_sections(self, items, product, service_sections):
+        dsc_payload = _contract_system_dsc_payload(product)
+        stored_by_key = {}
+        dsc_saved = {}
+        for item in items:
+            if _contract_is_dsc_payload_item(item, product):
+                dsc_saved = item
+                continue
+            key = str(item.get("code") or item.get("service_name") or "").strip()
+            if key and key not in stored_by_key:
+                stored_by_key[key] = item
+
+        normalized = []
+        if dsc_payload:
+            normalized.append(
+                {
+                    "code": dsc_payload["code"],
+                    "service_name": dsc_payload["service_name"],
+                    "html": str(dsc_saved.get("html") or "").strip(),
+                    "plain_text": str(dsc_saved.get("plain_text") or "").strip(),
+                }
+            )
+
+        for section in service_sections:
+            if _contract_is_dsc_payload_item(section, product):
+                continue
+            key = str(section.get("code") or section.get("service_name") or "").strip()
+            saved = stored_by_key.get(key) or stored_by_key.get(str(section.get("service_name") or "").strip()) or {}
+            normalized.append(
+                {
+                    "code": str(section.get("code") or "").strip(),
+                    "service_name": str(section.get("service_name") or "").strip(),
+                    "html": str(saved.get("html") or "").strip(),
+                    "plain_text": str(saved.get("plain_text") or "").strip(),
+                }
+            )
+        return normalized
+
+    def _normalize_contract_stage_service_sections(self, raw, *, row_index, product=None):
+        items = self._load_contract_stage_json(
+            raw,
+            row_index=row_index,
+            field_label="Состав услуг / техническое задание",
+            expected_type=list,
+            default=[],
+        )
+        sections_by_name = {}
+        if product is not None:
+            ensure_system_dsc_section(product)
+            for section in TypicalSection.objects.filter(product=product).order_by("position", "id"):
+                name_ru = (section.name_ru or "").strip()
+                if name_ru and name_ru not in sections_by_name:
+                    sections_by_name[name_ru] = (section.code or "").strip()
+        normalized = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            service_name = str(item.get("service_name") or "").strip()
+            code = str(item.get("code") or "").strip()
+            if not service_name and not code:
+                continue
+            normalized.append(
+                {
+                    "service_name": service_name,
+                    "code": code or sections_by_name.get(service_name, ""),
+                    **(
+                        {"merge_without_code": True}
+                        if (
+                            not _contract_is_dsc_payload_item(item, product)
+                            and _contract_payload_bool(item.get("merge_without_code"))
+                        )
+                        else {}
+                    ),
+                }
+            )
+        return self._prepend_system_dsc_service_section(normalized, product)
+
+    def _normalize_contract_stage_editor_state(self, raw, *, row_index, product=None, service_sections=None):
+        items = self._load_contract_stage_json(
+            raw,
+            row_index=row_index,
+            field_label="Состояние редактора состава услуг",
+            expected_type=list,
+            default=[],
+        )
+        normalized = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            normalized.append(
+                {
+                    "code": str(item.get("code") or "").strip(),
+                    "service_name": str(item.get("service_name") or "").strip(),
+                    "html": str(item.get("html") or "").strip(),
+                    "plain_text": str(item.get("plain_text") or "").strip(),
+                }
+            )
+        if product is not None and service_sections is not None:
+            return self._normalize_editor_state_for_sections(normalized, product, service_sections)
+        return normalized
+
+    def _normalize_contract_stage_customer_tz_state(self, raw, *, row_index):
+        value = self._load_contract_stage_json(
+            raw,
+            row_index=row_index,
+            field_label="Состояние редактора ТЗ Заказчика",
+            expected_type=dict,
+            default={},
+        )
+        return {
+            "html": str(value.get("html") or "").strip(),
+            "plain_text": str(value.get("plain_text") or "").strip(),
+        }
+
     def _collect_contract_stage_payloads(self):
         stage_payloads = []
         type_ids = getattr(self, "cleaned_type_ids", [])
+        product_map = {
+            product.pk: product
+            for product in Product.objects.filter(pk__in=set(type_ids))
+        }
         rows = self.stage_rows or []
         for index, product_id in enumerate(type_ids, start=1):
             row = rows[index - 1] if index - 1 < len(rows) else {}
+            product = product_map.get(product_id)
+            if product is not None:
+                ensure_system_dsc_section(product)
+            service_composition_mode = str(row.get("service_composition_mode") or "sections").strip() or "sections"
+            if service_composition_mode not in {"sections", "customer_tz"}:
+                service_composition_mode = "sections"
+            service_composition_customer_tz = str(row.get("service_composition_customer_tz") or "").strip()
+            source_data_term_enabled = _contract_stage_enabled_value(row.get("source_data_term_enabled"))
+            evaluation_date_enabled = _contract_stage_enabled_value(row.get("evaluation_date_enabled"))
+            source_data_date_enabled = _contract_stage_enabled_value(row.get("source_data_date_enabled"))
+            service_term_months_enabled = _contract_stage_enabled_value(row.get("service_term_months_enabled"))
+            preliminary_report_date_enabled = _contract_stage_enabled_value(
+                row.get("preliminary_report_date_enabled")
+            )
+            final_report_date_enabled = _contract_stage_enabled_value(row.get("final_report_date_enabled"))
             if self.payment_schedule_common_enabled:
                 advance_percent = self.cleaned_data.get("advance_percent")
                 advance_term_days = self.cleaned_data.get("advance_term_days")
                 preliminary_report_percent = self.cleaned_data.get("preliminary_report_percent")
                 preliminary_report_term_days = self.cleaned_data.get("preliminary_report_term_days")
-                final_report_percent = self.cleaned_data.get("final_report_percent")
                 final_report_term_days = self.cleaned_data.get("final_report_term_days")
             else:
                 advance_percent = self._parse_contract_stage_percent(
@@ -1229,27 +1570,22 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                     row_index=index,
                     field_label="Срок оплаты Предварительного отчёта в календарных днях",
                 )
-                final_report_percent = self._calculate_final_report_percent(
-                    advance_percent=advance_percent,
-                    preliminary_report_percent=preliminary_report_percent,
-                )
-                if final_report_percent < 0 or final_report_percent > 100:
-                    raise forms.ValidationError(
-                        f"Этап {index}: рассчитанный размер оплаты Итогового отчёта должен быть в диапазоне от 0% до 100%."
-                    )
                 final_report_term_days = self._parse_contract_stage_integer(
                     row.get("final_report_term_days"),
                     row_index=index,
                     field_label="Срок оплаты Итогового отчёта в календарных днях",
                 )
-            source_data_term_enabled = _contract_stage_enabled_value(row.get("source_data_term_enabled"))
-            evaluation_date_enabled = _contract_stage_enabled_value(row.get("evaluation_date_enabled"))
-            source_data_date_enabled = _contract_stage_enabled_value(row.get("source_data_date_enabled"))
-            service_term_months_enabled = _contract_stage_enabled_value(row.get("service_term_months_enabled"))
-            preliminary_report_date_enabled = _contract_stage_enabled_value(
-                row.get("preliminary_report_date_enabled")
+            if not service_term_months_enabled:
+                preliminary_report_percent = Decimal("0")
+                preliminary_report_term_days = 0
+            final_report_percent = self._calculate_final_report_percent(
+                advance_percent=advance_percent,
+                preliminary_report_percent=preliminary_report_percent,
             )
-            final_report_date_enabled = _contract_stage_enabled_value(row.get("final_report_date_enabled"))
+            if final_report_percent < 0 or final_report_percent > 100:
+                raise forms.ValidationError(
+                    f"Этап {index}: рассчитанный размер оплаты Итогового отчёта должен быть в диапазоне от 0% до 100%."
+                )
             source_data_term_unit = self._parse_contract_stage_source_data_term_unit(
                 row.get("source_data_term_unit"),
                 row_index=index,
@@ -1288,10 +1624,34 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 field_label=self.fields["final_report_term_weeks"].label,
                 unit=final_report_term_unit,
             )
+            service_sections_json = self._normalize_contract_stage_service_sections(
+                row.get("service_sections_payload"),
+                row_index=index,
+                product=product,
+            )
+            service_sections_editor_state = self._normalize_contract_stage_editor_state(
+                row.get("service_sections_editor_state"),
+                row_index=index,
+                product=product,
+                service_sections=service_sections_json,
+            )
             stage_payloads.append(
                 {
                     "rank": index,
                     "product_id": product_id,
+                    "service_sections_json": service_sections_json,
+                    "service_sections_editor_state": service_sections_editor_state,
+                    "service_customer_tz_editor_state": self._normalize_contract_stage_customer_tz_state(
+                        row.get("service_customer_tz_editor_state"),
+                        row_index=index,
+                    ),
+                    "service_composition_customer_tz": service_composition_customer_tz,
+                    "service_composition_mode": service_composition_mode,
+                    "service_composition": (
+                        service_composition_customer_tz
+                        if service_composition_mode == "customer_tz"
+                        else str(row.get("service_composition") or "").strip()
+                    ),
                     "evaluation_date_enabled": evaluation_date_enabled,
                     "evaluation_date": (
                         self._parse_contract_stage_date(
@@ -1398,6 +1758,19 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 {
                     "rank": item["rank"],
                     "product_id": str(item["product_id"]),
+                    "service_sections_json": [
+                        {
+                            "service_name": section.get("service_name") or "",
+                            "code": section.get("code") or "",
+                            **({"merge_without_code": True} if section.get("merge_without_code") else {}),
+                        }
+                        for section in item["service_sections_json"]
+                    ],
+                    "service_sections_editor_state": list(item["service_sections_editor_state"]),
+                    "service_customer_tz_editor_state": dict(item["service_customer_tz_editor_state"]),
+                    "service_composition_customer_tz": item["service_composition_customer_tz"],
+                    "service_composition_mode": item["service_composition_mode"],
+                    "service_composition": item["service_composition"],
                     "evaluation_date_enabled": item["evaluation_date_enabled"],
                     "evaluation_date": _format_contract_stage_date(item["evaluation_date"]),
                     "source_data_term_enabled": item["source_data_term_enabled"],
@@ -1434,6 +1807,19 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 for item in stage_payloads
             ]
             last_stage = stage_payloads[-1]
+            instance.service_sections_json = [
+                {
+                    "service_name": section.get("service_name") or "",
+                    "code": section.get("code") or "",
+                    **({"merge_without_code": True} if section.get("merge_without_code") else {}),
+                }
+                for section in last_stage["service_sections_json"]
+            ]
+            instance.service_sections_editor_state = list(last_stage["service_sections_editor_state"])
+            instance.service_customer_tz_editor_state = dict(last_stage["service_customer_tz_editor_state"])
+            instance.service_composition_customer_tz = last_stage["service_composition_customer_tz"]
+            instance.service_composition_mode = last_stage["service_composition_mode"]
+            instance.service_composition = last_stage["service_composition"]
             instance.evaluation_date = last_stage.get("evaluation_date")
             instance.source_data_term = last_stage.get("source_data_term")
             instance.source_data_term_unit = last_stage.get(
@@ -1558,12 +1944,20 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 )
         if getattr(self, "cleaned_stage_payloads", None) and not self.payment_schedule_common_enabled:
             last_stage = self.cleaned_stage_payloads[-1]
+            cleaned_data["service_composition"] = last_stage["service_composition"]
+            cleaned_data["service_composition_customer_tz"] = last_stage["service_composition_customer_tz"]
+            cleaned_data["service_composition_mode"] = last_stage["service_composition_mode"]
             cleaned_data["advance_percent"] = last_stage["advance_percent"]
             cleaned_data["advance_term_days"] = last_stage["advance_term_days"]
             cleaned_data["preliminary_report_percent"] = last_stage["preliminary_report_percent"]
             cleaned_data["preliminary_report_term_days"] = last_stage["preliminary_report_term_days"]
             cleaned_data["final_report_percent"] = last_stage["final_report_percent"]
             cleaned_data["final_report_term_days"] = last_stage["final_report_term_days"]
+        elif getattr(self, "cleaned_stage_payloads", None):
+            last_stage = self.cleaned_stage_payloads[-1]
+            cleaned_data["service_composition"] = last_stage["service_composition"]
+            cleaned_data["service_composition_customer_tz"] = last_stage["service_composition_customer_tz"]
+            cleaned_data["service_composition_mode"] = last_stage["service_composition_mode"]
         if cleaned_data.get("asset_owner_matches_customer"):
             cleaned_data["asset_owner"] = cleaned_data.get("customer") or ""
             cleaned_data["asset_owner_country"] = cleaned_data.get("country")
@@ -1584,6 +1978,12 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         ordered_products = list(proposal.ordered_products())
         stored_stages = list(getattr(proposal, "stage_payloads_json", None) or [])
         proposal_fallback = {
+            "service_sections_json": proposal.service_sections_json or [],
+            "service_sections_editor_state": proposal.service_sections_editor_state or [],
+            "service_customer_tz_editor_state": proposal.service_customer_tz_editor_state or {},
+            "service_composition_customer_tz": proposal.service_composition_customer_tz or "",
+            "service_composition_mode": proposal.service_composition_mode or "sections",
+            "service_composition": proposal.service_composition or "",
             "evaluation_date_enabled": True,
             "evaluation_date": _format_contract_stage_date(proposal.evaluation_date),
             "source_data_term_enabled": True,
@@ -1679,6 +2079,11 @@ CONTRACT_PREFILL_FROM_PROPOSAL_FIELDS = [
     "asset_owner_registration_number",
     "asset_owner_region",
     "asset_owner_registration_date",
+    "proposal_project_name",
+    "purpose",
+    "service_composition",
+    "service_composition_customer_tz",
+    "service_composition_mode",
     "evaluation_date",
     "service_term_months",
     "preliminary_report_date",

@@ -539,12 +539,71 @@
     });
   }
 
+  function openDraftPage(url) {
+    if (!url || !window.htmx) return Promise.resolve();
+
+    var currentPane = pane();
+    if (!currentPane) return Promise.resolve();
+
+    var staging = document.createElement('div');
+    staging.style.display = 'none';
+    staging.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(staging);
+
+    return htmx.ajax('GET', url, { target: staging, swap: 'innerHTML' }).then(function() {
+      var nextPane = staging.querySelector('#contracts-drafts-pane');
+      if (!nextPane) throw new Error('Не удалось загрузить форму договора.');
+
+      var fragment = document.createDocumentFragment();
+      Array.from(staging.childNodes).forEach(function(node) {
+        fragment.appendChild(node);
+      });
+      currentPane.replaceWith(fragment);
+
+      nextPane = document.getElementById('contracts-drafts-pane');
+      if (window.htmx && typeof window.htmx.process === 'function' && nextPane) {
+        window.htmx.process(nextPane);
+      }
+      if (typeof window.initContractProjectFormPage === 'function' && nextPane) {
+        window.initContractProjectFormPage(nextPane);
+      } else if (nextPane && nextPane.matches('[data-contract-project-form-page]')) {
+        nextPane.classList.remove('contracts-project-form-page--pending');
+        nextPane.style.visibility = '';
+        nextPane.removeAttribute('aria-busy');
+      }
+      if (typeof window.updateContractsProjectFormHeader === 'function') {
+        window.updateContractsProjectFormHeader();
+      }
+    }).finally(function() {
+      staging.remove();
+    });
+  }
+
+  function setDraftCreateButtonLoading(button, isLoading) {
+    if (!(button instanceof HTMLButtonElement)) return;
+
+    if (isLoading) {
+      if (button.dataset.loading === '1') return;
+      button.dataset.loading = '1';
+      button.dataset.originalHtml = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Создание договора...';
+      return;
+    }
+
+    if (button.dataset.originalHtml) {
+      button.innerHTML = button.dataset.originalHtml;
+    }
+    button.disabled = false;
+    delete button.dataset.loading;
+  }
+
   function refreshDraftsPane() {
     var root = pane();
     if (!root) return Promise.resolve();
     var refreshUrl = root.getAttribute('hx-get') || root.dataset.refreshUrl;
     if (!refreshUrl) return Promise.resolve();
-    return htmx.ajax('GET', refreshUrl, { target: '#contracts-drafts-pane', swap: 'innerHTML' });
+    return htmx.ajax('GET', refreshUrl, { target: '#contracts-drafts-pane', swap: 'outerHTML' });
   }
 
   function postSequential(urls) {
@@ -732,14 +791,20 @@
 
     var createBtn = e.target.closest('#contracts-drafts-create-btn');
     if (createBtn && root.contains(createBtn)) {
-      openModal(createBtn.dataset.url);
+      if (createBtn.disabled) return;
+      setDraftCreateButtonLoading(createBtn, true);
+      openDraftPage(createBtn.dataset.url)
+        .catch(function(err) {
+          alert(err.message || 'Не удалось загрузить форму договора.');
+          setDraftCreateButtonLoading(createBtn, false);
+        });
       return;
     }
 
     var paymentQuickEdit = e.target.closest('.contracts-payment-quick-edit');
     if (paymentQuickEdit && root.contains(paymentQuickEdit)) {
       var paymentRow = paymentQuickEdit.closest('tr');
-      openModal(paymentRow && paymentRow.dataset.editUrl);
+      openDraftPage(paymentRow && paymentRow.dataset.editUrl);
       return;
     }
 
@@ -753,7 +818,7 @@
     var action = panelBtn.dataset.panelAction;
     if (action === 'edit') {
       var tr = checked[0].closest('tr');
-      openModal(tr && tr.dataset.editUrl);
+      openDraftPage(tr && tr.dataset.editUrl);
       return;
     }
 
@@ -819,7 +884,7 @@
   });
 
   document.addEventListener('input', function(e) {
-    if (!e.target.matches('#contracts-modal [name="advance_percent"], #contracts-modal [name="preliminary_report_percent"]')) return;
+    if (!e.target.matches('[data-contract-project-form] [name="advance_percent"], [data-contract-project-form] [name="preliminary_report_percent"]')) return;
     updateContractFinalReportPercent(e.target.closest('form'));
   });
 
@@ -835,8 +900,11 @@
 
   document.body.addEventListener('htmx:afterSwap', function(e) {
     if (!(e.target instanceof Element)) return;
-    if (!e.target.closest('#contracts-modal .modal-content')) return;
-    updateContractFinalReportPercent(e.target.querySelector('form'));
+    var form = e.target.matches('[data-contract-project-form]')
+      ? e.target
+      : e.target.querySelector('[data-contract-project-form]');
+    if (!form) return;
+    updateContractFinalReportPercent(form);
   });
 
   document.addEventListener('DOMContentLoaded', function() {

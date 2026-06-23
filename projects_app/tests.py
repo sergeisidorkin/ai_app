@@ -954,7 +954,14 @@ class ProjectRegistrationFormViewTests(TestCase):
         product_meta = next(item for item in meta["products"] if item["id"] == self.product.pk)
         self.assertEqual(
             product_meta["typical_service_terms"],
-            {"source_data_weeks": "0", "preliminary_report_months": "1.5", "final_report_weeks": "2.0"},
+            {
+                "source_data_weeks": "0.0",
+                "source_data_term_unit": "weeks",
+                "preliminary_report_months": "1.5",
+                "preliminary_report_term_unit": "months",
+                "final_report_weeks": "2.0",
+                "final_report_term_unit": "weeks",
+            },
         )
 
     def test_registration_edit_form_preserves_custom_stage_terms_in_html(self):

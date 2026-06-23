@@ -7263,7 +7263,12 @@ class ProposalFormContextTests(TestCase):
         )
         self.assertEqual(
             payload["typical_service_term"],
-            {"preliminary_report_months": "1.0", "final_report_weeks": "2.0"},
+            {
+                "preliminary_report_months": "1.0",
+                "preliminary_report_term_unit": "months",
+                "final_report_weeks": "2.0",
+                "final_report_term_unit": "weeks",
+            },
         )
         self.assertEqual(response["Cache-Control"], "no-store")
 
@@ -7354,7 +7359,12 @@ class ProposalFormContextTests(TestCase):
         )
         self.assertEqual(
             payload["typical_service_term"],
-            {"preliminary_report_months": "2.5", "final_report_weeks": "6.0"},
+            {
+                "preliminary_report_months": "2.5",
+                "preliminary_report_term_unit": "months",
+                "final_report_weeks": "6.0",
+                "final_report_term_unit": "weeks",
+            },
         )
         section_entry = next(item for item in payload["typical_sections"] if item["code"] == "FULL-1")
         self.assertEqual(section_entry["specialty_tariff_rate_eur"], "1200.00")
@@ -7545,7 +7555,9 @@ class ProposalFormContextTests(TestCase):
             response.context["typical_service_terms_json"][str(product.pk)],
             {
                 "preliminary_report_months": "1.5",
+                "preliminary_report_term_unit": "months",
                 "final_report_weeks": "2.0",
+                "final_report_term_unit": "weeks",
             },
         )
         self.assertContains(response, 'id="proposal-typical-service-terms-data"', html=False)

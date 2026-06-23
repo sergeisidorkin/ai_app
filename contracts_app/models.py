@@ -240,6 +240,18 @@ class ContractProjectRegistration(models.Model):
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
     asset_owner = models.CharField("Владелец активов", max_length=255, blank=True, default="")
     asset_owner_matches_customer = models.BooleanField("Совпадает с Заказчиком", default=True)
+    proposal_project_name = models.TextField("Наименование ТКП (проекта)", blank=True, default="")
+    purpose = models.TextField("Цель оказания услуг", blank=True, default="")
+    service_sections_json = models.JSONField("Состав услуг: разделы", default=list, blank=True)
+    service_sections_editor_state = models.JSONField("Состав услуг: состояние редактора", default=list, blank=True)
+    service_composition = models.TextField("Состав услуг", blank=True, default="")
+    service_composition_customer_tz = models.TextField("Состав услуг: ТЗ Заказчика", blank=True, default="")
+    service_customer_tz_editor_state = models.JSONField(
+        "Состав услуг: состояние редактора ТЗ Заказчика",
+        default=dict,
+        blank=True,
+    )
+    service_composition_mode = models.CharField("Режим состава услуг", max_length=20, blank=True, default="sections")
     asset_owner_country = models.ForeignKey(
         "classifiers_app.OKSMCountry",
         verbose_name="Страна владельца активов",

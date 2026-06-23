@@ -84,6 +84,7 @@ from policy_app.models import (
     LAWYER_GROUP,
     Product,
     PROJECTS_HEAD_GROUP,
+    ServiceGoalReport,
     SYSTEM_DSC_SECTION_CODE,
     TypicalSection,
     TypicalServiceTerm,
@@ -345,6 +346,19 @@ def _product_option_label(product):
 def _registration_product_catalog():
     products = list(Product.objects.order_by("position", "id"))
     typical_terms = {}
+    service_goal_reports = {}
+    for item in (
+        ServiceGoalReport.objects
+        .filter(product__in=products)
+        .order_by("product_id", "position", "id")
+    ):
+        product_id = str(item.product_id or "")
+        if not product_id or product_id in service_goal_reports:
+            continue
+        service_goal_reports[product_id] = {
+            "report_title": item.report_title or "",
+            "service_goal": item.service_goal or "",
+        }
     for item in (
         TypicalServiceTerm.objects
         .filter(product__in=products)
@@ -355,8 +369,11 @@ def _registration_product_catalog():
             continue
         typical_terms[product_id] = {
             "source_data_weeks": str(item.source_data_weeks),
+            "source_data_term_unit": item.source_data_term_unit,
             "preliminary_report_months": format(item.preliminary_report_months, ".1f"),
+            "preliminary_report_term_unit": item.preliminary_report_term_unit,
             "final_report_weeks": format(item.final_report_weeks, ".1f"),
+            "final_report_term_unit": item.final_report_term_unit,
         }
     catalog_meta = build_consulting_catalog_meta()
     consulting_types = []
@@ -389,6 +406,7 @@ def _registration_product_catalog():
                     "consulting_type": (product.consulting_type_display or "").strip(),
                     "service_category": (product.service_category_display or "").strip(),
                     "service_subtype": (product.service_subtype_display or "").strip(),
+                    "service_goal_report": service_goal_reports.get(str(product.pk), {}),
                     "typical_service_terms": typical_terms.get(str(product.pk), {}),
                 }
                 for product in products
@@ -1063,8 +1081,11 @@ def project_schedule_gantt(request, pk: int):
             placeholder = SimpleNamespace(
                 pk=reg.pk,
                 source_data_weeks=0,
+                source_data_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
                 preliminary_report_months=0,
+                preliminary_report_term_unit=TypicalServiceTerm.TermUnit.MONTHS,
                 final_report_weeks=0,
+                final_report_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
             )
             gantt_data = _default_typical_service_term_gantt_data(placeholder)
             base_iso = (reg.launched_at or date.today()).isoformat()
@@ -1106,8 +1127,11 @@ def project_schedule_gantt(request, pk: int):
                 "product": product_label,
                 "project_label": f"{reg.short_uid} {product_label}".strip(),
                 "source_data_weeks": 0,
+                "source_data_term_unit": TypicalServiceTerm.TermUnit.WEEKS,
                 "preliminary_report_months": "0,0",
+                "preliminary_report_term_unit": TypicalServiceTerm.TermUnit.MONTHS,
                 "final_report_weeks": 0,
+                "final_report_term_unit": TypicalServiceTerm.TermUnit.WEEKS,
                 "launched_at": reg.launched_at.isoformat() if reg.launched_at else "",
             },
         }

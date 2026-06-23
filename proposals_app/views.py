@@ -1803,7 +1803,9 @@ def _proposal_product_autofill_data(product_ids=None):
             continue
         typical_service_terms_map[product_id] = {
             "preliminary_report_months": format(item.preliminary_report_months, ".1f"),
+            "preliminary_report_term_unit": item.preliminary_report_term_unit,
             "final_report_weeks": format(item.final_report_weeks, ".1f"),
+            "final_report_term_unit": item.final_report_term_unit,
         }
     return {
         "typical_sections_json": sections_map,

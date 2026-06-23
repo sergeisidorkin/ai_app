@@ -79,6 +79,38 @@ function attachRegistrationProducts(node) {
   const getStageDelayRows = () => Array.from(node.querySelectorAll(termsConfig.delayRowSelector));
   const getTermsTotalRow = () => node.querySelector(termsConfig.totalRowSelector);
 
+  const parseTermDecimal = (value) => {
+    const raw = String(value || "").trim().replace(/\s+/g, "").replace(",", ".");
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const formatTermDecimal = (value) => (
+    Number.isFinite(value) ? (Math.round(value * 10) / 10).toFixed(1) : ""
+  );
+
+  const termValueToDays = (value, unit) => {
+    const safeValue = Number.isFinite(value) ? Math.max(value, 0) : 0;
+    if (unit === "days") return Math.round(safeValue);
+    if (unit === "months") return safeValue * 30;
+    return safeValue * 7;
+  };
+
+  const daysToTermValue = (days, unit) => {
+    const safeDays = Number.isFinite(days) ? Math.max(days, 0) : 0;
+    if (unit === "days") return Math.round(safeDays);
+    if (unit === "months") return safeDays / 30;
+    return safeDays / 7;
+  };
+
+  const termValueForUnit = (value, sourceUnit, targetUnit) => {
+    const parsed = parseTermDecimal(value);
+    if (parsed === null) return "";
+    const normalizedSourceUnit = ["days", "weeks", "months"].includes(sourceUnit) ? sourceUnit : targetUnit;
+    return formatTermDecimal(daysToTermValue(termValueToDays(parsed, normalizedSourceUnit), targetUnit));
+  };
+
   const createStageDelayRow = () => {
     const row = document.createElement("tr");
     row.className = `${termsConfig.delayRowClass} d-none`;
@@ -325,17 +357,25 @@ function attachRegistrationProducts(node) {
         ) {
           sourceDataTermInput.value = terms.source_data_weeks || "";
         }
-        if (sourceDataTermUnitSelect) sourceDataTermUnitSelect.value = "weeks";
+        if (sourceDataTermUnitSelect) sourceDataTermUnitSelect.value = terms.source_data_term_unit || "weeks";
         if (
           monthsInput
           && terms.preliminary_report_months !== undefined
           && isStageFieldEnabled(termRow, ".proposal-stage-service-term-months-enabled")
         ) {
-          monthsInput.value = terms.preliminary_report_months || "";
+          monthsInput.value = isContractProposalTermsMode
+            ? (terms.preliminary_report_months || "")
+            : termValueForUnit(
+                terms.preliminary_report_months,
+                terms.preliminary_report_term_unit || "months",
+                "months"
+              );
         }
         if (preliminaryTermUnitSelect) preliminaryTermUnitSelect.value = terms.preliminary_report_term_unit || "months";
         if (weeksInput && terms.final_report_weeks !== undefined) {
-          weeksInput.value = terms.final_report_weeks || "";
+          weeksInput.value = isContractProposalTermsMode
+            ? (terms.final_report_weeks || "")
+            : termValueForUnit(terms.final_report_weeks, terms.final_report_term_unit || "weeks", "weeks");
         }
         if (finalTermUnitSelect) finalTermUnitSelect.value = terms.final_report_term_unit || "weeks";
         termRow.dataset.forceDatesFromTerms = "1";
@@ -347,6 +387,9 @@ function attachRegistrationProducts(node) {
     syncRegistrationStageTerms();
     if (typeof window.syncContractPaymentStageBlocks === "function") {
       window.syncContractPaymentStageBlocks(node);
+    }
+    if (typeof window.syncContractServiceStageBlocks === "function") {
+      window.syncContractServiceStageBlocks(node);
     }
   };
 

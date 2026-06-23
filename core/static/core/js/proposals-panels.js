@@ -2910,7 +2910,7 @@
   }
 
   function getProposalTypicalSectionsMap(form) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-typical-sections-data');
     if (!script) return {};
     try {
@@ -2921,7 +2921,7 @@
   }
 
   function getProposalServiceGoalReportsMap(form) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-service-goal-reports-data');
     if (!script) return {};
     try {
@@ -2932,7 +2932,7 @@
   }
 
   function getProposalTypicalServiceCompositionsMap(form) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-typical-service-compositions-data');
     if (!script) return {};
     try {
@@ -2943,7 +2943,7 @@
   }
 
   function getProposalTypicalServiceTermsMap(form) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-typical-service-terms-data');
     if (!script) return {};
     try {
@@ -2954,7 +2954,7 @@
   }
 
   function setProposalJsonMapEntry(form, scriptId, productId, value) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#' + scriptId);
     if (!script || !productId) return;
     let data = {};
@@ -3022,7 +3022,8 @@
   function getProposalOwningForm(node) {
     if (!node) return null;
     if (node.matches?.('form[data-proposal-form]')) return node;
-    return node.closest?.('form[data-proposal-form]') || null;
+    if (node.matches?.('form[data-contract-project-form]')) return node;
+    return node.closest?.('form[data-proposal-form], form[data-contract-project-form]') || null;
   }
 
   function getProposalStageScope(node) {
@@ -3144,13 +3145,49 @@
     return value && typeof value === 'object' ? value : {};
   }
 
+  function parseProposalTermDecimal(value) {
+    const raw = String(value || '').trim().replace(/\s+/g, '').replace(',', '.');
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function formatProposalTermDecimal(value) {
+    return Number.isFinite(value) ? (Math.round(value * 10) / 10).toFixed(1) : '';
+  }
+
+  function proposalTermValueToDays(value, unit) {
+    const safeValue = Number.isFinite(value) ? Math.max(value, 0) : 0;
+    if (unit === 'days') return Math.round(safeValue);
+    if (unit === 'months') return safeValue * 30;
+    return safeValue * 7;
+  }
+
+  function proposalTermValueForUnit(value, sourceUnit, targetUnit) {
+    const parsed = parseProposalTermDecimal(value);
+    if (parsed === null) return '';
+    const normalizedSourceUnit = ['days', 'weeks', 'months'].includes(sourceUnit) ? sourceUnit : targetUnit;
+    const days = proposalTermValueToDays(parsed, normalizedSourceUnit);
+    if (targetUnit === 'months') return formatProposalTermDecimal(days / 30);
+    if (targetUnit === 'weeks') return formatProposalTermDecimal(days / 7);
+    return String(Math.round(days));
+  }
+
   function getProposalTypicalServiceTermEntry(form) {
     const entriesMap = getProposalTypicalServiceTermsMap(form);
     const entry = entriesMap[getProposalTypeId(form)] || null;
     if (!entry || typeof entry !== 'object') return null;
     return {
-      preliminary_report_months: String(entry.preliminary_report_months || '').trim(),
-      final_report_weeks: String(entry.final_report_weeks || '').trim(),
+      preliminary_report_months: proposalTermValueForUnit(
+        entry.preliminary_report_months,
+        entry.preliminary_report_term_unit || 'months',
+        'months'
+      ),
+      final_report_weeks: proposalTermValueForUnit(
+        entry.final_report_weeks,
+        entry.final_report_term_unit || 'weeks',
+        'weeks'
+      ),
     };
   }
 
@@ -7777,6 +7814,59 @@
     form.__proposalServiceTextEditorApi = api;
     return api;
   }
+
+  function proposalServiceRowsFromCurrentType(root) {
+    return getProposalTypicalSectionEntries(root).map(function (entry) {
+      return {
+        service_name: (entry?.name || '').trim(),
+        code: (entry?.code || '').trim(),
+        merge_without_code: false,
+        exclude_from_tkp_autofill: !!entry?.exclude_from_tkp_autofill,
+      };
+    }).filter(function (entry) {
+      return !!entry.service_name && !entry.exclude_from_tkp_autofill;
+    }).map(function (entry) {
+      return {
+        service_name: entry.service_name,
+        code: entry.code,
+        merge_without_code: false,
+      };
+    });
+  }
+
+  function hasUserServiceRows(block, api) {
+    const rows = Array.isArray(api?.getSerializedRows?.()) ? api.getSerializedRows() : [];
+    return rows.some(function (row) {
+      return !isProposalSystemDscRow(row) && String(row?.service_name || row?.code || '').trim();
+    });
+  }
+
+  function replaceProposalServiceBlockFromType(block, meta) {
+    const api = attachProposalServiceSectionsTable(block);
+    attachProposalServiceTextEditor(block);
+    if (!api || typeof api.replaceRows !== 'function') return;
+    api.replaceRows(proposalServiceRowsFromCurrentType(block), { ...(meta || {}), forceAutofill: true });
+  }
+
+  function initProposalServiceBlocks(root, options) {
+    const scope = root || document;
+    qa('.proposal-stage-service-block', scope).forEach(function (block) {
+      const api = attachProposalServiceSectionsTable(block);
+      attachProposalServiceTextEditor(block);
+      if (
+        options?.autofillEmpty === true
+        && getProposalTypeId(block)
+        && !hasUserServiceRows(block, api)
+      ) {
+        replaceProposalServiceBlockFromType(block, { reason: 'autofill-service-sections-by-type' });
+      }
+    });
+  }
+
+  window.ProposalServiceBlocks = {
+    init: initProposalServiceBlocks,
+    replaceFromType: replaceProposalServiceBlockFromType,
+  };
 
   function initProposalForm() {
     const root = pane();

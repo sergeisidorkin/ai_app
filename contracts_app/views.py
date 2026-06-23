@@ -1583,8 +1583,10 @@ def _render_contracts_development_updated(request):
 
 def _render_contracts_project_registration_form(request, form, *, action, registration=None):
     from projects_app.views import _registration_form_context
+    from proposals_app.views import _proposal_product_autofill_data
 
     context = _registration_form_context(form, action, registration)
+    context.update(_proposal_product_autofill_data())
     prefill_ranked_products = getattr(form, "prefill_ranked_products", None)
     if prefill_ranked_products is not None:
         context["ranked_products"] = prefill_ranked_products
@@ -1760,10 +1762,7 @@ def contracts_project_registration_create(request):
 
     form = ContractProjectRegistrationForm(request.POST)
     if not form.is_valid():
-        resp = _render_contracts_project_registration_form(request, form, action="create")
-        resp["HX-Retarget"] = "#contracts-modal .modal-content"
-        resp["HX-Reswap"] = "innerHTML"
-        return resp
+        return _render_contracts_project_registration_form(request, form, action="create")
 
     from projects_app.views import (
         _next_position,
@@ -1804,12 +1803,9 @@ def contracts_project_registration_edit(request, pk):
 
     form = ContractProjectRegistrationForm(request.POST, instance=registration)
     if not form.is_valid():
-        resp = _render_contracts_project_registration_form(
+        return _render_contracts_project_registration_form(
             request, form, action="edit", registration=registration,
         )
-        resp["HX-Retarget"] = "#contracts-modal .modal-content"
-        resp["HX-Reswap"] = "innerHTML"
-        return resp
 
     from projects_app.views import (
         _sync_selection_kwargs,

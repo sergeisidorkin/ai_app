@@ -2551,12 +2551,12 @@ class TypicalServiceTermViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Типовые сроки оказания услуг")
-        self.assertContains(response, "Сроки предоставления исходных данных, нед.")
-        self.assertContains(response, "Срок подготовки Предварительного отчёта, мес.")
-        self.assertContains(response, "Срок подготовки Итогового отчёта, нед.")
-        self.assertContains(response, ">0<", html=False)
-        self.assertContains(response, ">1,5<", html=False)
-        self.assertContains(response, ">3<", html=False)
+        self.assertContains(response, "Сроки предоставления исходных данных")
+        self.assertContains(response, "Срок подготовки Предварительного отчёта")
+        self.assertContains(response, "Срок подготовки Итогового отчёта")
+        self.assertContains(response, ">0,0 нед.<", html=False)
+        self.assertContains(response, ">1,5 мес.<", html=False)
+        self.assertContains(response, ">3,0 нед.<", html=False)
         self.assertContains(response, 'id="typical-service-terms-actions"', html=False)
         self.assertContains(response, 'id="typical-service-terms-gantt-edit-btn"', html=False)
         self.assertContains(response, 'id="typical-service-term-gantt-editor"', html=False)
@@ -3803,12 +3803,15 @@ class TypicalServiceTermViewsTests(TestCase):
             rows[0],
             [
                 "Продукт",
-                "Сроки предоставления исходных данных, нед.",
-                "Срок подготовки Предварительного отчёта, мес.",
-                "Срок подготовки Итогового отчёта, нед.",
+                "Сроки предоставления исходных данных",
+                "Единица срока предоставления исходных данных",
+                "Срок подготовки Предварительного отчёта",
+                "Единица срока подготовки Предварительного отчёта",
+                "Срок подготовки Итогового отчёта",
+                "Единица срока подготовки Итогового отчёта",
             ],
         )
-        self.assertEqual(rows[1], ["TERM", "0", "1,5", "3"])
+        self.assertEqual(rows[1], ["TERM", "0,0", "нед.", "1,5", "мес.", "3,0", "нед."])
 
     def test_typical_service_term_csv_download_respects_product_filter(self):
         TypicalServiceTerm.objects.create(
@@ -3860,8 +3863,10 @@ class TypicalServiceTermViewsTests(TestCase):
         csv_file = SimpleUploadedFile(
             "typical_service_terms.csv",
             (
-                "Продукт;Сроки предоставления исходных данных, нед.;Срок подготовки Предварительного отчёта, мес.;Срок подготовки Итогового отчёта, нед.\n"
-                "TERM;3;2,5;4\n"
+                "Продукт;Сроки предоставления исходных данных;Единица срока предоставления исходных данных;"
+                "Срок подготовки Предварительного отчёта;Единица срока подготовки Предварительного отчёта;"
+                "Срок подготовки Итогового отчёта;Единица срока подготовки Итогового отчёта\n"
+                "TERM;3;дн.;2,5;нед.;4;мес.\n"
             ).encode("utf-8"),
             content_type="text/csv",
         )
@@ -3872,8 +3877,11 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 1)
         item = TypicalServiceTerm.objects.get()
         self.assertEqual(item.source_data_weeks, 3)
+        self.assertEqual(item.source_data_term_unit, "days")
         self.assertEqual(item.preliminary_report_months, Decimal("2.5"))
+        self.assertEqual(item.preliminary_report_term_unit, "weeks")
         self.assertEqual(item.final_report_weeks, 4)
+        self.assertEqual(item.final_report_term_unit, "months")
 
     def test_typical_service_term_csv_upload_updates_existing_product_row(self):
         item = TypicalServiceTerm.objects.create(

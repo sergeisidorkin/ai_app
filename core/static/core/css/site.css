@@ -261,6 +261,11 @@ body.contract-requisites-modal-open {
   color: #6c757d !important;
 }
 
+.typical-service-term-unit-select {
+  flex: 0 0 5.5rem !important;
+  width: 5.5rem !important;
+}
+
 .iti {
   width: 100%;
 }
@@ -540,6 +545,25 @@ body .second-sidebar {
   padding: 0 !important;                   /* без внутренних отступов */
   border-right: 1px solid #cfd4da !important; /* явная серая граница */
   box-sizing: border-box !important;
+}
+
+#contracts:has(#contracts-drafts-pane.contracts-project-form-page) > .templates-bleed > .second-sidebar {
+  display: none !important;
+  flex: 0 0 0 !important;
+  width: 0 !important;
+}
+
+#contracts:has(#contracts-drafts-pane.contracts-project-form-page) > .templates-bleed > .flex-grow-1 {
+  padding-left: 0 !important;
+}
+
+#contracts-drafts-pane.contracts-project-form-page {
+  position: relative;
+}
+
+#contracts-drafts-pane.contracts-project-form-page.contracts-project-form-page--pending .contracts-project-form-body {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* Сброс возможных унаследованных рамок, кроме правой, чтобы линия не пропадала */
@@ -1093,6 +1117,12 @@ body .second-sidebar + .flex-grow-1 {
 #policy-pane .typical-sections-table .form-check-input:disabled {
   background-color: #e9ecef !important;
   border-color: #d5dbe1 !important;
+  opacity: 1 !important;
+}
+
+.form-check-input.is-contract-payment-common-blocked:disabled {
+  background-color: #d5dbe1 !important;
+  border-color: #c4cad1 !important;
   opacity: 1 !important;
 }
 
@@ -5593,9 +5623,48 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   padding-right: .275rem !important;
 }
 
+#contracts-drafts-pane .proposal-assets-table .proposal-assets-check-col,
+#contracts-drafts-pane .proposal-assets-table td.proposal-asset-check-cell {
+  width: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
+  padding-left: .275rem !important;
+  padding-right: .275rem !important;
+}
+
 #proposals-pane .proposal-assets-table th.proposal-assets-check-col,
 #proposals-pane .proposal-assets-table td.proposal-asset-check-cell {
   text-align: center !important;
+}
+
+#contracts-drafts-pane .proposal-assets-table th.proposal-assets-check-col,
+#contracts-drafts-pane .proposal-assets-table td.proposal-asset-check-cell {
+  text-align: center !important;
+}
+
+#contracts-drafts-pane .proposal-assets-table td.proposal-asset-check-cell {
+  vertical-align: middle !important;
+}
+
+#contracts-drafts-pane .proposal-assets-table td.proposal-asset-check-cell .proposal-asset-check-wrap {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin: 0 !important;
+  margin-left: 0 !important;
+  width: 100%;
+  min-height: auto !important;
+}
+
+#contracts-drafts-pane .proposal-assets-table td.proposal-asset-check-cell .proposal-asset-check,
+#contracts-drafts-pane .proposal-assets-table td.proposal-asset-check-cell .proposal-service-section-check {
+  float: none !important;
+  display: block !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  margin-top: 0 !important;
 }
 
 #proposals-pane .proposal-assets-table td.proposal-asset-check-cell {
@@ -6707,6 +6776,22 @@ html.worktime-progress-cursor * {
   color: #c7cdd3;
 }
 
+#contracts-section-title .proposal-header-link {
+  color: #212529;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+#contracts-section-title .proposal-header-link:hover,
+#contracts-section-title .proposal-header-link:focus {
+  color: #212529;
+  text-decoration: none;
+}
+
+#contracts-section-title .proposal-header-separator {
+  color: #c7cdd3;
+}
+
 #proposals-pane .group-select-shell {
   position: relative;
 }
@@ -7038,6 +7123,10 @@ html.worktime-progress-cursor * {
 
 #contracts-modal .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row {
   margin-top: 0;
+}
+
+#contracts-drafts-pane .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row .form-label:not(.proposal-payment-stage-title) {
+  margin-top: 1rem;
 }
 
 #proposals-pane .proposal-payment-stage-block {
@@ -9936,6 +10025,888 @@ body.proposal-service-text-modal-open {
 #policy-modal .proposal-service-text-card__editor .ql-editor p {
   margin-top: 0;
   margin-bottom: 0;
+}
+
+#contracts-modal .proposal-service-sections-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+#contracts-modal .proposal-service-sections-table thead tr {
+  height: 2rem;
+}
+
+#contracts-modal .proposal-service-sections-table thead th {
+  vertical-align: middle !important;
+  height: 2rem;
+  padding-top: .2rem !important;
+  padding-bottom: 0 !important;
+  line-height: 1 !important;
+}
+
+#contracts-modal .proposal-service-sections-table th:nth-child(2),
+#contracts-modal .proposal-service-sections-table td:nth-child(2) {
+  width: calc(100% - var(--proposal-check-width) - 10rem - 2.25rem);
+  min-width: calc(100% - var(--proposal-check-width) - 10rem - 2.25rem);
+}
+
+#contracts-modal .proposal-service-sections-table th:nth-child(3),
+#contracts-modal .proposal-service-sections-table td:nth-child(3) {
+  width: 10rem;
+  min-width: 10rem;
+  max-width: 10rem;
+}
+
+#contracts-modal .proposal-service-sections-table th:nth-child(4),
+#contracts-modal .proposal-service-sections-table td:nth-child(4) {
+  width: 2.25rem;
+  min-width: 2.25rem;
+  max-width: 2.25rem;
+  text-align: center;
+}
+
+#contracts-modal .proposal-service-sections-table .proposal-service-section-header-text {
+  display: inline-block;
+  position: relative;
+  top: -8px;
+}
+
+#contracts-modal .proposal-service-sections-table th.proposal-assets-check-col .proposal-asset-check-wrap {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  width: 100%;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#contracts-modal .proposal-service-sections-table th.proposal-assets-check-col .proposal-service-sections-master-check {
+  margin: 0 !important;
+  position: relative;
+  top: -4px;
+}
+
+#contracts-modal .proposal-service-sections-table .proposal-service-section-rule-cell {
+  padding-left: .25rem;
+  padding-right: .25rem;
+}
+
+#contracts-modal .proposal-service-sections-table .proposal-service-section-merge-rule {
+  border: 0;
+  background: transparent;
+  color: #adb5bd;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  line-height: 1;
+}
+
+#contracts-modal .proposal-service-sections-table .proposal-service-section-merge-rule:hover,
+#contracts-modal .proposal-service-sections-table .proposal-service-section-merge-rule:focus {
+  color: #8f99a3;
+}
+
+#contracts-modal .proposal-service-sections-table .form-control,
+#contracts-modal .proposal-service-sections-table .form-select {
+  color: #868e96;
+}
+
+#contracts-modal .proposal-service-sections-table .form-check-input:disabled {
+  background-color: #f8f9fa !important;
+  border-color: #ced4da !important;
+  opacity: 1 !important;
+}
+
+#contracts-modal .proposal-asset-add-btn {
+  border: 1px solid #ced4da;
+  background-color: #f8f9fa;
+  color: #495057;
+  font-size: 1rem;
+  padding: .375rem .75rem;
+}
+
+#contracts-modal .proposal-asset-add-btn:hover,
+#contracts-modal .proposal-asset-add-btn:focus,
+#contracts-modal #proposal-service-section-up-btn:hover,
+#contracts-modal #proposal-service-section-up-btn:focus,
+#contracts-modal #proposal-service-section-down-btn:hover,
+#contracts-modal #proposal-service-section-down-btn:focus {
+  background-color: #eef1f4;
+  color: #343a40;
+}
+
+#contracts-modal #proposal-service-section-up-btn,
+#contracts-modal #proposal-service-section-down-btn {
+  border-color: #ced4da;
+  background-color: #f8f9fa;
+  color: #495057;
+}
+
+#contracts-modal #proposal-service-section-delete-btn {
+  border-color: #e6c9cf;
+  background-color: #fbf4f5;
+  color: #b45d68;
+}
+
+#contracts-modal #proposal-service-section-delete-btn:hover,
+#contracts-modal #proposal-service-section-delete-btn:focus {
+  border-color: #ddb8c0;
+  background-color: #f8ecee;
+  color: #a14f59;
+}
+
+#contracts-modal .proposal-service-text-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1090;
+}
+
+#contracts-modal .proposal-service-text-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(33, 37, 41, .5);
+}
+
+#contracts-modal .proposal-service-text-modal__dialog {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: .75rem;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+#contracts-modal .proposal-service-text-modal__header,
+#contracts-modal .proposal-service-text-modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .9rem 1rem;
+  background: #fff;
+}
+
+#contracts-modal .proposal-service-text-modal__header,
+#contracts-modal .proposal-service-text-modal__toolbar,
+#contracts-modal .proposal-service-text-modal__body,
+#contracts-modal .proposal-service-text-modal__footer {
+  position: relative;
+  z-index: 1;
+  background: #fff;
+}
+
+#contracts-modal .proposal-service-text-modal__header {
+  border: 0;
+  border-top-left-radius: .5rem;
+  border-top-right-radius: .5rem;
+}
+
+#contracts-modal .proposal-service-text-modal__footer {
+  justify-content: flex-start;
+  border-top: 1px solid #e9ecef;
+  border-bottom-left-radius: .5rem;
+  border-bottom-right-radius: .5rem;
+}
+
+#contracts-modal .proposal-service-text-modal__toolbar {
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
+  padding: .75rem 1rem;
+  border-bottom: 1px solid #e9ecef;
+  overflow: visible;
+}
+
+#contracts-modal .proposal-service-text-toolbar {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#contracts-modal .proposal-service-mode-toggle-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0 0 0 .35rem;
+  padding-left: .75rem;
+  border-left: 1px solid #e9ecef;
+  min-height: 2rem;
+}
+
+#contracts-modal .proposal-service-mode-toggle-wrap .form-check-input {
+  margin: 0;
+}
+
+#contracts-modal .proposal-service-mode-toggle-wrap .form-check-label {
+  white-space: nowrap;
+}
+
+#contracts-modal .proposal-service-text-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+}
+
+#contracts-modal .proposal-service-text-toolbar__select {
+  min-width: 11rem;
+  border-color: #ced4da;
+  font-size: .875rem;
+}
+
+#contracts-modal .proposal-service-text-toolbar__btn {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: #ced4da;
+  background: #fff;
+  box-shadow: none !important;
+}
+
+#contracts-modal .proposal-service-text-toolbar__btn.is-active {
+  color: #0a58ca;
+  background: #e7f1ff;
+  border-color: #86b7fe;
+}
+
+#contracts-modal .proposal-service-text-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem;
+}
+
+#contracts-modal .proposal-service-text-modal__cards {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+#contracts-modal .proposal-service-text-card {
+  min-width: 0;
+  margin: 0;
+  padding: .75rem;
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  background: #fff;
+}
+
+#contracts-modal .proposal-service-text-card.is-active {
+  border-color: #9ec5fe;
+  box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .08);
+}
+
+#contracts-modal .proposal-service-text-card legend {
+  float: none;
+  width: auto;
+  margin: 0 0 .5rem;
+  padding: 0 .25rem;
+  font-size: .95rem;
+  color: #6c757d;
+}
+
+#contracts-modal .proposal-service-text-card__editor {
+  min-height: 11rem;
+}
+
+#contracts-modal .proposal-service-text-card__editor.ql-container,
+#contracts-modal .proposal-service-text-card__editor.ql-container.ql-snow,
+#contracts-modal .proposal-service-text-card__editor .ql-container,
+#contracts-modal .proposal-service-text-card__editor .ql-container.ql-snow {
+  font-size: inherit;
+  border: 0 !important;
+  font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
+}
+
+#contracts-modal .proposal-service-text-card__editor .ql-editor {
+  min-height: 10rem;
+  padding: 0 0 .25rem;
+  line-height: 1.15;
+  text-align: justify;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table thead tr {
+  height: 2rem;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table thead th {
+  vertical-align: middle !important;
+  height: 2rem;
+  padding-top: .2rem !important;
+  padding-bottom: 0 !important;
+  line-height: 1 !important;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table th:nth-child(2),
+#contracts-drafts-pane .proposal-service-sections-table td:nth-child(2) {
+  width: calc(100% - var(--proposal-check-width) - 10rem - 2.25rem) !important;
+  min-width: calc(100% - var(--proposal-check-width) - 10rem - 2.25rem) !important;
+  max-width: calc(100% - var(--proposal-check-width) - 10rem - 2.25rem) !important;
+  text-align: left !important;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table th.proposal-service-section-name-header {
+  padding-left: var(--bs-table-cell-padding-x, .5rem);
+  text-align: left !important;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table th:nth-child(3),
+#contracts-drafts-pane .proposal-service-sections-table td:nth-child(3) {
+  width: 10rem;
+  min-width: 10rem;
+  max-width: 10rem;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table th:nth-child(4),
+#contracts-drafts-pane .proposal-service-sections-table td:nth-child(4) {
+  width: 2.25rem;
+  min-width: 2.25rem;
+  max-width: 2.25rem;
+  text-align: center;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table .proposal-service-section-header-text {
+  display: inline-block;
+  position: relative;
+  top: -8px;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table th.proposal-assets-check-col {
+  vertical-align: middle !important;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table th.proposal-assets-check-col .proposal-asset-check-wrap {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  width: 100%;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table th.proposal-assets-check-col .proposal-service-sections-master-check {
+  margin: 0 !important;
+  position: relative;
+  top: -4px;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table .proposal-service-section-rule-cell {
+  padding-left: .25rem;
+  padding-right: .25rem;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table .proposal-service-section-merge-rule {
+  border: 0;
+  background: transparent;
+  color: #adb5bd;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  line-height: 1;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table .proposal-service-section-merge-rule:hover,
+#contracts-drafts-pane .proposal-service-sections-table .proposal-service-section-merge-rule:focus {
+  color: #8f99a3;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table .form-control,
+#contracts-drafts-pane .proposal-service-sections-table .form-select {
+  color: #868e96;
+}
+
+#contracts-drafts-pane .proposal-service-sections-table .form-check-input:disabled {
+  background-color: #f8f9fa !important;
+  border-color: #ced4da !important;
+  opacity: 1 !important;
+}
+
+#contracts-drafts-pane .proposal-asset-add-btn {
+  border: 1px solid #ced4da;
+  background-color: #f8f9fa;
+  color: #495057;
+  font-size: 1rem;
+  padding: .375rem .75rem;
+}
+
+#contracts-drafts-pane .proposal-asset-add-btn:hover,
+#contracts-drafts-pane .proposal-asset-add-btn:focus,
+#contracts-drafts-pane #proposal-service-section-up-btn:hover,
+#contracts-drafts-pane #proposal-service-section-up-btn:focus,
+#contracts-drafts-pane #proposal-service-section-down-btn:hover,
+#contracts-drafts-pane #proposal-service-section-down-btn:focus {
+  background-color: #eef1f4;
+  color: #343a40;
+}
+
+#contracts-drafts-pane #proposal-service-section-up-btn,
+#contracts-drafts-pane #proposal-service-section-down-btn {
+  border-color: #ced4da;
+  background-color: #f8f9fa;
+  color: #495057;
+}
+
+#contracts-drafts-pane #proposal-service-section-delete-btn {
+  border-color: #e6c9cf;
+  background-color: #fbf4f5;
+  color: #b45d68;
+}
+
+#contracts-drafts-pane #proposal-service-section-delete-btn:hover,
+#contracts-drafts-pane #proposal-service-section-delete-btn:focus {
+  border-color: #ddb8c0;
+  background-color: #f8ecee;
+  color: #a14f59;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1090;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(33, 37, 41, .5);
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__dialog {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: .75rem;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__header,
+#contracts-drafts-pane .proposal-service-text-modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .9rem 1rem;
+  background: #fff;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__header,
+#contracts-drafts-pane .proposal-service-text-modal__toolbar,
+#contracts-drafts-pane .proposal-service-text-modal__body,
+#contracts-drafts-pane .proposal-service-text-modal__footer {
+  position: relative;
+  z-index: 1;
+  background: #fff;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__header {
+  border: 0;
+  border-top-left-radius: .5rem;
+  border-top-right-radius: .5rem;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__footer {
+  justify-content: flex-start;
+  border-top: 1px solid #e9ecef;
+  border-bottom-left-radius: .5rem;
+  border-bottom-right-radius: .5rem;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__toolbar {
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
+  padding: .75rem 1rem;
+  border-bottom: 1px solid #e9ecef;
+  overflow: visible;
+}
+
+#contracts-drafts-pane .proposal-service-text-toolbar {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#contracts-drafts-pane .proposal-service-mode-toggle-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0 0 0 .35rem;
+  padding-left: .75rem;
+  border-left: 1px solid #e9ecef;
+  min-height: 2rem;
+}
+
+#contracts-drafts-pane .proposal-service-mode-toggle-wrap .form-check-input {
+  margin: 0;
+}
+
+#contracts-drafts-pane .proposal-service-mode-toggle-wrap .form-check-label {
+  white-space: nowrap;
+}
+
+#contracts-drafts-pane .proposal-service-text-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+}
+
+#contracts-drafts-pane .proposal-service-text-toolbar__select {
+  min-width: 11rem;
+  border-color: #ced4da;
+  font-size: .875rem;
+}
+
+#contracts-drafts-pane .proposal-service-text-toolbar__btn {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: #ced4da;
+  background: #fff;
+  box-shadow: none !important;
+}
+
+#contracts-drafts-pane .proposal-service-text-toolbar__btn.is-active {
+  color: #0a58ca;
+  background: #e7f1ff;
+  border-color: #86b7fe;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem;
+}
+
+#contracts-drafts-pane .proposal-service-text-modal__cards {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+#contracts-drafts-pane .proposal-service-text-card {
+  min-width: 0;
+  margin: 0;
+  padding: .75rem;
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  background: #fff;
+}
+
+#contracts-drafts-pane .proposal-service-text-card.is-active {
+  border-color: #9ec5fe;
+  box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .08);
+}
+
+#contracts-drafts-pane .proposal-service-text-card legend {
+  float: none;
+  width: auto;
+  margin: 0 0 .5rem;
+  padding: 0 .25rem;
+  font-size: .95rem;
+  color: #6c757d;
+}
+
+#contracts-drafts-pane .proposal-service-text-card__editor {
+  min-height: 11rem;
+}
+
+#contracts-drafts-pane .proposal-service-text-card__editor.ql-container,
+#contracts-drafts-pane .proposal-service-text-card__editor.ql-container.ql-snow,
+#contracts-drafts-pane .proposal-service-text-card__editor .ql-container,
+#contracts-drafts-pane .proposal-service-text-card__editor .ql-container.ql-snow {
+  font-size: inherit;
+  border: 0 !important;
+  font-family: "ProposalCalibri", Calibri, "Carlito", Arial, Helvetica, sans-serif;
+}
+
+#contracts-drafts-pane .proposal-service-text-card__editor .ql-editor {
+  min-height: 10rem;
+  padding: 0 0 .25rem;
+  line-height: 1.15;
+  text-align: justify;
+}
+
+#contracts-modal .proposal-service-text-toolbar__group,
+#contracts-drafts-pane .proposal-service-text-toolbar__group,
+#contracts-modal .proposal-service-mode-toggle-wrap,
+#contracts-drafts-pane .proposal-service-mode-toggle-wrap {
+  flex: 0 0 auto;
+}
+
+#contracts-modal .proposal-service-text-toolbar__select,
+#contracts-drafts-pane .proposal-service-text-toolbar__select {
+  width: auto;
+}
+
+#contracts-modal .proposal-service-text-toolbar__list-split,
+#contracts-drafts-pane .proposal-service-text-toolbar__list-split {
+  position: relative;
+  z-index: 35;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+#contracts-modal .proposal-service-text-toolbar__btn--list-primary,
+#contracts-drafts-pane .proposal-service-text-toolbar__btn--list-primary {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+#contracts-modal .proposal-service-text-toolbar__btn--list-toggle,
+#contracts-drafts-pane .proposal-service-text-toolbar__btn--list-toggle {
+  width: 1.25rem;
+  min-width: 1.25rem;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 0;
+}
+
+#contracts-modal .proposal-service-text-toolbar__btn--list-toggle::after,
+#contracts-drafts-pane .proposal-service-text-toolbar__btn--list-toggle::after {
+  margin-left: 0;
+}
+
+#contracts-modal .proposal-service-text-toolbar__icon,
+#contracts-drafts-pane .proposal-service-text-toolbar__icon {
+  width: 1rem;
+  height: 1rem;
+  max-width: 1rem;
+  max-height: 1rem;
+  display: block;
+  object-fit: contain;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-combo,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-combo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  height: 2rem;
+  padding: 0 .45rem;
+  border: 1px solid #ced4da;
+  border-radius: .25rem;
+  background: #fff;
+}
+
+#contracts-modal .proposal-service-text-toolbar__btn--combo,
+#contracts-drafts-pane .proposal-service-text-toolbar__btn--combo {
+  width: auto;
+  min-width: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color,
+#contracts-drafts-pane .proposal-service-text-toolbar__color {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: .95rem;
+  min-width: .95rem;
+  height: .95rem;
+  padding: 0;
+  border: 0;
+  border-radius: .15rem;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color input[type="color"],
+#contracts-drafts-pane .proposal-service-text-toolbar__color input[type="color"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-swatch,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-swatch {
+  width: .65rem;
+  height: .65rem;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, .18);
+  display: block;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-popover,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-popover {
+  position: absolute;
+  z-index: 1080;
+  top: calc(100% + .35rem);
+  right: 0;
+  width: 13rem;
+  padding: .5rem;
+  border: 1px solid #ced4da;
+  border-radius: .35rem;
+  background: #fff;
+  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .15);
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-sv,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-sv {
+  --proposal-color-picker-hue: 0;
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 8rem;
+  margin-bottom: .55rem;
+  border: 1px solid #ced4da;
+  border-radius: .25rem;
+  background:
+    linear-gradient(to top, #000, rgba(0, 0, 0, 0)),
+    linear-gradient(to right, #fff, hsl(var(--proposal-color-picker-hue), 100%, 50%));
+  cursor: crosshair;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-sv-handle,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-sv-handle {
+  position: absolute;
+  width: .75rem;
+  height: .75rem;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .65);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-hue,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-hue {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: .9rem;
+  margin: 0 0 .65rem;
+  border: 1px solid #ced4da;
+  border-radius: 999px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  cursor: pointer;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-hue:focus,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-hue:focus {
+  outline: 0;
+  box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .25);
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-hue-handle,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-hue-handle {
+  position: absolute;
+  top: 50%;
+  width: .75rem;
+  height: 1.15rem;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .55);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-rgb,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-rgb {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: .4rem;
+  margin-bottom: .55rem;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-rgb label,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-rgb label {
+  display: grid;
+  gap: .2rem;
+  margin: 0;
+  color: #212529;
+  font-size: .75rem;
+  text-align: center;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-rgb input,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-rgb input {
+  width: 100%;
+  height: 2rem;
+  padding: .25rem;
+  border: 1px solid #ced4da;
+  border-radius: .25rem;
+  text-align: center;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-actions,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-actions {
+  display: flex;
+  align-items: stretch;
+  gap: .4rem;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-actions .btn,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-actions .btn {
+  width: auto;
+  min-width: 0;
+  height: 2rem;
+  padding: .25rem .5rem;
+  border-radius: .25rem;
+}
+
+#contracts-modal .proposal-service-text-toolbar__color-reset,
+#contracts-drafts-pane .proposal-service-text-toolbar__color-reset {
+  width: 2rem;
+  min-width: 2rem;
+  flex: 0 0 2rem;
+  padding-right: 0;
+  padding-left: 0;
 }
 
 .letter-template-preview li[data-list="bullet"] > .ql-ui::before,
