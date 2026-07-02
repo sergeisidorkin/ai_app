@@ -599,16 +599,30 @@
   function getCreateSourceDataBtn() {
     return pane()?.querySelector('#create-source-data-btn');
   }
+  function getRevokeInfoApprovalBtn() {
+    return pane()?.querySelector('#revoke-info-approval-btn');
+  }
 
   function getSelectedInfoRequestProjectId() {
     const filter = window.__infoRequestProjectFilter;
     if (filter && filter.length === 1 && filter[0] !== '__all__') return filter[0];
     return null;
   }
+  function getInfoRequestRowForCheck(checkbox) {
+    return checkbox?.closest('tr[data-project-id]') || null;
+  }
+  function isInfoRequestRowSent(row) {
+    return row?.dataset?.infoRequestSent === '1';
+  }
+  function isInfoRequestRowApproved(row) {
+    return row?.dataset?.infoApprovalStatus === 'approved';
+  }
 
   function updateInfoRequestState() {
     const boxes = getVisibleInfoRequestChecks();
-    const checkedCount = boxes.filter(b => b.checked).length;
+    const checked = boxes.filter(b => b.checked);
+    const checkedCount = checked.length;
+    const checkedRows = checked.map(getInfoRequestRowForCheck).filter(Boolean);
     const master = getInfoRequestMaster();
     if (master) {
       master.checked = boxes.length > 0 && checkedCount === boxes.length;
@@ -617,11 +631,22 @@
     updateRowHighlight('info-request-select');
 
     const requestBtn = getInfoRequestBtn();
-    if (requestBtn) requestBtn.disabled = checkedCount === 0;
+    if (requestBtn) {
+      const canRequestApproval = checkedCount > 0 && checkedRows.every((row) => !isInfoRequestRowSent(row));
+      requestBtn.disabled = !canRequestApproval;
+    }
+
+    const revokeBtn = getRevokeInfoApprovalBtn();
+    if (revokeBtn) {
+      const hasApprovedSelection = checkedRows.some(isInfoRequestRowApproved);
+      const canRevoke = checkedCount === 1 && checkedRows.length === 1 && isInfoRequestRowApproved(checkedRows[0]);
+      revokeBtn.classList.toggle('d-none', !hasApprovedSelection);
+      revokeBtn.disabled = !canRevoke;
+    }
 
     const controls = getInfoRequestDeadlineControls();
     if (controls) {
-      const show = checkedCount > 0;
+      const show = checkedCount > 0 && checkedRows.every((row) => !isInfoRequestRowSent(row));
       controls.classList.toggle('invisible', !show);
       controls.classList.toggle('pe-none', !show);
     }
@@ -2367,6 +2392,41 @@
       ensurePerformerActionsVisibility();
 
       await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
+      return;
+    }
+
+    const revokeInfoApprovalBtn = e.target.closest('#revoke-info-approval-btn');
+    if (revokeInfoApprovalBtn && root.contains(revokeInfoApprovalBtn)) {
+      const checked = getVisibleInfoRequestChecks().filter((cb) => cb.checked);
+      if (checked.length !== 1 || revokeInfoApprovalBtn.disabled) return;
+
+      const requestPanel = getInfoRequestPanel();
+      const revokeUrl = requestPanel?.dataset?.revokeInfoApprovalUrl;
+      if (!revokeUrl) return;
+
+      const formData = new FormData();
+      formData.append('performer_id', checked[0].value);
+
+      revokeInfoApprovalBtn.disabled = true;
+      try {
+        const response = await fetch(revokeUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrftoken },
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data?.error || 'Не удалось отменить согласование.');
+        }
+
+        window.__tableSel['info-request-select'] = [];
+        window.__tableSelLast = null;
+        document.body.dispatchEvent(new Event('performers-updated'));
+        document.body.dispatchEvent(new Event('notifications-updated'));
+      } catch (err) {
+        alert(err.message || 'Не удалось отменить согласование.');
+        updateInfoRequestState();
+      }
       return;
     }
 

@@ -144,6 +144,16 @@ def staff_required(user):
     return user.is_authenticated and user.is_staff
 
 
+def _is_admin_user(user):
+    if not staff_required(user):
+        return False
+    employee = getattr(user, "employee_profile", None)
+    return (
+        getattr(employee, "role", "") == ADMIN_GROUP
+        or user.groups.filter(name=ADMIN_GROUP).exists()
+    )
+
+
 def _normalize_contract_person_name(value):
     return " ".join(str(value or "").split()).strip()
 
@@ -1788,6 +1798,7 @@ def _payment_request_context(user=None, *, payment_request_performers_qs=None, p
 def _performers_context(user=None):
     expert_project_ids = _confirmed_project_ids_for_expert(user)
     is_expert = expert_project_ids is not None
+    is_admin = _is_admin_user(user)
     active_participation_statuses = ["Не начат", "В работе"]
     registration_products_prefetch = models.Prefetch(
         "registration__product_links",
@@ -2058,6 +2069,7 @@ def _performers_context(user=None):
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "user_is_direction_head": user_is_direction_head,
         "is_expert": is_expert,
+        "is_admin": is_admin,
         "has_active_smtp_connection": has_active_smtp_connection,
     }
 
@@ -3234,6 +3246,85 @@ def info_request_approval(request):
             "deadline_at": timezone.localtime(deadline_at).strftime("%d.%m.%Y %H:%M"),
         }
     )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def revoke_info_request_approval(request):
+    if not _is_admin_user(request.user):
+        return JsonResponse({"ok": False, "error": "Действие доступно только администратору."}, status=403)
+
+    performer_id = (request.POST.get("performer_id") or "").strip()
+    if not performer_id:
+        return JsonResponse({"ok": False, "error": "Не выбрана строка для отката."}, status=400)
+
+    from checklists_app.models import InfoRequestSectionApproval
+    from notifications_app.models import Notification, NotificationPerformerLink
+
+    with transaction.atomic():
+        performer = get_object_or_404(
+            Performer.objects.select_for_update(),
+            pk=performer_id,
+        )
+        if performer.info_approval_status != Performer.InfoApprovalStatus.APPROVED:
+            return JsonResponse({"ok": False, "error": "По выбранной строке нет согласования для отмены."}, status=400)
+        if not performer.employee_id or not getattr(performer.employee, "user_id", None):
+            return JsonResponse({"ok": False, "error": "У выбранной строки не найден эксперт."}, status=400)
+        if not performer.typical_section_id:
+            return JsonResponse({"ok": False, "error": "У выбранной строки не указан типовой раздел."}, status=400)
+
+        expert_user = performer.employee.user
+        project = performer.registration
+        section = performer.typical_section
+
+        affected_performers = (
+            Performer.objects
+            .select_for_update()
+            .filter(
+                registration=project,
+                employee=performer.employee,
+                typical_section=section,
+                info_request_sent_at__isnull=False,
+            )
+        )
+        affected_ids = list(affected_performers.values_list("pk", flat=True))
+        notification_ids = list(
+            NotificationPerformerLink.objects
+            .filter(
+                performer_id__in=affected_ids,
+                notification__notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                notification__project=project,
+                notification__recipient=expert_user,
+            )
+            .values_list("notification_id", flat=True)
+            .distinct()
+        )
+        if not notification_ids:
+            return JsonResponse({"ok": False, "error": "Не найден связанный запрос согласования."}, status=400)
+
+        InfoRequestSectionApproval.objects.filter(
+            project=project,
+            section=section,
+            approved_by=expert_user,
+        ).delete()
+        performers_updated = affected_performers.update(
+            info_approval_status="",
+            info_approval_at=None,
+        )
+        notifications_updated = Notification.objects.filter(pk__in=notification_ids).update(
+            is_processed=False,
+            action_at=None,
+            action_by=None,
+            action_choice="",
+            updated_at=timezone.now(),
+        )
+
+    return JsonResponse({
+        "ok": True,
+        "performers_updated": performers_updated,
+        "notifications_updated": notifications_updated,
+    })
 
 
 @login_required

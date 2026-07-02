@@ -618,6 +618,11 @@
       <tbody>
       {% for p in info_request_performers %}
         <tr data-project-id="{{ p.registration_id }}"
+            data-performer-id="{{ p.id }}"
+            data-section-id="{{ p.typical_section_id|default:'' }}"
+            data-employee-user-id="{% if p.employee and p.employee.user_id %}{{ p.employee.user_id }}{% endif %}"
+            data-info-request-sent="{% if p.info_request_sent_at %}1{% else %}0{% endif %}"
+            data-info-approval-status="{{ p.info_approval_status|default:'' }}"
             data-executor="{{ p.executor }}"
             data-asset-name="{{ p.asset_name }}">
           <td class="text-nowrap cell-group-val">
@@ -631,7 +636,7 @@
                        {% if is_expert %}
                          disabled
                        {% endif %}
-                       {% if p.info_request_sent_at %}
+                       {% if p.info_request_sent_at and not is_admin %}
                          disabled
                          title="Строка недоступна: запрос уже отправлен"
                        {% endif %}
@@ -667,6 +672,7 @@
       <div id="info-request-actions"
            class="d-flex align-items-stretch gap-2 products-actions-row"
            data-request-url="{% url 'info_request_approval' %}"
+           data-revoke-info-approval-url="{% url 'revoke_info_request_approval' %}"
            data-create-source-data-url="{% url 'create_source_data_workspace' %}"
            data-source-data-target-url="{% url 'source_data_target_folder_load' %}"
            data-source-data-target-save-url="{% url 'source_data_target_folder_save' %}">
@@ -704,6 +710,14 @@
             <i class="bi bi-gear"></i>
           </button>
         </div>
+        {% if is_admin %}
+          <button type="button"
+                  id="revoke-info-approval-btn"
+                  class="btn btn-outline-danger btn-sm d-none d-flex align-items-center"
+                  disabled>
+            <i class="bi bi-arrow-counterclockwise me-2"></i>Отменить согласование
+          </button>
+        {% endif %}
       </div>
 
       <div class="modal fade" id="info-request-modal" tabindex="-1" aria-hidden="true">

@@ -17,7 +17,14 @@ from django.utils import timezone
 from docx import Document
 from docx.enum.text import WD_COLOR_INDEX
 
-from checklists_app.models import ChecklistItem, ChecklistStatus, SourceDataItemFolder, SourceDataSectionFolder, SourceDataWorkspace
+from checklists_app.models import (
+    ChecklistItem,
+    ChecklistStatus,
+    InfoRequestSectionApproval,
+    SourceDataItemFolder,
+    SourceDataSectionFolder,
+    SourceDataWorkspace,
+)
 from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntityRecord, LegalEntityRecord, OKSMCountry
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
@@ -26,6 +33,7 @@ from letters_app.models import LetterTemplate
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
 from policy_app.models import (
+    ADMIN_GROUP,
     DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
     EXPERT_GROUP,
@@ -4382,6 +4390,168 @@ class ProjectProductLinkSyncTests(TestCase):
         self.assertEqual(edited["text"], "Обновлённая задача")
         self.assertEqual(edited["executor"], "Архивный Исполнитель")
         self.assertEqual(int(edited["progress"]), 75)
+
+
+class InfoRequestApprovalRevokeTests(TestCase):
+    def setUp(self):
+        self.admin_user = get_user_model().objects.create_user(
+            username="info-revoke-admin",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=self.admin_user, role=ADMIN_GROUP)
+        self.staff_user = get_user_model().objects.create_user(
+            username="info-revoke-staff",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=self.staff_user, role=PROJECTS_HEAD_GROUP)
+        self.expert_user = get_user_model().objects.create_user(
+            username="info-revoke-expert",
+            password="secret",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Эксперт",
+        )
+        self.expert_employee = Employee.objects.create(
+            user=self.expert_user,
+            patronymic="Иванович",
+            role=EXPERT_GROUP,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.section = self.product.sections.create(
+            code="FIN",
+            short_name="Finance",
+            short_name_ru="Финансы",
+            name_en="Finance",
+            name_ru="Финансы",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=6101,
+            type=self.product,
+            name="Откат согласования",
+            year=2026,
+        )
+        self.work = WorkVolume.objects.create(
+            project=self.project,
+            name="Asset A",
+            asset_name="Asset A",
+        )
+        self.performer = Performer.objects.create(
+            work_item=self.work,
+            registration=self.project,
+            asset_name="Asset A",
+            executor=Performer.employee_full_name(self.expert_employee),
+            employee=self.expert_employee,
+            typical_section=self.section,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            info_request_sent_at=timezone.now() - timedelta(hours=2),
+            info_request_deadline_at=timezone.now() + timedelta(hours=46),
+            info_approval_status=Performer.InfoApprovalStatus.APPROVED,
+            info_approval_at=timezone.now() - timedelta(hours=1),
+        )
+        self.checklist_item = ChecklistItem.objects.create(
+            project=self.project,
+            section=self.section,
+            code="FIN",
+            number=1,
+            short_name="ОСВ",
+            name="Оборотно-сальдовая ведомость",
+        )
+        self.notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            related_section=Notification.RelatedSection.CHECKLISTS,
+            recipient=self.expert_user,
+            project=self.project,
+            title_text="Согласуйте запрос",
+            is_read=True,
+            is_processed=True,
+            action_at=timezone.now() - timedelta(hours=1),
+            action_by=self.expert_user,
+            action_choice=Notification.ActionChoice.APPROVED,
+        )
+        NotificationPerformerLink.objects.create(
+            notification=self.notification,
+            performer=self.performer,
+        )
+        InfoRequestSectionApproval.objects.create(
+            project=self.project,
+            section=self.section,
+            approved_by=self.expert_user,
+            approved_at=timezone.now() - timedelta(hours=1),
+        )
+
+    def test_admin_can_select_approved_info_request_row(self):
+        self.client.force_login(self.admin_user)
+
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        checkbox_start = content.index(f'id="info-request-sel-{self.performer.pk}"')
+        checkbox_html = content[checkbox_start:content.index("aria-label", checkbox_start)]
+        self.assertNotIn("disabled", checkbox_html)
+        self.assertIn('data-info-approval-status="approved"', content)
+        self.assertIn('id="revoke-info-approval-btn"', content)
+
+    def test_revoke_info_request_approval_requires_admin_role(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("revoke_info_request_approval"),
+            {"performer_id": self.performer.pk},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.performer.refresh_from_db()
+        self.assertEqual(self.performer.info_approval_status, Performer.InfoApprovalStatus.APPROVED)
+
+    def test_admin_revoke_restores_expert_pending_checklist_editing(self):
+        self.client.force_login(self.admin_user)
+
+        response = self.client.post(
+            reverse("revoke_info_request_approval"),
+            {"performer_id": self.performer.pk},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.performer.refresh_from_db()
+        self.notification.refresh_from_db()
+        self.assertEqual(self.performer.info_approval_status, "")
+        self.assertIsNone(self.performer.info_approval_at)
+        self.assertFalse(self.notification.is_processed)
+        self.assertIsNone(self.notification.action_at)
+        self.assertIsNone(self.notification.action_by)
+        self.assertEqual(self.notification.action_choice, "")
+        self.assertFalse(
+            InfoRequestSectionApproval.objects.filter(
+                project=self.project,
+                section=self.section,
+                approved_by=self.expert_user,
+            ).exists()
+        )
+
+        self.client.force_login(self.expert_user)
+        grid_response = self.client.get(reverse("checklists_app:grid_data"), {
+            "project_uid": self.project.short_uid,
+            "asset": "all",
+            "section": str(self.section.pk),
+        })
+        self.assertEqual(grid_response.status_code, 200)
+        payload = grid_response.json()
+        self.assertIn(self.section.pk, payload["ui"]["pendingSectionIds"])
+        self.assertIn(self.section.pk, payload["ui"]["editableSectionIds"])
+        self.assertIn(reverse("checklists_app:item_form_create"), payload["ui"]["createUrl"])
 
 
 class ExpertProjectVisibilityTests(TestCase):
