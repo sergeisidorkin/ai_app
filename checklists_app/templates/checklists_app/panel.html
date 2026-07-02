@@ -92,20 +92,21 @@
                 </div>
 
                 {% if request.user.is_authenticated and request.user.is_staff %}
-                <div class="chk-filter-group ms-auto d-flex gap-2">
+                <div class="chk-filter-group ms-auto d-flex gap-2 chk-toolbar-actions">
                     <button type="button" id="chk-yadisk-btn"
                             class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1"
                             data-yadisk-url="{{ yadisk_url }}"
-                            title="Файлообменник">
+                            title="Файлообменник"
+                            aria-label="Файлообменник">
                         <i class="bi bi-cloud"></i>
-                        <span>Файлообменник</span>
+                        <span class="chk-toolbar-label">Файлообменник</span>
                     </button>
                     <div class="btn-group">
-                        <button type="button" id="chk-share-btn" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" title="Публичная ссылка">
+                        <button type="button" id="chk-share-btn" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" title="Публичная ссылка" aria-label="Публичная ссылка">
                             <i class="bi bi-share"></i>
-                            <span>Публичная ссылка</span>
+                            <span class="chk-toolbar-label">Публичная ссылка</span>
                         </button>
-                        <button type="button" id="chk-share-settings-btn" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#shared-link-settings-modal" title="Настройки публичной ссылки">
+                        <button type="button" id="chk-share-settings-btn" class="btn btn-outline-primary btn-sm d-inline-flex align-items-center justify-content-center" data-bs-toggle="modal" data-bs-target="#shared-link-settings-modal" title="Настройки публичной ссылки">
                             <i class="bi bi-gear"></i>
                         </button>
                     </div>
@@ -197,14 +198,19 @@
         padding: 0 .5rem;
         margin-left: 10px;
     }
+    #checklists-panel-root .chooser-card {
+        container-type: inline-size;
+    }
     
     #checklists-panel-root .chk-filters-row {
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
     }
     #checklists-panel-root .chk-filter-group {
         display: inline-flex;
         align-items: center;
         gap: .5rem;
+        flex: 0 1 auto;
+        min-width: 0;
         white-space: nowrap;
     }
     #checklists-panel-root .chk-filter-group select,
@@ -346,6 +352,37 @@
     .chk-visibility-toggles {
         gap: .35rem !important;
         margin-left: 1rem;
+        flex-wrap: wrap;
+        max-width: 100%;
+    }
+    .chk-toolbar-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        max-width: 100%;
+    }
+    .chk-toolbar-actions .btn,
+    .chk-toolbar-actions .btn-group {
+        flex: 0 0 auto;
+    }
+    .chk-toolbar-actions.chk-toolbar-actions--compact .chk-toolbar-label {
+        display: none;
+    }
+    .chk-toolbar-actions.chk-toolbar-actions--compact .btn {
+        width: 2rem;
+        justify-content: center;
+        padding-left: .45rem;
+        padding-right: .45rem;
+    }
+    @container (max-width: 72rem) {
+        #checklists-panel-root .chk-toolbar-actions .chk-toolbar-label {
+            display: none;
+        }
+        #checklists-panel-root .chk-toolbar-actions .btn {
+            width: 2rem;
+            justify-content: center;
+            padding-left: .45rem;
+            padding-right: .45rem;
+        }
     }
     .chk-vis-toggle {
         display: inline-flex;
@@ -1166,6 +1203,10 @@
         const batchUpdateUrl = root.dataset.batchUpdateUrl;
         const metaUrlBase = root.dataset.metaUrlBase;
         let metaController = null;
+        const filtersRow = root.querySelector('.chk-filters-row');
+        const toolbarActions = root.querySelector('.chk-toolbar-actions');
+        let toolbarLayoutFrame = null;
+        let toolbarResizeObserver = null;
 
         function getCsrf() {
             const m = document.cookie.match('(^|;)\\s*csrftoken\\s*=\\s*([^;]+)');
@@ -1182,17 +1223,53 @@
             return checked.length ? checked.join(',') : 'all';
         }
 
+        function updateToolbarLayout() {
+            toolbarLayoutFrame = null;
+            if (!filtersRow || !toolbarActions) return;
+            toolbarActions.classList.remove('chk-toolbar-actions--compact');
+
+            const rowRect = filtersRow.getBoundingClientRect();
+            const beforeToolbar = Array.from(filtersRow.children)
+                .filter((el) => el !== toolbarActions && el.offsetParent !== null);
+            const lastBeforeToolbar = beforeToolbar[beforeToolbar.length - 1];
+            if (!lastBeforeToolbar) return;
+
+            const rowWidth = filtersRow.clientWidth || rowRect.width;
+            const usedBeforeToolbar = lastBeforeToolbar.getBoundingClientRect().right - rowRect.left;
+            const columnGap = parseFloat(getComputedStyle(filtersRow).columnGap) || 0;
+            const fullToolbarWidth = toolbarActions.getBoundingClientRect().width;
+            const fullToolbarFits = usedBeforeToolbar + columnGap + fullToolbarWidth <= rowWidth + 1;
+            toolbarActions.classList.toggle('chk-toolbar-actions--compact', !fullToolbarFits);
+        }
+
+        function scheduleToolbarLayout() {
+            if (toolbarLayoutFrame !== null) return;
+            toolbarLayoutFrame = window.requestAnimationFrame(updateToolbarLayout);
+        }
+
+        if (filtersRow && toolbarActions) {
+            scheduleToolbarLayout();
+            window.addEventListener('resize', scheduleToolbarLayout);
+            if (window.ResizeObserver) {
+                toolbarResizeObserver = new ResizeObserver(scheduleToolbarLayout);
+                toolbarResizeObserver.observe(filtersRow);
+                toolbarResizeObserver.observe(root.querySelector('.chooser-card') || root);
+            }
+        }
+
         function updateAssetBtnText() {
             if (!assetBtn || !assetMenu) return;
             const allCb = assetMenu.querySelector('.form-check-input[value="all"]');
             if (allCb && allCb.checked) {
                 assetBtn.textContent = 'Все активы';
+                scheduleToolbarLayout();
                 return;
             }
             const checked = [...assetMenu.querySelectorAll('.form-check-input:checked')]
                 .filter(cb => cb.value !== 'all');
             if (!checked.length) {
                 assetBtn.textContent = 'Все активы';
+                scheduleToolbarLayout();
                 return;
             }
             if (checked.length === 1) {
@@ -1201,6 +1278,7 @@
             } else {
                 assetBtn.textContent = `Выбрано: ${checked.length}`;
             }
+            scheduleToolbarLayout();
         }
 
         function _buildFormCheck(value, id, labelText) {
@@ -1408,11 +1486,14 @@
 
         projectSel?.addEventListener('change', async () => {
             if (window.UIPref) UIPref.set('checklists:project', projectSel.value);
+            scheduleToolbarLayout();
             await loadProjectMeta();
+            scheduleToolbarLayout();
             await reloadTable();
         });
         sectionSel?.addEventListener('change', function () {
             if (window.UIPref) UIPref.set('checklists:section', sectionSel.value);
+            scheduleToolbarLayout();
             reloadTable();
         });
 
@@ -1424,12 +1505,14 @@
                 }
             }
             await loadProjectMeta();
+            scheduleToolbarLayout();
             if (window.UIPref && sectionSel) {
                 var savedSection = UIPref.get('checklists:section', null);
                 if (savedSection && sectionSel.querySelector('option[value="' + CSS.escape(savedSection) + '"]')) {
                     sectionSel.value = savedSection;
                 }
             }
+            scheduleToolbarLayout();
             await reloadTable();
         })();
 

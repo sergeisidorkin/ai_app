@@ -1,12 +1,14 @@
+import json
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
 from policy_app.models import EXPERT_GROUP, Product, TypicalSection
-from projects_app.models import Performer, ProjectRegistration
+from projects_app.models import LegalEntity, Performer, ProjectRegistration, WorkVolume
 from users_app.models import Employee
 
-from checklists_app.models import SharedChecklistLink
+from checklists_app.models import ChecklistCustomerStatus, ChecklistItem, ChecklistStatus, SharedChecklistLink
 from checklists_app.views import _project_options
 
 
@@ -142,3 +144,222 @@ class ChecklistFilterTests(TestCase):
             payload["sections"],
             [{"id": self.section_accounting.id, "name": f"{self.section_accounting} {self.section_accounting.short_name_ru}"}],
         )
+
+
+class ChecklistStatusPermissionTests(TestCase):
+    def setUp(self):
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=6001,
+            type=self.product,
+            name="Проект прав доступа",
+            year=2026,
+        )
+        self.section_allowed = TypicalSection.objects.create(
+            product=self.product,
+            code="ALW",
+            short_name="Allowed",
+            short_name_ru="Разрешенный",
+            name_en="Allowed",
+            name_ru="Разрешенный",
+            accounting_type="Раздел",
+        )
+        self.section_other = TypicalSection.objects.create(
+            product=self.product,
+            code="OTH",
+            short_name="Other",
+            short_name_ru="Чужой",
+            name_en="Other",
+            name_ru="Чужой",
+            accounting_type="Раздел",
+        )
+        self.work_allowed = WorkVolume.objects.create(
+            project=self.project,
+            name="Asset A",
+            asset_name="Asset A",
+        )
+        self.work_other = WorkVolume.objects.create(
+            project=self.project,
+            name="Asset B",
+            asset_name="Asset B",
+        )
+        self.legal_allowed = LegalEntity.objects.filter(work_item=self.work_allowed).first()
+        self.legal_other = LegalEntity.objects.filter(work_item=self.work_other).first()
+
+        self.item_allowed = ChecklistItem.objects.create(
+            project=self.project,
+            section=self.section_allowed,
+            code="ALW",
+            number=1,
+            short_name="Allowed item",
+            name="Allowed item",
+        )
+        self.item_other_section = ChecklistItem.objects.create(
+            project=self.project,
+            section=self.section_other,
+            code="OTH",
+            number=1,
+            short_name="Other item",
+            name="Other item",
+        )
+
+        self.expert_user = get_user_model().objects.create_user(
+            username="status-expert",
+            password="secret",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Эксперт",
+        )
+        self.expert_employee = Employee.objects.create(
+            user=self.expert_user,
+            patronymic="Иванович",
+            role=EXPERT_GROUP,
+        )
+        Performer.objects.create(
+            work_item=self.work_allowed,
+            registration=self.project,
+            asset_name="Asset A",
+            executor=Performer.employee_full_name(self.expert_employee),
+            employee=self.expert_employee,
+            typical_section=self.section_allowed,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        self.shared_link = SharedChecklistLink.objects.create(project=self.project)
+
+    def _post_json(self, url, payload):
+        return self.client.post(
+            url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def _status_payload(self, item, legal_entity, status):
+        return {
+            "asset_name": "all",
+            "updates": [{
+                "checklist_item": item.id,
+                "legal_entity": legal_entity.id,
+                "status": status,
+            }],
+        }
+
+    def test_expert_grid_marks_only_confirmed_section_asset_imcm_cells_editable(self):
+        self.client.force_login(self.expert_user)
+
+        response = self.client.get(reverse("checklists_app:grid_data"), {
+            "project_uid": self.project.short_uid,
+            "asset": "all",
+            "section": "all",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        rows = [row for row in response.json()["rows"] if row.get("kind") == "item"]
+        allowed_row = next(row for row in rows if row["id"] == self.item_allowed.id)
+        other_section_row = next(row for row in rows if row["id"] == self.item_other_section.id)
+
+        allowed_cell = next(cell for cell in allowed_row["cells"] if cell["entityId"] == self.legal_allowed.id)
+        wrong_asset_cell = next(cell for cell in allowed_row["cells"] if cell["entityId"] == self.legal_other.id)
+        other_section_cell = next(cell for cell in other_section_row["cells"] if cell["entityId"] == self.legal_allowed.id)
+        allowed_customer_cell = next(
+            cell for cell in allowed_row["customerCells"] if cell["entityId"] == self.legal_allowed.id
+        )
+
+        self.assertTrue(allowed_cell["editable"])
+        self.assertFalse(wrong_asset_cell["editable"])
+        self.assertFalse(other_section_cell["editable"])
+        self.assertFalse(allowed_customer_cell["editable"])
+
+    def test_expert_can_update_only_confirmed_imcm_status_and_not_customer_status(self):
+        self.client.force_login(self.expert_user)
+
+        allowed_response = self._post_json(
+            reverse("checklists_app:update_status_batch"),
+            self._status_payload(self.item_allowed, self.legal_allowed, ChecklistStatus.Status.PROVIDED),
+        )
+        denied_asset_response = self._post_json(
+            reverse("checklists_app:update_status_batch"),
+            self._status_payload(self.item_allowed, self.legal_other, ChecklistStatus.Status.PROVIDED),
+        )
+        denied_customer_response = self._post_json(
+            reverse("checklists_app:update_customer_status_batch"),
+            self._status_payload(
+                self.item_allowed,
+                self.legal_allowed,
+                ChecklistCustomerStatus.Status.TRANSFERRED,
+            ),
+        )
+
+        self.assertEqual(allowed_response.status_code, 200)
+        self.assertTrue(
+            ChecklistStatus.objects.filter(
+                checklist_item=self.item_allowed,
+                legal_entity=self.legal_allowed,
+                status=ChecklistStatus.Status.PROVIDED,
+            ).exists()
+        )
+        self.assertEqual(denied_asset_response.status_code, 400)
+        self.assertFalse(
+            ChecklistStatus.objects.filter(
+                checklist_item=self.item_allowed,
+                legal_entity=self.legal_other,
+            ).exists()
+        )
+        self.assertEqual(denied_customer_response.status_code, 400)
+        self.assertFalse(
+            ChecklistCustomerStatus.objects.filter(
+                checklist_item=self.item_allowed,
+                legal_entity=self.legal_allowed,
+            ).exists()
+        )
+
+    def test_public_link_cannot_update_imcm_but_can_update_customer_status(self):
+        self.client.logout()
+
+        grid_response = self.client.get(reverse("checklists_app:shared_grid_data", args=[self.shared_link.token]), {
+            "asset": "all",
+            "section": "all",
+        })
+        imcm_response = self._post_json(
+            reverse("checklists_app:shared_update_status_batch", args=[self.shared_link.token]),
+            self._status_payload(self.item_allowed, self.legal_allowed, ChecklistStatus.Status.PROVIDED),
+        )
+        customer_response = self._post_json(
+            reverse("checklists_app:shared_update_customer_status_batch", args=[self.shared_link.token]),
+            self._status_payload(
+                self.item_allowed,
+                self.legal_allowed,
+                ChecklistCustomerStatus.Status.TRANSFERRED,
+            ),
+        )
+
+        self.assertEqual(grid_response.status_code, 200)
+        rows = [row for row in grid_response.json()["rows"] if row.get("kind") == "item"]
+        allowed_row = next(row for row in rows if row["id"] == self.item_allowed.id)
+        imcm_cell = next(cell for cell in allowed_row["cells"] if cell["entityId"] == self.legal_allowed.id)
+        customer_cell = next(cell for cell in allowed_row["customerCells"] if cell["entityId"] == self.legal_allowed.id)
+        self.assertFalse(imcm_cell["editable"])
+        self.assertTrue(customer_cell["editable"])
+
+        self.assertEqual(imcm_response.status_code, 403)
+        self.assertFalse(
+            ChecklistStatus.objects.filter(
+                checklist_item=self.item_allowed,
+                legal_entity=self.legal_allowed,
+            ).exists()
+        )
+        self.assertEqual(customer_response.status_code, 200)
+        self.assertTrue(
+            ChecklistCustomerStatus.objects.filter(
+                checklist_item=self.item_allowed,
+                legal_entity=self.legal_allowed,
+                status=ChecklistCustomerStatus.Status.TRANSFERRED,
+            ).exists()
+        )
+

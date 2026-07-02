@@ -18,12 +18,14 @@ from users_app.models import Employee
 from yandexdisk_app.workspace import _build_project_folder_name, WorkspaceResult
 from nextcloud_app.api import NextcloudApiError
 from nextcloud_app.api import NextcloudApiClient
+from nextcloud_app.api import NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from nextcloud_app.provisioning import ensure_nextcloud_account
 from nextcloud_app.workspace import (
     create_basic_project_workspace_stream,
     create_proposal_workspace,
     grant_project_workspace_editor_access_for_performers,
+    revoke_contract_folder_access_for_user,
 )
 
 User = get_user_model()
@@ -178,6 +180,134 @@ class NextcloudCommandTests(TestCase):
     NEXTCLOUD_PROVISIONING_TOKEN="token",
     NEXTCLOUD_OIDC_PROVIDER_ID=1,
 )
+class NextcloudContractSharePruneCommandTests(TestCase):
+    def test_prune_nextcloud_contract_shares_reports_stale_direct_contract_share(self):
+        user = User.objects.create_user(
+            username="smirnova@example.com",
+            email="smirnova@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        employee = Employee.objects.create(user=user)
+        link = NextcloudUserLink.objects.create(
+            user=user,
+            nextcloud_user_id=f"ncstaff-{user.pk}",
+            nextcloud_username=f"ncstaff-{user.pk}",
+            nextcloud_email=user.email,
+        )
+        active_folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 001 Смирнова ЭЮ"
+        )
+        stale_folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 012 Смирнова ЭЮ"
+        )
+        project = ProjectRegistration.objects.create(number=6101, name="Проект", year=2026)
+        Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Смирнова Элеонора Юрьевна",
+            contract_project_disk_folder=active_folder,
+        )
+
+        out = StringIO()
+        with patch("nextcloud_app.api.NextcloudApiClient.list_user_shares") as mocked_list_shares:
+            mocked_list_shares.return_value = {
+                active_folder: NextcloudShare(
+                    share_id="91",
+                    path=active_folder,
+                    share_with=link.nextcloud_user_id,
+                    permissions=1,
+                    target_path="/6001010RU 001 Смирнова ЭЮ",
+                ),
+                stale_folder: NextcloudShare(
+                    share_id="92",
+                    path=stale_folder,
+                    share_with=link.nextcloud_user_id,
+                    permissions=1,
+                    target_path="/6001010RU 012 Смирнова ЭЮ",
+                ),
+            }
+
+            call_command("prune_nextcloud_contract_shares", "--email", user.email, stdout=out)
+
+        output = out.getvalue()
+        self.assertIn("1 stale contract share(s)", output)
+        self.assertIn("STALE 92", output)
+        self.assertIn(stale_folder, output)
+        self.assertNotIn("STALE 91", output)
+
+
+class NextcloudContractShareSignalTests(TestCase):
+    @patch("nextcloud_app.signals.revoke_contract_folder_access_for_user")
+    def test_deleting_performer_schedules_contract_folder_share_revoke(self, mocked_revoke):
+        user = User.objects.create_user(
+            username="deleted-contract-share@example.com",
+            email="deleted-contract-share@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        employee = Employee.objects.create(user=user)
+        project = ProjectRegistration.objects.create(number=6201, name="Проект", year=2026)
+        folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 012 Смирнова ЭЮ"
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Смирнова Элеонора Юрьевна",
+            contract_project_disk_folder=folder,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            performer.delete()
+
+        mocked_revoke.assert_called_once_with(user.pk, folder)
+
+    @patch("nextcloud_app.signals.revoke_contract_folder_access_for_user")
+    def test_updating_performer_contract_folder_schedules_previous_share_revoke(self, mocked_revoke):
+        user = User.objects.create_user(
+            username="updated-contract-share@example.com",
+            email="updated-contract-share@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        employee = Employee.objects.create(user=user)
+        project = ProjectRegistration.objects.create(number=6202, name="Проект", year=2026)
+        old_folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 012 Смирнова ЭЮ"
+        )
+        new_folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 013 Смирнова ЭЮ"
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Смирнова Элеонора Юрьевна",
+            contract_project_disk_folder=old_folder,
+        )
+        mocked_revoke.reset_mock()
+
+        performer.contract_project_disk_folder = new_folder
+        with self.captureOnCommitCallbacks(execute=True):
+            performer.save(update_fields=["contract_project_disk_folder"])
+
+        mocked_revoke.assert_called_once_with(user.pk, old_folder)
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
 class NextcloudApiClientFileOpsTests(TestCase):
     def test_list_resources_parses_webdav_depth_response(self):
         session = Mock()
@@ -266,6 +396,54 @@ class NextcloudApiClientFileOpsTests(TestCase):
 
         self.assertEqual(public_url, "https://cloud.example.com/s/public-doc")
         self.assertEqual(session.request.call_count, 2)
+
+    def test_revoke_user_share_deletes_existing_share(self):
+        session = Mock()
+        session.request.side_effect = [
+            Mock(
+                status_code=200,
+                content=(
+                    b'{"ocs":{"meta":{"status":"ok","statuscode":100},"data":['
+                    b'{"id":"42","path":"/Corporate Root/02 Contracts/000 Ivanov",'
+                    b'"share_type":0,"share_with":"ncstaff-1","permissions":1}'
+                    b']}}'
+                ),
+                json=lambda: {
+                    "ocs": {
+                        "meta": {"status": "ok", "statuscode": 100},
+                        "data": [
+                            {
+                                "id": "42",
+                                "path": "/Corporate Root/02 Contracts/000 Ivanov",
+                                "share_type": 0,
+                                "share_with": "ncstaff-1",
+                                "permissions": 1,
+                            }
+                        ],
+                    }
+                },
+                text="",
+                headers={},
+            ),
+            Mock(
+                status_code=200,
+                content=b'{"ocs":{"meta":{"status":"ok","statuscode":100},"data":[]}}',
+                json=lambda: {"ocs": {"meta": {"status": "ok", "statuscode": 100}, "data": []}},
+                text="",
+                headers={},
+            ),
+        ]
+        client = NextcloudApiClient(session=session)
+
+        revoked = client.revoke_user_share(
+            "cloud-admin",
+            "/Corporate Root/02 Contracts/000 Ivanov",
+            "ncstaff-1",
+        )
+
+        self.assertTrue(revoked)
+        self.assertEqual(session.request.call_args_list[1].args[0], "DELETE")
+        self.assertIn("/ocs/v2.php/apps/files_sharing/api/v1/shares/42", session.request.call_args_list[1].args[1])
 
     @patch("nextcloud_app.api.time.sleep")
     def test_ensure_public_link_share_retries_after_429(self, mocked_sleep):
@@ -826,6 +1004,80 @@ class NextcloudWorkspaceTests(TestCase):
         self.assertEqual(granted, 0)
         client.enable_user.assert_not_called()
         client.ensure_user_share.assert_not_called()
+
+    def test_revoke_contract_folder_access_for_user_removes_stale_share(self):
+        performer_user = User.objects.create_user(
+            username="stale-contract-share@example.com",
+            email="stale-contract-share@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        performer_employee = Employee.objects.create(user=performer_user)
+        folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 001 Сергеев СС"
+        )
+        NextcloudUserLink.objects.create(
+            user=performer_user,
+            nextcloud_user_id=f"ncstaff-{performer_user.pk}",
+            nextcloud_username=f"ncstaff-{performer_user.pk}",
+            nextcloud_email=performer_user.email,
+        )
+        performer = Performer.objects.create(
+            registration=self.project,
+            employee=performer_employee,
+            executor="Сергеев Сергей Сергеевич",
+            contract_project_disk_folder=folder,
+        )
+        performer.delete()
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.revoke_user_share.return_value = True
+
+        revoked = revoke_contract_folder_access_for_user(performer_user.pk, folder, client=client)
+
+        self.assertTrue(revoked)
+        client.revoke_user_share.assert_called_once_with(
+            "cloud-admin",
+            folder,
+            f"ncstaff-{performer_user.pk}",
+        )
+
+    def test_revoke_contract_folder_access_keeps_share_when_folder_is_still_assigned(self):
+        performer_user = User.objects.create_user(
+            username="active-contract-share@example.com",
+            email="active-contract-share@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        performer_employee = Employee.objects.create(user=performer_user)
+        folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 001 Сергеев СС"
+        )
+        NextcloudUserLink.objects.create(
+            user=performer_user,
+            nextcloud_user_id=f"ncstaff-{performer_user.pk}",
+            nextcloud_username=f"ncstaff-{performer_user.pk}",
+            nextcloud_email=performer_user.email,
+        )
+        Performer.objects.create(
+            registration=self.project,
+            employee=performer_employee,
+            executor="Сергеев Сергей Сергеевич",
+            contract_project_disk_folder=folder,
+        )
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+
+        revoked = revoke_contract_folder_access_for_user(performer_user.pk, folder, client=client)
+
+        self.assertFalse(revoked)
+        client.revoke_user_share.assert_not_called()
 
     def test_create_basic_project_workspace_accepts_slash_as_root_path(self):
         settings_obj = CloudStorageSettings.get_solo()

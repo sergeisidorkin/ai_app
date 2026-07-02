@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models, transaction
 
 DEPARTMENT_HEAD_GROUP = "Руководитель направления"
@@ -588,6 +588,35 @@ class SectionStructure(models.Model):
 
     def __str__(self):
         return f"{self.product.short_name} / {self.section.short_name}"
+
+
+class ReportStructure(models.Model):
+    product = models.ForeignKey(
+        Product,
+        verbose_name="Продукт",
+        on_delete=models.CASCADE,
+        related_name="report_structures",
+    )
+    level = models.PositiveSmallIntegerField(
+        "Уровень",
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(9)],
+    )
+    code = models.CharField("Код", max_length=255, blank=True, default="")
+    name = models.TextField("Наименование отчета, раздела (подраздела)", blank=True, default="")
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Типовая структура отчета"
+        verbose_name_plural = "Типовая структура отчета"
+        ordering = ["product_id", "position", "id"]
+
+    def __str__(self):
+        label = self.code or self.name
+        return f"{self.product.short_name} / {label}"
 
 
 class ServiceGoalReport(models.Model):

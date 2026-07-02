@@ -20,6 +20,7 @@ from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpec
 from group_app.models import GroupMember, OrgUnit
 from policy_app.forms import (
     ProductForm,
+    ReportStructureForm,
     SectionStructureForm,
     ServiceGoalReportForm,
     TariffForm,
@@ -32,6 +33,7 @@ from policy_app.models import (
     ConsultingServiceType,
     ExpertiseDirection,
     Product,
+    ReportStructure,
     SectionStructure,
     ServiceGoalReport,
     SpecialtyTariff,
@@ -59,6 +61,20 @@ class RemoveTypicalSectionExecutorMigrationTests(TransactionTestCase):
         TypicalSection = old_apps.get_model("policy_app", "TypicalSection")
         ExpertSpecialty = old_apps.get_model("experts_app", "ExpertSpecialty")
         TypicalSectionSpecialty = old_apps.get_model("policy_app", "TypicalSectionSpecialty")
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                columns = {
+                    column.name
+                    for column in connection.introspection.get_table_description(
+                        cursor,
+                        "experts_app_expertspecialty",
+                    )
+                }
+                if "specialization_area" in columns:
+                    cursor.execute(
+                        "ALTER TABLE experts_app_expertspecialty "
+                        "ALTER COLUMN specialization_area SET DEFAULT ''"
+                    )
 
         product = Product.objects.create(
             short_name="MIG",
@@ -1368,6 +1384,202 @@ class SectionStructureViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
         self.assertEqual(SectionStructure.objects.get().section, self.section)
+
+
+class ReportStructureViewsTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="policy-report-structures-admin",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="REP",
+            name_en="Report",
+            display_name="Report Product",
+            name_ru="Отчет",
+            consulting_type="Горный",
+            service_category="Инжиниринг",
+            service_subtype="По международным стандартам",
+            position=1,
+        )
+
+    def _create_report_structure(self, level, code, name, position):
+        return ReportStructure.objects.create(
+            product=self.product,
+            level=level,
+            code=code,
+            name=name,
+            position=position,
+        )
+
+    def test_policy_partial_renders_report_structure_table_and_actions(self):
+        self._create_report_structure(0, "RPT", "Итоговый отчет", 1)
+        self._create_report_structure(1, "SEC", "Раздел", 2)
+        self._create_report_structure(2, "SUB", "Подраздел", 3)
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Типовая структура отчета")
+        self.assertContains(response, 'id="report-structures-master"', html=False)
+        self.assertContains(response, 'name="report-structure-select"', html=False)
+        self.assertContains(response, 'id="report-structures-actions"', html=False)
+        self.assertContains(response, 'id="report-structures-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="report-structures-csv-upload-btn"', html=False)
+        self.assertContains(response, "Итоговый отчет")
+        self.assertContains(response, "1.1")
+
+    def test_report_structure_form_and_level_validation(self):
+        response = self.client.get(reverse("report_structure_form_create"), {"product": self.product.pk})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<select name="product"', html=False)
+        self.assertContains(response, "policy-product-select")
+        self.assertContains(response, 'name="level"', html=False)
+        self.assertContains(response, 'name="number"', html=False)
+        self.assertContains(response, "readonly-field", html=False)
+        self.assertContains(response, "var itemsByProduct", html=False)
+
+        form = ReportStructureForm(data={
+            "product": self.product.pk,
+            "level": 10,
+            "code": "BAD",
+            "name": "Недопустимый уровень",
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn("level", form.errors)
+
+    def test_create_and_edit_report_structure_rows(self):
+        response = self.client.post(
+            reverse("report_structure_form_create"),
+            {
+                "product": self.product.pk,
+                "level": 0,
+                "code": "RPT",
+                "name": "Итоговый отчет",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = ReportStructure.objects.get()
+        self.assertEqual(item.position, 1)
+        self.assertEqual(item.level, 0)
+
+        response = self.client.post(
+            reverse("report_structure_form_edit", args=[item.pk]),
+            {
+                "product": self.product.pk,
+                "level": 1,
+                "code": "SEC",
+                "name": "Раздел отчета",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.level, 1)
+        self.assertEqual(item.code, "SEC")
+        self.assertEqual(item.name, "Раздел отчета")
+
+    def test_report_structure_numbering_resets_after_level_zero(self):
+        self._create_report_structure(0, "RPT1", "Первый отчет", 1)
+        self._create_report_structure(1, "SEC1", "Первый раздел", 2)
+        self._create_report_structure(2, "SUB1", "Первый подраздел", 3)
+        self._create_report_structure(1, "SEC2", "Второй раздел", 4)
+        self._create_report_structure(0, "RPT2", "Второй отчет", 5)
+        self._create_report_structure(1, "SEC3", "Раздел второго отчета", 6)
+
+        response = self.client.get(reverse("report_structure_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(rows[0], [
+            "Продукт",
+            "Уровень",
+            "Номер",
+            "Код",
+            "Наименование отчета, раздела (подраздела)",
+        ])
+        self.assertEqual([row[2] for row in rows[1:]], ["0", "1", "1.1", "2", "0", "1"])
+
+    def test_report_structure_csv_upload_and_download_filter(self):
+        other_product = Product.objects.create(
+            short_name="REP2",
+            name_en="Report 2",
+            display_name="Report Product 2",
+            name_ru="Отчет 2",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        ReportStructure.objects.create(
+            product=other_product,
+            level=0,
+            code="OTHER",
+            name="Другой отчет",
+            position=1,
+        )
+        csv_file = SimpleUploadedFile(
+            "report_structures.csv",
+            (
+                "Продукт;Уровень;Номер;Код;Наименование отчета, раздела (подраздела)\n"
+                "REP;0;0;RPT;Итоговый отчет\n"
+                "REP;1;1;SEC;Раздел отчета\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("report_structure_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 2)
+        self.assertEqual(response.json()["warnings"], [])
+        self.assertEqual(ReportStructure.objects.filter(product=self.product).count(), 2)
+
+        response = self.client.get(
+            reverse("report_structure_csv_download"),
+            {"product": [self.product.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({row[0] for row in rows[1:]}, {"REP"})
+
+    def test_report_structure_move_down_reorders_within_product(self):
+        first = self._create_report_structure(0, "RPT", "Отчет", 1)
+        second = self._create_report_structure(1, "SEC", "Раздел", 2)
+        other_product = Product.objects.create(
+            short_name="REP2",
+            name_en="Report 2",
+            display_name="Report Product 2",
+            name_ru="Отчет 2",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        other = ReportStructure.objects.create(
+            product=other_product,
+            level=0,
+            code="OTHER",
+            name="Другой отчет",
+            position=1,
+        )
+
+        response = self.client.post(reverse("report_structure_move_down", args=[first.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(first.position, 2)
+        self.assertEqual(second.position, 1)
+        self.assertEqual(other.position, 1)
 
 
 class ServiceGoalReportViewsTests(TestCase):

@@ -35,6 +35,7 @@ from .models import (
     TypicalSection,
     TypicalSectionSpecialty,
     SectionStructure,
+    ReportStructure,
     ServiceGoalReport,
     TypicalServiceComposition,
     TypicalServiceTerm,
@@ -52,6 +53,7 @@ from .forms import (
     ProductForm,
     TypicalSectionForm,
     SectionStructureForm,
+    ReportStructureForm,
     ServiceGoalReportForm,
     TypicalServiceCompositionForm,
     TypicalServiceTermForm,
@@ -70,6 +72,7 @@ POLICY_PARTIAL_TEMPLATE = "policy_app/policy_partial.html"
 PRODUCT_FORM_TEMPLATE = "policy_app/product_form.html"
 SECTION_FORM_TEMPLATE = "policy_app/section_form.html"
 STRUCTURE_FORM_TEMPLATE = "policy_app/structure_form.html"
+REPORT_STRUCTURE_FORM_TEMPLATE = "policy_app/report_structure_form.html"
 SERVICE_GOAL_REPORT_FORM_TEMPLATE = "policy_app/service_goal_report_form.html"
 TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE = "policy_app/typical_service_composition_form.html"
 TYPICAL_SERVICE_TERM_FORM_TEMPLATE = "policy_app/typical_service_term_form.html"
@@ -103,6 +106,13 @@ STRUCTURE_CSV_HEADERS = [
     "Код",
     "Раздел (услуга)",
     "Подразделы",
+]
+REPORT_STRUCTURE_CSV_HEADERS = [
+    "Продукт",
+    "Уровень",
+    "Номер",
+    "Код",
+    "Наименование отчета, раздела (подраздела)",
 ]
 TYPICAL_SERVICE_COMPOSITION_CSV_HEADERS = [
     "Продукт",
@@ -291,6 +301,96 @@ def _split_csv_list_value(value, lookup=None):
 def _csv_truthy(value):
     return _csv_lookup_key(value) in {"1", "true", "yes", "y", "да", "д", "on", "checked", "истина", "+", "x", "✓"}
 
+
+def _coerce_report_level(value):
+    try:
+        level = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return level if 0 <= level <= 9 else None
+
+
+def _report_structure_number_for_level(counters, level):
+    if level == 0:
+        counters.clear()
+        return "0"
+    if len(counters) < level:
+        counters.extend([0] * (level - len(counters)))
+    else:
+        del counters[level:]
+    counters[level - 1] += 1
+    return ".".join(str(value) for value in counters[:level])
+
+
+def _build_report_structure_numbers(items):
+    counters_by_product = defaultdict(list)
+    numbers = {}
+    for item in items:
+        product_id = item["product_id"] if isinstance(item, dict) else item.product_id
+        level = _coerce_report_level(item["level"] if isinstance(item, dict) else item.level)
+        if product_id is None or level is None:
+            continue
+        number = _report_structure_number_for_level(counters_by_product[product_id], level)
+        key = item.get("key") if isinstance(item, dict) else getattr(item, "pk", None)
+        if key is not None:
+            numbers[key] = number
+    return numbers
+
+
+def _ordered_report_structures_queryset():
+    return ReportStructure.objects.select_related(
+        "product",
+        "product__consulting_type_ref",
+        "product__service_category_ref",
+        "product__service_subtype_ref",
+    ).order_by("product__position", "product_id", "position", "id")
+
+
+def _report_structure_items_by_product_json():
+    grouped = defaultdict(list)
+    for item in ReportStructure.objects.order_by("product__position", "product_id", "position", "id").only("id", "product_id", "level", "position"):
+        grouped[item.product_id].append({
+            "id": item.pk,
+            "level": item.level,
+            "position": item.position,
+        })
+    return json.dumps(grouped, ensure_ascii=False)
+
+
+def _report_structure_number_preview(product_id, level, report_structure=None):
+    product_id = _positive_int(product_id)
+    level = _coerce_report_level(level)
+    if product_id is None or level is None:
+        return ""
+    preview_key = "__preview__"
+    items = []
+    inserted = False
+    current_id = report_structure.pk if report_structure and report_structure.pk else None
+    original_product_id = report_structure.product_id if report_structure and report_structure.pk else None
+    for item in ReportStructure.objects.filter(product_id=product_id).order_by("position", "id").only("id", "product_id", "level", "position"):
+        if current_id and item.pk == current_id:
+            if original_product_id == product_id:
+                items.append({"key": preview_key, "product_id": product_id, "level": level})
+                inserted = True
+            continue
+        items.append(item)
+    if not inserted:
+        items.append({"key": preview_key, "product_id": product_id, "level": level})
+    return _build_report_structure_numbers(items).get(preview_key, "")
+
+
+def _report_structure_form_initial_number(form, report_structure=None):
+    if form.is_bound:
+        product_id = form.data.get("product")
+        level = form.data.get("level")
+    elif report_structure and report_structure.pk:
+        product_id = report_structure.product_id
+        level = report_structure.level
+    else:
+        product_id = form.initial.get("product")
+        level = form.initial.get("level", 0)
+    return _report_structure_number_preview(product_id, level, report_structure)
+
 # Вспомогательные функции для устранения дублирования
 def _policy_context(request):
     products = Product.objects.select_related(
@@ -313,6 +413,10 @@ def _policy_context(request):
         "product__service_subtype_ref",
         "section",
     ).all()
+    report_structures = list(_ordered_report_structures_queryset())
+    report_structure_numbers = _build_report_structure_numbers(report_structures)
+    for report_structure in report_structures:
+        report_structure.display_number = report_structure_numbers.get(report_structure.pk, "")
     service_goal_reports = ServiceGoalReport.objects.select_related(
         "product",
         "product__consulting_type_ref",
@@ -346,6 +450,7 @@ def _policy_context(request):
         "products": products,
         "sections": sections,
         "structures": structures,
+        "report_structures": report_structures,
         "service_goal_reports": service_goal_reports,
         "typical_service_compositions": typical_service_compositions,
         "typical_service_terms": typical_service_terms,
@@ -801,6 +906,21 @@ def _structure_form_context(form, action, structure=None):
     }
     if structure:
         ctx["structure"] = structure
+    return ctx
+
+
+def _report_structure_form_context(form, action, report_structure=None):
+    number = _report_structure_form_initial_number(form, report_structure)
+    form.fields["number"].initial = number
+    ctx = {
+        "form": form,
+        "action": action,
+        "report_structure_items_by_product_json": _report_structure_items_by_product_json(),
+        "current_report_structure_id": report_structure.pk if report_structure and report_structure.pk else None,
+        "current_report_structure_product_id": report_structure.product_id if report_structure and report_structure.pk else None,
+    }
+    if report_structure:
+        ctx["report_structure"] = report_structure
     return ctx
 
 
@@ -1439,6 +1559,240 @@ def structure_move_down(request, pk: int):
         SectionStructure.objects.filter(pk=cur.id).update(position=next_pos)
         SectionStructure.objects.filter(pk=nxt.id).update(position=cur_pos)
         _normalize_structure_positions()
+    return _render_policy_updated(request)
+
+
+# --- Типовая структура отчета ---
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def report_structure_form_create(request):
+    if request.method == "GET":
+        initial = {"level": 0}
+        initial.update(_product_field_initial_from_request(request))
+        form = ReportStructureForm(initial=initial)
+        return render(request, REPORT_STRUCTURE_FORM_TEMPLATE, _report_structure_form_context(form, "create"))
+    form = ReportStructureForm(request.POST)
+    if not form.is_valid():
+        return render(request, REPORT_STRUCTURE_FORM_TEMPLATE, _report_structure_form_context(form, "create"))
+    obj = form.save(commit=False)
+    obj.position = _next_position(ReportStructure, {"product": obj.product})
+    obj.save()
+    _normalize_report_structure_positions(obj.product_id)
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def report_structure_form_edit(request, pk: int):
+    report_structure = get_object_or_404(ReportStructure, pk=pk)
+    old_product_id = report_structure.product_id
+    if request.method == "GET":
+        form = ReportStructureForm(instance=report_structure)
+        return render(
+            request,
+            REPORT_STRUCTURE_FORM_TEMPLATE,
+            _report_structure_form_context(form, "edit", report_structure),
+        )
+    form = ReportStructureForm(request.POST, instance=report_structure)
+    if not form.is_valid():
+        return render(
+            request,
+            REPORT_STRUCTURE_FORM_TEMPLATE,
+            _report_structure_form_context(form, "edit", report_structure),
+        )
+    obj = form.save(commit=False)
+    if obj.product_id != old_product_id:
+        obj.position = _next_position(ReportStructure, {"product": obj.product})
+    obj.save()
+    _normalize_report_structure_positions(old_product_id)
+    if obj.product_id != old_product_id:
+        _normalize_report_structure_positions(obj.product_id)
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_structure_delete(request, pk: int):
+    report_structure = get_object_or_404(ReportStructure, pk=pk)
+    product_id = report_structure.product_id
+    report_structure.delete()
+    _normalize_report_structure_positions(product_id)
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_structure_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse({"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."}, status=400)
+
+    if len(rows) < 2:
+        return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+
+    products_by_name = {_csv_lookup_key(p.short_name): p for p in Product.objects.all()}
+    created = 0
+    warnings = []
+    headers = rows[0]
+    product_col = _csv_header_index(headers, "Продукт")
+    level_col = _csv_header_index(headers, "Уровень")
+    number_col = _csv_header_index(headers, "Номер")
+    code_col = _csv_header_index(headers, "Код")
+    name_col = _csv_header_index(headers, "Наименование отчета, раздела (подраздела)")
+    if product_col is None:
+        product_col = 0
+    if level_col is None:
+        level_col = 1
+    if code_col is None:
+        code_col = 3 if number_col is not None else 2
+    if name_col is None:
+        name_col = 4 if number_col is not None else 3
+
+    changed_product_ids = set()
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if not _csv_required_columns_present(row, [product_col, level_col]):
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается "
+                "Продукт, Уровень, Номер, Код, Наименование отчета, раздела (подраздела))."
+            )
+            continue
+
+        product_name = _csv_row_value(row, product_col)
+        product = products_by_name.get(_csv_lookup_key(product_name))
+        if not product:
+            warnings.append(f"Строка {i}: продукт «{product_name}» не найден. Доступные: {', '.join(products_by_name.keys())}.")
+            continue
+
+        raw_level = _csv_row_value(row, level_col)
+        level = _coerce_report_level(raw_level)
+        if level is None:
+            warnings.append(f"Строка {i}: уровень «{raw_level}» должен быть целым числом от 0 до 9.")
+            continue
+
+        try:
+            ReportStructure.objects.create(
+                product=product,
+                level=level,
+                code=_csv_row_value(row, code_col),
+                name=_csv_row_value(row, name_col),
+                position=_next_position(ReportStructure, {"product": product}),
+            )
+            changed_product_ids.add(product.pk)
+            created += 1
+        except Exception as exc:
+            warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    for product_id in changed_product_ids:
+        _normalize_report_structure_positions(product_id)
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def report_structure_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(REPORT_STRUCTURE_CSV_HEADERS)
+
+    report_structures = list(_apply_policy_master_product_filters(_ordered_report_structures_queryset(), request))
+    report_structure_numbers = _build_report_structure_numbers(report_structures)
+    for report_structure in report_structures:
+        writer.writerow(
+            [
+                report_structure.product.short_name,
+                report_structure.level,
+                report_structure_numbers.get(report_structure.pk, ""),
+                report_structure.code,
+                report_structure.name,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="report_structures.csv"'
+    return response
+
+
+def _normalize_report_structure_positions(product_id: int | None = None):
+    qs = ReportStructure.objects.only("id", "position", "product_id")
+    if product_id:
+        groups = {product_id: list(qs.filter(product_id=product_id).order_by("position", "id"))}
+    else:
+        groups = {}
+        for item in qs.order_by("product_id", "position", "id"):
+            groups.setdefault(item.product_id, []).append(item)
+    for items in groups.values():
+        for idx, item in enumerate(items, start=1):
+            if item.position != idx:
+                ReportStructure.objects.filter(pk=item.pk).update(position=idx)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def report_structure_move_up(request, pk: int):
+    report_structure = get_object_or_404(ReportStructure, pk=pk)
+    product_id = report_structure.product_id
+    _normalize_report_structure_positions(product_id)
+    items = list(ReportStructure.objects.filter(product_id=product_id).order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx > 0:
+        cur = items[idx]
+        prev = items[idx - 1]
+        cur_pos, prev_pos = cur.position, prev.position
+        ReportStructure.objects.filter(pk=cur.id).update(position=prev_pos)
+        ReportStructure.objects.filter(pk=prev.id).update(position=cur_pos)
+        _normalize_report_structure_positions(product_id)
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+def report_structure_move_down(request, pk: int):
+    report_structure = get_object_or_404(ReportStructure, pk=pk)
+    product_id = report_structure.product_id
+    _normalize_report_structure_positions(product_id)
+    items = list(ReportStructure.objects.filter(product_id=product_id).order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is not None and idx < len(items) - 1:
+        cur = items[idx]
+        nxt = items[idx + 1]
+        cur_pos, next_pos = cur.position, nxt.position
+        ReportStructure.objects.filter(pk=cur.id).update(position=next_pos)
+        ReportStructure.objects.filter(pk=nxt.id).update(position=cur_pos)
+        _normalize_report_structure_positions(product_id)
     return _render_policy_updated(request)
 
 
