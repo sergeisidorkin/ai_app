@@ -4446,6 +4446,8 @@ class InfoRequestApprovalRevokeTests(TestCase):
             name="Asset A",
             asset_name="Asset A",
         )
+        self.info_request_sent_at = timezone.now() - timedelta(hours=2)
+        self.info_request_deadline_at = timezone.now() + timedelta(hours=46)
         self.performer = Performer.objects.create(
             work_item=self.work,
             registration=self.project,
@@ -4454,8 +4456,8 @@ class InfoRequestApprovalRevokeTests(TestCase):
             employee=self.expert_employee,
             typical_section=self.section,
             participation_response=Performer.ParticipationResponse.CONFIRMED,
-            info_request_sent_at=timezone.now() - timedelta(hours=2),
-            info_request_deadline_at=timezone.now() + timedelta(hours=46),
+            info_request_sent_at=self.info_request_sent_at,
+            info_request_deadline_at=self.info_request_deadline_at,
             info_approval_status=Performer.InfoApprovalStatus.APPROVED,
             info_approval_at=timezone.now() - timedelta(hours=1),
         )
@@ -4473,6 +4475,8 @@ class InfoRequestApprovalRevokeTests(TestCase):
             recipient=self.expert_user,
             project=self.project,
             title_text="Согласуйте запрос",
+            sent_at=self.info_request_sent_at,
+            deadline_at=self.info_request_deadline_at,
             is_read=True,
             is_processed=True,
             action_at=timezone.now() - timedelta(hours=1),
@@ -4552,6 +4556,69 @@ class InfoRequestApprovalRevokeTests(TestCase):
         self.assertIn(self.section.pk, payload["ui"]["pendingSectionIds"])
         self.assertIn(self.section.pk, payload["ui"]["editableSectionIds"])
         self.assertIn(reverse("checklists_app:item_form_create"), payload["ui"]["createUrl"])
+
+    def test_admin_revoke_removes_manager_section_approval(self):
+        InfoRequestSectionApproval.objects.filter(
+            project=self.project,
+            section=self.section,
+            approved_by=self.expert_user,
+        ).delete()
+        InfoRequestSectionApproval.objects.create(
+            project=self.project,
+            section=self.section,
+            approved_by=self.staff_user,
+            approved_at=timezone.now() - timedelta(hours=1),
+        )
+        self.notification.action_by = self.staff_user
+        self.notification.save(update_fields=["action_by"])
+        self.client.force_login(self.admin_user)
+
+        response = self.client.post(
+            reverse("revoke_info_request_approval"),
+            {"performer_id": self.performer.pk},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            InfoRequestSectionApproval.objects.filter(
+                project=self.project,
+                section=self.section,
+                approved_by=self.staff_user,
+            ).exists()
+        )
+
+    def test_admin_revoke_does_not_reopen_historical_notifications(self):
+        old_notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            related_section=Notification.RelatedSection.CHECKLISTS,
+            recipient=self.expert_user,
+            project=self.project,
+            title_text="Старый запрос",
+            sent_at=self.info_request_sent_at - timedelta(days=10),
+            deadline_at=self.info_request_deadline_at - timedelta(days=10),
+            is_read=True,
+            is_processed=True,
+            action_at=timezone.now() - timedelta(days=9),
+            action_by=self.expert_user,
+            action_choice=Notification.ActionChoice.APPROVED,
+        )
+        NotificationPerformerLink.objects.create(
+            notification=old_notification,
+            performer=self.performer,
+        )
+        self.client.force_login(self.admin_user)
+
+        response = self.client.post(
+            reverse("revoke_info_request_approval"),
+            {"performer_id": self.performer.pk},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.notification.refresh_from_db()
+        old_notification.refresh_from_db()
+        self.assertFalse(self.notification.is_processed)
+        self.assertTrue(old_notification.is_processed)
+        self.assertEqual(old_notification.action_choice, Notification.ActionChoice.APPROVED)
 
 
 class ExpertProjectVisibilityTests(TestCase):

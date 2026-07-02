@@ -3278,35 +3278,54 @@ def revoke_info_request_approval(request):
         project = performer.registration
         section = performer.typical_section
 
+        current_notification_ids = list(
+            Notification.objects
+            .filter(
+                notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                project=project,
+                recipient=expert_user,
+                sent_at=performer.info_request_sent_at,
+                deadline_at=performer.info_request_deadline_at,
+                performer_links__performer=performer,
+            )
+            .values_list("pk", flat=True)
+            .distinct()
+        )
+        if not current_notification_ids:
+            return JsonResponse({"ok": False, "error": "Не найден связанный запрос согласования."}, status=400)
+
+        current_notifications = list(
+            Notification.objects
+            .select_for_update()
+            .filter(pk__in=current_notification_ids)
+        )
+        notification_ids = [notification.pk for notification in current_notifications]
+        affected_ids = list(
+            NotificationPerformerLink.objects
+            .filter(
+                notification_id__in=notification_ids,
+                performer__registration=project,
+                performer__employee=performer.employee,
+                performer__typical_section=section,
+            )
+            .values_list("performer_id", flat=True)
+            .distinct()
+        )
         affected_performers = (
             Performer.objects
             .select_for_update()
-            .filter(
-                registration=project,
-                employee=performer.employee,
-                typical_section=section,
-                info_request_sent_at__isnull=False,
-            )
+            .filter(pk__in=affected_ids)
         )
-        affected_ids = list(affected_performers.values_list("pk", flat=True))
-        notification_ids = list(
-            NotificationPerformerLink.objects
-            .filter(
-                performer_id__in=affected_ids,
-                notification__notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
-                notification__project=project,
-                notification__recipient=expert_user,
-            )
-            .values_list("notification_id", flat=True)
-            .distinct()
+        approver_ids = {expert_user.pk}
+        approver_ids.update(
+            notification.action_by_id
+            for notification in current_notifications
+            if notification.action_by_id
         )
-        if not notification_ids:
-            return JsonResponse({"ok": False, "error": "Не найден связанный запрос согласования."}, status=400)
-
         InfoRequestSectionApproval.objects.filter(
             project=project,
             section=section,
-            approved_by=expert_user,
+            approved_by_id__in=approver_ids,
         ).delete()
         performers_updated = affected_performers.update(
             info_approval_status="",
