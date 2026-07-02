@@ -1793,6 +1793,7 @@ def create_payment_request_notifications(
     created = []
     system_email_jobs = []
     connected_email_jobs = []
+    email_recipients = _letter_template_email_recipients("payment_request", sender, lawyer_user)
     should_create_notifications = DELIVERY_CHANNEL_SYSTEM in delivery_channels
     if should_create_notifications:
         notification = Notification.objects.create(
@@ -1821,22 +1822,24 @@ def create_payment_request_notifications(
         )
         created.append(notification)
     if DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels:
-        system_email_jobs.append(
+        system_email_jobs.extend(
             {
-                "recipient": lawyer_user,
+                "recipient": email_recipient,
                 "subject": title_text,
                 "content": content_text,
                 "sender": sender,
             }
+            for email_recipient in email_recipients
         )
     if DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels:
-        connected_email_jobs.append(
+        connected_email_jobs.extend(
             {
-                "recipient": lawyer_user,
+                "recipient": email_recipient,
                 "subject": title_text,
                 "content": content_text,
                 "sender": sender,
             }
+            for email_recipient in email_recipients
         )
 
     system_email_requested = DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels

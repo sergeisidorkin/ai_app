@@ -16,6 +16,7 @@ from .models import (
     Grade,
     Product,
     SectionStructure,
+    ReportStructure,
     ServiceGoalReport,
     SpecialtyTariff,
     Tariff,
@@ -202,6 +203,25 @@ class SectionStructureAdmin(TimestampedAdmin):
     fieldsets = (
         (None, {
             "fields": ("position", "product", "section", "subsections"),
+        }),
+        ("Служебные поля", {
+            "fields": ("created_at", "updated_at"),
+        }),
+    )
+
+
+@admin.register(ReportStructure)
+class ReportStructureAdmin(TimestampedAdmin):
+    list_display = ("position", "product", "level", "code", "name", "updated_at")
+    list_editable = ("position",)
+    list_display_links = ("product",)
+    list_select_related = ("product",)
+    list_filter = ("product", "level")
+    search_fields = ("product__short_name", "code", "name")
+    ordering = ("product__short_name", "position", "id")
+    fieldsets = (
+        (None, {
+            "fields": ("position", "product", "level", "code", "name"),
         }),
         ("Служебные поля", {
             "fields": ("created_at", "updated_at"),

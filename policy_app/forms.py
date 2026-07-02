@@ -18,6 +18,7 @@ from .models import (
     SYSTEM_DSC_SECTION_DEFAULTS,
     TypicalSection,
     SectionStructure,
+    ReportStructure,
     ServiceGoalReport,
     TypicalServiceComposition,
     TypicalServiceTerm,
@@ -639,6 +640,53 @@ class SectionStructureForm(forms.ModelForm):
         if product and section and section.product_id != product.pk:
             self.add_error("section", "Раздел должен относиться к выбранному продукту.")
         return cleaned
+
+
+class ReportStructureForm(forms.ModelForm):
+    product = forms.ModelChoiceField(
+        label="Продукт",
+        queryset=Product.objects.all(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    level = forms.IntegerField(
+        label="Уровень",
+        min_value=0,
+        max_value=9,
+        widget=forms.NumberInput(attrs={
+            "class": "form-control",
+            "min": "0",
+            "max": "9",
+            "step": "1",
+        }),
+    )
+    number = forms.CharField(
+        label="Номер",
+        required=False,
+        disabled=True,
+        widget=forms.TextInput(attrs={
+            "class": "form-control readonly-field",
+            "readonly": True,
+            "tabindex": "-1",
+        }),
+    )
+
+    def __init__(self, *args, request_user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        _configure_policy_product_field(self.fields["product"])
+
+    class Meta:
+        model = ReportStructure
+        fields = ["product", "level", "number", "code", "name"]
+        widgets = {
+            "code": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "Код",
+            }),
+            "name": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "Наименование отчета, раздела (подраздела)",
+            }),
+        }
 
 
 class ServiceGoalReportForm(forms.ModelForm):

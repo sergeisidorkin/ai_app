@@ -30,12 +30,14 @@
       margin-left: 10px;
     }
     #checklists-panel-root .chk-filters-row {
-      flex-wrap: nowrap;
+      flex-wrap: wrap;
     }
     #checklists-panel-root .chk-filter-group {
       display: inline-flex;
       align-items: center;
       gap: .5rem;
+      flex: 0 1 auto;
+      min-width: 0;
       white-space: nowrap;
     }
     #checklists-panel-root .chk-filter-group select,
@@ -174,6 +176,8 @@
     .chk-visibility-toggles {
       gap: .35rem !important;
       margin-left: 1rem;
+      flex-wrap: wrap;
+      max-width: 100%;
     }
     .chk-vis-toggle {
       display: inline-flex;

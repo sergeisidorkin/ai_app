@@ -10,8 +10,9 @@ from core.cloud_paths import (
     PROJECTS_SECTION_FOLDER,
     PROPOSALS_SECTION_FOLDER,
     cloud_year_folder,
+    normalize_cloud_path,
 )
-from core.cloud_storage import get_nextcloud_root_path, get_primary_cloud_storage_label
+from core.cloud_storage import get_nextcloud_root_path, get_primary_cloud_storage_label, is_nextcloud_primary
 from policy_app.models import DEPARTMENT_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP, PROJECTS_HEAD_GROUP
 from users_app.models import Employee
 from yandexdisk_app.workspace import (
@@ -530,6 +531,52 @@ def grant_project_workspace_editor_access_for_performers(
             )
             granted += 1
     return granted
+
+
+def revoke_contract_folder_access_for_user(
+    user_id: int | None,
+    folder_path: str,
+    *,
+    client: NextcloudApiClient | None = None,
+) -> bool:
+    from django.contrib.auth import get_user_model
+    from projects_app.models import Performer
+
+    if not user_id or not folder_path or not is_nextcloud_primary():
+        return False
+
+    normalized_folder = normalize_cloud_path(folder_path)
+    if normalized_folder == "/":
+        return False
+
+    still_assigned = Performer.objects.filter(
+        contract_project_disk_folder=normalized_folder,
+        employee__user_id=user_id,
+    ).exists()
+    if still_assigned:
+        return False
+
+    user = get_user_model().objects.filter(pk=user_id).first()
+    if user is None or not _should_manage_in_nextcloud(user):
+        return False
+
+    link = NextcloudUserLink.objects.filter(user=user).first()
+    if not link or not link.nextcloud_user_id:
+        return False
+
+    client = client or NextcloudApiClient()
+    if not client.is_configured:
+        return False
+
+    try:
+        return client.revoke_user_share(client.username, normalized_folder, link.nextcloud_user_id)
+    except NextcloudApiError:
+        logger.exception(
+            "Failed to revoke Nextcloud contract folder share for user %s at %s",
+            user_id,
+            normalized_folder,
+        )
+        return False
 
 
 def _confirmed_project_performer_users(project):

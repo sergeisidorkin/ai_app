@@ -121,27 +121,49 @@ detect_active_postmaster() {
   [ -f "$pid_file" ] || return 1
 
   pid="$(sed -n '1p' "$pid_file" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+  if is_postmaster_pid "$pid"; then
     DEV_POSTGRES_ACTIVE_PID="$pid"
     return 0
   fi
   return 1
 }
 
+is_postmaster_pid() {
+  local pid process_command
+  pid="$1"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+
+  process_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  case "$process_command" in
+    *postgres*|*postmaster*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 clear_stale_postmaster_pid() {
   resolve_data_dir || return 0
 
-  local pid_file pid status_line
+  local pid_file pid status_line process_command
   pid_file="${DEV_POSTGRES_DATA_DIR%/}/postmaster.pid"
   [ -f "$pid_file" ] || return 0
 
   pid="$(sed -n '1p' "$pid_file" 2>/dev/null || true)"
   status_line="$(sed -n '8p' "$pid_file" 2>/dev/null || true)"
 
-  if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+  if is_postmaster_pid "$pid"; then
     DEV_POSTGRES_ACTIVE_PID="$pid"
     log "detected active postmaster pid=$pid; stale lock cleanup skipped"
     return 0
+  fi
+
+  if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+    process_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    log "pid $pid from postmaster.pid belongs to another process (${process_command:-unknown}); treating lock as stale"
   fi
 
   if [ -n "$status_line" ]; then

@@ -113,6 +113,16 @@ COLUMN_REGISTRY = {
                     "subsections": "Подразделы",
                 },
             },
+            "report_structure": {
+                "label": "Типовая структура отчета",
+                "columns": {
+                    "product": "Продукт",
+                    "level": "Уровень",
+                    "number": "Номер",
+                    "code": "Код",
+                    "name": "Наименование отчета, раздела (подраздела)",
+                },
+            },
             "typical_service_composition": {
                 "label": "Типовой состав услуг",
                 "columns": {

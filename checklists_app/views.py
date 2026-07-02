@@ -28,6 +28,7 @@ from .models import (
     ChecklistRequestNote,
     ChecklistStatus,
     ChecklistStatusHistory,
+    InfoRequestSectionApproval,
     SharedChecklistLink,
 )
 
@@ -327,6 +328,81 @@ def _legal_entities_for_single(qs, asset_name: str):
         Q(work_item__asset_name__iexact=asset_name)
         | Q(work_item__name__iexact=asset_name)
     ))
+
+
+def _norm_access_value(value) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _legal_entity_access_keys(legal_entity: LegalEntity) -> set[str]:
+    work_item = getattr(legal_entity, "work_item", None)
+    values = {
+        getattr(work_item, "asset_name", "") if work_item else "",
+        getattr(work_item, "name", "") if work_item else "",
+        getattr(legal_entity, "legal_name", ""),
+        getattr(legal_entity, "work_name", ""),
+    }
+    return {_norm_access_value(value) for value in values if _norm_access_value(value)}
+
+
+def _expert_confirmed_scope(user, project: ProjectRegistration) -> tuple[set[tuple[int, int]], set[tuple[int, str]]]:
+    employee = getattr(user, "employee_profile", None)
+    if getattr(employee, "role", "") != EXPERT_GROUP:
+        return set(), set()
+
+    confirmed = (
+        Performer.objects
+        .filter(
+            employee=employee,
+            registration=project,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        .exclude(typical_section_id__isnull=True)
+        .select_related("work_item")
+        .values_list("typical_section_id", "work_item_id", "asset_name")
+    )
+    work_item_scope: set[tuple[int, int]] = set()
+    asset_scope: set[tuple[int, str]] = set()
+    for section_id, work_item_id, asset_name in confirmed:
+        if work_item_id:
+            work_item_scope.add((section_id, work_item_id))
+        normalized_asset = _norm_access_value(asset_name)
+        if normalized_asset:
+            asset_scope.add((section_id, normalized_asset))
+    return work_item_scope, asset_scope
+
+
+def _expert_can_edit_status_cell(user, checklist_item: ChecklistItem, legal_entity: LegalEntity) -> bool:
+    employee = getattr(user, "employee_profile", None)
+    if getattr(employee, "role", "") != EXPERT_GROUP:
+        return True
+    work_item_scope, asset_scope = _expert_confirmed_scope(user, checklist_item.project)
+    section_id = checklist_item.section_id
+    work_item_id = getattr(legal_entity, "work_item_id", None)
+    if work_item_id and (section_id, work_item_id) in work_item_scope:
+        return True
+    return any((section_id, key) in asset_scope for key in _legal_entity_access_keys(legal_entity))
+
+
+def _can_update_imcm_status(*, user, checklist_item: ChecklistItem, legal_entity: LegalEntity, shared_link=None) -> bool:
+    if shared_link is not None:
+        return False
+    if checklist_item.project_id != legal_entity.project_id:
+        return False
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    return _expert_can_edit_status_cell(user, checklist_item, legal_entity)
+
+
+def _can_update_customer_status(*, user, checklist_item: ChecklistItem, legal_entity: LegalEntity, shared_link=None) -> bool:
+    if checklist_item.project_id != legal_entity.project_id:
+        return False
+    if shared_link is not None:
+        return bool(shared_link.can_edit)
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    employee = getattr(user, "employee_profile", None)
+    return getattr(employee, "role", "") != EXPERT_GROUP
 
 
 # ---------------------------------------------------------------------------
@@ -971,6 +1047,8 @@ def _build_grid_payload(
     approve_info_request_url: str = "",
     pending_section_ids: set | None = None,
     section_approval_map: dict | None = None,
+    status_editable_resolver=None,
+    customer_status_editable_resolver=None,
 ) -> dict:
     section_items_list = scope["section_items_list"]
     legal_entities = scope["legal_entities"]
@@ -1064,6 +1142,9 @@ def _build_grid_payload(
                 status_obj = status_map.get((item.id, entity.id))
                 row_statuses.append({"entity": entity, "status": status_obj})
                 value = status_obj.status if status_obj else ChecklistStatus.Status.MISSING
+                status_editable = (not readonly) and (
+                    status_editable_resolver(item, entity) if status_editable_resolver else True
+                )
                 cells.append({
                     "entityId": entity.id,
                     "status": value,
@@ -1071,10 +1152,14 @@ def _build_grid_payload(
                     "statusShortLabel": _status_short_label(value),
                     "dateDisplay": _format_status_changed_at(status_obj),
                     "dateIso": timezone.localtime(status_obj.status_changed_at).isoformat() if status_obj and status_obj.status_changed_at else "",
+                    "editable": status_editable,
                 })
 
                 cs_obj = customer_status_map.get((item.id, entity.id))
                 cs_value = cs_obj.status if cs_obj else ChecklistCustomerStatus.Status.NOT_TRANSFERRED
+                customer_status_editable = (not readonly) and (
+                    customer_status_editable_resolver(item, entity) if customer_status_editable_resolver else True
+                )
                 customer_cells.append({
                     "entityId": entity.id,
                     "status": cs_value,
@@ -1082,6 +1167,7 @@ def _build_grid_payload(
                     "statusShortLabel": _customer_status_short_label(cs_value),
                     "dateDisplay": _format_customer_status_changed_at(cs_obj),
                     "dateIso": timezone.localtime(cs_obj.status_changed_at).isoformat() if cs_obj and cs_obj.status_changed_at else "",
+                    "editable": customer_status_editable,
                 })
 
             folder = folder_map.get(item.id)
@@ -1229,11 +1315,20 @@ def _batch_update_statuses(*, request_user, asset_name, updates, shared_link=Non
 
             checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
             legal_entity = get_object_or_404(LegalEntity, pk=legal_entity_id)
+            if checklist_item.project_id != legal_entity.project_id:
+                raise ValueError("Нет доступа к этой записи.")
             if shared_link and (
                 legal_entity.project_id != shared_link.project_id
                 or checklist_item.project_id != shared_link.project_id
             ):
                 raise ValueError("Нет доступа к этой записи.")
+            if not _can_update_imcm_status(
+                user=user,
+                checklist_item=checklist_item,
+                legal_entity=legal_entity,
+                shared_link=shared_link,
+            ):
+                raise ValueError("Нет прав на изменение статусов IMCM для этой записи.")
 
             existing = ChecklistStatus.objects.filter(
                 checklist_item=checklist_item,
@@ -1303,11 +1398,20 @@ def _batch_update_customer_statuses(*, request_user, asset_name, updates, shared
 
             checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
             legal_entity = get_object_or_404(LegalEntity, pk=legal_entity_id)
+            if checklist_item.project_id != legal_entity.project_id:
+                raise ValueError("Нет доступа к этой записи.")
             if shared_link and (
                 legal_entity.project_id != shared_link.project_id
                 or checklist_item.project_id != shared_link.project_id
             ):
                 raise ValueError("Нет доступа к этой записи.")
+            if not _can_update_customer_status(
+                user=user,
+                checklist_item=checklist_item,
+                legal_entity=legal_entity,
+                shared_link=shared_link,
+            ):
+                raise ValueError("Нет прав на изменение статусов Заказчика для этой записи.")
 
             existing = ChecklistCustomerStatus.objects.filter(
                 checklist_item=checklist_item,
@@ -1663,6 +1767,16 @@ def grid_data(request):
         approve_info_request_url=approve_url,
         pending_section_ids=pending_section_ids,
         section_approval_map=section_approval_map,
+        status_editable_resolver=lambda item, entity: _can_update_imcm_status(
+            user=request.user,
+            checklist_item=item,
+            legal_entity=entity,
+        ),
+        customer_status_editable_resolver=lambda item, entity: _can_update_customer_status(
+            user=request.user,
+            checklist_item=item,
+            legal_entity=entity,
+        ),
     )
     if info_request_approved_at:
         payload["ui"]["infoRequestApprovedAt"] = info_request_approved_at
@@ -2024,6 +2138,12 @@ def update_status(request):
 
     checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
     legal_entity = get_object_or_404(LegalEntity, pk=legal_entity_id)
+    if not _can_update_imcm_status(
+        user=request.user,
+        checklist_item=checklist_item,
+        legal_entity=legal_entity,
+    ):
+        return HttpResponseBadRequest("Нет прав на изменение статусов IMCM для этой записи.")
 
     existing = ChecklistStatus.objects.filter(
         checklist_item=checklist_item, legal_entity=legal_entity,
@@ -2974,6 +3094,8 @@ def shared_grid_data(request, token: str):
         readonly=not link.can_edit,
         show_actions=False,
         xlsx_url=reverse("checklists_app:shared_export_xlsx", args=[token]) if scope["all_mode"] else "",
+        status_editable_resolver=lambda item, entity: False,
+        customer_status_editable_resolver=lambda item, entity: link.can_edit,
     )
     return JsonResponse(payload)
 
@@ -3018,25 +3140,7 @@ def shared_update_status_batch(request, token: str):
     link = _get_shared_link(token)
     if not link or not link.can_edit:
         return JsonResponse({"ok": False, "error": "Нет прав на редактирование или ссылка недействительна."}, status=403)
-
-    try:
-        payload = json.loads(request.body.decode("utf-8") or "{}")
-    except json.JSONDecodeError:
-        return JsonResponse({"ok": False, "error": "Некорректный JSON."}, status=400)
-
-    asset_name = str(payload.get("asset_name") or "").strip()
-    updates = payload.get("updates") or []
-    try:
-        results = _batch_update_statuses(
-            request_user=request.user,
-            asset_name=asset_name,
-            updates=updates,
-            shared_link=link,
-        )
-    except ValueError as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
-
-    return JsonResponse({"ok": True, "results": results})
+    return JsonResponse({"ok": False, "error": "Публичная ссылка не позволяет изменять статусы IMCM."}, status=403)
 
 
 @require_POST
@@ -3198,8 +3302,13 @@ def shared_update_status(request, token: str):
     checklist_item = get_object_or_404(ChecklistItem, pk=item_id)
     legal_entity = get_object_or_404(LegalEntity, pk=legal_entity_id)
 
-    if legal_entity.project_id != link.project_id:
-        return HttpResponseBadRequest("Нет доступа к этому юридическому лицу.")
+    if not _can_update_imcm_status(
+        user=request.user,
+        checklist_item=checklist_item,
+        legal_entity=legal_entity,
+        shared_link=link,
+    ):
+        return HttpResponseBadRequest("Нет прав на изменение статусов IMCM по публичной ссылке.")
 
     update_url = reverse("checklists_app:shared_update_status", args=[token])
 

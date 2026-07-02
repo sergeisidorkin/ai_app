@@ -22,6 +22,7 @@ from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntit
 from contacts_app.models import CitizenshipRecord, PersonRecord
 from core.models import CloudStorageSettings
 from contracts_app.models import ContractProjectRegistration, ContractTemplate
+from letters_app.models import LetterTemplate
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
 from policy_app.models import (
@@ -3650,6 +3651,101 @@ class WorkVolumePerformerCreationTests(TestCase):
         contracted.refresh_from_db()
         self.assertIsNotNone(contracted.advance_payment_request_sent_at)
         self.assertIsNotNone(contracted.final_payment_request_sent_at)
+
+    @patch("notifications_app.services.send_notification_email")
+    def test_payment_request_email_uses_current_template_cc_recipients(self, mocked_send_notification_email):
+        from notifications_app.services import create_payment_request_notifications
+
+        mocked_send_notification_email.return_value = {
+            "recipient_email": "ignored@example.com",
+            "subject": "ignored",
+            "is_html": True,
+        }
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user = get_user_model().objects.create_user(
+            username="payment-request-cc-lawyer@example.com",
+            email="payment-request-cc-lawyer@example.com",
+            password="secret",
+            first_name="Анна",
+            last_name="Юрина",
+            is_staff=True,
+        )
+        Employee.objects.create(user=lawyer_user, patronymic="Юрьевна")
+        lawyer_user.groups.add(lawyer_group)
+        cc_user = get_user_model().objects.create_user(
+            username="payment-request-cc-current@example.com",
+            email="payment-request-cc-current@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        removed_cc_user = get_user_model().objects.create_user(
+            username="payment-request-cc-removed@example.com",
+            email="payment-request-cc-removed@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        template = LetterTemplate.objects.create(
+            template_type="payment_request",
+            user=None,
+            subject_template="Заявка на оплату №{number_of_request}",
+            body_html="<p>[payment_request]</p>",
+            is_default=True,
+        )
+        template.cc_recipients.set([lawyer_user, cc_user, removed_cc_user])
+        performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.project_manager_employee,
+            executor=self.project_manager_name,
+            contract_batch_id=uuid.uuid4(),
+            contract_number="AGR-CC",
+            contract_signing_note="Договор заключен",
+            prepayment=Decimal("50"),
+            final_payment=Decimal("50"),
+            agreed_amount=Decimal("1000.00"),
+        )
+        sent_at = timezone.localtime().replace(second=0, microsecond=0)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            first_result = create_payment_request_notifications(
+                performers=[performer],
+                letter_performers=[performer],
+                sender=self.user,
+                request_sent_at=sent_at,
+                request_number=1,
+                delivery_channels=["system_email"],
+            )
+
+        first_recipients = [
+            call.kwargs["recipient"].email
+            for call in mocked_send_notification_email.call_args_list
+        ]
+        self.assertEqual(first_result["email_delivery"]["attempted"], 3)
+        self.assertEqual(first_result["email_delivery"]["sent"], 3)
+        self.assertEqual(first_recipients.count(lawyer_user.email), 1)
+        self.assertEqual(
+            set(first_recipients),
+            {lawyer_user.email, cc_user.email, removed_cc_user.email},
+        )
+
+        template.cc_recipients.set([cc_user])
+        mocked_send_notification_email.reset_mock()
+        with self.captureOnCommitCallbacks(execute=True):
+            second_result = create_payment_request_notifications(
+                performers=[performer],
+                letter_performers=[performer],
+                sender=self.user,
+                request_sent_at=sent_at,
+                request_number=2,
+                delivery_channels=["system_email"],
+            )
+
+        second_recipients = {
+            call.kwargs["recipient"].email
+            for call in mocked_send_notification_email.call_args_list
+        }
+        self.assertEqual(second_result["email_delivery"]["attempted"], 2)
+        self.assertEqual(second_result["email_delivery"]["sent"], 2)
+        self.assertEqual(second_recipients, {lawyer_user.email, cc_user.email})
 
     def test_payment_request_forbids_expert_direct_post(self):
         expert_user = get_user_model().objects.create_user(

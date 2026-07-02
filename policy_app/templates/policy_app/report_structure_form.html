@@ -1,0 +1,119 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'report_structure_form_create' %}"
+    {% else %}
+      hx-post="{% url 'report_structure_form_edit' report_structure.pk %}"
+    {% endif %}
+    hx-target="#policy-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body modal-body-scroll">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Продукт</label>
+      {{ form.product }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Уровень</label>
+      {{ form.level }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Номер</label>
+      {{ form.number }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Код</label>
+      {{ form.code }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование отчета, раздела (подраздела)</label>
+      {{ form.name }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var productSelect = document.getElementById('id_product');
+  var levelInput = document.getElementById('id_level');
+  var numberInput = document.getElementById('id_number');
+  var itemsByProduct = {{ report_structure_items_by_product_json|safe }};
+  var currentId = {{ current_report_structure_id|default:"null" }};
+  var currentProductId = {{ current_report_structure_product_id|default:"null" }};
+  if (!productSelect || !levelInput || !numberInput) return;
+
+  function normalizeLevel(value) {
+    var level = parseInt(value, 10);
+    if (!Number.isFinite(level) || level < 0 || level > 9) return null;
+    return level;
+  }
+
+  function numberForLevel(counters, level) {
+    if (level === 0) {
+      counters.length = 0;
+      return '0';
+    }
+    while (counters.length < level) counters.push(0);
+    if (counters.length > level) counters.splice(level);
+    counters[level - 1] += 1;
+    return counters.slice(0, level).join('.');
+  }
+
+  function computeNumber(productId, level) {
+    if (!productId || level === null) return '';
+    var productKey = String(productId);
+    var rows = itemsByProduct[productKey] || [];
+    var sequence = [];
+    var inserted = false;
+    rows.forEach(function(item) {
+      if (currentId && Number(item.id) === Number(currentId)) {
+        if (Number(currentProductId) === Number(productId)) {
+          sequence.push({ id: '__current__', level: level });
+          inserted = true;
+        }
+        return;
+      }
+      sequence.push(item);
+    });
+    if (!inserted) {
+      sequence.push({ id: '__current__', level: level });
+    }
+
+    var counters = [];
+    var result = '';
+    sequence.forEach(function(item) {
+      var itemLevel = item.id === '__current__' ? level : normalizeLevel(item.level);
+      if (itemLevel === null) return;
+      var number = numberForLevel(counters, itemLevel);
+      if (item.id === '__current__') result = number;
+    });
+    return result;
+  }
+
+  function syncNumber() {
+    numberInput.value = computeNumber(productSelect.value, normalizeLevel(levelInput.value));
+  }
+
+  productSelect.addEventListener('change', syncNumber);
+  levelInput.addEventListener('input', syncNumber);
+  levelInput.addEventListener('change', syncNumber);
+  syncNumber();
+})();
+</script>

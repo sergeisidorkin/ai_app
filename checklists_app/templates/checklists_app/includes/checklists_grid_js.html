@@ -168,6 +168,14 @@
       return row.customerCellMap.get(String(entityId)) || null;
     }
 
+    function canEditStatusCell(cell) {
+      return !state.payload?.readonly && !!cell && cell.editable !== false;
+    }
+
+    function canEditCustomerStatusCell(cell) {
+      return !state.payload?.readonly && !!cell && cell.editable !== false;
+    }
+
     async function reload() {
       await flushPending();
       const projectUid = options.getProjectUid();
@@ -380,6 +388,8 @@
 
     function renderStatusCell(row, cell) {
       const key = cellKey(row.id, cell.entityId);
+      const disabled = state.payload.readonly || cell.editable === false;
+      const title = cell.editable === false ? "Нет прав на изменение этого статуса IMCM" : cell.statusLabel;
       return `<td class="status-cell status-col imcm-col">
         <button
           type="button"
@@ -389,8 +399,8 @@
           data-item-id="${row.id}"
           data-entity-id="${cell.entityId}"
           data-status="${cell.status}"
-          title="${escapeHtml(cell.statusLabel)}"
-          ${state.payload.readonly ? "disabled" : ""}>
+          title="${escapeHtml(title)}"
+          ${disabled ? "disabled" : ""}>
           ${escapeHtml(cell.statusShortLabel)}
         </button>
       </td>
@@ -401,6 +411,8 @@
 
     function renderCustomerStatusCell(row, cell) {
       const key = "cs:" + cellKey(row.id, cell.entityId);
+      const disabled = state.payload.readonly || cell.editable === false;
+      const title = cell.editable === false ? "Нет прав на изменение этого статуса Заказчика" : cell.statusLabel;
       return `<td class="status-cell status-col cs-col">
         <button
           type="button"
@@ -410,8 +422,8 @@
           data-item-id="${row.id}"
           data-entity-id="${cell.entityId}"
           data-status="${cell.status}"
-          title="${escapeHtml(cell.statusLabel)}"
-          ${state.payload.readonly ? "disabled" : ""}>
+          title="${escapeHtml(title)}"
+          ${disabled ? "disabled" : ""}>
           ${escapeHtml(cell.statusShortLabel)}
         </button>
       </td>
@@ -1364,6 +1376,7 @@
       const row = getRow(itemId);
       const cell = getCell(itemId, entityId);
       if (!row || !cell) return;
+      if (!canEditStatusCell(cell)) return;
 
       const choice = (state.payload.statusChoices || []).find((item) => item.value === statusValue);
       cell.status = statusValue;
@@ -1411,7 +1424,10 @@
 
       const entries = Array.from(state.pending.entries());
       state.pending.clear();
-      const updates = entries.map((entry) => entry[1]);
+      const updates = entries
+        .map((entry) => entry[1])
+        .filter((update) => canEditStatusCell(getCell(update.checklist_item, update.legal_entity)));
+      if (!updates.length) return;
       state.savePromise = fetch(options.batchUpdateUrl, {
         method: "POST",
         headers: {
@@ -1485,6 +1501,7 @@
       const row = getRow(itemId);
       const cell = getCustomerCell(itemId, entityId);
       if (!row || !cell) return;
+      if (!canEditCustomerStatusCell(cell)) return;
 
       const choice = (state.payload.customerStatusChoices || []).find((c) => c.value === statusValue);
       cell.status = statusValue;
@@ -1529,7 +1546,10 @@
 
       const entries = Array.from(state.customerPending.entries());
       state.customerPending.clear();
-      const updates = entries.map((entry) => entry[1]);
+      const updates = entries
+        .map((entry) => entry[1])
+        .filter((update) => canEditCustomerStatusCell(getCustomerCell(update.checklist_item, update.legal_entity)));
+      if (!updates.length) return;
       state.customerSavePromise = fetch(options.customerBatchUpdateUrl, {
         method: "POST",
         headers: {
@@ -1708,11 +1728,11 @@
 
     function openEditor(button) {
       if (state.payload?.readonly) return;
-      selectCell(button);
       const itemId = button.dataset.itemId;
       const entityId = button.dataset.entityId;
       const cell = getCell(itemId, entityId);
-      if (!cell) return;
+      if (!canEditStatusCell(cell)) return;
+      selectCell(button);
 
       editor.innerHTML = "";
       (state.payload.statusChoices || []).forEach((choice) => {
@@ -1740,15 +1760,15 @@
 
     function openCustomerEditor(button) {
       if (state.payload?.readonly) return;
+      const itemId = button.dataset.itemId;
+      const entityId = button.dataset.entityId;
+      const cell = getCustomerCell(itemId, entityId);
+      if (!canEditCustomerStatusCell(cell)) return;
+
       const key = "cs:" + cellKey(button.dataset.itemId, button.dataset.entityId);
       clearActiveCell();
       state.activeCellKey = key;
       button.classList.add("is-active");
-
-      const itemId = button.dataset.itemId;
-      const entityId = button.dataset.entityId;
-      const cell = getCustomerCell(itemId, entityId);
-      if (!cell) return;
 
       customerEditor.innerHTML = "";
       (state.payload.customerStatusChoices || []).forEach((choice) => {

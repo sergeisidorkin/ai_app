@@ -221,6 +221,34 @@ class NextcloudApiClient:
             target_path=str(data.get("file_target") or data.get("fileTarget") or ""),
         )
 
+    def revoke_user_share(
+        self,
+        owner_user_id: str,
+        path: str,
+        share_with_user_id: str,
+    ) -> bool:
+        existing = self.get_user_share(owner_user_id, path, share_with_user_id)
+        if existing is None:
+            return False
+        return self.delete_share(existing.share_id)
+
+    def delete_share(self, share_id: str) -> bool:
+        clean_share_id = str(share_id or "").strip()
+        if not clean_share_id:
+            return False
+
+        response = self._request(
+            "DELETE",
+            f"/ocs/v2.php/apps/files_sharing/api/v1/shares/{quote(clean_share_id, safe='')}",
+        )
+        self._extract_raw_data(response)
+        self._public_share_cache = {
+            path: share
+            for path, share in self._public_share_cache.items()
+            if share.share_id != clean_share_id
+        }
+        return True
+
     def get_user_share(
         self,
         owner_user_id: str,
@@ -238,7 +266,7 @@ class NextcloudApiClient:
                 continue
             if str(item.get("share_with") or "") != share_with_user_id:
                 continue
-            if int(item.get("share_type") or -1) != 0:
+            if self._as_int(item.get("share_type"), default=-1) != 0:
                 continue
             return NextcloudShare(
                 share_id=str(item.get("id") or ""),
@@ -263,7 +291,7 @@ class NextcloudApiClient:
         for item in self._extract_list_data(response):
             if str(item.get("share_with") or "") != share_with_user_id:
                 continue
-            if int(item.get("share_type") or -1) != 0:
+            if self._as_int(item.get("share_type"), default=-1) != 0:
                 continue
             normalized_path = self._normalize_folder_path(item.get("path") or "")
             if not normalized_path or normalized_path == "/":
@@ -526,7 +554,7 @@ class NextcloudApiClient:
             item_path = self._normalize_folder_path(item.get("path") or "")
             if not item_path or item_path == "/":
                 continue
-            if int(item.get("share_type") or -1) != self.PUBLIC_LINK_SHARE_TYPE:
+            if self._as_int(item.get("share_type"), default=-1) != self.PUBLIC_LINK_SHARE_TYPE:
                 continue
             shares[item_path] = NextcloudShare(
                 share_id=str(item.get("id") or ""),
@@ -577,6 +605,15 @@ class NextcloudApiClient:
             method.upper() == "POST"
             and path == "/ocs/v2.php/apps/files_sharing/api/v1/shares"
         )
+
+    @staticmethod
+    def _as_int(value, *, default: int) -> int:
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _extract_data(response: requests.Response) -> dict[str, object]:
