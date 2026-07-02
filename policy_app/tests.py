@@ -63,7 +63,18 @@ class RemoveTypicalSectionExecutorMigrationTests(TransactionTestCase):
         TypicalSectionSpecialty = old_apps.get_model("policy_app", "TypicalSectionSpecialty")
         if connection.vendor == "postgresql":
             with connection.cursor() as cursor:
-                cursor.execute("ALTER TABLE experts_app_expertspecialty ALTER COLUMN specialization_area SET DEFAULT ''")
+                columns = {
+                    column.name
+                    for column in connection.introspection.get_table_description(
+                        cursor,
+                        "experts_app_expertspecialty",
+                    )
+                }
+                if "specialization_area" in columns:
+                    cursor.execute(
+                        "ALTER TABLE experts_app_expertspecialty "
+                        "ALTER COLUMN specialization_area SET DEFAULT ''"
+                    )
 
         product = Product.objects.create(
             short_name="MIG",
