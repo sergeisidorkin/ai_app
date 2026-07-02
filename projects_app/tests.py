@@ -4494,6 +4494,48 @@ class InfoRequestApprovalRevokeTests(TestCase):
             approved_at=timezone.now() - timedelta(hours=1),
         )
 
+    def _create_approved_info_request_row(self, employee, section, suffix):
+        sent_at = timezone.now() - timedelta(hours=2)
+        deadline_at = timezone.now() + timedelta(hours=46)
+        performer = Performer.objects.create(
+            work_item=self.work,
+            registration=self.project,
+            asset_name=f"Asset {suffix}",
+            executor=Performer.employee_full_name(employee),
+            employee=employee,
+            typical_section=section,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+            info_request_sent_at=sent_at,
+            info_request_deadline_at=deadline_at,
+            info_approval_status=Performer.InfoApprovalStatus.APPROVED,
+            info_approval_at=timezone.now() - timedelta(hours=1),
+        )
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            related_section=Notification.RelatedSection.CHECKLISTS,
+            recipient=employee.user,
+            project=self.project,
+            title_text="Согласуйте запрос",
+            sent_at=sent_at,
+            deadline_at=deadline_at,
+            is_read=True,
+            is_processed=True,
+            action_at=timezone.now() - timedelta(hours=1),
+            action_by=employee.user,
+            action_choice=Notification.ActionChoice.APPROVED,
+        )
+        NotificationPerformerLink.objects.create(
+            notification=notification,
+            performer=performer,
+        )
+        InfoRequestSectionApproval.objects.create(
+            project=self.project,
+            section=section,
+            approved_by=employee.user,
+            approved_at=timezone.now() - timedelta(hours=1),
+        )
+        return performer, notification
+
     def test_admin_can_select_approved_info_request_row(self):
         self.client.force_login(self.admin_user)
 
@@ -4556,6 +4598,77 @@ class InfoRequestApprovalRevokeTests(TestCase):
         self.assertIn(self.section.pk, payload["ui"]["pendingSectionIds"])
         self.assertIn(self.section.pk, payload["ui"]["editableSectionIds"])
         self.assertIn(reverse("checklists_app:item_form_create"), payload["ui"]["createUrl"])
+
+    def test_admin_revoke_single_executor_row_revokes_all_executor_sections(self):
+        second_section = self.product.sections.create(
+            code="LEG",
+            short_name="Legal",
+            short_name_ru="Право",
+            name_en="Legal",
+            name_ru="Право",
+            accounting_type="Раздел",
+            position=2,
+        )
+        second_performer, second_notification = self._create_approved_info_request_row(
+            self.expert_employee,
+            second_section,
+            "B",
+        )
+        self.client.force_login(self.admin_user)
+
+        response = self.client.post(
+            reverse("revoke_info_request_approval"),
+            {"performer_ids[]": [self.performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["performers_updated"], 2)
+        self.performer.refresh_from_db()
+        second_performer.refresh_from_db()
+        self.notification.refresh_from_db()
+        second_notification.refresh_from_db()
+        self.assertEqual(self.performer.info_approval_status, "")
+        self.assertEqual(second_performer.info_approval_status, "")
+        self.assertFalse(self.notification.is_processed)
+        self.assertFalse(second_notification.is_processed)
+        self.assertFalse(
+            InfoRequestSectionApproval.objects.filter(
+                project=self.project,
+                section__in=[self.section, second_section],
+                approved_by=self.expert_user,
+            ).exists()
+        )
+
+    def test_admin_revoke_rejects_rows_from_different_executors(self):
+        other_user = get_user_model().objects.create_user(
+            username="info-revoke-other-expert",
+            password="secret",
+            is_staff=True,
+            first_name="Петр",
+            last_name="Другой",
+        )
+        other_employee = Employee.objects.create(
+            user=other_user,
+            patronymic="Петрович",
+            role=EXPERT_GROUP,
+        )
+        other_performer, _ = self._create_approved_info_request_row(
+            other_employee,
+            self.section,
+            "C",
+        )
+        self.client.force_login(self.admin_user)
+
+        response = self.client.post(
+            reverse("revoke_info_request_approval"),
+            {"performer_ids[]": [self.performer.pk, other_performer.pk]},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.performer.refresh_from_db()
+        other_performer.refresh_from_db()
+        self.assertEqual(self.performer.info_approval_status, Performer.InfoApprovalStatus.APPROVED)
+        self.assertEqual(other_performer.info_approval_status, Performer.InfoApprovalStatus.APPROVED)
 
     def test_admin_revoke_removes_manager_section_approval(self):
         InfoRequestSectionApproval.objects.filter(
