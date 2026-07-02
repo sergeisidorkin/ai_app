@@ -1302,8 +1302,8 @@ class Performer(models.Model):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._original_employee_id = self.employee_id
-        self._original_executor = self.executor
+        self._original_employee_id = self.__dict__.get("employee_id")
+        self._original_executor = self.__dict__.get("executor", "")
 
     class Meta:
         ordering = ["position", "id"]

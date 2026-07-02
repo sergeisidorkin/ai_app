@@ -268,6 +268,39 @@ class NextcloudContractShareSignalTests(TestCase):
 
         mocked_revoke.assert_called_once_with(user.pk, folder)
 
+    @patch("nextcloud_app.signals.revoke_contract_folder_access_for_user")
+    def test_updating_performer_contract_folder_schedules_previous_share_revoke(self, mocked_revoke):
+        user = User.objects.create_user(
+            username="updated-contract-share@example.com",
+            email="updated-contract-share@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        employee = Employee.objects.create(user=user)
+        project = ProjectRegistration.objects.create(number=6202, name="Проект", year=2026)
+        old_folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 012 Смирнова ЭЮ"
+        )
+        new_folder = (
+            "/Corporate Root/02 Договоры/2026/Проект/Договор/02 Исполнители/"
+            "6001010RU 013 Смирнова ЭЮ"
+        )
+        performer = Performer.objects.create(
+            registration=project,
+            employee=employee,
+            executor="Смирнова Элеонора Юрьевна",
+            contract_project_disk_folder=old_folder,
+        )
+        mocked_revoke.reset_mock()
+
+        performer.contract_project_disk_folder = new_folder
+        with self.captureOnCommitCallbacks(execute=True):
+            performer.save(update_fields=["contract_project_disk_folder"])
+
+        mocked_revoke.assert_called_once_with(user.pk, old_folder)
+
 
 @override_settings(
     NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",

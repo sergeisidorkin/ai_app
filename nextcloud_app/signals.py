@@ -74,13 +74,16 @@ def capture_previous_nextcloud_contract_share(sender, instance, raw=False, **kwa
     previous = (
         sender.objects
         .filter(pk=instance.pk)
-        .only("employee_id", "contract_project_disk_folder")
+        .values("employee_id", "contract_project_disk_folder")
         .first()
     )
     if previous is None:
         return
 
-    old_user_id, old_folder = _performer_contract_access_snapshot(previous)
+    old_user_id = _employee_user_id(previous["employee_id"])
+    old_folder = normalize_cloud_path(previous["contract_project_disk_folder"] or "")
+    if old_folder == "/":
+        old_folder = ""
     new_user_id, new_folder = _performer_contract_access_snapshot(instance)
     if old_user_id != new_user_id or old_folder != new_folder:
         instance._nextcloud_previous_contract_share = (old_user_id, old_folder)
