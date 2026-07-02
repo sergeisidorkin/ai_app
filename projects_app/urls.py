@@ -46,6 +46,7 @@ urlpatterns = [
     path("projects/performers/request-confirmation/", views.participation_request, name="participation_request"),
     path("projects/performers/send-contract/", views.contract_request, name="contract_request"),
     path("projects/performers/request-info-approval/", views.info_request_approval, name="info_request_approval"),
+    path("projects/performers/revoke-info-approval/", views.revoke_info_request_approval, name="revoke_info_request_approval"),
     path("projects/performers/payment-request/", views.payment_request, name="payment_request"),
     path(
         "projects/performers/payment-paid-toggle/",

@@ -7,6 +7,7 @@ from django.urls import reverse
 from policy_app.models import EXPERT_GROUP, Product, TypicalSection
 from projects_app.models import LegalEntity, Performer, ProjectRegistration, WorkVolume
 from users_app.models import Employee
+from notifications_app.models import Notification, NotificationPerformerLink
 
 from checklists_app.models import ChecklistCustomerStatus, ChecklistItem, ChecklistStatus, SharedChecklistLink
 from checklists_app.views import _project_options
@@ -222,7 +223,7 @@ class ChecklistStatusPermissionTests(TestCase):
             patronymic="Иванович",
             role=EXPERT_GROUP,
         )
-        Performer.objects.create(
+        self.performer_allowed = Performer.objects.create(
             work_item=self.work_allowed,
             registration=self.project,
             asset_name="Asset A",
@@ -275,6 +276,67 @@ class ChecklistStatusPermissionTests(TestCase):
         self.assertFalse(wrong_asset_cell["editable"])
         self.assertFalse(other_section_cell["editable"])
         self.assertFalse(allowed_customer_cell["editable"])
+
+    def test_expert_section_filter_keeps_create_url_for_pending_own_section(self):
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+            recipient=self.expert_user,
+            project=self.project,
+            title_text="Согласуйте запрос",
+        )
+        NotificationPerformerLink.objects.create(
+            notification=notification,
+            performer=self.performer_allowed,
+        )
+        self.client.force_login(self.expert_user)
+
+        response = self.client.get(reverse("checklists_app:grid_data"), {
+            "project_uid": self.project.short_uid,
+            "asset": "all",
+            "section": str(self.section_allowed.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        create_url = response.json()["ui"]["createUrl"]
+        self.assertIn(reverse("checklists_app:item_form_create"), create_url)
+        self.assertIn(f"section={self.section_allowed.id}", create_url)
+
+    def test_batch_edit_renumbers_items_after_reorder(self):
+        second = ChecklistItem.objects.create(
+            project=self.project,
+            section=self.section_allowed,
+            code="ALW",
+            number=2,
+            position=2,
+            short_name="Second item",
+            name="Second item",
+        )
+        third = ChecklistItem.objects.create(
+            project=self.project,
+            section=self.section_allowed,
+            code="ALW",
+            number=3,
+            position=3,
+            short_name="Third item",
+            name="Third item",
+        )
+        self.client.force_login(self.expert_user)
+
+        response = self._post_json(reverse("checklists_app:item_batch_edit"), {
+            "order": [
+                {"id": third.id, "position": 0},
+                {"id": self.item_allowed.id, "position": 1},
+                {"id": second.id, "position": 2},
+            ],
+        })
+
+        self.assertEqual(response.status_code, 204)
+        self.item_allowed.refresh_from_db()
+        second.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual(third.number, 1)
+        self.assertEqual(self.item_allowed.number, 2)
+        self.assertEqual(second.number, 3)
 
     def test_expert_can_update_only_confirmed_imcm_status_and_not_customer_status(self):
         self.client.force_login(self.expert_user)

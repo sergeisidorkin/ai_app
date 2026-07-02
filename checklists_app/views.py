@@ -1818,7 +1818,8 @@ def grid_data(request):
                     .values_list("typical_section_id", flat=True).distinct()
                 )
                 user_approved_sections = user_approved_sections | processed_section_ids
-            if _current_section and _current_section.id not in user_approved_sections:
+            user_create_sections = user_approved_sections | set(pending_section_ids)
+            if _current_section and _current_section.id not in user_create_sections:
                 payload["ui"]["createUrl"] = ""
 
         any_sent = _Notif.objects.filter(
@@ -2604,40 +2605,63 @@ def item_check_number(request):
 @login_required
 @require_POST
 def item_delete(request, pk):
-    ci = get_object_or_404(ChecklistItem, pk=pk)
-    ci.delete()
+    with transaction.atomic():
+        ci = get_object_or_404(ChecklistItem.objects.select_for_update(), pk=pk)
+        project_id = ci.project_id
+        section_id = ci.section_id
+        ci.delete()
+        _renumber_checklist_items(project_id, [section_id])
     resp = HttpResponse(status=204)
     resp["HX-Trigger"] = "checklists:saved"
     return resp
 
 
+def _renumber_checklist_items(project_id: int, section_ids) -> None:
+    for section_id in {sid for sid in section_ids if sid}:
+        items = list(
+            ChecklistItem.objects
+            .select_for_update()
+            .filter(project_id=project_id, section_id=section_id)
+            .order_by("position", "id")
+        )
+        changed = []
+        for idx, item in enumerate(items, start=1):
+            if item.number != idx:
+                item.number = idx
+                changed.append(item)
+        if changed:
+            ChecklistItem.objects.bulk_update(changed, ["number"])
+
+
 @login_required
 @require_POST
 def item_move(request, pk, direction):
-    ci = get_object_or_404(ChecklistItem, pk=pk)
+    with transaction.atomic():
+        ci = get_object_or_404(ChecklistItem.objects.select_for_update(), pk=pk)
 
-    group_filter = Q(project=ci.project, section=ci.section)
-    if ci.item_type == ChecklistItem.ItemType.ADDITIONAL and ci.additional_number is not None:
-        group_filter &= Q(item_type=ChecklistItem.ItemType.ADDITIONAL, additional_number=ci.additional_number)
-    else:
-        group_filter &= Q(item_type=ChecklistItem.ItemType.BASIC)
+        group_filter = Q(project=ci.project, section=ci.section)
+        if ci.item_type == ChecklistItem.ItemType.ADDITIONAL and ci.additional_number is not None:
+            group_filter &= Q(item_type=ChecklistItem.ItemType.ADDITIONAL, additional_number=ci.additional_number)
+        else:
+            group_filter &= Q(item_type=ChecklistItem.ItemType.BASIC)
 
-    siblings = ChecklistItem.objects.filter(group_filter).order_by("position", "id")
-    items = list(siblings)
-    idx = next((i for i, x in enumerate(items) if x.pk == ci.pk), None)
-    if idx is None:
-        return HttpResponse(status=204)
+        siblings = ChecklistItem.objects.select_for_update().filter(group_filter).order_by("position", "id")
+        items = list(siblings)
+        idx = next((i for i, x in enumerate(items) if x.pk == ci.pk), None)
+        if idx is None:
+            return HttpResponse(status=204)
 
-    if direction == "up" and idx > 0:
-        swap = items[idx - 1]
-    elif direction == "down" and idx < len(items) - 1:
-        swap = items[idx + 1]
-    else:
-        return HttpResponse(status=204)
+        if direction == "up" and idx > 0:
+            swap = items[idx - 1]
+        elif direction == "down" and idx < len(items) - 1:
+            swap = items[idx + 1]
+        else:
+            return HttpResponse(status=204)
 
-    ci.position, swap.position = swap.position, ci.position
-    ci.save(update_fields=["position"])
-    swap.save(update_fields=["position"])
+        ci.position, swap.position = swap.position, ci.position
+        ci.save(update_fields=["position"])
+        swap.save(update_fields=["position"])
+        _renumber_checklist_items(ci.project_id, [ci.section_id])
     resp = HttpResponse(status=204)
     resp["HX-Trigger"] = "checklists:saved"
     return resp
@@ -2656,6 +2680,19 @@ def item_batch_edit(request):
     text_updates = data.get("text_updates") or []
 
     with transaction.atomic():
+        affected_sections_by_project: dict[int, set[int]] = {}
+        order_item_ids = [
+            entry.get("id") for entry in order_list
+            if entry.get("id") is not None
+        ]
+        affected_item_ids = list(deleted_ids) + order_item_ids
+        if affected_item_ids:
+            affected_rows = ChecklistItem.objects.filter(pk__in=affected_item_ids).values_list(
+                "project_id", "section_id",
+            )
+            for project_id, section_id in affected_rows:
+                affected_sections_by_project.setdefault(project_id, set()).add(section_id)
+
         if deleted_ids:
             ChecklistItem.objects.filter(pk__in=deleted_ids).delete()
 
@@ -2674,6 +2711,9 @@ def item_batch_edit(request):
             if field == "name" and not value:
                 continue
             ChecklistItem.objects.filter(pk=item_id).update(**{field: value})
+
+        for project_id, section_ids in affected_sections_by_project.items():
+            _renumber_checklist_items(project_id, section_ids)
 
     resp = HttpResponse(status=204)
     resp["HX-Trigger"] = "checklists:saved"

@@ -239,6 +239,24 @@
       return rows.slice(start, end);
     }
 
+    function renumberRowsInPayload() {
+      const rows = state.payload?.rows || [];
+      const counters = new Map();
+      let currentSectionId = null;
+      rows.forEach((row) => {
+        if (row.kind === "section_header") {
+          currentSectionId = row.sectionId;
+          if (!counters.has(currentSectionId)) counters.set(currentSectionId, 0);
+          return;
+        }
+        if (row.kind !== "item") return;
+        const sectionId = row.sectionId || currentSectionId || "";
+        const nextNumber = (counters.get(sectionId) || 0) + 1;
+        counters.set(sectionId, nextNumber);
+        row.number = String(nextNumber).padStart(2, "0");
+      });
+    }
+
     function renderActions() {
       const ui = state.payload?.ui || {};
       if (!ui.createUrl && !ui.xlsxUrl && !ui.showActions && !ui.approveInfoRequestUrl && !ui.infoRequestApprovedAt) return "";
@@ -2144,6 +2162,7 @@
           (row) => row.kind !== "item" || !deleteSet.has(String(row.id))
         );
         deleteSet.forEach((id) => state.selectedItems.delete(id));
+        renumberRowsInPayload();
         reindexRows();
         render();
         return;
@@ -2183,6 +2202,7 @@
           [sectionItems[posInSection], sectionItems[swapPos]] = [sectionItems[swapPos], sectionItems[posInSection]];
         }
 
+        renumberRowsInPayload();
         reindexRows();
         render();
         restoreSelection(saved);
