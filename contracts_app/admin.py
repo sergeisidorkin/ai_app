@@ -48,12 +48,14 @@ class ContractTemplateAdmin(admin.ModelAdmin):
     list_display = (
         "position",
         "sample_name",
+        "act_sample_name",
         "contract_type",
         "party",
         "country_name",
         "group_member",
         "product",
         "version",
+        "act_version",
         "has_file",
         "is_all_sections",
         "updated_at",
@@ -61,7 +63,15 @@ class ContractTemplateAdmin(admin.ModelAdmin):
     list_editable = ("position",)
     list_display_links = ("sample_name",)
     list_filter = ("contract_type", "party", "is_all_sections", "product")
-    search_fields = ("sample_name", "country_name", "version", "group_member__short_name", "product__short_name")
+    search_fields = (
+        "sample_name",
+        "act_sample_name",
+        "country_name",
+        "version",
+        "act_version",
+        "group_member__short_name",
+        "product__short_name",
+    )
     autocomplete_fields = ("product",)
     raw_id_fields = ("group_member",)
     ordering = ("position", "id")
@@ -69,7 +79,7 @@ class ContractTemplateAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {
             "fields": (
-                "sample_name", "version", "position",
+                "sample_name", "version", "act_sample_name", "act_version", "position",
             ),
         }),
         ("Классификация", {
@@ -82,6 +92,7 @@ class ContractTemplateAdmin(admin.ModelAdmin):
         ("Файл и разделы", {
             "fields": (
                 "file",
+                "act_file",
                 "is_all_sections",
                 "typical_sections_json",
             ),

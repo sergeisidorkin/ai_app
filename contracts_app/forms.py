@@ -2328,6 +2328,7 @@ class ContractTemplateForm(forms.ModelForm):
         fields = [
             "contract_type", "party",
             "sample_name", "version", "file",
+            "act_sample_name", "act_version", "act_file",
         ]
         widgets = {
             "contract_type": forms.Select(attrs={"class": "form-select"}),
@@ -2335,6 +2336,9 @@ class ContractTemplateForm(forms.ModelForm):
             "sample_name": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
             "version": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
             "file": _ContractFileInput(attrs={"class": "form-control"}),
+            "act_sample_name": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+            "act_version": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+            "act_file": _ContractFileInput(attrs={"class": "form-control"}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -2342,17 +2346,24 @@ class ContractTemplateForm(forms.ModelForm):
 
         self._orig_sample_name = ""
         self._orig_version = ""
+        self._orig_act_sample_name = ""
+        self._orig_act_version = ""
         if self.instance and self.instance.pk:
             self._orig_sample_name = self.instance.sample_name or ""
             self._orig_version = self.instance.version or ""
+            self._orig_act_sample_name = self.instance.act_sample_name or ""
+            self._orig_act_version = self.instance.act_version or ""
 
         order_map = _group_member_order_map()
         members_qs = list(GroupMember.objects.all())
         products_qs = list(Product.objects.order_by("position", "id"))
 
         self.fields["file"].required = not (self.instance and self.instance.pk and self.instance.file)
+        self.fields["act_file"].required = not (self.instance and self.instance.pk and self.instance.act_file)
         self.fields["sample_name"].required = False
         self.fields["version"].required = False
+        self.fields["act_sample_name"].required = False
+        self.fields["act_version"].required = False
 
         self.group_short_map = {
             str(m.pk): _group_member_short(m, order_map.get(m.pk, 0)) for m in members_qs
@@ -2430,6 +2441,7 @@ class ContractTemplateForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             existing = existing.exclude(pk=self.instance.pk)
         version_map = {}
+        act_version_map = {}
         for t in existing:
             base = t.sample_name.rsplit("_v", 1)[0] if t.sample_name else ""
             try:
@@ -2437,13 +2449,26 @@ class ContractTemplateForm(forms.ModelForm):
             except (ValueError, TypeError):
                 v = 0
             version_map[base] = max(version_map.get(base, 0), v)
+            act_base = t.act_sample_name.rsplit("_v", 1)[0] if t.act_sample_name else ""
+            try:
+                act_v = int(t.act_version)
+            except (ValueError, TypeError):
+                act_v = 0
+            if act_base:
+                act_version_map[act_base] = max(act_version_map.get(act_base, 0), act_v)
         self.version_map = version_map
+        self.act_version_map = act_version_map
 
         self.current_base = ""
         self.current_version = ""
+        self.current_act_base = ""
+        self.current_act_version = ""
         if self.instance and self.instance.pk and self.instance.sample_name:
             self.current_base = self.instance.sample_name.rsplit("_v", 1)[0]
             self.current_version = self.instance.version or ""
+        if self.instance and self.instance.pk and self.instance.act_sample_name:
+            self.current_act_base = self.instance.act_sample_name.rsplit("_v", 1)[0]
+            self.current_act_version = self.instance.act_version or ""
 
     def _posted_values(self, name):
         if not self.is_bound:
@@ -2566,10 +2591,9 @@ class ContractTemplateForm(forms.ModelForm):
             for group in groups
         ) or "Все"
         group_prefix = f"{group_prefix} "
-        base_name = (
-            f"{group_prefix}Шаблон договора {party_short} {type_short} "
-            f"{alpha3}_{product_name}-{sections_part}"
-        )
+        name_suffix = f"{party_short} {type_short} {alpha3}_{product_name}-{sections_part}"
+        base_name = f"{group_prefix}Шаблон договора {name_suffix}"
+        act_base_name = f"{group_prefix}Шаблон акта {name_suffix}"
 
         existing = ContractTemplate.objects.all()
         if instance.pk:
@@ -2585,23 +2609,22 @@ class ContractTemplateForm(forms.ModelForm):
         instance.version = version
         instance.sample_name = f"{base_name}_v{version}"
 
-        import os
-        uploaded = self.cleaned_data.get("file")
-        if isinstance(uploaded, UploadedFile):
-            ext = os.path.splitext(uploaded.name)[1]
-            instance.file.name = instance.sample_name + ext
-        elif instance.pk and instance.file:
-            old_path = instance.file.name
-            ext = os.path.splitext(old_path)[1]
-            new_name = "contract_templates/" + instance.sample_name + ext
-            if old_path != new_name:
-                storage = instance.file.storage
-                if storage.exists(old_path):
-                    old_full = storage.path(old_path)
-                    new_full = storage.path(new_name)
-                    os.makedirs(os.path.dirname(new_full), exist_ok=True)
-                    os.rename(old_full, new_full)
-                    instance.file.name = new_name
+        act_existing = ContractTemplate.objects.all()
+        if instance.pk:
+            orig_act_base = self._orig_act_sample_name.rsplit("_v", 1)[0] if self._orig_act_sample_name else ""
+            if orig_act_base == act_base_name:
+                act_version = self._orig_act_version or "1"
+            else:
+                act_existing = act_existing.exclude(pk=instance.pk)
+                act_version = str(self._next_version(act_existing, act_base_name, "act_sample_name", "act_version"))
+        else:
+            act_version = str(self._next_version(act_existing, act_base_name, "act_sample_name", "act_version"))
+
+        instance.act_version = act_version
+        instance.act_sample_name = f"{act_base_name}_v{act_version}"
+
+        self._apply_template_file_name(instance, "file", instance.sample_name, self.cleaned_data.get("file"))
+        self._apply_template_file_name(instance, "act_file", instance.act_sample_name, self.cleaned_data.get("act_file"))
 
         if commit:
             instance.save()
@@ -2610,13 +2633,38 @@ class ContractTemplateForm(forms.ModelForm):
         return instance
 
     @staticmethod
-    def _next_version(qs, base_name):
+    def _apply_template_file_name(instance, field_name, sample_name, uploaded):
+        import os
+
+        field_file = getattr(instance, field_name)
+        if isinstance(uploaded, UploadedFile):
+            ext = os.path.splitext(uploaded.name)[1]
+            field_file.name = sample_name + ext
+            return
+        if not (instance.pk and field_file):
+            return
+        old_path = field_file.name
+        ext = os.path.splitext(old_path)[1]
+        new_name = "contract_templates/" + sample_name + ext
+        if old_path == new_name:
+            return
+        storage = field_file.storage
+        if storage.exists(old_path):
+            old_full = storage.path(old_path)
+            new_full = storage.path(new_name)
+            os.makedirs(os.path.dirname(new_full), exist_ok=True)
+            os.rename(old_full, new_full)
+            field_file.name = new_name
+
+    @staticmethod
+    def _next_version(qs, base_name, sample_attr="sample_name", version_attr="version"):
         max_v = 0
         for t in qs:
-            t_base = t.sample_name.rsplit("_v", 1)[0] if t.sample_name else ""
+            sample_name = getattr(t, sample_attr, "") or ""
+            t_base = sample_name.rsplit("_v", 1)[0] if sample_name else ""
             if t_base == base_name:
                 try:
-                    v = int(t.version)
+                    v = int(getattr(t, version_attr, ""))
                 except (ValueError, TypeError):
                     v = 0
                 max_v = max(max_v, v)

@@ -1411,6 +1411,114 @@
     },
   };
 
+  var CT_COLPICKER = {
+    prefKey: 'contracts:templatesHiddenCols:v2',
+    wrapId: 'ct-colpicker-wrap',
+    btnId: 'ct-colpicker-btn',
+    menuId: 'ct-colpicker-menu',
+    allId: 'ct-col-all',
+    tableId: 'ct-table',
+    hidden: null,
+  };
+
+  function getDefaultHiddenTemplateColumns() {
+    var menu = document.getElementById(CT_COLPICKER.menuId);
+    var hidden = {};
+    if (!menu) return hidden;
+    qa('input.form-check-input[data-default-hidden="true"]:not([value="all"])', menu).forEach(function(cb) {
+      hidden[cb.value] = true;
+    });
+    return hidden;
+  }
+
+  function getHiddenTemplateColumns() {
+    if (!CT_COLPICKER.hidden) {
+      var saved = window.UIPref ? UIPref.get(CT_COLPICKER.prefKey, null) : null;
+      CT_COLPICKER.hidden = saved && typeof saved === 'object' && !Array.isArray(saved)
+        ? saved
+        : getDefaultHiddenTemplateColumns();
+    }
+    return CT_COLPICKER.hidden || {};
+  }
+
+  function saveHiddenTemplateColumns() {
+    if (window.UIPref) UIPref.set(CT_COLPICKER.prefKey, getHiddenTemplateColumns());
+  }
+
+  function updateTemplateColPickerLabel(btn, menu) {
+    var cbs = qa('input.form-check-input:not([value="all"])', menu);
+    var checked = cbs.filter(function(cb) { return cb.checked; }).length;
+    btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
+  }
+
+  function applyTemplateColumnVisibility() {
+    var table = document.getElementById(CT_COLPICKER.tableId);
+    if (!table) return;
+    var hidden = Object.keys(getHiddenTemplateColumns());
+    table.querySelectorAll('[data-col]').forEach(function(cell) {
+      cell.style.display = hidden.includes(cell.getAttribute('data-col')) ? 'none' : '';
+    });
+  }
+
+  function closeTemplateColPicker() {
+    var wrap = document.getElementById(CT_COLPICKER.wrapId);
+    var menu = document.getElementById(CT_COLPICKER.menuId);
+    if (!wrap || !menu) return;
+    menu.classList.remove('show');
+    var header = wrap.closest('.table-section-header');
+    if (header) header.classList.remove('tkp-colpicker-open');
+  }
+
+  function initTemplateColPicker() {
+    var wrap = document.getElementById(CT_COLPICKER.wrapId);
+    var btn = document.getElementById(CT_COLPICKER.btnId);
+    var menu = document.getElementById(CT_COLPICKER.menuId);
+    if (!wrap || !btn || !menu) return;
+
+    CT_COLPICKER.hidden = null;
+
+    btn.onclick = function(event) {
+      event.stopPropagation();
+      var shouldShow = !menu.classList.contains('show');
+      menu.classList.toggle('show', shouldShow);
+      var header = wrap.closest('.table-section-header');
+      if (header) header.classList.toggle('tkp-colpicker-open', shouldShow);
+    };
+
+    var cbs = qa('input.form-check-input:not([value="all"])', menu);
+    var hiddenState = getHiddenTemplateColumns();
+    cbs.forEach(function(cb) {
+      cb.checked = !hiddenState[cb.value];
+    });
+
+    var allCb = document.getElementById(CT_COLPICKER.allId);
+    if (allCb) {
+      allCb.checked = cbs.every(function(cb) { return cb.checked; });
+    }
+
+    updateTemplateColPickerLabel(btn, menu);
+    applyTemplateColumnVisibility();
+
+    menu.onchange = function(event) {
+      var cb = event.target;
+      if (!cb.classList.contains('form-check-input')) return;
+      var items = qa('input.form-check-input:not([value="all"])', menu);
+      if (cb.value === 'all') {
+        items.forEach(function(item) { item.checked = cb.checked; });
+      } else {
+        var ac = document.getElementById(CT_COLPICKER.allId);
+        if (ac) ac.checked = items.every(function(item) { return item.checked; });
+      }
+      CT_COLPICKER.hidden = {};
+      items.forEach(function(item) {
+        if (!item.checked) CT_COLPICKER.hidden[item.value] = true;
+      });
+      saveHiddenTemplateColumns();
+      updateTemplateColPickerLabel(btn, menu);
+      applyTemplateColumnVisibility();
+    };
+  }
+
   function getRowChecksByName(name) {
     var root = ctPane();
     if (!root) return [];
@@ -1459,6 +1567,9 @@
   }
 
   document.addEventListener('click', function(e) {
+    var colPickerWrap = document.getElementById(CT_COLPICKER.wrapId);
+    if (colPickerWrap && !colPickerWrap.contains(e.target)) closeTemplateColPicker();
+
     var root = ctPane();
     if (!root) return;
     var btn = e.target.closest('button[data-panel-action]');
@@ -1564,6 +1675,7 @@
 
   document.body.addEventListener('htmx:afterSettle', function(e) {
     if (!(e.target && e.target.id === 'contract-templates-pane')) return;
+    initTemplateColPicker();
     var sel = window.__ctTableSel || {};
     for (var name in sel) {
       var ids = sel[name] || [];
@@ -1582,6 +1694,12 @@
       window.__ctVarsOpenTimer = setTimeout(function() { window.__ctVarsOpen = false; }, 1000);
     }
   });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initTemplateColPicker);
+  } else {
+    initTemplateColPicker();
+  }
 })();
 
 

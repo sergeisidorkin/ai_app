@@ -80,7 +80,7 @@
         </div>
       </div>
       <div class="col-3">
-        <label class="form-label">Типовой раздел (услуги)</label>
+        <label class="form-label">Раздел</label>
         <div class="dropdown" id="ct-section-dropdown">
           <button class="form-select text-start" type="button"
                   id="ct-section-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
@@ -125,7 +125,7 @@
         {{ form.country }}
       </div>
       <div class="col-10">
-        <label class="form-label">Наименование образца</label>
+        <label class="form-label">Наименование образца договора</label>
         {{ form.sample_name }}
       </div>
       <div class="col-2">
@@ -135,6 +135,17 @@
 
       <div class="col-12 mt-4 mb-3">
         {{ form.file }}
+      </div>
+      <div class="col-10">
+        <label class="form-label">Наименование образца акта</label>
+        {{ form.act_sample_name }}
+      </div>
+      <div class="col-2">
+        <label class="form-label">Версия</label>
+        {{ form.act_version }}
+      </div>
+      <div class="col-12 mt-4 mb-3">
+        {{ form.act_file }}
       </div>
     </div>
   </div>
@@ -148,8 +159,11 @@
 {{ form.group_short_map|json_script:"ct-data-group-short-map" }}
 {{ form.product_short_map|json_script:"ct-data-product-short-map" }}
 {{ form.version_map|json_script:"ct-data-version-map" }}
+{{ form.act_version_map|json_script:"ct-data-act-version-map" }}
 {{ form.current_base|json_script:"ct-data-current-base" }}
 {{ form.current_version|json_script:"ct-data-current-ver" }}
+{{ form.current_act_base|json_script:"ct-data-current-act-base" }}
+{{ form.current_act_version|json_script:"ct-data-current-act-ver" }}
 
 <script>
 (function() {
@@ -161,8 +175,11 @@
   const groupShortMap = _jsonEl("ct-data-group-short-map");
   const productShortMap = _jsonEl("ct-data-product-short-map");
   const versionMap    = _jsonEl("ct-data-version-map");
+  const actVersionMap = _jsonEl("ct-data-act-version-map");
   const currentBase   = _jsonEl("ct-data-current-base");
   const currentVer    = _jsonEl("ct-data-current-ver");
+  const currentActBase = _jsonEl("ct-data-current-act-base");
+  const currentActVer  = _jsonEl("ct-data-current-act-ver");
 
   const groupDropdown = document.getElementById("ct-group-dropdown");
   const productDropdown = document.getElementById("ct-product-dropdown");
@@ -183,6 +200,8 @@
   const countrySel  = document.getElementById("id_country");
   const versionInp  = document.getElementById("id_version");
   const sampleInp   = document.getElementById("id_sample_name");
+  const actVersionInp = document.getElementById("id_act_version");
+  const actSampleInp  = document.getElementById("id_act_sample_name");
 
   function shortLabel(cb) {
     const full = cb.nextElementSibling?.textContent?.trim() || "";
@@ -230,7 +249,7 @@
     productLabel.textContent = selected.length + " выбрано";
   }
 
-  function computeBase() {
+  function computeBase(templateLabel) {
     const groupShort = selectedGroupValues().map(id => groupShortMap[id]).filter(Boolean).join("-") || "Все";
     const party   = PARTY_SHORT[partySel?.value]  || "";
     const ctype   = TYPE_SHORT[typeSel?.value]     || "";
@@ -247,22 +266,29 @@
     }
 
     const prefix = groupShort ? groupShort + " " : "";
-    return prefix + "Шаблон договора " + party + " " + ctype + " " +
+    return prefix + templateLabel + " " + party + " " + ctype + " " +
       alpha3 + "_" + product + "-" + sectionsPart;
   }
 
-  function getNextVersion(base) {
-    if (currentBase && base === currentBase) return currentVer || "1";
-    const maxV = versionMap[base] || 0;
+  function getNextVersion(base, map, existingBase, existingVersion) {
+    if (existingBase && base === existingBase) return existingVersion || "1";
+    const maxV = map[base] || 0;
     return String(maxV + 1);
   }
 
   function buildSampleName() {
-    if (!sampleInp || !versionInp) return;
-    const base = computeBase();
-    const version = getNextVersion(base);
-    versionInp.value = version;
-    sampleInp.value = base + "_v" + version;
+    if (sampleInp && versionInp) {
+      const base = computeBase("Шаблон договора");
+      const version = getNextVersion(base, versionMap, currentBase, currentVer);
+      versionInp.value = version;
+      sampleInp.value = base + "_v" + version;
+    }
+    if (actSampleInp && actVersionInp) {
+      const actBase = computeBase("Шаблон акта");
+      const actVersion = getNextVersion(actBase, actVersionMap, currentActBase, currentActVer);
+      actVersionInp.value = actVersion;
+      actSampleInp.value = actBase + "_v" + actVersion;
+    }
   }
 
   checks.forEach(cb => {
