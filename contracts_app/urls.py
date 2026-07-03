@@ -62,6 +62,7 @@ urlpatterns = [
     path("templates/<int:pk>/move-up/", views.ct_move_up, name="ct_move_up"),
     path("templates/<int:pk>/move-down/", views.ct_move_down, name="ct_move_down"),
     path("templates/<int:pk>/download/", views.ct_download, name="ct_download"),
+    path("templates/<int:pk>/act-download/", views.ct_act_download, name="ct_act_download"),
 
     # Contract variables ("Доступные переменные")
     path("variables/create/", views.ctv_form_create, name="ctv_form_create"),

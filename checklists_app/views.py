@@ -1,5 +1,7 @@
 import hashlib
 import json
+import logging
+import uuid
 from datetime import date
 from typing import Optional
 
@@ -25,12 +27,17 @@ from .models import (
     ChecklistCustomerStatus,
     ChecklistCustomerStatusHistory,
     ChecklistItem,
+    ChecklistItemAuditLog,
     ChecklistRequestNote,
     ChecklistStatus,
     ChecklistStatusHistory,
     InfoRequestSectionApproval,
     SharedChecklistLink,
+    _sync_project_gantt_for_checklist_item,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _product_short_label(product) -> str:
@@ -237,6 +244,66 @@ def _code_cell_class(status_cells):
     return ""
 
 
+def _audit_actor(user):
+    if user and getattr(user, "is_authenticated", False):
+        return user
+    return None
+
+
+def _log_checklist_item_event(
+    item: ChecklistItem,
+    action: str,
+    *,
+    actor=None,
+    snapshot: dict | None = None,
+    metadata: dict | None = None,
+    change_batch_id=None,
+) -> None:
+    try:
+        ChecklistItemAuditLog.objects.create(
+            checklist_item=item,
+            project_id=item.project_id,
+            section_id=item.section_id,
+            action=action,
+            actor=_audit_actor(actor),
+            snapshot=snapshot if snapshot is not None else item.snapshot(),
+            metadata=metadata or {},
+            change_batch_id=change_batch_id,
+        )
+    except Exception:
+        # Audit failures must not block user-facing checklist work.
+        return
+
+
+def _soft_delete_checklist_items(items, *, actor=None, change_batch_id=None, source=""):
+    now = timezone.now()
+    actor = _audit_actor(actor)
+    active_items = [item for item in items if not item.deleted_at]
+    if not active_items:
+        return []
+
+    audit_rows = []
+    for item in active_items:
+        snapshot = item.snapshot()
+        item.deleted_at = now
+        item.deleted_by = actor
+        audit_rows.append(ChecklistItemAuditLog(
+            checklist_item=item,
+            project_id=item.project_id,
+            section_id=item.section_id,
+            action=ChecklistItemAuditLog.Action.SOFT_DELETED,
+            actor=actor,
+            snapshot=snapshot,
+            metadata={"source": source, "deleted_at": now.isoformat()},
+            change_batch_id=change_batch_id,
+        ))
+    ChecklistItem.all_objects.bulk_update(active_items, ["deleted_at", "deleted_by"])
+    ChecklistItemAuditLog.objects.bulk_create(audit_rows, batch_size=200)
+    for project_id in {item.project_id for item in active_items}:
+        _sync_project_gantt_for_checklist_item(project_id)
+    return active_items
+
+
 def _project_options(user=None):
     regs = ProjectRegistration.objects.select_related("type", "group_member")
     employee = getattr(user, "employee_profile", None)
@@ -411,7 +478,7 @@ def _can_update_customer_status(*, user, checklist_item: ChecklistItem, legal_en
 
 def _ensure_checklist_items(project: ProjectRegistration, section: TypicalSection):
     """Create ChecklistItems from RequestItems if none exist for this project+section."""
-    if ChecklistItem.objects.filter(project=project, section=section).exists():
+    if ChecklistItem.all_objects.filter(project=project, section=section).exists():
         return
 
     if not project.has_products:
@@ -1977,6 +2044,7 @@ def touch_status_dates(request):
 @require_POST
 def item_text_update(request, pk: int):
     item = get_object_or_404(ChecklistItem, pk=pk)
+    before = item.snapshot()
     field = (request.POST.get("field") or "").strip()
     value = (request.POST.get("value") or "").strip()
 
@@ -1985,8 +2053,16 @@ def item_text_update(request, pk: int):
     if field == "name" and not value:
         return JsonResponse({"ok": False, "error": "Наименование запроса не может быть пустым."}, status=400)
 
-    setattr(item, field, value)
-    item.save(update_fields=[field])
+    if getattr(item, field) != value:
+        setattr(item, field, value)
+        item.save(update_fields=[field])
+        _log_checklist_item_event(
+            item,
+            ChecklistItemAuditLog.Action.UPDATED,
+            actor=request.user,
+            snapshot=before,
+            metadata={"source": "text_update", "field": field, "value": value},
+        )
     return JsonResponse({"ok": True, "item": _text_update_payload(item)})
 
 
@@ -2505,13 +2581,19 @@ def item_create(request):
     if ChecklistItem.objects.filter(project=project, section=section, number=number).exists():
         return HttpResponseBadRequest(f"Запрос с номером {number} уже существует в данном разделе.")
 
-    ChecklistItem.objects.create(
+    ci = ChecklistItem.objects.create(
         project=project, section=section,
         code=code, number=number, short_name=short_name, name=name,
         position=max_pos + 1,
         item_type=item_type,
         additional_date=additional_date,
         additional_number=additional_number,
+    )
+    _log_checklist_item_event(
+        ci,
+        ChecklistItemAuditLog.Action.CREATED,
+        actor=request.user,
+        metadata={"source": "item_create"},
     )
     resp = HttpResponse(status=204)
     resp["HX-Trigger"] = "checklists:saved"
@@ -2522,6 +2604,7 @@ def item_create(request):
 @require_POST
 def item_update(request, pk):
     ci = get_object_or_404(ChecklistItem, pk=pk)
+    before = ci.snapshot()
     code = (request.POST.get("code") or "").strip()
     number_raw = (request.POST.get("number") or "").strip()
     short_name = (request.POST.get("short_name") or "").strip()
@@ -2573,6 +2656,15 @@ def item_update(request, pk):
         "code", "number", "short_name", "name",
         "item_type", "additional_date", "additional_number",
     ])
+    after = ci.snapshot()
+    if before != after:
+        _log_checklist_item_event(
+            ci,
+            ChecklistItemAuditLog.Action.UPDATED,
+            actor=request.user,
+            snapshot=before,
+            metadata={"source": "item_update", "after": after},
+        )
     resp = HttpResponse(status=204)
     resp["HX-Trigger"] = "checklists:saved"
     return resp
@@ -2609,7 +2701,7 @@ def item_delete(request, pk):
         ci = get_object_or_404(ChecklistItem.objects.select_for_update(), pk=pk)
         project_id = ci.project_id
         section_id = ci.section_id
-        ci.delete()
+        _soft_delete_checklist_items([ci], actor=request.user, source="item_delete")
         _renumber_checklist_items(project_id, [section_id])
     resp = HttpResponse(status=204)
     resp["HX-Trigger"] = "checklists:saved"
@@ -2678,42 +2770,186 @@ def item_batch_edit(request):
     deleted_ids = data.get("deleted") or []
     order_list = data.get("order") or []
     text_updates = data.get("text_updates") or []
+    explicit_delete = data.get("explicit_delete") is True
+
+    if deleted_ids and not explicit_delete:
+        logger.warning(
+            "checklists.batch_edit_rejected_implicit_delete user=%s deleted_count=%s order_count=%s text_count=%s",
+            getattr(request.user, "pk", None),
+            len(deleted_ids) if isinstance(deleted_ids, list) else "invalid",
+            len(order_list) if isinstance(order_list, list) else "invalid",
+            len(text_updates) if isinstance(text_updates, list) else "invalid",
+        )
+        return JsonResponse({
+            "ok": False,
+            "error": "Удаление строк возможно только явным действием пользователя.",
+        }, status=400)
+
+    if not isinstance(deleted_ids, list) or not isinstance(order_list, list) or not isinstance(text_updates, list):
+        return JsonResponse({"ok": False, "error": "Некорректный формат batch-edit."}, status=400)
+
+    try:
+        deleted_ids = [int(item_id) for item_id in deleted_ids]
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректный список удаляемых строк."}, status=400)
+
+    change_batch_id = uuid.uuid4()
 
     with transaction.atomic():
         affected_sections_by_project: dict[int, set[int]] = {}
-        order_item_ids = [
-            entry.get("id") for entry in order_list
-            if entry.get("id") is not None
-        ]
-        affected_item_ids = list(deleted_ids) + order_item_ids
-        if affected_item_ids:
-            affected_rows = ChecklistItem.objects.filter(pk__in=affected_item_ids).values_list(
-                "project_id", "section_id",
-            )
-            for project_id, section_id in affected_rows:
-                affected_sections_by_project.setdefault(project_id, set()).add(section_id)
+        affected_count = {"deleted": 0, "order": 0, "text": 0}
+
+        def mark_affected(item):
+            affected_sections_by_project.setdefault(item.project_id, set()).add(item.section_id)
 
         if deleted_ids:
-            ChecklistItem.objects.filter(pk__in=deleted_ids).delete()
+            deleted_items = list(
+                ChecklistItem.objects
+                .select_for_update()
+                .filter(pk__in=deleted_ids)
+                .order_by("id")
+            )
+            for item in deleted_items:
+                mark_affected(item)
+            affected_count["deleted"] = len(_soft_delete_checklist_items(
+                deleted_items,
+                actor=request.user,
+                change_batch_id=change_batch_id,
+                source="batch_edit",
+            ))
 
+        order_updates = []
+        order_item_ids = []
         for entry in order_list:
+            if not isinstance(entry, dict):
+                continue
             item_id = entry.get("id")
             position = entry.get("position")
-            if item_id is not None and position is not None:
-                ChecklistItem.objects.filter(pk=item_id).update(position=position)
+            if item_id is None or position is None:
+                continue
+            try:
+                order_item_ids.append(int(item_id))
+            except (TypeError, ValueError):
+                continue
+        if order_item_ids:
+            order_items = {
+                item.pk: item
+                for item in ChecklistItem.objects.select_for_update().filter(pk__in=order_item_ids)
+            }
+            for entry in order_list:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    item_id = int(entry.get("id"))
+                    position = int(entry.get("position"))
+                except (TypeError, ValueError):
+                    continue
+                item = order_items.get(item_id)
+                if not item or item.position == position:
+                    continue
+                item.position = position
+                order_updates.append(item)
+                mark_affected(item)
+            if order_updates:
+                ChecklistItem.objects.bulk_update(order_updates, ["position"], batch_size=200)
+                affected_count["order"] = len(order_updates)
 
+        text_item_ids = []
         for entry in text_updates:
+            if not isinstance(entry, dict):
+                continue
             item_id = entry.get("id")
+            if item_id is None:
+                continue
+            try:
+                text_item_ids.append(int(item_id))
+            except (TypeError, ValueError):
+                continue
+
+        text_items = {
+            item.pk: item
+            for item in ChecklistItem.objects.select_for_update().filter(pk__in=text_item_ids)
+        } if text_item_ids else {}
+        text_before = {}
+        text_changed_fields: dict[int, set[str]] = {}
+        for entry in text_updates:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                item_id = int(entry.get("id"))
+            except (TypeError, ValueError):
+                continue
+            item = text_items.get(item_id)
+            if not item:
+                continue
             field = (entry.get("field") or "").strip()
             value = (entry.get("value") or "").strip()
-            if not item_id or field not in ("short_name", "name"):
+            if field not in ("short_name", "name"):
                 continue
             if field == "name" and not value:
                 continue
-            ChecklistItem.objects.filter(pk=item_id).update(**{field: value})
+            if getattr(item, field) == value:
+                continue
+            text_before.setdefault(item.pk, item.snapshot())
+            setattr(item, field, value)
+            text_changed_fields.setdefault(item.pk, set()).add(field)
+            mark_affected(item)
+
+        if text_changed_fields:
+            changed_items = [text_items[item_id] for item_id in text_changed_fields]
+            ChecklistItem.objects.bulk_update(changed_items, ["short_name", "name"], batch_size=200)
+            ChecklistItemAuditLog.objects.bulk_create([
+                ChecklistItemAuditLog(
+                    checklist_item=item,
+                    project_id=item.project_id,
+                    section_id=item.section_id,
+                    action=ChecklistItemAuditLog.Action.UPDATED,
+                    actor=_audit_actor(request.user),
+                    snapshot=text_before[item.pk],
+                    metadata={
+                        "source": "batch_edit",
+                        "fields": sorted(text_changed_fields[item.pk]),
+                        "after": item.snapshot(),
+                    },
+                    change_batch_id=change_batch_id,
+                )
+                for item in changed_items
+            ], batch_size=200)
+            affected_count["text"] = len(changed_items)
 
         for project_id, section_ids in affected_sections_by_project.items():
             _renumber_checklist_items(project_id, section_ids)
+
+        if any(affected_count.values()):
+            ChecklistItemAuditLog.objects.bulk_create([
+                ChecklistItemAuditLog(
+                    checklist_item=None,
+                    project_id=project_id,
+                    section_id=section_id,
+                    action=ChecklistItemAuditLog.Action.BATCH_EDIT,
+                    actor=_audit_actor(request.user),
+                    snapshot={},
+                    metadata={
+                        "source": "batch_edit",
+                        "deleted_count": affected_count["deleted"],
+                        "order_count": affected_count["order"],
+                        "text_count": affected_count["text"],
+                    },
+                    change_batch_id=change_batch_id,
+                )
+                for project_id, section_ids in affected_sections_by_project.items()
+                for section_id in section_ids
+            ], batch_size=200)
+
+    logger.info(
+        "checklists.batch_edit_applied user=%s batch=%s deleted_count=%s order_count=%s text_count=%s affected_projects=%s",
+        getattr(request.user, "pk", None),
+        change_batch_id,
+        len(deleted_ids),
+        len(order_list),
+        len(text_updates),
+        len(affected_sections_by_project),
+    )
 
     resp = HttpResponse(status=204)
     resp["HX-Trigger"] = "checklists:saved"
@@ -3219,6 +3455,7 @@ def shared_item_text_update(request, token: str, pk: int):
     if item.project_id != link.project_id:
         return JsonResponse({"ok": False, "error": "Нет доступа к этой записи."}, status=403)
 
+    before = item.snapshot()
     field = (request.POST.get("field") or "").strip()
     value = (request.POST.get("value") or "").strip()
 
@@ -3227,8 +3464,15 @@ def shared_item_text_update(request, token: str, pk: int):
     if field == "name" and not value:
         return JsonResponse({"ok": False, "error": "Наименование запроса не может быть пустым."}, status=400)
 
-    setattr(item, field, value)
-    item.save(update_fields=[field])
+    if getattr(item, field) != value:
+        setattr(item, field, value)
+        item.save(update_fields=[field])
+        _log_checklist_item_event(
+            item,
+            ChecklistItemAuditLog.Action.UPDATED,
+            snapshot=before,
+            metadata={"source": "shared_text_update", "field": field, "shared_link_id": link.pk},
+        )
     return JsonResponse({"ok": True, "item": _text_update_payload(item)})
 
 

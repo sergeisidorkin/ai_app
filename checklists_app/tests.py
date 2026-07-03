@@ -9,7 +9,13 @@ from projects_app.models import LegalEntity, Performer, ProjectRegistration, Wor
 from users_app.models import Employee
 from notifications_app.models import Notification, NotificationPerformerLink
 
-from checklists_app.models import ChecklistCustomerStatus, ChecklistItem, ChecklistStatus, SharedChecklistLink
+from checklists_app.models import (
+    ChecklistCustomerStatus,
+    ChecklistItem,
+    ChecklistItemAuditLog,
+    ChecklistStatus,
+    SharedChecklistLink,
+)
 from checklists_app.views import _project_options
 
 
@@ -337,6 +343,50 @@ class ChecklistStatusPermissionTests(TestCase):
         self.assertEqual(third.number, 1)
         self.assertEqual(self.item_allowed.number, 2)
         self.assertEqual(second.number, 3)
+
+    def test_batch_edit_rejects_implicit_delete_payload(self):
+        self.client.force_login(self.expert_user)
+
+        response = self._post_json(reverse("checklists_app:item_batch_edit"), {
+            "deleted": [self.item_allowed.id],
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(ChecklistItem.objects.filter(pk=self.item_allowed.pk).exists())
+        self.assertFalse(
+            ChecklistItemAuditLog.objects.filter(
+                checklist_item=self.item_allowed,
+                action=ChecklistItemAuditLog.Action.SOFT_DELETED,
+            ).exists()
+        )
+
+    def test_batch_edit_explicit_delete_soft_deletes_item_and_keeps_related_data(self):
+        status = ChecklistStatus.objects.create(
+            checklist_item=self.item_allowed,
+            legal_entity=self.legal_allowed,
+            status=ChecklistStatus.Status.PROVIDED,
+            updated_by=self.expert_user,
+        )
+        self.client.force_login(self.expert_user)
+
+        response = self._post_json(reverse("checklists_app:item_batch_edit"), {
+            "deleted": [self.item_allowed.id],
+            "explicit_delete": True,
+        })
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(ChecklistItem.objects.filter(pk=self.item_allowed.pk).exists())
+        deleted_item = ChecklistItem.all_objects.get(pk=self.item_allowed.pk)
+        self.assertIsNotNone(deleted_item.deleted_at)
+        self.assertEqual(deleted_item.deleted_by, self.expert_user)
+        self.assertTrue(ChecklistStatus.objects.filter(pk=status.pk, checklist_item=deleted_item).exists())
+        self.assertTrue(
+            ChecklistItemAuditLog.objects.filter(
+                checklist_item=deleted_item,
+                action=ChecklistItemAuditLog.Action.SOFT_DELETED,
+                actor=self.expert_user,
+            ).exists()
+        )
 
     def test_expert_can_update_only_confirmed_imcm_status_and_not_customer_status(self):
         self.client.force_login(self.expert_user)

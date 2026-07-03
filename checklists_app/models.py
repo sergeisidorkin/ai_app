@@ -9,6 +9,20 @@ from datetime import timedelta
 
 _PREVIOUS_STATUS_UNSET = object()
 
+
+class ChecklistItemQuerySet(models.QuerySet):
+    def active(self):
+        return self.filter(deleted_at__isnull=True)
+
+    def deleted(self):
+        return self.filter(deleted_at__isnull=False)
+
+
+class ActiveChecklistItemManager(models.Manager.from_queryset(ChecklistItemQuerySet)):
+    def get_queryset(self):
+        return super().get_queryset().active()
+
+
 class ChecklistItem(models.Model):
     class ItemType(models.TextChoices):
         BASIC = "basic", "Основной"
@@ -36,14 +50,120 @@ class ChecklistItem(models.Model):
         related_name="derived_checklist_items",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    deleted_at = models.DateTimeField("Дата удаления", null=True, blank=True, db_index=True)
+    deleted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="deleted_checklist_items",
+        verbose_name="Кто удалил",
+    )
+
+    objects = ActiveChecklistItemManager()
+    all_objects = ChecklistItemQuerySet.as_manager()
 
     class Meta:
         ordering = ["position", "id"]
+        base_manager_name = "all_objects"
+        default_manager_name = "objects"
+        indexes = [
+            models.Index(
+                fields=["project", "section", "position", "id"],
+                name="chk_item_active_order_idx",
+                condition=models.Q(deleted_at__isnull=True),
+            ),
+            models.Index(
+                fields=["project", "section", "deleted_at"],
+                name="chk_item_deleted_lookup_idx",
+            ),
+        ]
         verbose_name = "Пункт чек-листа"
         verbose_name_plural = "Пункты чек-листа"
 
     def __str__(self):
         return f"{self.code} {self.number:02d} — {self.short_name or self.name[:40]}"
+
+    @property
+    def is_deleted(self):
+        return self.deleted_at is not None
+
+    def snapshot(self) -> dict:
+        return {
+            "id": self.pk,
+            "project_id": self.project_id,
+            "section_id": self.section_id,
+            "code": self.code,
+            "number": self.number,
+            "short_name": self.short_name,
+            "name": self.name,
+            "position": self.position,
+            "item_type": self.item_type,
+            "additional_date": self.additional_date.isoformat() if self.additional_date else None,
+            "additional_number": self.additional_number,
+            "source_request_item_id": self.source_request_item_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
+            "deleted_by_id": self.deleted_by_id,
+        }
+
+
+class ChecklistItemAuditLog(models.Model):
+    class Action(models.TextChoices):
+        CREATED = "created", "Создан"
+        UPDATED = "updated", "Изменён"
+        SOFT_DELETED = "soft_deleted", "Удалён"
+        RESTORED = "restored", "Восстановлен"
+        BATCH_EDIT = "batch_edit", "Массовое редактирование"
+
+    checklist_item = models.ForeignKey(
+        ChecklistItem,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="audit_logs",
+        verbose_name="Пункт чек-листа",
+    )
+    project = models.ForeignKey(
+        "projects_app.ProjectRegistration",
+        on_delete=models.CASCADE,
+        related_name="checklist_item_audit_logs",
+        verbose_name="Проект",
+    )
+    section = models.ForeignKey(
+        "policy_app.TypicalSection",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="checklist_item_audit_logs",
+        verbose_name="Раздел",
+    )
+    action = models.CharField("Действие", max_length=32, choices=Action.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="checklist_item_audit_logs",
+        verbose_name="Пользователь",
+    )
+    snapshot = models.JSONField("Снимок строки", default=dict, blank=True)
+    metadata = models.JSONField("Метаданные", default=dict, blank=True)
+    change_batch_id = models.UUIDField("ID пакета изменений", null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField("Дата события", auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["project", "-created_at"], name="chk_audit_project_time_idx"),
+            models.Index(fields=["checklist_item", "-created_at"], name="chk_audit_item_time_idx"),
+            models.Index(fields=["action", "-created_at"], name="chk_audit_action_time_idx"),
+        ]
+        verbose_name = "Аудит пункта чек-листа"
+        verbose_name_plural = "Аудит пунктов чек-листа"
+
+    def __str__(self):
+        return f"{self.get_action_display()}:{self.checklist_item_id or '—'}:{self.created_at:%Y-%m-%d %H:%M}"
 
 
 def _sync_project_gantt_for_checklist_item(project_id):

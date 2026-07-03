@@ -106,6 +106,7 @@
       editMode: false,
       selectedItems: new Set(),
       editSnapshot: null,
+      editDeletedIds: new Set(),
       editTextChanges: {},
       truncated: false,
       imcmVisible: true,
@@ -178,6 +179,14 @@
 
     async function reload() {
       await flushPending();
+      if (state.editMode) {
+        state.editMode = false;
+        state.editSnapshot = null;
+        state.editDeletedIds.clear();
+        state.editTextChanges = {};
+        state.selectedItems.clear();
+        showEditModeNotice("Таблица обновилась. Режим редактирования сброшен, чтобы не сохранить устаревшие данные.");
+      }
       const projectUid = options.getProjectUid();
       if (!projectUid) {
         clearSticky();
@@ -1862,6 +1871,7 @@
       state.editMode = true;
       state.selectedItems.clear();
       state.editTextChanges = {};
+      state.editDeletedIds.clear();
       state.editSnapshot = JSON.parse(JSON.stringify(state.payload.rows));
       closeEditor();
       if (state.inlineEditing) closeInlineEdit();
@@ -1876,6 +1886,7 @@
         .filter((r) => r.kind === "item").map((r) => String(r.id));
       const currentIds = state.payload.rows
         .filter((r) => r.kind === "item").map((r) => String(r.id));
+      if (state.editDeletedIds.size > 0) return true;
       if (snapshotIds.length !== currentIds.length) return true;
       if (snapshotIds.some((id, i) => id !== currentIds[i])) return true;
       if (Object.keys(state.editTextChanges).length > 0) return true;
@@ -1894,6 +1905,7 @@
 
       state.editSnapshot = null;
       state.editTextChanges = {};
+      state.editDeletedIds.clear();
       state.editMode = false;
       state.selectedItems.clear();
       closeEditor();
@@ -1916,7 +1928,21 @@
       const currentIds = currentItems.map((r) => String(r.id));
       const currentIdSet = new Set(currentIds);
 
-      const deleted = snapshotIds.filter((id) => !currentIdSet.has(id));
+      const deleted = Array.from(state.editDeletedIds || []).map(String);
+      const deletedSet = new Set(deleted);
+      const unexpectedlyMissing = snapshotIds.filter((id) => !currentIdSet.has(id) && !deletedSet.has(id));
+      if (unexpectedlyMissing.length) {
+        state.editSnapshot = null;
+        state.editTextChanges = {};
+        state.editDeletedIds.clear();
+        state.editMode = false;
+        state.selectedItems.clear();
+        closeEditor();
+        clearActiveCell();
+        showEditModeNotice("Таблица изменилась во время редактирования. Данные перезагружены без сохранения устаревшего удаления.");
+        reload();
+        return;
+      }
 
       const order = [];
       const snapshotOrder = snapshotIds.filter((id) => currentIdSet.has(id));
@@ -1940,6 +1966,7 @@
       if (!deleted.length && !order.length && !textUpdates.length) {
         state.editSnapshot = null;
         state.editTextChanges = {};
+        state.editDeletedIds.clear();
         state.editMode = false;
         state.selectedItems.clear();
         closeEditor();
@@ -1958,6 +1985,7 @@
           },
           body: JSON.stringify({
             deleted: deleted.map(Number),
+            explicit_delete: deleted.length > 0,
             order,
             text_updates: textUpdates,
           }),
@@ -1974,6 +2002,7 @@
 
       state.editSnapshot = null;
       state.editTextChanges = {};
+      state.editDeletedIds.clear();
       state.editMode = false;
       state.selectedItems.clear();
       closeEditor();
@@ -2158,6 +2187,7 @@
       if (action === "delete-item") {
         if (!window.confirm("Удалить выбранные записи?")) return;
         const deleteSet = new Set(selected.map(String));
+        deleteSet.forEach((id) => state.editDeletedIds.add(id));
         state.payload.rows = state.payload.rows.filter(
           (row) => row.kind !== "item" || !deleteSet.has(String(row.id))
         );

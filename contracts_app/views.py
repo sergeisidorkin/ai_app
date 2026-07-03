@@ -280,6 +280,22 @@ CONTRACTS_PROJECT_REG_FORM_TEMPLATE = "contracts_app/contracts_project_registrat
 CT_PARTIAL_TEMPLATE = "contracts_app/contract_templates_partial.html"
 CT_FORM_TEMPLATE = "contracts_app/contract_template_form.html"
 CT_HX_EVENT = "contract-templates-updated"
+CONTRACT_TEMPLATE_COLUMN_PICKER = (
+    {"value": "group", "label": "Группа"},
+    {"value": "product", "label": "Продукт"},
+    {"value": "section", "label": "Раздел"},
+    {"value": "type", "label": "Вид"},
+    {"value": "party", "label": "Сторона"},
+    {"value": "country", "label": "Страна"},
+    {"value": "sample-name", "label": "Наименование образца договора"},
+    {"value": "version", "label": "Версия"},
+    {"value": "upload", "label": "Загрузка", "default_hidden": True},
+    {"value": "download", "label": "Скачать"},
+    {"value": "act-sample-name", "label": "Наименование образца акта"},
+    {"value": "act-version", "label": "Версия"},
+    {"value": "act-upload", "label": "Загрузка", "default_hidden": True},
+    {"value": "act-download", "label": "Скачать"},
+)
 
 
 def _normalize_contract_person_name(value):
@@ -2446,6 +2462,7 @@ def _ct_context():
     return {
         "templates": templates,
         "ct_variables": ContractVariable.objects.all(),
+        "contract_template_column_picker": CONTRACT_TEMPLATE_COLUMN_PICKER,
     }
 
 
@@ -2523,6 +2540,8 @@ def ct_delete(request, pk):
     obj = get_object_or_404(ContractTemplate, pk=pk)
     if obj.file:
         obj.file.delete(save=False)
+    if obj.act_file:
+        obj.act_file.delete(save=False)
     obj.delete()
     _ct_normalize_positions()
     return _ct_render_updated(request)
@@ -2554,16 +2573,12 @@ def ct_move_down(request, pk):
     return _ct_render_updated(request)
 
 
-@login_required
-@require_http_methods(["GET"])
-def ct_download(request, pk):
-    obj = get_object_or_404(ContractTemplate, pk=pk)
-    if not obj.file:
+def _ct_download_file_response(field_file):
+    if not field_file:
         raise Http404("Файл не найден")
-    file_path = obj.file.path
+    file_path = field_file.path
     if not os.path.isfile(file_path):
         raise Http404("Файл не найден на диске")
-    from urllib.parse import quote
     basename = os.path.basename(file_path)
     response = FileResponse(
         open(file_path, "rb"),
@@ -2573,6 +2588,20 @@ def ct_download(request, pk):
         f"attachment; filename*=UTF-8''{quote(basename)}"
     )
     return response
+
+
+@login_required
+@require_http_methods(["GET"])
+def ct_download(request, pk):
+    obj = get_object_or_404(ContractTemplate, pk=pk)
+    return _ct_download_file_response(obj.file)
+
+
+@login_required
+@require_http_methods(["GET"])
+def ct_act_download(request, pk):
+    obj = get_object_or_404(ContractTemplate, pk=pk)
+    return _ct_download_file_response(obj.act_file)
 
 
 # ---------------------------------------------------------------------------

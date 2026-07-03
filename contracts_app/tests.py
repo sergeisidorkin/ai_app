@@ -2303,6 +2303,11 @@ class ContractsCloudLabelTests(TestCase):
                     b"docx",
                     content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 ),
+                "act_file": SimpleUploadedFile(
+                    "act.docx",
+                    b"act-docx",
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
             },
         )
 
@@ -2320,9 +2325,57 @@ class ContractsCloudLabelTests(TestCase):
         )
         self.assertEqual(template.product_id, product.pk)
         self.assertTrue(template.sample_name.startswith("RU-KZ Шаблон договора ФЗЛ СМЗ KAZ_CT-TDD-CT-OVR-Общий_v"))
+        self.assertTrue(template.act_sample_name.startswith("RU-KZ Шаблон акта ФЗЛ СМЗ KAZ_CT-TDD-CT-OVR-Общий_v"))
+        self.assertIn("RU-KZ_Шаблон_акта_ФЗЛ_СМЗ_KAZ_CT-TDD-CT-OVR-Общий_v", template.act_file.name)
+        self.assertTrue(template.act_file.name.endswith(".docx"))
+
+    def test_contract_template_form_keeps_act_file_optional_for_legacy_template(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        template = ContractTemplate.objects.create(
+            group_member=self.group_member,
+            product=self.product,
+            contract_type="gph",
+            party="individual",
+            country_name="Россия",
+            country_code="643",
+            sample_name="RU Шаблон договора ФЗЛ ГПХ RUS_DD-Общий_v1",
+            version="1",
+            file=SimpleUploadedFile(
+                "template.docx",
+                b"docx",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+
+        form = ContractTemplateForm(
+            data={
+                "group_member_ids": [str(self.group_member.pk)],
+                "product_ids": [str(self.product.pk)],
+                "contract_type": template.contract_type,
+                "party": template.party,
+                "country": str(country.pk),
+                "sample_name": template.sample_name,
+                "version": template.version,
+                "act_sample_name": "",
+                "act_version": "",
+                "section_ids": ["__all__"],
+            },
+            instance=template,
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        updated = form.save()
+        self.assertFalse(updated.act_file)
 
     def test_contract_template_table_renders_all_group_for_unscoped_template(self):
-        ContractTemplate.objects.create(
+        template = ContractTemplate.objects.create(
             group_member=None,
             product=self.product,
             contract_type="gph",
@@ -2336,13 +2389,38 @@ class ContractsCloudLabelTests(TestCase):
                 b"docx",
                 content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             ),
+            act_sample_name="Все Шаблон акта ФЗЛ ГПХ RUS_DD-Общий_v1",
+            act_version="1",
+            act_file=SimpleUploadedFile(
+                "act.docx",
+                b"act-docx",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
             is_all_sections=True,
         )
 
         response = self.client.get(reverse("ct_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "<td class=\"text-nowrap\">Все</td>", html=False)
+        content = response.content.decode()
+        self.assertContains(response, 'id="ct-colpicker-wrap"', html=False)
+        self.assertContains(response, 'id="ct-col-upload"', html=False)
+        self.assertContains(response, 'id="ct-col-act-upload"', html=False)
+        self.assertEqual(content.count('data-default-hidden="true"'), 2)
+        self.assertContains(response, ">Раздел</th>", html=False)
+        self.assertContains(response, ">Наименование образца договора</th>", html=False)
+        self.assertContains(response, '<th data-col="act-sample-name">Наименование образца акта</th>', html=False)
+        self.assertContains(response, '<th data-col="act-version">Версия</th>', html=False)
+        self.assertContains(response, '<th data-col="act-upload">Загрузка</th>', html=False)
+        self.assertContains(response, '<th data-col="act-download">Скачать</th>', html=False)
+        self.assertNotContains(response, "Типовой раздел (услуги)")
+        self.assertContains(response, '<td class="text-nowrap" data-col="group">Все</td>', html=False)
+        self.assertContains(response, 'data-col="act-sample-name">Все Шаблон акта ФЗЛ ГПХ RUS_DD-Общий_v1</td>', html=False)
+        self.assertContains(response, reverse("ct_act_download", args=[template.pk]), html=False)
+
+        download_response = self.client.get(reverse("ct_act_download", args=[template.pk]))
+        self.assertEqual(download_response.status_code, 200)
+        self.assertEqual(b"".join(download_response.streaming_content), b"act-docx")
 
     def test_contract_template_table_renders_all_product_for_unscoped_template(self):
         ContractTemplate.objects.create(
@@ -2365,7 +2443,7 @@ class ContractsCloudLabelTests(TestCase):
         response = self.client.get(reverse("ct_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "<td class=\"text-nowrap\">Все</td>", html=False)
+        self.assertContains(response, '<td class="text-nowrap" data-col="product">Все</td>', html=False)
 
     def test_contracts_development_partial_renders_client_contract_projects_table(self):
         contract_project = ContractProjectRegistration.objects.create(

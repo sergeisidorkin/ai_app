@@ -1,4 +1,4 @@
-<table class="table table-sm align-top">
+<table class="table table-sm align-top" id="ct-table">
     <thead>
     <tr>
         <th style="width:1%">
@@ -13,16 +13,20 @@
                 </div>
             {% endif %}
         </th>
-        <th>Группа</th>
-        <th>Продукт</th>
-        <th>Типовой раздел (услуги)</th>
-        <th>Вид</th>
-        <th>Сторона</th>
-        <th>Страна</th>
-        <th>Наименование образца</th>
-        <th>Версия</th>
-        <th>Загрузка</th>
-        <th>Скачать</th>
+        <th data-col="group">Группа</th>
+        <th data-col="product">Продукт</th>
+        <th data-col="section">Раздел</th>
+        <th data-col="type">Вид</th>
+        <th data-col="party">Сторона</th>
+        <th data-col="country">Страна</th>
+        <th data-col="sample-name">Наименование образца договора</th>
+        <th data-col="version">Версия</th>
+        <th data-col="upload">Загрузка</th>
+        <th data-col="download">Скачать</th>
+        <th data-col="act-sample-name">Наименование образца акта</th>
+        <th data-col="act-version">Версия</th>
+        <th data-col="act-upload">Загрузка</th>
+        <th data-col="act-download">Скачать</th>
     </tr>
     </thead>
     <tbody>
@@ -44,16 +48,16 @@
                     </div>
                 {% endif %}
             </td>
-            <td class="text-nowrap">{{ t.group_display }}</td>
-            <td class="text-nowrap">{{ t.product_display }}</td>
-            <td class="text-nowrap">{{ t.typical_sections_display }}</td>
-            <td class="text-nowrap">{{ t.get_contract_type_display|slice:":3" }}</td>
-            <td class="text-nowrap">{{ t.get_party_display }}</td>
-            <td class="text-nowrap">{{ t.country_name }}</td>
-            <td>{{ t.sample_name }}</td>
-            <td class="text-nowrap">{{ t.version }}</td>
-            <td class="text-nowrap">{% if t.file %}{{ t.file.name|cut:"contract_templates/" }}{% else %}—{% endif %}</td>
-            <td class="text-nowrap">
+            <td class="text-nowrap" data-col="group">{{ t.group_display }}</td>
+            <td class="text-nowrap" data-col="product">{{ t.product_display }}</td>
+            <td class="text-nowrap" data-col="section">{{ t.typical_sections_display }}</td>
+            <td class="text-nowrap" data-col="type">{{ t.get_contract_type_display|slice:":3" }}</td>
+            <td class="text-nowrap" data-col="party">{{ t.get_party_display }}</td>
+            <td class="text-nowrap" data-col="country">{{ t.country_name }}</td>
+            <td data-col="sample-name">{{ t.sample_name }}</td>
+            <td class="text-nowrap" data-col="version">{{ t.version }}</td>
+            <td class="text-nowrap" data-col="upload">{% if t.file %}{{ t.file.name|cut:"contract_templates/" }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap" data-col="download">
                 {% if t.file %}
                     <a href="{% url 'ct_download' t.pk %}" download class="ct-download-link" title="Скачать файл">
                         <i class="bi bi-download"></i>
@@ -62,9 +66,21 @@
                     —
                 {% endif %}
             </td>
+            <td data-col="act-sample-name">{{ t.act_sample_name|default:"—" }}</td>
+            <td class="text-nowrap" data-col="act-version">{{ t.act_version|default:"—" }}</td>
+            <td class="text-nowrap" data-col="act-upload">{% if t.act_file %}{{ t.act_file.name|cut:"contract_templates/" }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap" data-col="act-download">
+                {% if t.act_file %}
+                    <a href="{% url 'ct_act_download' t.pk %}" download class="ct-download-link" title="Скачать файл акта">
+                        <i class="bi bi-download"></i>
+                    </a>
+                {% else %}
+                    —
+                {% endif %}
+            </td>
         </tr>
     {% empty %}
-        <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
 </table>
