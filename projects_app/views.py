@@ -3255,42 +3255,74 @@ def revoke_info_request_approval(request):
     if not _is_admin_user(request.user):
         return JsonResponse({"ok": False, "error": "Действие доступно только администратору."}, status=403)
 
-    performer_id = (request.POST.get("performer_id") or "").strip()
-    if not performer_id:
-        return JsonResponse({"ok": False, "error": "Не выбрана строка для отката."}, status=400)
+    raw_ids = (
+        request.POST.getlist("performer_ids[]")
+        or request.POST.getlist("performer_ids")
+        or [request.POST.get("performer_id")]
+    )
+    try:
+        performer_ids = sorted({int(value) for value in raw_ids if str(value or "").strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+    if not performer_ids:
+        return JsonResponse({"ok": False, "error": "Не выбраны строки для отката."}, status=400)
 
     from checklists_app.models import InfoRequestSectionApproval
-    from notifications_app.models import Notification, NotificationPerformerLink
+    from notifications_app.models import Notification
 
     with transaction.atomic():
-        performer = get_object_or_404(
-            Performer.objects.select_for_update(),
-            pk=performer_id,
+        selected_performers = list(
+            Performer.objects
+            .select_for_update()
+            .filter(pk__in=performer_ids)
         )
-        if performer.info_approval_status != Performer.InfoApprovalStatus.APPROVED:
-            return JsonResponse({"ok": False, "error": "По выбранной строке нет согласования для отмены."}, status=400)
+        if len(selected_performers) != len(performer_ids):
+            return JsonResponse({"ok": False, "error": "Одна или несколько выбранных строк не найдены."}, status=404)
+        if any(p.info_approval_status != Performer.InfoApprovalStatus.APPROVED for p in selected_performers):
+            return JsonResponse({"ok": False, "error": "Откат доступен только для согласованных строк."}, status=400)
+
+        project_ids = {p.registration_id for p in selected_performers}
+        employee_ids = {p.employee_id for p in selected_performers}
+        if len(project_ids) != 1:
+            return JsonResponse({"ok": False, "error": "Выберите строки в рамках одного проекта."}, status=400)
+        if len(employee_ids) != 1:
+            return JsonResponse({"ok": False, "error": "Выберите строки одного исполнителя."}, status=400)
+
+        performer = selected_performers[0]
         if not performer.employee_id or not getattr(performer.employee, "user_id", None):
-            return JsonResponse({"ok": False, "error": "У выбранной строки не найден эксперт."}, status=400)
-        if not performer.typical_section_id:
-            return JsonResponse({"ok": False, "error": "У выбранной строки не указан типовой раздел."}, status=400)
+            return JsonResponse({"ok": False, "error": "У выбранных строк не найден эксперт."}, status=400)
 
         expert_user = performer.employee.user
         project = performer.registration
-        section = performer.typical_section
-
-        current_notification_ids = list(
-            Notification.objects
+        target_performers = list(
+            Performer.objects
+            .select_for_update()
             .filter(
-                notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
-                project=project,
-                recipient=expert_user,
-                sent_at=performer.info_request_sent_at,
-                deadline_at=performer.info_request_deadline_at,
-                performer_links__performer=performer,
+                registration=project,
+                employee=performer.employee,
+                info_approval_status=Performer.InfoApprovalStatus.APPROVED,
             )
-            .values_list("pk", flat=True)
-            .distinct()
         )
+        section_ids = {p.typical_section_id for p in target_performers if p.typical_section_id}
+        if not section_ids:
+            return JsonResponse({"ok": False, "error": "У выбранных строк не указаны типовые разделы."}, status=400)
+
+        current_notification_ids = set()
+        for target in target_performers:
+            ids = (
+                Notification.objects
+                .filter(
+                    notification_type=Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL,
+                    project=project,
+                    recipient=expert_user,
+                    sent_at=target.info_request_sent_at,
+                    deadline_at=target.info_request_deadline_at,
+                    performer_links__performer=target,
+                )
+                .values_list("pk", flat=True)
+                .distinct()
+            )
+            current_notification_ids.update(ids)
         if not current_notification_ids:
             return JsonResponse({"ok": False, "error": "Не найден связанный запрос согласования."}, status=400)
 
@@ -3300,22 +3332,6 @@ def revoke_info_request_approval(request):
             .filter(pk__in=current_notification_ids)
         )
         notification_ids = [notification.pk for notification in current_notifications]
-        affected_ids = list(
-            NotificationPerformerLink.objects
-            .filter(
-                notification_id__in=notification_ids,
-                performer__registration=project,
-                performer__employee=performer.employee,
-                performer__typical_section=section,
-            )
-            .values_list("performer_id", flat=True)
-            .distinct()
-        )
-        affected_performers = (
-            Performer.objects
-            .select_for_update()
-            .filter(pk__in=affected_ids)
-        )
         approver_ids = {expert_user.pk}
         approver_ids.update(
             notification.action_by_id
@@ -3324,12 +3340,17 @@ def revoke_info_request_approval(request):
         )
         InfoRequestSectionApproval.objects.filter(
             project=project,
-            section=section,
+            section_id__in=section_ids,
             approved_by_id__in=approver_ids,
         ).delete()
-        performers_updated = affected_performers.update(
-            info_approval_status="",
-            info_approval_at=None,
+        performers_updated = (
+            Performer.objects
+            .select_for_update()
+            .filter(pk__in=[p.pk for p in target_performers])
+            .update(
+                info_approval_status="",
+                info_approval_at=None,
+            )
         )
         notifications_updated = Notification.objects.filter(pk__in=notification_ids).update(
             is_processed=False,

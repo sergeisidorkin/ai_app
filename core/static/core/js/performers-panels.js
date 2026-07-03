@@ -617,6 +617,19 @@
   function isInfoRequestRowApproved(row) {
     return row?.dataset?.infoApprovalStatus === 'approved';
   }
+  function infoRequestRevokeSelectionState(checkedRows) {
+    const approvedRows = checkedRows.filter(isInfoRequestRowApproved);
+    const hasApprovedSelection = approvedRows.length > 0;
+    if (!checkedRows.length || approvedRows.length !== checkedRows.length) {
+      return { hasApprovedSelection, canRevoke: false };
+    }
+    const executorSet = new Set(checkedRows.map((row) => row.dataset.employeeUserId || row.dataset.executor || ''));
+    const projectSet = new Set(checkedRows.map((row) => row.dataset.projectId || ''));
+    return {
+      hasApprovedSelection,
+      canRevoke: executorSet.size === 1 && projectSet.size === 1,
+    };
+  }
 
   function updateInfoRequestState() {
     const boxes = getVisibleInfoRequestChecks();
@@ -638,10 +651,9 @@
 
     const revokeBtn = getRevokeInfoApprovalBtn();
     if (revokeBtn) {
-      const hasApprovedSelection = checkedRows.some(isInfoRequestRowApproved);
-      const canRevoke = checkedCount === 1 && checkedRows.length === 1 && isInfoRequestRowApproved(checkedRows[0]);
-      revokeBtn.classList.toggle('d-none', !hasApprovedSelection);
-      revokeBtn.disabled = !canRevoke;
+      const revokeState = infoRequestRevokeSelectionState(checkedRows);
+      revokeBtn.classList.toggle('d-none', !revokeState.hasApprovedSelection);
+      revokeBtn.disabled = !revokeState.canRevoke;
     }
 
     const controls = getInfoRequestDeadlineControls();
@@ -2398,14 +2410,14 @@
     const revokeInfoApprovalBtn = e.target.closest('#revoke-info-approval-btn');
     if (revokeInfoApprovalBtn && root.contains(revokeInfoApprovalBtn)) {
       const checked = getVisibleInfoRequestChecks().filter((cb) => cb.checked);
-      if (checked.length !== 1 || revokeInfoApprovalBtn.disabled) return;
+      if (!checked.length || revokeInfoApprovalBtn.disabled) return;
 
       const requestPanel = getInfoRequestPanel();
       const revokeUrl = requestPanel?.dataset?.revokeInfoApprovalUrl;
       if (!revokeUrl) return;
 
       const formData = new FormData();
-      formData.append('performer_id', checked[0].value);
+      checked.forEach((cb) => formData.append('performer_ids[]', cb.value));
 
       revokeInfoApprovalBtn.disabled = true;
       try {
