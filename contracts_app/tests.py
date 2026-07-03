@@ -2329,6 +2329,51 @@ class ContractsCloudLabelTests(TestCase):
         self.assertIn("RU-KZ_Шаблон_акта_ФЗЛ_СМЗ_KAZ_CT-TDD-CT-OVR-Общий_v", template.act_file.name)
         self.assertTrue(template.act_file.name.endswith(".docx"))
 
+    def test_contract_template_form_keeps_act_file_optional_for_legacy_template(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        template = ContractTemplate.objects.create(
+            group_member=self.group_member,
+            product=self.product,
+            contract_type="gph",
+            party="individual",
+            country_name="Россия",
+            country_code="643",
+            sample_name="RU Шаблон договора ФЗЛ ГПХ RUS_DD-Общий_v1",
+            version="1",
+            file=SimpleUploadedFile(
+                "template.docx",
+                b"docx",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+
+        form = ContractTemplateForm(
+            data={
+                "group_member_ids": [str(self.group_member.pk)],
+                "product_ids": [str(self.product.pk)],
+                "contract_type": template.contract_type,
+                "party": template.party,
+                "country": str(country.pk),
+                "sample_name": template.sample_name,
+                "version": template.version,
+                "act_sample_name": "",
+                "act_version": "",
+                "section_ids": ["__all__"],
+            },
+            instance=template,
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        updated = form.save()
+        self.assertFalse(updated.act_file)
+
     def test_contract_template_table_renders_all_group_for_unscoped_template(self):
         template = ContractTemplate.objects.create(
             group_member=None,

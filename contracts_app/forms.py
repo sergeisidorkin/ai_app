@@ -2359,7 +2359,7 @@ class ContractTemplateForm(forms.ModelForm):
         products_qs = list(Product.objects.order_by("position", "id"))
 
         self.fields["file"].required = not (self.instance and self.instance.pk and self.instance.file)
-        self.fields["act_file"].required = not (self.instance and self.instance.pk and self.instance.act_file)
+        self.fields["act_file"].required = False
         self.fields["sample_name"].required = False
         self.fields["version"].required = False
         self.fields["act_sample_name"].required = False
