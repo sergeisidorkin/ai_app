@@ -252,7 +252,13 @@ repair remain in explicit workspace workflows.
 
 The compose file also pins PostgreSQL safety limits (`max_connections=100`,
 `idle_session_timeout=30min`, `idle_in_transaction_session_timeout=5min`) and
-keeps Apache below that ceiling with `MaxRequestWorkers=60`.
+keeps Apache below that ceiling with `MaxRequestWorkers=60`. The container
+healthcheck is a single PHP process with its own five-second HTTP deadline and
+requires `/status.php` to report `installed: true`; do not replace it with a
+`CMD-SHELL` pipeline, because Docker's health timeout can leave pipeline
+children running after the shell is killed. The container init process reaps
+abandoned children, and a 256-process limit provides a final guard against
+process leaks.
 
 ## Checklist Folder Metrics
 

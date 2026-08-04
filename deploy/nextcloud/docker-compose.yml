@@ -39,6 +39,7 @@ services:
   nextcloud:
     image: nextcloud:apache
     restart: always
+    init: true
     env_file:
       - nextcloud.env
     depends_on:
@@ -71,10 +72,12 @@ services:
       # Keep user files in a dedicated mount so data growth is easy to track.
       - "${ROOT}/data:/var/www/html/data"
       - "./apache-mpm-prefork.conf:/etc/apache2/mods-available/mpm_prefork.conf:ro"
+      - "./nextcloud-container-healthcheck.php:/usr/local/bin/nextcloud-container-healthcheck.php:ro"
+    pids_limit: 256
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error -H 'Host: ${NEXTCLOUD_HOST}' http://127.0.0.1/status.php | grep -q '\"installed\":true'"]
-      interval: 15s
-      timeout: 10s
+      test: ["CMD", "php", "/usr/local/bin/nextcloud-container-healthcheck.php"]
+      interval: 30s
+      timeout: 8s
       retries: 12
       start_period: 60s
 

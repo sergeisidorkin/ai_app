@@ -2238,6 +2238,36 @@ class ContractsCloudLabelTests(TestCase):
         mocked_ensure_user_share.assert_not_called()
 
     @override_settings(NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ=False)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
+    def test_lawyer_missing_file_ids_skips_all_live_reads_when_disabled(
+        self,
+        mocked_list_user_shares,
+        mocked_list_resources,
+    ):
+        from contracts_app.views import _attach_contract_folder_urls
+
+        lawyer_user = get_user_model().objects.create_user(
+            username="lawyer-no-live-reads@example.com",
+            email="lawyer-no-live-reads@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        lawyer_group, _ = Group.objects.get_or_create(name=LAWYER_GROUP)
+        lawyer_user.groups.add(lawyer_group)
+        NextcloudUserLink.objects.create(
+            user=lawyer_user,
+            nextcloud_user_id="nc-lawyer-no-live-reads",
+            nextcloud_username="nc-lawyer-no-live-reads",
+            nextcloud_email=lawyer_user.email,
+        )
+
+        _attach_contract_folder_urls([self.performer], lawyer_user)
+
+        mocked_list_user_shares.assert_not_called()
+        mocked_list_resources.assert_not_called()
+
+    @override_settings(NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ=False)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
     def test_linked_expert_uses_folder_file_redirect_without_live_share_api(
         self,
