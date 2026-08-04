@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically synchronize cloud folder file metrics
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+RandomizedDelaySec=60
+Persistent=true
+Unit=cloud-folder-metadata-sync.service
+
+[Install]
+WantedBy=timers.target

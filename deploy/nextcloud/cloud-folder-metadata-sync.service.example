@@ -1,0 +1,13 @@
+[Unit]
+Description=Synchronize cloud folder file metrics
+After=network-online.target ai_app.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sergei
+Group=www-data
+WorkingDirectory=/home/sergei/ai_appdir/ai_app
+EnvironmentFile=/home/sergei/ai_appdir/env/prod.env
+ExecStart=/home/sergei/ai_appdir/ai_appenv/bin/python manage.py sync_cloud_folder_metadata --delay 0.2
+Nice=10

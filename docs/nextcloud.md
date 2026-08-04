@@ -40,6 +40,8 @@ is mostly a copy operation.
 - `deploy/nextcloud/nextcloud-compose.service.example`: optional `systemd` unit to keep the compose stack up after reboot.
 - `deploy/nextcloud/apache-mpm-prefork.conf`: bounded Apache/PHP worker pool.
 - `deploy/nextcloud/nextcloud-healthcheck.sh`: post-start `occ` and local HTTP verification.
+- `deploy/nextcloud/cloud-folder-metadata-sync.{service,timer}.example`: one
+  process periodically refreshes checklist file counts and latest-upload dates.
 - `deploy/nextcloud/update_cloud_cert.sh.example`: example certificate refresh script for a dedicated `cloud` certificate from Yandex Certificate Manager.
 - `deploy/nextcloud/prod.env.nextcloud.example`: Django-side `NEXTCLOUD_*` variables for `$HOME/ai_appdir/env/prod.env`.
 
@@ -241,6 +243,26 @@ single-flight per user and cached briefly in each Django process.
 The compose file also pins PostgreSQL safety limits (`max_connections=100`,
 `idle_session_timeout=30min`, `idle_in_transaction_session_timeout=5min`) and
 keeps Apache below that ceiling with `MaxRequestWorkers=60`.
+
+## Checklist Folder Metrics
+
+The checklist tables read `file_count` and `last_upload_at` from local folder
+records. Gunicorn intentionally does not start the background synchronizer in
+each worker, because that would duplicate the same DAV scan. Install the
+dedicated timer instead:
+
+```bash
+sudo install -m 0644 deploy/nextcloud/cloud-folder-metadata-sync.service.example \
+  /etc/systemd/system/cloud-folder-metadata-sync.service
+sudo install -m 0644 deploy/nextcloud/cloud-folder-metadata-sync.timer.example \
+  /etc/systemd/system/cloud-folder-metadata-sync.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now cloud-folder-metadata-sync.timer
+```
+
+For an immediate refresh, run
+`sudo systemctl start cloud-folder-metadata-sync.service`. The timer is
+single-instance under systemd, so a slow scan cannot overlap the next run.
 
 `ai_app` should remain the source of truth:
 
