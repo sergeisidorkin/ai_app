@@ -38,6 +38,10 @@ is mostly a copy operation.
 - `deploy/nextcloud/nextcloud.env.example`: environment file template.
 - `deploy/nextcloud/nginx-cloud.example.com.conf.example`: reverse proxy example for the host `nginx`.
 - `deploy/nextcloud/nextcloud-compose.service.example`: optional `systemd` unit to keep the compose stack up after reboot.
+- `deploy/nextcloud/apache-mpm-prefork.conf`: bounded Apache/PHP worker pool.
+- `deploy/nextcloud/nextcloud-healthcheck.sh`: post-start `occ` and local HTTP verification.
+- `deploy/nextcloud/cloud-folder-metadata-sync.{service,timer}.example`: one
+  process periodically refreshes checklist file counts and latest-upload dates.
 - `deploy/nextcloud/update_cloud_cert.sh.example`: example certificate refresh script for a dedicated `cloud` certificate from Yandex Certificate Manager.
 - `deploy/nextcloud/prod.env.nextcloud.example`: Django-side `NEXTCLOUD_*` variables for `$HOME/ai_appdir/env/prod.env`.
 
@@ -58,6 +62,8 @@ is mostly a copy operation.
 /opt/nextcloud/
   docker-compose.yml
   nextcloud.env
+  apache-mpm-prefork.conf
+  nextcloud-healthcheck.sh
   html/
   data/
   postgres/
@@ -71,6 +77,9 @@ is mostly a copy operation.
 3. Copy:
    - `deploy/nextcloud/docker-compose.yml` -> `/opt/nextcloud/docker-compose.yml`
    - `deploy/nextcloud/nextcloud.env.example` -> `/opt/nextcloud/nextcloud.env`
+   - `deploy/nextcloud/apache-mpm-prefork.conf` -> `/opt/nextcloud/apache-mpm-prefork.conf`
+   - `deploy/nextcloud/nextcloud-healthcheck.sh` -> `/opt/nextcloud/nextcloud-healthcheck.sh`
+   Then make the healthcheck executable with `chmod 755 /opt/nextcloud/nextcloud-healthcheck.sh`.
 4. Replace placeholder passwords and set the real subdomain in `/opt/nextcloud/nextcloud.env`.
 5. Create data directories:
 
@@ -170,6 +179,9 @@ Important proxy behavior:
 - `client_max_body_size 2g` allows practical file upload testing.
 - `/.well-known/carddav` and `/.well-known/caldav` redirect to DAV endpoints.
 - `proxy_request_buffering off` avoids unnecessary buffering during uploads.
+- OCS requests use a 3-second connect timeout and a bounded 65-second response timeout.
+- DAV transfers retain one-hour read/send timeouts; no location sends an unconditional
+  WebSocket `Connection: upgrade` header.
 
 ## Validation
 
@@ -207,13 +219,50 @@ NEXTCLOUD_BASE_URL=https://cloud.imcmontanai.ru
 NEXTCLOUD_SSO_ENABLED=True
 NEXTCLOUD_OIDC_LOGIN_PATH=/apps/user_oidc/login/1
 NEXTCLOUD_PROVISIONING_BASE_URL=https://cloud.imcmontanai.ru
+NEXTCLOUD_INTERNAL_BASE_URL=http://127.0.0.1:8091
 NEXTCLOUD_PROVISIONING_USERNAME=admin
 NEXTCLOUD_PROVISIONING_TOKEN=replace-with-nextcloud-app-password
 NEXTCLOUD_OIDC_PROVIDER_ID=1
 NEXTCLOUD_OIDC_CLIENT_ID=replace-with-django-oidc-client-id
 NEXTCLOUD_DEFAULT_GROUP=staff
 NEXTCLOUD_DEFAULT_QUOTA=
+NEXTCLOUD_CONNECT_TIMEOUT=3
+NEXTCLOUD_READ_TIMEOUT=60
+NEXTCLOUD_OCS_READ_ATTEMPTS=2
+NEXTCLOUD_DAV_READ_ATTEMPTS=2
+NEXTCLOUD_MAX_CONCURRENT_REQUESTS_PER_PROCESS=2
+NEXTCLOUD_SHARE_MAP_CACHE_TTL=15
 ```
+
+`NEXTCLOUD_BASE_URL` remains the public browser URL. Only server-side HTTP uses
+`NEXTCLOUD_INTERNAL_BASE_URL`; the client preserves the public `Host` header.
+Safe reads may retry connection failures, but a response read timeout is never
+retried and mutating OCS requests are sent once. Share-list reads are
+single-flight per user and cached briefly in each Django process.
+
+The compose file also pins PostgreSQL safety limits (`max_connections=100`,
+`idle_session_timeout=30min`, `idle_in_transaction_session_timeout=5min`) and
+keeps Apache below that ceiling with `MaxRequestWorkers=60`.
+
+## Checklist Folder Metrics
+
+The checklist tables read `file_count` and `last_upload_at` from local folder
+records. Gunicorn intentionally does not start the background synchronizer in
+each worker, because that would duplicate the same DAV scan. Install the
+dedicated timer instead:
+
+```bash
+sudo install -m 0644 deploy/nextcloud/cloud-folder-metadata-sync.service.example \
+  /etc/systemd/system/cloud-folder-metadata-sync.service
+sudo install -m 0644 deploy/nextcloud/cloud-folder-metadata-sync.timer.example \
+  /etc/systemd/system/cloud-folder-metadata-sync.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now cloud-folder-metadata-sync.timer
+```
+
+For an immediate refresh, run
+`sudo systemctl start cloud-folder-metadata-sync.service`. The timer is
+single-instance under systemd, so a slow scan cannot overlap the next run.
 
 `ai_app` should remain the source of truth:
 

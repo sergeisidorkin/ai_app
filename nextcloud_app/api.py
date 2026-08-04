@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+import threading
 import time
 from urllib.parse import quote
 from urllib.parse import unquote
+from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
 import requests
@@ -41,9 +43,18 @@ class NextcloudApiClient:
     RETRYABLE_STATUS_CODES = {429, 503}
     DAV_RETRYABLE_STATUSES = {429, 503}
     SHARE_CREATE_INTERVAL_SECONDS = 1.0
-    MAX_OCS_ATTEMPTS = 8
-    MAX_DAV_ATTEMPTS = 5
+    MAX_OCS_ATTEMPTS = 2
+    MAX_DAV_ATTEMPTS = 2
     MAX_RETRY_SLEEP_SECONDS = 2.0
+    SAFE_RETRY_METHODS = {"GET", "HEAD", "OPTIONS", "PROPFIND", "REPORT"}
+    IDEMPOTENT_DAV_RETRY_METHODS = SAFE_RETRY_METHODS | {"PUT", "DELETE", "MKCOL"}
+
+    _request_semaphore = None
+    _request_semaphore_size = None
+    _request_semaphore_lock = threading.Lock()
+    _share_cache_condition = threading.Condition()
+    _share_cache: dict[tuple[str, str, str], tuple[float, dict[str, NextcloudShare]]] = {}
+    _share_cache_loading: set[tuple[str, str, str]] = set()
 
     def __init__(self, *, session: requests.Session | None = None):
         self._session = session or requests.Session()
@@ -51,13 +62,23 @@ class NextcloudApiClient:
             (getattr(settings, "NEXTCLOUD_PROVISIONING_BASE_URL", "") or "").strip()
             or (getattr(settings, "NEXTCLOUD_BASE_URL", "") or "").strip()
         ).rstrip("/")
+        self.transport_base_url = (
+            (getattr(settings, "NEXTCLOUD_INTERNAL_BASE_URL", "") or "").strip()
+            or self.base_url
+        ).rstrip("/")
         self.username = (getattr(settings, "NEXTCLOUD_PROVISIONING_USERNAME", "") or "").strip()
         self.token = (getattr(settings, "NEXTCLOUD_PROVISIONING_TOKEN", "") or "").strip()
         self.provider_id = int(getattr(settings, "NEXTCLOUD_OIDC_PROVIDER_ID", 0) or 0)
         self.default_group = (getattr(settings, "NEXTCLOUD_DEFAULT_GROUP", "") or "").strip()
         self.default_quota = (getattr(settings, "NEXTCLOUD_DEFAULT_QUOTA", "") or "").strip()
+        self.connect_timeout = float(getattr(settings, "NEXTCLOUD_CONNECT_TIMEOUT", 3) or 3)
+        self.read_timeout = float(getattr(settings, "NEXTCLOUD_READ_TIMEOUT", 60) or 60)
+        self.ocs_read_attempts = max(int(getattr(settings, "NEXTCLOUD_OCS_READ_ATTEMPTS", 2) or 2), 1)
+        self.dav_read_attempts = max(int(getattr(settings, "NEXTCLOUD_DAV_READ_ATTEMPTS", 2) or 2), 1)
+        self.share_cache_ttl = max(float(getattr(settings, "NEXTCLOUD_SHARE_MAP_CACHE_TTL", 15) or 0), 0)
         self._public_share_cache_loaded = False
         self._public_share_cache: dict[str, NextcloudShare] = {}
+        self._user_share_cache: dict[tuple[str, str], dict[str, NextcloudShare]] = {}
         self._next_share_create_at = 0.0
 
     @property
@@ -193,6 +214,7 @@ class NextcloudApiClient:
                     f"/ocs/v2.php/apps/files_sharing/api/v1/shares/{existing.share_id}",
                     data={"permissions": permissions},
                 )
+                self._invalidate_user_share_cache(owner_user_id, share_with_user_id)
                 return NextcloudShare(
                     share_id=existing.share_id,
                     path=existing.path,
@@ -213,6 +235,7 @@ class NextcloudApiClient:
             },
         )
         data = self._extract_data(response)
+        self._invalidate_user_share_cache(owner_user_id, share_with_user_id)
         return NextcloudShare(
             share_id=str(data.get("id") or ""),
             path=str(data.get("path") or normalized),
@@ -242,6 +265,8 @@ class NextcloudApiClient:
             f"/ocs/v2.php/apps/files_sharing/api/v1/shares/{quote(clean_share_id, safe='')}",
         )
         self._extract_raw_data(response)
+        self._user_share_cache.clear()
+        self._invalidate_all_user_share_caches()
         self._public_share_cache = {
             path: share
             for path, share in self._public_share_cache.items()
@@ -256,6 +281,14 @@ class NextcloudApiClient:
         share_with_user_id: str,
     ) -> NextcloudShare | None:
         normalized = self._normalize_folder_path(path)
+        instance_key = (str(owner_user_id), str(share_with_user_id))
+        instance_cached = self._user_share_cache.get(instance_key)
+        if instance_cached is not None and normalized in instance_cached:
+            return instance_cached[normalized]
+        cached = self._get_cached_user_shares(owner_user_id, share_with_user_id)
+        if cached is not None and normalized in cached:
+            self._user_share_cache.setdefault(instance_key, {})[normalized] = cached[normalized]
+            return cached[normalized]
         response = self._request(
             "GET",
             "/ocs/v2.php/apps/files_sharing/api/v1/shares",
@@ -268,13 +301,15 @@ class NextcloudApiClient:
                 continue
             if self._as_int(item.get("share_type"), default=-1) != 0:
                 continue
-            return NextcloudShare(
+            share = NextcloudShare(
                 share_id=str(item.get("id") or ""),
                 path=str(item.get("path") or normalized),
                 share_with=str(item.get("share_with") or share_with_user_id),
                 permissions=int(item.get("permissions") or self.EDITOR_PERMISSIONS),
                 target_path=str(item.get("file_target") or item.get("fileTarget") or ""),
             )
+            self._user_share_cache.setdefault(instance_key, {})[normalized] = share
+            return share
         return None
 
     def list_user_shares(
@@ -282,28 +317,57 @@ class NextcloudApiClient:
         owner_user_id: str,
         share_with_user_id: str,
     ) -> dict[str, NextcloudShare]:
-        response = self._request(
-            "GET",
-            "/ocs/v2.php/apps/files_sharing/api/v1/shares",
-            params={"reshares": "true", "subfiles": "false"},
-        )
-        shares: dict[str, NextcloudShare] = {}
-        for item in self._extract_list_data(response):
-            if str(item.get("share_with") or "") != share_with_user_id:
-                continue
-            if self._as_int(item.get("share_type"), default=-1) != 0:
-                continue
-            normalized_path = self._normalize_folder_path(item.get("path") or "")
-            if not normalized_path or normalized_path == "/":
-                continue
-            shares[normalized_path] = NextcloudShare(
-                share_id=str(item.get("id") or ""),
-                path=normalized_path,
-                share_with=str(item.get("share_with") or share_with_user_id),
-                permissions=int(item.get("permissions") or self.EDITOR_PERMISSIONS),
-                target_path=str(item.get("file_target") or item.get("fileTarget") or ""),
+        key = self._user_share_cache_key(owner_user_id, share_with_user_id)
+        with self._share_cache_condition:
+            while True:
+                cached = self._get_cached_user_shares_locked(key)
+                if cached is not None:
+                    self.prime_user_share_cache(owner_user_id, share_with_user_id, cached)
+                    return cached
+                if key not in self._share_cache_loading:
+                    self._share_cache_loading.add(key)
+                    break
+                self._share_cache_condition.wait()
+
+        try:
+            response = self._request(
+                "GET",
+                "/ocs/v2.php/apps/files_sharing/api/v1/shares",
+                params={"reshares": "true", "subfiles": "false"},
             )
-        return shares
+            shares: dict[str, NextcloudShare] = {}
+            for item in self._extract_list_data(response):
+                if str(item.get("share_with") or "") != share_with_user_id:
+                    continue
+                if self._as_int(item.get("share_type"), default=-1) != 0:
+                    continue
+                normalized_path = self._normalize_folder_path(item.get("path") or "")
+                if not normalized_path or normalized_path == "/":
+                    continue
+                shares[normalized_path] = NextcloudShare(
+                    share_id=str(item.get("id") or ""),
+                    path=normalized_path,
+                    share_with=str(item.get("share_with") or share_with_user_id),
+                    permissions=int(item.get("permissions") or self.EDITOR_PERMISSIONS),
+                    target_path=str(item.get("file_target") or item.get("fileTarget") or ""),
+                )
+            with self._share_cache_condition:
+                self._share_cache[key] = (time.monotonic() + self.share_cache_ttl, dict(shares))
+            self.prime_user_share_cache(owner_user_id, share_with_user_id, shares)
+            return shares
+        finally:
+            with self._share_cache_condition:
+                self._share_cache_loading.discard(key)
+                self._share_cache_condition.notify_all()
+
+    def prime_user_share_cache(
+        self,
+        owner_user_id: str,
+        share_with_user_id: str,
+        shares: dict[str, NextcloudShare],
+    ) -> None:
+        """Keep one bulk result authoritative for the lifetime of this client."""
+        self._user_share_cache[(str(owner_user_id), str(share_with_user_id))] = dict(shares)
 
     def build_files_url(self, path: str) -> str:
         normalized = self._normalize_folder_path(path)
@@ -425,8 +489,12 @@ class NextcloudApiClient:
         if not self.is_configured:
             raise NextcloudApiError("Nextcloud provisioning is not configured.")
 
-        max_attempts = kwargs.pop("_max_attempts", None) or self.MAX_OCS_ATTEMPTS
+        method_upper = method.upper()
+        default_attempts = self.ocs_read_attempts if method_upper in self.SAFE_RETRY_METHODS else 1
+        max_attempts = max(int(kwargs.pop("_max_attempts", None) or default_attempts), 1)
         headers = {"OCS-APIRequest": "true"}
+        headers.update(self._transport_headers())
+        headers.update(kwargs.pop("headers", {}) or {})
         if "json" in kwargs:
             headers["Content-Type"] = "application/json"
         params = dict(kwargs.pop("params", {}) or {})
@@ -438,17 +506,22 @@ class NextcloudApiClient:
             if is_share_create:
                 self._wait_for_share_slot()
             try:
-                response = self._session.request(
-                    method,
-                    f"{self.base_url}{path}",
-                    auth=(self.username, self.token),
-                    headers=headers,
-                    params=params,
-                    timeout=15,
-                    **kwargs,
-                )
+                with self._request_slot():
+                    response = self._session.request(
+                        method,
+                        f"{self.transport_base_url}{path}",
+                        auth=(self.username, self.token),
+                        headers=headers,
+                        params=params,
+                        timeout=(self.connect_timeout, self.read_timeout),
+                        **kwargs,
+                    )
             except requests.RequestException as exc:
-                if attempt == max_attempts - 1:
+                retryable_exception = (
+                    method_upper in self.SAFE_RETRY_METHODS
+                    and not isinstance(exc, requests.ReadTimeout)
+                )
+                if not retryable_exception or attempt == max_attempts - 1:
                     raise NextcloudApiError(f"Nextcloud request failed: {exc}") from exc
                 delay = min(2.0 * (2 ** attempt), cap)
                 logger.warning(
@@ -485,30 +558,40 @@ class NextcloudApiClient:
             raise NextcloudApiError("Nextcloud provisioning is not configured.")
 
         allow_statuses = set(kwargs.pop("allow_statuses", set()) or set())
+        method_upper = method.upper()
+        max_attempts = self.dav_read_attempts if method_upper in self.IDEMPOTENT_DAV_RETRY_METHODS else 1
+        headers = self._transport_headers()
+        headers.update(kwargs.pop("headers", {}) or {})
         cap = self.MAX_RETRY_SLEEP_SECONDS
         response = None
-        for attempt in range(self.MAX_DAV_ATTEMPTS):
+        for attempt in range(max_attempts):
             try:
-                response = self._session.request(
-                    method,
-                    url,
-                    auth=(self.username, self.token),
-                    timeout=15,
-                    **kwargs,
-                )
+                with self._request_slot():
+                    response = self._session.request(
+                        method,
+                        self._transport_url(url),
+                        auth=(self.username, self.token),
+                        headers=headers,
+                        timeout=(self.connect_timeout, self.read_timeout),
+                        **kwargs,
+                    )
             except requests.RequestException as exc:
-                if attempt == self.MAX_DAV_ATTEMPTS - 1:
+                retryable_exception = (
+                    method_upper in self.IDEMPOTENT_DAV_RETRY_METHODS
+                    and not isinstance(exc, requests.ReadTimeout)
+                )
+                if not retryable_exception or attempt == max_attempts - 1:
                     raise NextcloudApiError(f"Nextcloud DAV request failed: {exc}") from exc
                 delay = min(2.0 * (2 ** attempt), cap)
                 logger.warning(
                     "DAV %s network error (attempt %d/%d), retry in %.1fs: %s",
-                    method, attempt + 1, self.MAX_DAV_ATTEMPTS, delay, exc,
+                    method, attempt + 1, max_attempts, delay, exc,
                 )
                 time.sleep(delay)
                 continue
             if response.status_code not in self.DAV_RETRYABLE_STATUSES:
                 break
-            if attempt == self.MAX_DAV_ATTEMPTS - 1:
+            if attempt == max_attempts - 1:
                 break
             delay = min(
                 self._get_retry_after_seconds(response, default=min(2.0 * (2 ** attempt), cap)),
@@ -516,8 +599,7 @@ class NextcloudApiClient:
             )
             logger.warning(
                 "DAV %s returned %d (attempt %d/%d), retry in %.1fs",
-                method, response.status_code,
-                attempt + 1, self.MAX_DAV_ATTEMPTS, delay,
+                method, response.status_code, attempt + 1, max_attempts, delay,
             )
             time.sleep(delay)
         if response is not None and response.status_code >= 400 and response.status_code not in ({405} | allow_statuses):
@@ -528,6 +610,59 @@ class NextcloudApiClient:
         normalized = self._normalize_folder_path(path)
         encoded = quote(normalized.lstrip("/"), safe="/")
         return f"{self.base_url}/remote.php/dav/files/{quote(owner_user_id, safe='')}/{encoded}"
+
+    def _transport_url(self, url: str) -> str:
+        if self.transport_base_url == self.base_url or not url.startswith(self.base_url):
+            return url
+        return f"{self.transport_base_url}{url[len(self.base_url):]}"
+
+    def _transport_headers(self) -> dict[str, str]:
+        if self.transport_base_url == self.base_url:
+            return {}
+        public_host = urlparse(self.base_url).netloc
+        return {"Host": public_host} if public_host else {}
+
+    @classmethod
+    def _get_request_semaphore(cls):
+        size = max(int(getattr(settings, "NEXTCLOUD_MAX_CONCURRENT_REQUESTS_PER_PROCESS", 2) or 2), 1)
+        with cls._request_semaphore_lock:
+            if cls._request_semaphore is None or cls._request_semaphore_size != size:
+                cls._request_semaphore = threading.BoundedSemaphore(size)
+                cls._request_semaphore_size = size
+            return cls._request_semaphore
+
+    @classmethod
+    def _request_slot(cls):
+        return cls._get_request_semaphore()
+
+    def _user_share_cache_key(self, owner_user_id: str, share_with_user_id: str):
+        return (self.base_url, str(owner_user_id), str(share_with_user_id))
+
+    def _get_cached_user_shares_locked(self, key):
+        cached = self._share_cache.get(key)
+        if cached is None:
+            return None
+        expires_at, shares = cached
+        if expires_at <= time.monotonic():
+            self._share_cache.pop(key, None)
+            return None
+        return dict(shares)
+
+    def _get_cached_user_shares(self, owner_user_id: str, share_with_user_id: str):
+        key = self._user_share_cache_key(owner_user_id, share_with_user_id)
+        with self._share_cache_condition:
+            return self._get_cached_user_shares_locked(key)
+
+    def _invalidate_user_share_cache(self, owner_user_id: str, share_with_user_id: str) -> None:
+        key = self._user_share_cache_key(owner_user_id, share_with_user_id)
+        self._user_share_cache.pop((str(owner_user_id), str(share_with_user_id)), None)
+        with self._share_cache_condition:
+            self._share_cache.pop(key, None)
+
+    @classmethod
+    def _invalidate_all_user_share_caches(cls) -> None:
+        with cls._share_cache_condition:
+            cls._share_cache.clear()
 
     @staticmethod
     def _normalize_folder_path(path: str) -> str:

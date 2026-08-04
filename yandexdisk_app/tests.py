@@ -1,7 +1,9 @@
+from io import StringIO
 from unittest.mock import call, patch
 from datetime import datetime, timezone as dt_timezone
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
 from checklists_app.models import ChecklistItem, SourceDataItemFolder, SourceDataWorkspace, ProjectWorkspace
@@ -18,6 +20,20 @@ from yandexdisk_app.workspace import (
     WorkspaceResult,
     create_basic_project_workspace_stream,
 )
+
+
+class CloudFolderMetadataCommandTests(SimpleTestCase):
+    @patch(
+        "yandexdisk_app.management.commands.sync_cloud_folder_metadata.run_sync",
+        return_value=7,
+    )
+    def test_command_runs_single_sync_with_configured_delay(self, mocked_run_sync):
+        output = StringIO()
+
+        call_command("sync_cloud_folder_metadata", delay=0.2, stdout=output)
+
+        mocked_run_sync.assert_called_once_with(delay=0.2)
+        self.assertIn("Обновлено папок: 7", output.getvalue())
 
 
 class WorkspaceFolderVariablesTests(SimpleTestCase):

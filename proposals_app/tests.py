@@ -33,7 +33,7 @@ from core.proposal_registry_columns import (
 from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 from letters_app.models import LetterTemplate
-from nextcloud_app.api import NextcloudShare
+from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.email_delivery import EmailDeliveryError
 from policy_app.models import (
@@ -7906,7 +7906,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
             proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП",
         )
 
-    def test_proposals_partial_renders_zero_padded_number(self):
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_renders_zero_padded_number(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
         self.proposal.number = 1
         self.proposal.save(update_fields=["number", "short_uid"])
 
@@ -7918,7 +7924,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertEqual(self.proposal.short_uid, "000100RU")
         self.assertContains(response, ">000100RU<", html=False)
 
-    def test_proposals_partial_renders_multiple_products_with_hyphen_in_type_column(self):
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_renders_multiple_products_with_hyphen_in_type_column(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
         ProposalRegistrationProduct.objects.bulk_create(
             [
                 ProposalRegistrationProduct(proposal_id=self.proposal.pk, product=self.product, rank=1),
@@ -7930,6 +7942,60 @@ class ProposalDispatchDiskColumnTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, ">DD-QAQC<", html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
+    @patch(
+        "nextcloud_app.api.NextcloudApiClient.list_user_shares",
+        side_effect=NextcloudApiError("bulk timeout"),
+    )
+    def test_proposals_partial_stops_after_bulk_share_failure(
+        self,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 503)
+        mocked_list_user_shares.assert_called_once()
+        mocked_get_user_share.assert_not_called()
+
+    @patch(
+        "proposals_app.views._attach_proposal_folder_urls",
+        side_effect=NextcloudApiError("temporary outage"),
+    )
+    def test_completed_mutation_context_falls_back_when_nextcloud_is_unavailable(
+        self,
+        _mocked_attach_folder_urls,
+    ):
+        from proposals_app.views import _proposals_context
+
+        context = _proposals_context(
+            user=self.user,
+            strict_nextcloud=False,
+        )
+
+        self.assertIn(self.proposal, context["proposals"])
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_deduplicates_unresolved_ancestor_lookups(
+        self,
+        _mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        ProposalRegistration.objects.create(
+            number=3334,
+            group_member=self.group_member,
+            type=self.product,
+            name="Второе ТКП",
+            year=2026,
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333400RU DD Второе ТКП",
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(mocked_get_user_share.call_count, 6)
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_renders_disk_icon_with_nextcloud_share_target(self, mocked_list_user_shares):
@@ -8035,8 +8101,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertNotContains(response, f'href="{owner_url}"', html=False)
         self.assertContains(response, "bi-file-pdf-fill", html=False)
 
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_preserves_legacy_media_docx_link(self, _mocked_list_user_shares):
+    def test_proposals_partial_preserves_legacy_media_docx_link(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
         self.proposal.docx_file_name = "legacy.docx"
         self.proposal.docx_file_link = "/media/proposal_documents/2026/33330RU/legacy.docx"
         self.proposal.save(update_fields=["docx_file_name", "docx_file_link"])
@@ -8050,8 +8121,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
             html=False,
         )
 
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_keeps_docx_link_when_filename_is_missing(self, _mocked_list_user_shares):
+    def test_proposals_partial_keeps_docx_link_when_filename_is_missing(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
         self.proposal.docx_file_name = ""
         self.proposal.docx_file_link = "/media/proposal_documents/2026/33330RU/legacy.docx"
         self.proposal.save(update_fields=["docx_file_name", "docx_file_link"])
@@ -8066,8 +8142,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
         )
         self.assertContains(response, "DOCX файл", html=False)
 
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_keeps_pdf_link_when_filename_is_missing(self, _mocked_list_user_shares):
+    def test_proposals_partial_keeps_pdf_link_when_filename_is_missing(
+        self,
+        _mocked_list_user_shares,
+        _mocked_get_user_share,
+    ):
         self.proposal.pdf_file_name = ""
         self.proposal.pdf_file_link = "/media/proposal_documents/2026/33330RU/legacy.pdf"
         self.proposal.save(update_fields=["pdf_file_name", "pdf_file_link"])

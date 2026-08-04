@@ -261,6 +261,7 @@ def _resolve_target_path_via_user_share_lookup(
     share_with_user_id: str,
     *,
     root_path: str = "",
+    share_lookup_cache: dict[str, object] | None = None,
 ):
     normalized_path = _normalize_nextcloud_path(path)
     if not normalized_path or normalized_path == "/":
@@ -268,8 +269,16 @@ def _resolve_target_path_via_user_share_lookup(
 
     current_path = normalized_path
     last_share = None
+    if share_lookup_cache is None:
+        share_lookup_cache = {}
     while current_path and current_path != "/":
-        share = client.get_user_share(owner_user_id, current_path, share_with_user_id)
+        if current_path not in share_lookup_cache:
+            share_lookup_cache[current_path] = client.get_user_share(
+                owner_user_id,
+                current_path,
+                share_with_user_id,
+            )
+        share = share_lookup_cache[current_path]
         if share is not None:
             last_share = share
             target_path = _normalize_viewer_target_path(
@@ -825,6 +834,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
     normalized_root_path = _get_normalized_nextcloud_root_path()
     resolved_cache = {}
     cached_target_paths = _get_cached_proposal_target_paths(request, root_path=normalized_root_path)
+    share_lookup_cache = {}
     if share_resolution_paths and user is not None and getattr(user, "is_authenticated", False):
         link = NextcloudUserLink.objects.filter(user=user).first()
         if (
@@ -836,8 +846,9 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
             try:
                 share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
             except NextcloudApiError as exc:
-                logger.warning("Could not resolve Nextcloud share targets for proposals table: %s", exc)
-                share_map = {}
+                logger.error("Could not load Nextcloud share map for proposals table: %s", exc)
+                raise
+            client.prime_user_share_cache(client.username, link.nextcloud_user_id, share_map)
 
             stored_target_paths = {
                 (getattr(proposal, "proposal_workspace_disk_path", "") or "").strip(): _normalize_viewer_target_path(
@@ -854,23 +865,6 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     root_path=normalized_root_path,
                 )
                 lookup_share = None
-                if not target_path:
-                    try:
-                        target_path, lookup_share = _resolve_target_path_via_user_share_lookup(
-                            client,
-                            client.username,
-                            path,
-                            link.nextcloud_user_id,
-                            root_path=normalized_root_path,
-                        )
-                    except NextcloudApiError as exc:
-                        logger.warning(
-                            "Could not resolve Nextcloud share target for proposal path %s: %s",
-                            path,
-                            exc,
-                        )
-                        target_path = ""
-                        lookup_share = None
                 if not target_path and direct_target_path:
                     target_path = direct_target_path
                 if not target_path:
@@ -880,9 +874,24 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     target_path = stored_target_paths.get(path, "")
                 if not target_path:
                     target_path = cached_target_paths.get(path, "")
+                if not target_path:
+                    target_path, lookup_share = _resolve_target_path_via_user_share_lookup(
+                        client,
+                        client.username,
+                        path,
+                        link.nextcloud_user_id,
+                        root_path=normalized_root_path,
+                        share_lookup_cache=share_lookup_cache,
+                    )
                 if target_path:
                     resolved_target_cache[path] = target_path
                     resolved_cache[path] = client.build_files_url(target_path)
+                    _cache_proposal_target_path(
+                        request,
+                        path,
+                        target_path,
+                        root_path=normalized_root_path,
+                    )
                 _log_nextcloud_resolution_debug(
                     path=path,
                     share_map=share_map,
@@ -1249,7 +1258,13 @@ def _annotate_proposal_number_groups(proposals):
     return items
 
 
-def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
+def _proposals_context(
+    request=None,
+    user=None,
+    *,
+    debug_nextcloud_links=False,
+    strict_nextcloud=True,
+):
     if request is not None and user is None:
         user = request.user
     proposals = ProposalRegistration.objects.select_related(
@@ -1260,7 +1275,21 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
         "currency",
     ).prefetch_related("product_links__product").all()
     proposals = _annotate_proposal_number_groups(proposals)
-    _attach_proposal_folder_urls(proposals, user=user, request=request, debug_nextcloud_links=debug_nextcloud_links)
+    try:
+        _attach_proposal_folder_urls(
+            proposals,
+            user=user,
+            request=request,
+            debug_nextcloud_links=debug_nextcloud_links,
+        )
+    except NextcloudApiError as exc:
+        if strict_nextcloud:
+            raise
+        logger.warning(
+            "Nextcloud unavailable while rendering a completed proposal mutation; "
+            "using saved folder links: %s",
+            exc,
+        )
     proposal_templates = list(
         ProposalTemplate.objects
         .select_related("group_member", "product")
@@ -1319,7 +1348,11 @@ def _render_proposals_updated(request):
     response = render(
         request,
         PROPOSALS_PARTIAL_TEMPLATE,
-        _proposals_context(request=request, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
+        _proposals_context(
+            request=request,
+            debug_nextcloud_links=_proposal_link_debug_enabled(request),
+            strict_nextcloud=False,
+        ),
     )
     response[HX_TRIGGER_HEADER] = HX_PROPOSALS_UPDATED_EVENT
     return response
@@ -1329,7 +1362,11 @@ def _render_proposal_variables_updated(request):
     return render(
         request,
         PROPOSAL_VARIABLES_SECTION_TEMPLATE,
-        _proposals_context(request=request, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
+        _proposals_context(
+            request=request,
+            debug_nextcloud_links=_proposal_link_debug_enabled(request),
+            strict_nextcloud=False,
+        ),
     )
 
 
@@ -1972,11 +2009,17 @@ def _find_proposal_template(proposal, templates):
 @user_passes_test(staff_required)
 @require_GET
 def proposals_partial(request):
-    return render(
-        request,
-        PROPOSALS_PARTIAL_TEMPLATE,
-        _proposals_context(request=request, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
-    )
+    try:
+        context = _proposals_context(
+            request=request,
+            debug_nextcloud_links=_proposal_link_debug_enabled(request),
+        )
+    except NextcloudApiError:
+        return HttpResponse(
+            "Nextcloud временно недоступен. Не удалось полностью загрузить ссылки на файлы.",
+            status=503,
+        )
+    return render(request, PROPOSALS_PARTIAL_TEMPLATE, context)
 
 
 @login_required

@@ -649,7 +649,7 @@ def _attach_contract_batch_display_fields(performers):
     return performer_list
 
 
-def _contracts_context(user=None):
+def _contracts_context(user=None, *, strict_nextcloud=True):
     active_participation_statuses = ["Не начат", "В работе"]
     registration_products_prefetch = models.Prefetch(
         "registration__product_links",
@@ -839,7 +839,19 @@ def _contracts_context(user=None):
     contract_dispatch_performers.sort(
         key=lambda performer: _contract_conclusion_order_key(performer, contract_representative_order)
     )
-    _attach_contract_folder_urls([*contract_drafting_performers, *contract_dispatch_performers, *contracts], user)
+    try:
+        _attach_contract_folder_urls(
+            [*contract_drafting_performers, *contract_dispatch_performers, *contracts],
+            user,
+        )
+    except NextcloudApiError as exc:
+        if strict_nextcloud:
+            raise
+        logger.warning(
+            "Nextcloud unavailable while rendering a completed contract mutation; "
+            "using saved folder links: %s",
+            exc,
+        )
 
     return {
         "contracts": contracts,
@@ -969,14 +981,23 @@ def _resolve_contract_target_path_via_user_share_lookup(
     share_with_user_id: str,
     *,
     root_path: str = "",
+    share_lookup_cache: dict[str, object] | None = None,
 ) -> str:
     normalized_path = _normalize_contract_nextcloud_path(path)
     if not normalized_path or normalized_path == "/":
         return ""
 
     current_path = normalized_path
+    if share_lookup_cache is None:
+        share_lookup_cache = {}
     while current_path and current_path != "/":
-        share = client.get_user_share(owner_user_id, current_path, share_with_user_id)
+        if current_path not in share_lookup_cache:
+            share_lookup_cache[current_path] = client.get_user_share(
+                owner_user_id,
+                current_path,
+                share_with_user_id,
+            )
+        share = share_lookup_cache[current_path]
         if share is not None:
             target_path = _normalize_contract_viewer_target_path(
                 getattr(share, "target_path", "") or "",
@@ -1080,25 +1101,25 @@ def _attach_contract_folder_urls(contracts, user=None):
     try:
         share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
     except NextcloudApiError as exc:
-        logger.warning("Could not resolve Nextcloud share targets for contracts table: %s", exc)
-        return
+        logger.error("Could not load Nextcloud share map for contracts table: %s", exc)
+        raise
+    client.prime_user_share_cache(client.username, link.nextcloud_user_id, share_map)
 
     normalized_root_path = _normalize_contract_nextcloud_path(get_nextcloud_root_path())
     resolved_cache = dict(folder_cache)
     resolved_target_cache = {}
+    share_lookup_cache = {}
     for path in list(resolved_cache.keys()):
         target_path = _resolve_contract_shared_target_path(path, share_map, root_path=normalized_root_path)
         if not target_path:
-            try:
-                target_path = _resolve_contract_target_path_via_user_share_lookup(
-                    client,
-                    client.username,
-                    path,
-                    link.nextcloud_user_id,
-                    root_path=normalized_root_path,
-                )
-            except NextcloudApiError as exc:
-                logger.warning("Could not resolve Nextcloud share target for contract path %s: %s", path, exc)
+            target_path = _resolve_contract_target_path_via_user_share_lookup(
+                client,
+                client.username,
+                path,
+                link.nextcloud_user_id,
+                root_path=normalized_root_path,
+                share_lookup_cache=share_lookup_cache,
+            )
         if target_path:
             resolved_target_cache[path] = target_path
             resolved_cache[path] = client.build_files_url(target_path)
@@ -1130,24 +1151,6 @@ def _attach_contract_folder_urls(contracts, user=None):
                 )
         if is_lawyer and stored_folder_file_id:
             performer.contract_project_folder_url = _build_contract_file_redirect_url(client, stored_folder_file_id)
-        if is_lawyer and path and not target_path:
-            try:
-                share = client.ensure_user_share(
-                    client.username,
-                    path,
-                    link.nextcloud_user_id,
-                    permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
-                )
-            except NextcloudApiError as exc:
-                logger.warning("Could not ensure Nextcloud contract folder share for performer %s: %s", performer.pk, exc)
-            else:
-                target_path = _normalize_contract_viewer_target_path(
-                    getattr(share, "target_path", "") or "",
-                    root_path=normalized_root_path,
-                )
-                if target_path:
-                    resolved_target_cache[path] = target_path
-                    resolved_cache[path] = client.build_files_url(target_path)
         if is_lawyer:
             contract_file = getattr(performer, "contract_file", "") or ""
             editor_url = ""
@@ -1651,7 +1654,14 @@ def _save_ranked_contract_project_products(registration, product_ids):
 @login_required
 @require_http_methods(["GET"])
 def contracts_partial(request):
-    return render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
+    try:
+        context = _contracts_context(request.user)
+    except NextcloudApiError:
+        return HttpResponse(
+            "Nextcloud временно недоступен. Не удалось полностью загрузить ссылки на файлы.",
+            status=503,
+        )
+    return render(request, CONTRACTS_PARTIAL_TEMPLATE, context)
 
 
 @login_required
@@ -2090,7 +2100,11 @@ def contract_signing_edit(request, pk):
                     default_storage.delete(path)
                 except Exception:
                     pass
-            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
+            resp = render(
+                request,
+                CONTRACTS_PARTIAL_TEMPLATE,
+                _contracts_context(request.user, strict_nextcloud=False),
+            )
             resp["HX-Trigger"] = "contracts-updated"
             return resp
     else:
@@ -2402,7 +2416,11 @@ def contract_form_edit(request, pk):
                     final_payment=obj.final_payment,
                     contract_file=obj.contract_file,
                 )
-            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
+            resp = render(
+                request,
+                CONTRACTS_PARTIAL_TEMPLATE,
+                _contracts_context(request.user, strict_nextcloud=False),
+            )
             resp["HX-Trigger"] = "contracts-updated"
             return resp
     else:
