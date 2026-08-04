@@ -281,12 +281,14 @@ class NextcloudApiClient:
         share_with_user_id: str,
     ) -> NextcloudShare | None:
         normalized = self._normalize_folder_path(path)
-        instance_cached = self._user_share_cache.get((str(owner_user_id), str(share_with_user_id)))
-        if instance_cached is not None:
-            return instance_cached.get(normalized)
+        instance_key = (str(owner_user_id), str(share_with_user_id))
+        instance_cached = self._user_share_cache.get(instance_key)
+        if instance_cached is not None and normalized in instance_cached:
+            return instance_cached[normalized]
         cached = self._get_cached_user_shares(owner_user_id, share_with_user_id)
-        if cached is not None:
-            return cached.get(normalized)
+        if cached is not None and normalized in cached:
+            self._user_share_cache.setdefault(instance_key, {})[normalized] = cached[normalized]
+            return cached[normalized]
         response = self._request(
             "GET",
             "/ocs/v2.php/apps/files_sharing/api/v1/shares",
@@ -299,13 +301,15 @@ class NextcloudApiClient:
                 continue
             if self._as_int(item.get("share_type"), default=-1) != 0:
                 continue
-            return NextcloudShare(
+            share = NextcloudShare(
                 share_id=str(item.get("id") or ""),
                 path=str(item.get("path") or normalized),
                 share_with=str(item.get("share_with") or share_with_user_id),
                 permissions=int(item.get("permissions") or self.EDITOR_PERMISSIONS),
                 target_path=str(item.get("file_target") or item.get("fileTarget") or ""),
             )
+            self._user_share_cache.setdefault(instance_key, {})[normalized] = share
+            return share
         return None
 
     def list_user_shares(

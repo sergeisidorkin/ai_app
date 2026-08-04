@@ -2136,6 +2136,23 @@ class ContractsCloudLabelTests(TestCase):
         mocked_list_user_shares.assert_called_once()
         mocked_get_user_share.assert_not_called()
 
+    @patch(
+        "contracts_app.views._attach_contract_folder_urls",
+        side_effect=NextcloudApiError("temporary outage"),
+    )
+    def test_completed_mutation_context_falls_back_when_nextcloud_is_unavailable(
+        self,
+        _mocked_attach_folder_urls,
+    ):
+        from contracts_app.views import _contracts_context
+
+        context = _contracts_context(
+            self.user,
+            strict_nextcloud=False,
+        )
+
+        self.assertIn("contracts", context)
+
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")

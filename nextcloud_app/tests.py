@@ -409,6 +409,41 @@ class NextcloudApiClientFileOpsTests(TestCase):
         self.assertTrue(all("/Corporate Root/2026" in result for result in results))
 
     @override_settings(NEXTCLOUD_SHARE_MAP_CACHE_TTL=30)
+    def test_cached_bulk_miss_allows_path_scoped_share_lookup(self):
+        session = Mock()
+        session.request.side_effect = [
+            self._ocs_response([]),
+            self._ocs_response(
+                [
+                    {
+                        "id": "43",
+                        "path": "/Corporate Root/2026/New",
+                        "share_type": 0,
+                        "share_with": "ncstaff-1",
+                        "permissions": 15,
+                        "file_target": "/Shared/New",
+                    }
+                ]
+            ),
+        ]
+        client = NextcloudApiClient(session=session)
+
+        client.list_user_shares("cloud-admin", "ncstaff-1")
+        share = client.get_user_share(
+            "cloud-admin",
+            "/Corporate Root/2026/New",
+            "ncstaff-1",
+        )
+
+        self.assertIsNotNone(share)
+        self.assertEqual(share.target_path, "/Shared/New")
+        self.assertEqual(session.request.call_count, 2)
+        self.assertEqual(
+            session.request.call_args.kwargs["params"]["path"],
+            "/Corporate Root/2026/New",
+        )
+
+    @override_settings(NEXTCLOUD_SHARE_MAP_CACHE_TTL=30)
     def test_share_update_invalidates_bulk_cache(self):
         session = Mock()
         existing = {

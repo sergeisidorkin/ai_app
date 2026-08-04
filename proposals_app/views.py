@@ -1258,7 +1258,13 @@ def _annotate_proposal_number_groups(proposals):
     return items
 
 
-def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
+def _proposals_context(
+    request=None,
+    user=None,
+    *,
+    debug_nextcloud_links=False,
+    strict_nextcloud=True,
+):
     if request is not None and user is None:
         user = request.user
     proposals = ProposalRegistration.objects.select_related(
@@ -1269,7 +1275,21 @@ def _proposals_context(request=None, user=None, *, debug_nextcloud_links=False):
         "currency",
     ).prefetch_related("product_links__product").all()
     proposals = _annotate_proposal_number_groups(proposals)
-    _attach_proposal_folder_urls(proposals, user=user, request=request, debug_nextcloud_links=debug_nextcloud_links)
+    try:
+        _attach_proposal_folder_urls(
+            proposals,
+            user=user,
+            request=request,
+            debug_nextcloud_links=debug_nextcloud_links,
+        )
+    except NextcloudApiError as exc:
+        if strict_nextcloud:
+            raise
+        logger.warning(
+            "Nextcloud unavailable while rendering a completed proposal mutation; "
+            "using saved folder links: %s",
+            exc,
+        )
     proposal_templates = list(
         ProposalTemplate.objects
         .select_related("group_member", "product")
@@ -1328,7 +1348,11 @@ def _render_proposals_updated(request):
     response = render(
         request,
         PROPOSALS_PARTIAL_TEMPLATE,
-        _proposals_context(request=request, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
+        _proposals_context(
+            request=request,
+            debug_nextcloud_links=_proposal_link_debug_enabled(request),
+            strict_nextcloud=False,
+        ),
     )
     response[HX_TRIGGER_HEADER] = HX_PROPOSALS_UPDATED_EVENT
     return response
@@ -1338,7 +1362,11 @@ def _render_proposal_variables_updated(request):
     return render(
         request,
         PROPOSAL_VARIABLES_SECTION_TEMPLATE,
-        _proposals_context(request=request, debug_nextcloud_links=_proposal_link_debug_enabled(request)),
+        _proposals_context(
+            request=request,
+            debug_nextcloud_links=_proposal_link_debug_enabled(request),
+            strict_nextcloud=False,
+        ),
     )
 
 

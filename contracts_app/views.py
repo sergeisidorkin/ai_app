@@ -649,7 +649,7 @@ def _attach_contract_batch_display_fields(performers):
     return performer_list
 
 
-def _contracts_context(user=None):
+def _contracts_context(user=None, *, strict_nextcloud=True):
     active_participation_statuses = ["Не начат", "В работе"]
     registration_products_prefetch = models.Prefetch(
         "registration__product_links",
@@ -839,7 +839,19 @@ def _contracts_context(user=None):
     contract_dispatch_performers.sort(
         key=lambda performer: _contract_conclusion_order_key(performer, contract_representative_order)
     )
-    _attach_contract_folder_urls([*contract_drafting_performers, *contract_dispatch_performers, *contracts], user)
+    try:
+        _attach_contract_folder_urls(
+            [*contract_drafting_performers, *contract_dispatch_performers, *contracts],
+            user,
+        )
+    except NextcloudApiError as exc:
+        if strict_nextcloud:
+            raise
+        logger.warning(
+            "Nextcloud unavailable while rendering a completed contract mutation; "
+            "using saved folder links: %s",
+            exc,
+        )
 
     return {
         "contracts": contracts,
@@ -2088,7 +2100,11 @@ def contract_signing_edit(request, pk):
                     default_storage.delete(path)
                 except Exception:
                     pass
-            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
+            resp = render(
+                request,
+                CONTRACTS_PARTIAL_TEMPLATE,
+                _contracts_context(request.user, strict_nextcloud=False),
+            )
             resp["HX-Trigger"] = "contracts-updated"
             return resp
     else:
@@ -2400,7 +2416,11 @@ def contract_form_edit(request, pk):
                     final_payment=obj.final_payment,
                     contract_file=obj.contract_file,
                 )
-            resp = render(request, CONTRACTS_PARTIAL_TEMPLATE, _contracts_context(request.user))
+            resp = render(
+                request,
+                CONTRACTS_PARTIAL_TEMPLATE,
+                _contracts_context(request.user, strict_nextcloud=False),
+            )
             resp["HX-Trigger"] = "contracts-updated"
             return resp
     else:
