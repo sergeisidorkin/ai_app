@@ -1149,7 +1149,7 @@ def _attach_contract_folder_urls(contracts, user=None):
         stored_folder_file_id = str(getattr(performer, "contract_project_folder_file_id", "") or "").strip()
         if path and not public_url:
             performer.contract_project_folder_url = resolved_cache.get(path, performer.contract_project_folder_url)
-        if is_lawyer and path and not stored_folder_file_id:
+        if is_lawyer and live_share_lookup and path and not stored_folder_file_id:
             try:
                 stored_folder_file_id = _resolve_contract_nextcloud_file_id(
                     client,
@@ -1173,7 +1173,7 @@ def _attach_contract_folder_urls(contracts, user=None):
             if contract_file:
                 contract_file_path = f"{path.rstrip('/')}/{contract_file}" if path else ""
                 file_id = str(getattr(performer, "contract_project_file_id", "") or "").strip()
-                if not file_id:
+                if live_share_lookup and not file_id:
                     try:
                         file_id = _resolve_contract_nextcloud_file_id(
                             client,

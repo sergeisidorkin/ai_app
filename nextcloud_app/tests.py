@@ -1,13 +1,15 @@
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
+from pathlib import Path
 import time
 from unittest.mock import Mock, call, patch
 
 import requests
+import yaml
 from checklists_app.models import ProjectWorkspace, SourceDataWorkspace
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
-from django.test import Client, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 
 from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
@@ -32,6 +34,25 @@ from nextcloud_app.workspace import (
 )
 
 User = get_user_model()
+
+
+class NextcloudDeploymentConfigTests(SimpleTestCase):
+    def test_healthcheck_is_bounded_and_has_no_shell_pipeline(self):
+        compose_path = (
+            Path(__file__).resolve().parents[1]
+            / "deploy"
+            / "nextcloud"
+            / "docker-compose.yml"
+        )
+        config = yaml.safe_load(compose_path.read_text())
+        nextcloud = config["services"]["nextcloud"]
+        healthcheck = nextcloud["healthcheck"]
+        command = healthcheck["test"]
+
+        self.assertEqual(command[0], "CMD")
+        self.assertIn("--max-time", command)
+        self.assertNotIn("|", " ".join(command))
+        self.assertEqual(nextcloud["pids_limit"], 256)
 
 
 class NextcloudProvisioningTests(TestCase):

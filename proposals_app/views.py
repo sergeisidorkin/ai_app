@@ -831,6 +831,9 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
         _assign_fallback_urls_without_share_resolution()
         return
 
+    live_share_lookup = bool(
+        getattr(settings, "NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ", True)
+    )
     normalized_root_path = _get_normalized_nextcloud_root_path()
     resolved_cache = {}
     cached_target_paths = _get_cached_proposal_target_paths(request, root_path=normalized_root_path)
@@ -843,9 +846,6 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
             and link.nextcloud_user_id != client.username
         ):
             viewer_has_nextcloud_link = True
-            live_share_lookup = bool(
-                getattr(settings, "NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ", True)
-            )
             share_map = {}
             if live_share_lookup:
                 try:
@@ -930,7 +930,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
         stored_file_id = _stored_proposal_file_id(proposal, stored_attr)
         if stored_file_id:
             return stored_file_id
-        if not _is_nextcloud_cloud_path(cloud_path):
+        if not live_share_lookup or not _is_nextcloud_cloud_path(cloud_path):
             return ""
         try:
             return _resolve_nextcloud_file_id(
