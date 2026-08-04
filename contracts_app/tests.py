@@ -2237,6 +2237,25 @@ class ContractsCloudLabelTests(TestCase):
         mocked_get_user_share.assert_not_called()
         mocked_ensure_user_share.assert_not_called()
 
+    @override_settings(NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ=False)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_linked_expert_uses_folder_file_redirect_without_live_share_api(
+        self,
+        mocked_list_user_shares,
+    ):
+        from contracts_app.views import _attach_contract_folder_urls
+
+        self.performer.contract_project_folder_file_id = "4479"
+        self.performer.save(update_fields=["contract_project_folder_file_id"])
+
+        _attach_contract_folder_urls([self.performer], self.employee_user)
+
+        self.assertEqual(
+            self.performer.contract_project_folder_url,
+            "https://cloud.example.com/f/4479",
+        )
+        mocked_list_user_shares.assert_not_called()
+
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_contracts_partial_does_not_render_docx_href_without_file_id(

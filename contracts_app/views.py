@@ -1165,7 +1165,7 @@ def _attach_contract_folder_urls(contracts, user=None):
                 Performer.objects.filter(pk=performer.pk).update(
                     contract_project_folder_file_id=stored_folder_file_id
                 )
-        if is_lawyer and stored_folder_file_id:
+        if stored_folder_file_id:
             performer.contract_project_folder_url = _build_contract_file_redirect_url(client, stored_folder_file_id)
         if is_lawyer:
             contract_file = getattr(performer, "contract_file", "") or ""

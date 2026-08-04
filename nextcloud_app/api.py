@@ -363,13 +363,18 @@ class NextcloudApiClient:
                 self._share_cache[key] = (time.monotonic() + self.share_cache_ttl, dict(shares))
             self.prime_user_share_cache(owner_user_id, share_with_user_id, shares)
             return shares
-        except NextcloudApiError as exc:
+        except Exception as exc:
+            error = exc if isinstance(exc, NextcloudApiError) else NextcloudApiError(
+                f"Could not parse Nextcloud user shares: {exc}"
+            )
             with self._share_cache_condition:
                 self._share_cache_errors[key] = (
                     time.monotonic() + self.share_cache_error_ttl,
-                    str(exc),
+                    str(error),
                 )
-            raise
+            if error is exc:
+                raise
+            raise error from exc
         finally:
             with self._share_cache_condition:
                 self._share_cache_loading.discard(key)
