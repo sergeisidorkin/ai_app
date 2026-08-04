@@ -39,6 +39,7 @@ services:
   nextcloud:
     image: nextcloud:apache
     restart: always
+    init: true
     env_file:
       - nextcloud.env
     depends_on:

@@ -255,8 +255,9 @@ The compose file also pins PostgreSQL safety limits (`max_connections=100`,
 keeps Apache below that ceiling with `MaxRequestWorkers=60`. The container
 healthcheck is a single `curl` process with its own five-second deadline; do not
 replace it with a `CMD-SHELL` pipeline, because Docker's health timeout can
-leave pipeline children running after the shell is killed. A 256-process
-container limit provides a final guard against process leaks.
+leave pipeline children running after the shell is killed. The container init
+process reaps abandoned children, and a 256-process limit provides a final
+guard against process leaks.
 
 ## Checklist Folder Metrics
 

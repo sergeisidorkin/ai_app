@@ -52,6 +52,7 @@ class NextcloudDeploymentConfigTests(SimpleTestCase):
         self.assertEqual(command[0], "CMD")
         self.assertIn("--max-time", command)
         self.assertNotIn("|", " ".join(command))
+        self.assertIs(nextcloud["init"], True)
         self.assertEqual(nextcloud["pids_limit"], 256)
 
 
