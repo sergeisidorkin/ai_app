@@ -314,6 +314,7 @@ class NextcloudContractShareSignalTests(TestCase):
 class NextcloudApiClientFileOpsTests(TestCase):
     def setUp(self):
         NextcloudApiClient._share_cache.clear()
+        NextcloudApiClient._share_cache_errors.clear()
         NextcloudApiClient._share_cache_loading.clear()
 
     @staticmethod
@@ -407,6 +408,70 @@ class NextcloudApiClientFileOpsTests(TestCase):
 
         self.assertEqual(session.request.call_count, 1)
         self.assertTrue(all("/Corporate Root/2026" in result for result in results))
+
+    @override_settings(
+        NEXTCLOUD_SHARE_MAP_CACHE_TTL=30,
+        NEXTCLOUD_SHARE_MAP_ERROR_TTL=5,
+    )
+    def test_list_user_shares_single_flight_shares_one_failure(self):
+        session = Mock()
+
+        def delayed_failure(*_args, **_kwargs):
+            time.sleep(0.05)
+            raise requests.ReadTimeout("bulk timeout")
+
+        session.request.side_effect = delayed_failure
+        clients = [NextcloudApiClient(session=session) for _ in range(4)]
+
+        def load(client):
+            try:
+                client.list_user_shares("cloud-admin", "ncstaff-1")
+            except NextcloudApiError as exc:
+                return str(exc)
+            return ""
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            errors = list(executor.map(load, clients))
+
+        self.assertEqual(session.request.call_count, 1)
+        self.assertTrue(all("bulk timeout" in error for error in errors))
+
+    @override_settings(
+        NEXTCLOUD_SHARE_MAP_CACHE_TTL=30,
+        NEXTCLOUD_SHARE_MAP_ERROR_TTL=5,
+    )
+    def test_list_user_shares_single_flight_caches_parsing_failure(self):
+        session = Mock()
+
+        def delayed_malformed_response(*_args, **_kwargs):
+            time.sleep(0.05)
+            return self._ocs_response(
+                [
+                    {
+                        "id": "42",
+                        "path": "/Corporate Root/2026",
+                        "share_type": 0,
+                        "share_with": "ncstaff-1",
+                        "permissions": "invalid",
+                    }
+                ]
+            )
+
+        session.request.side_effect = delayed_malformed_response
+        clients = [NextcloudApiClient(session=session) for _ in range(4)]
+
+        def load(client):
+            try:
+                client.list_user_shares("cloud-admin", "ncstaff-1")
+            except NextcloudApiError as exc:
+                return str(exc)
+            return ""
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            errors = list(executor.map(load, clients))
+
+        self.assertEqual(session.request.call_count, 1)
+        self.assertTrue(all("invalid" in error for error in errors))
 
     @override_settings(NEXTCLOUD_SHARE_MAP_CACHE_TTL=30)
     def test_cached_bulk_miss_allows_path_scoped_share_lookup(self):

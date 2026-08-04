@@ -8486,12 +8486,13 @@ class ProposalDispatchDiskColumnTests(TestCase):
         )
         mocked_ensure_public_link_share.assert_not_called()
 
+    @override_settings(NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ=False)
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_proposals_partial_uses_stored_target_path_when_share_api_is_silent(
+    def test_proposals_partial_uses_stored_target_without_live_share_api(
         self,
-        _mocked_list_user_shares,
-        _mocked_get_user_share,
+        mocked_list_user_shares,
+        mocked_get_user_share,
     ):
         self.proposal.proposal_workspace_target_path = "/Shared/333300RU DD Тестовое ТКП"
         self.proposal.save(update_fields=["proposal_workspace_target_path"])
@@ -8514,6 +8515,8 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertContains(response, f'href="{expected_url}"', html=False)
         self.assertNotContains(response, f'href="{guessed_url}"', html=False)
         self.assertNotContains(response, f'href="{owner_url}"', html=False)
+        mocked_list_user_shares.assert_not_called()
+        mocked_get_user_share.assert_not_called()
 
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})

@@ -5,6 +5,7 @@ from datetime import date as dt_date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import models, transaction
 from django.db.models import Count, Max, Sum, Q
@@ -1098,12 +1099,27 @@ def _attach_contract_folder_urls(contracts, user=None):
     if not link or not link.nextcloud_user_id or link.nextcloud_user_id == client.username:
         return
 
-    try:
-        share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
-    except NextcloudApiError as exc:
-        logger.error("Could not load Nextcloud share map for contracts table: %s", exc)
-        raise
-    client.prime_user_share_cache(client.username, link.nextcloud_user_id, share_map)
+    live_share_lookup = bool(
+        getattr(settings, "NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ", True)
+    )
+    share_map = {}
+    if live_share_lookup:
+        try:
+            share_map = client.list_user_shares(
+                client.username,
+                link.nextcloud_user_id,
+            )
+        except NextcloudApiError as exc:
+            logger.error(
+                "Could not load Nextcloud share map for contracts table: %s",
+                exc,
+            )
+            raise
+        client.prime_user_share_cache(
+            client.username,
+            link.nextcloud_user_id,
+            share_map,
+        )
 
     normalized_root_path = _normalize_contract_nextcloud_path(get_nextcloud_root_path())
     resolved_cache = dict(folder_cache)
@@ -1111,7 +1127,7 @@ def _attach_contract_folder_urls(contracts, user=None):
     share_lookup_cache = {}
     for path in list(resolved_cache.keys()):
         target_path = _resolve_contract_shared_target_path(path, share_map, root_path=normalized_root_path)
-        if not target_path:
+        if not target_path and live_share_lookup:
             target_path = _resolve_contract_target_path_via_user_share_lookup(
                 client,
                 client.username,
@@ -1149,7 +1165,7 @@ def _attach_contract_folder_urls(contracts, user=None):
                 Performer.objects.filter(pk=performer.pk).update(
                     contract_project_folder_file_id=stored_folder_file_id
                 )
-        if is_lawyer and stored_folder_file_id:
+        if stored_folder_file_id:
             performer.contract_project_folder_url = _build_contract_file_redirect_url(client, stored_folder_file_id)
         if is_lawyer:
             contract_file = getattr(performer, "contract_file", "") or ""

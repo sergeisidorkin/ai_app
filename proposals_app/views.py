@@ -843,12 +843,27 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
             and link.nextcloud_user_id != client.username
         ):
             viewer_has_nextcloud_link = True
-            try:
-                share_map = client.list_user_shares(client.username, link.nextcloud_user_id)
-            except NextcloudApiError as exc:
-                logger.error("Could not load Nextcloud share map for proposals table: %s", exc)
-                raise
-            client.prime_user_share_cache(client.username, link.nextcloud_user_id, share_map)
+            live_share_lookup = bool(
+                getattr(settings, "NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ", True)
+            )
+            share_map = {}
+            if live_share_lookup:
+                try:
+                    share_map = client.list_user_shares(
+                        client.username,
+                        link.nextcloud_user_id,
+                    )
+                except NextcloudApiError as exc:
+                    logger.error(
+                        "Could not load Nextcloud share map for proposals table: %s",
+                        exc,
+                    )
+                    raise
+                client.prime_user_share_cache(
+                    client.username,
+                    link.nextcloud_user_id,
+                    share_map,
+                )
 
             stored_target_paths = {
                 (getattr(proposal, "proposal_workspace_disk_path", "") or "").strip(): _normalize_viewer_target_path(
@@ -874,7 +889,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     target_path = stored_target_paths.get(path, "")
                 if not target_path:
                     target_path = cached_target_paths.get(path, "")
-                if not target_path:
+                if not target_path and live_share_lookup:
                     target_path, lookup_share = _resolve_target_path_via_user_share_lookup(
                         client,
                         client.username,
