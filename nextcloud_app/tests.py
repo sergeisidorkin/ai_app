@@ -37,21 +37,25 @@ User = get_user_model()
 
 
 class NextcloudDeploymentConfigTests(SimpleTestCase):
-    def test_healthcheck_is_bounded_and_has_no_shell_pipeline(self):
-        compose_path = (
+    def test_healthcheck_is_bounded_and_requires_installed_state(self):
+        deploy_dir = (
             Path(__file__).resolve().parents[1]
             / "deploy"
             / "nextcloud"
-            / "docker-compose.yml"
         )
+        compose_path = deploy_dir / "docker-compose.yml"
         config = yaml.safe_load(compose_path.read_text())
         nextcloud = config["services"]["nextcloud"]
         healthcheck = nextcloud["healthcheck"]
         command = healthcheck["test"]
+        probe = (deploy_dir / "nextcloud-container-healthcheck.php").read_text()
 
-        self.assertEqual(command[0], "CMD")
-        self.assertIn("--max-time", command)
-        self.assertNotIn("|", " ".join(command))
+        self.assertEqual(
+            command,
+            ["CMD", "php", "/usr/local/bin/nextcloud-container-healthcheck.php"],
+        )
+        self.assertIn("'timeout' => 5", probe)
+        self.assertIn("$status['installed']", probe)
         self.assertIs(nextcloud["init"], True)
         self.assertEqual(nextcloud["pids_limit"], 256)
 

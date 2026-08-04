@@ -72,9 +72,10 @@ services:
       # Keep user files in a dedicated mount so data growth is easy to track.
       - "${ROOT}/data:/var/www/html/data"
       - "./apache-mpm-prefork.conf:/etc/apache2/mods-available/mpm_prefork.conf:ro"
+      - "./nextcloud-container-healthcheck.php:/usr/local/bin/nextcloud-container-healthcheck.php:ro"
     pids_limit: 256
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "5", "-H", "Host: ${NEXTCLOUD_HOST}", "--output", "/dev/null", "http://127.0.0.1/status.php"]
+      test: ["CMD", "php", "/usr/local/bin/nextcloud-container-healthcheck.php"]
       interval: 30s
       timeout: 8s
       retries: 12
