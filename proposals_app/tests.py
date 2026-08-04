@@ -33,7 +33,7 @@ from core.proposal_registry_columns import (
 from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 from letters_app.models import LetterTemplate
-from nextcloud_app.api import NextcloudShare
+from nextcloud_app.api import NextcloudApiError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.email_delivery import EmailDeliveryError
 from policy_app.models import (
@@ -7906,7 +7906,8 @@ class ProposalDispatchDiskColumnTests(TestCase):
             proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Тестовое ТКП",
         )
 
-    def test_proposals_partial_renders_zero_padded_number(self):
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_renders_zero_padded_number(self, _mocked_list_user_shares):
         self.proposal.number = 1
         self.proposal.save(update_fields=["number", "short_uid"])
 
@@ -7918,7 +7919,11 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertEqual(self.proposal.short_uid, "000100RU")
         self.assertContains(response, ">000100RU<", html=False)
 
-    def test_proposals_partial_renders_multiple_products_with_hyphen_in_type_column(self):
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_renders_multiple_products_with_hyphen_in_type_column(
+        self,
+        _mocked_list_user_shares,
+    ):
         ProposalRegistrationProduct.objects.bulk_create(
             [
                 ProposalRegistrationProduct(proposal_id=self.proposal.pk, product=self.product, rank=1),
@@ -7930,6 +7935,43 @@ class ProposalDispatchDiskColumnTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, ">DD-QAQC<", html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
+    @patch(
+        "nextcloud_app.api.NextcloudApiClient.list_user_shares",
+        side_effect=NextcloudApiError("bulk timeout"),
+    )
+    def test_proposals_partial_stops_after_bulk_share_failure(
+        self,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 503)
+        mocked_list_user_shares.assert_called_once()
+        mocked_get_user_share.assert_not_called()
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_deduplicates_unresolved_ancestor_lookups(
+        self,
+        _mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        ProposalRegistration.objects.create(
+            number=3334,
+            group_member=self.group_member,
+            type=self.product,
+            name="Второе ТКП",
+            year=2026,
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333400RU DD Второе ТКП",
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(mocked_get_user_share.call_count, 6)
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
     def test_proposals_partial_renders_disk_icon_with_nextcloud_share_target(self, mocked_list_user_shares):

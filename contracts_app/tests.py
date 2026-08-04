@@ -2113,11 +2113,34 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, expected_url, html=False)
 
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
+    @patch(
+        "nextcloud_app.api.NextcloudApiClient.list_user_shares",
+        side_effect=NextcloudApiError("bulk timeout"),
+    )
+    def test_contracts_partial_stops_after_bulk_share_failure(
+        self,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        NextcloudUserLink.objects.create(
+            user=self.user,
+            nextcloud_user_id="nc-contract-viewer",
+            nextcloud_username="nc-contract-viewer",
+            nextcloud_email=self.user.email,
+        )
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 503)
+        mocked_list_user_shares.assert_called_once()
+        mocked_get_user_share.assert_not_called()
+
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")
-    def test_contracts_partial_repairs_missing_lawyer_share_for_docx_link(
+    def test_contracts_partial_does_not_repair_missing_lawyer_share_during_get(
         self,
         mocked_list_user_shares,
         mocked_get_user_share,
@@ -2140,13 +2163,6 @@ class ContractsCloudLabelTests(TestCase):
         )
         mocked_list_user_shares.return_value = {}
         mocked_get_user_share.return_value = None
-        mocked_ensure_user_share.return_value = NextcloudShare(
-            share_id="58",
-            path=self.performer.contract_project_disk_folder,
-            share_with="nc-lawyer-repair",
-            permissions=15,
-            target_path="/Shared/000 Иванов ИИ",
-        )
         mocked_list_resources.return_value = [
             {
                 "name": self.performer.contract_file,
@@ -2159,19 +2175,9 @@ class ContractsCloudLabelTests(TestCase):
 
         response = self.client.get(reverse("contracts_partial"))
 
-        expected_url = (
-            "https://cloud.example.com/apps/files/files/4476?dir="
-            + quote("/Shared/000 Иванов ИИ", safe="/")
-            + "&amp;openfile=true"
-        )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, expected_url, html=False)
-        mocked_ensure_user_share.assert_called_once_with(
-            "cloud-admin",
-            self.performer.contract_project_disk_folder,
-            "nc-lawyer-repair",
-            permissions=15,
-        )
+        self.assertContains(response, 'href="https://cloud.example.com/f/4476"', html=False)
+        mocked_ensure_user_share.assert_not_called()
 
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share", side_effect=NextcloudApiError("silent"))
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
@@ -4152,7 +4158,7 @@ class ContractsCloudLabelTests(TestCase):
         )
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", side_effect=NextcloudApiError("temporary outage"))
-    def test_contracts_partial_falls_back_to_generic_folder_url_when_share_resolution_fails(self, _mocked_list_user_shares):
+    def test_contracts_partial_returns_503_when_bulk_share_resolution_fails(self, _mocked_list_user_shares):
         NextcloudUserLink.objects.create(
             user=self.user,
             nextcloud_user_id="nc-admin",
@@ -4162,12 +4168,7 @@ class ContractsCloudLabelTests(TestCase):
 
         response = self.client.get(reverse("contracts_partial"))
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response,
-            "/apps/files/files?dir=/Corporate%20Root/2026/Project/09%20%D0%94%D0%BE%D0%B3%D0%BE%D0%B2%D0%BE%D1%80%D1%8B/000%20%D0%98%D0%B2%D0%B0%D0%BD%D0%BE%D0%B2%20%D0%98%D0%98",
-            html=False,
-        )
+        self.assertEqual(response.status_code, 503)
 
     @patch("contracts_app.views._upload_scan_to_cloud_bytes", return_value="")
     def test_contract_signing_edit_keeps_existing_local_scan_when_cloud_upload_fails(self, _mock_upload):

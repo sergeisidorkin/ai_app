@@ -1,6 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
+import time
 from unittest.mock import Mock, call, patch
 
+import requests
 from checklists_app.models import ProjectWorkspace, SourceDataWorkspace
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -309,6 +312,132 @@ class NextcloudContractShareSignalTests(TestCase):
     NEXTCLOUD_OIDC_PROVIDER_ID=1,
 )
 class NextcloudApiClientFileOpsTests(TestCase):
+    def setUp(self):
+        NextcloudApiClient._share_cache.clear()
+        NextcloudApiClient._share_cache_loading.clear()
+
+    @staticmethod
+    def _ocs_response(data):
+        return Mock(
+            status_code=200,
+            content=b"{}",
+            json=lambda: {
+                "ocs": {
+                    "meta": {"status": "ok", "statuscode": 100},
+                    "data": data,
+                }
+            },
+            text="",
+            headers={},
+        )
+
+    @override_settings(
+        NEXTCLOUD_INTERNAL_BASE_URL="http://127.0.0.1:8091",
+        NEXTCLOUD_CONNECT_TIMEOUT=2,
+        NEXTCLOUD_READ_TIMEOUT=40,
+    )
+    def test_ocs_request_uses_internal_transport_and_public_host(self):
+        session = Mock()
+        session.request.return_value = self._ocs_response({})
+        client = NextcloudApiClient(session=session)
+
+        client.get_user("ncstaff-1")
+
+        request_call = session.request.call_args
+        self.assertEqual(
+            request_call.args[1],
+            "http://127.0.0.1:8091/ocs/v1.php/cloud/users/ncstaff-1",
+        )
+        self.assertEqual(request_call.kwargs["headers"]["Host"], "cloud.example.com")
+        self.assertEqual(request_call.kwargs["timeout"], (2.0, 40.0))
+
+    @override_settings(NEXTCLOUD_OCS_READ_ATTEMPTS=3)
+    def test_mutating_ocs_request_is_not_retried_after_read_timeout(self):
+        session = Mock()
+        session.request.side_effect = requests.ReadTimeout("upstream response timed out")
+        client = NextcloudApiClient(session=session)
+
+        with self.assertRaises(NextcloudApiError):
+            client.add_user_to_group("ncstaff-1", "staff")
+
+        self.assertEqual(session.request.call_count, 1)
+
+    @override_settings(NEXTCLOUD_OCS_READ_ATTEMPTS=2)
+    @patch("nextcloud_app.api.time.sleep")
+    def test_safe_ocs_read_retries_connection_failure(self, _mocked_sleep):
+        session = Mock()
+        session.request.side_effect = [
+            requests.ConnectionError("connection refused"),
+            self._ocs_response({"id": "ncstaff-1"}),
+        ]
+        client = NextcloudApiClient(session=session)
+
+        self.assertEqual(client.get_user("ncstaff-1")["id"], "ncstaff-1")
+        self.assertEqual(session.request.call_count, 2)
+
+    @override_settings(NEXTCLOUD_SHARE_MAP_CACHE_TTL=30)
+    def test_list_user_shares_is_single_flight_and_cached(self):
+        session = Mock()
+
+        def delayed_response(*_args, **_kwargs):
+            time.sleep(0.05)
+            return self._ocs_response(
+                [
+                    {
+                        "id": "42",
+                        "path": "/Corporate Root/2026",
+                        "share_type": 0,
+                        "share_with": "ncstaff-1",
+                        "permissions": 15,
+                        "file_target": "/Shared/2026",
+                    }
+                ]
+            )
+
+        session.request.side_effect = delayed_response
+        clients = [NextcloudApiClient(session=session) for _ in range(4)]
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results = list(
+                executor.map(
+                    lambda client: client.list_user_shares("cloud-admin", "ncstaff-1"),
+                    clients,
+                )
+            )
+
+        self.assertEqual(session.request.call_count, 1)
+        self.assertTrue(all("/Corporate Root/2026" in result for result in results))
+
+    @override_settings(NEXTCLOUD_SHARE_MAP_CACHE_TTL=30)
+    def test_share_update_invalidates_bulk_cache(self):
+        session = Mock()
+        existing = {
+            "id": "42",
+            "path": "/Corporate Root/2026",
+            "share_type": 0,
+            "share_with": "ncstaff-1",
+            "permissions": 1,
+            "file_target": "/Shared/2026",
+        }
+        session.request.side_effect = [
+            self._ocs_response([existing]),
+            self._ocs_response({}),
+            self._ocs_response([{**existing, "permissions": 15}]),
+        ]
+        client = NextcloudApiClient(session=session)
+
+        client.list_user_shares("cloud-admin", "ncstaff-1")
+        client.ensure_user_share(
+            "cloud-admin",
+            "/Corporate Root/2026",
+            "ncstaff-1",
+            permissions=15,
+        )
+        refreshed = client.list_user_shares("cloud-admin", "ncstaff-1")
+
+        self.assertEqual(session.request.call_count, 3)
+        self.assertEqual(refreshed["/Corporate Root/2026"].permissions, 15)
+
     def test_list_resources_parses_webdav_depth_response(self):
         session = Mock()
         session.request.return_value = Mock(

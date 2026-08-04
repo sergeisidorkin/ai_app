@@ -2,6 +2,14 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: always
+    command:
+      - postgres
+      - -c
+      - max_connections=100
+      - -c
+      - idle_session_timeout=30min
+      - -c
+      - idle_in_transaction_session_timeout=5min
     env_file:
       - nextcloud.env
     environment:
@@ -22,6 +30,11 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - "${ROOT}/redis:/data"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   nextcloud:
     image: nextcloud:apache
@@ -32,7 +45,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "127.0.0.1:${NEXTCLOUD_LOCAL_PORT}:80"
     environment:
@@ -57,6 +70,13 @@ services:
       - "${ROOT}/html:/var/www/html"
       # Keep user files in a dedicated mount so data growth is easy to track.
       - "${ROOT}/data:/var/www/html/data"
+      - "./apache-mpm-prefork.conf:/etc/apache2/mods-available/mpm_prefork.conf:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error -H 'Host: ${NEXTCLOUD_HOST}' http://127.0.0.1/status.php | grep -q '\"installed\":true'"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
 
   cron:
     image: nextcloud:apache
@@ -68,7 +88,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${POSTGRES_DB}
