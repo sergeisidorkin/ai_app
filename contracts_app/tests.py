@@ -2196,16 +2196,17 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'href="https://cloud.example.com/f/4476"', html=False)
         mocked_ensure_user_share.assert_not_called()
 
+    @override_settings(NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ=False)
     @patch("nextcloud_app.api.NextcloudApiClient.ensure_user_share", side_effect=NextcloudApiError("silent"))
     @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
-    def test_contracts_partial_falls_back_to_file_redirect_when_target_unknown(
+    def test_contracts_partial_uses_file_redirect_without_live_share_api(
         self,
-        _mocked_list_user_shares,
+        mocked_list_user_shares,
         mocked_list_resources,
-        _mocked_get_user_share,
-        _mocked_ensure_user_share,
+        mocked_get_user_share,
+        mocked_ensure_user_share,
     ):
         lawyer_user = get_user_model().objects.create_user(
             username="lawyer-file-id@example.com",
@@ -2232,6 +2233,9 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'href="https://cloud.example.com/f/4477"', html=False)
         self.assertContains(response, 'href="https://cloud.example.com/f/4478"', html=False)
         mocked_list_resources.assert_not_called()
+        mocked_list_user_shares.assert_not_called()
+        mocked_get_user_share.assert_not_called()
+        mocked_ensure_user_share.assert_not_called()
 
     @patch("nextcloud_app.api.NextcloudApiClient.list_resources", return_value=[])
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares")

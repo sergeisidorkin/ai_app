@@ -232,13 +232,23 @@ NEXTCLOUD_OCS_READ_ATTEMPTS=2
 NEXTCLOUD_DAV_READ_ATTEMPTS=2
 NEXTCLOUD_MAX_CONCURRENT_REQUESTS_PER_PROCESS=2
 NEXTCLOUD_SHARE_MAP_CACHE_TTL=15
+NEXTCLOUD_SHARE_MAP_ERROR_TTL=2
+NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ=False
 ```
 
 `NEXTCLOUD_BASE_URL` remains the public browser URL. Only server-side HTTP uses
 `NEXTCLOUD_INTERNAL_BASE_URL`; the client preserves the public `Host` header.
 Safe reads may retry connection failures, but a response read timeout is never
 retried and mutating OCS requests are sent once. Share-list reads are
-single-flight per user and cached briefly in each Django process.
+single-flight per user and cached briefly in each Django process. A bulk-load
+failure is also shared briefly so waiting threads do not repeat the same
+expensive request one after another.
+
+Keep `NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ=False` when the owner has enough
+shares that the unpaginated OCS all-shares endpoint cannot meet the interactive
+deadline. Proposal and contract GET renders then use persisted target paths,
+file-id redirects, session targets, and saved links only; share creation and
+repair remain in explicit workspace workflows.
 
 The compose file also pins PostgreSQL safety limits (`max_connections=100`,
 `idle_session_timeout=30min`, `idle_in_transaction_session_timeout=5min`) and

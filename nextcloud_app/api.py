@@ -54,6 +54,7 @@ class NextcloudApiClient:
     _request_semaphore_lock = threading.Lock()
     _share_cache_condition = threading.Condition()
     _share_cache: dict[tuple[str, str, str], tuple[float, dict[str, NextcloudShare]]] = {}
+    _share_cache_errors: dict[tuple[str, str, str], tuple[float, str]] = {}
     _share_cache_loading: set[tuple[str, str, str]] = set()
 
     def __init__(self, *, session: requests.Session | None = None):
@@ -76,6 +77,10 @@ class NextcloudApiClient:
         self.ocs_read_attempts = max(int(getattr(settings, "NEXTCLOUD_OCS_READ_ATTEMPTS", 2) or 2), 1)
         self.dav_read_attempts = max(int(getattr(settings, "NEXTCLOUD_DAV_READ_ATTEMPTS", 2) or 2), 1)
         self.share_cache_ttl = max(float(getattr(settings, "NEXTCLOUD_SHARE_MAP_CACHE_TTL", 15) or 0), 0)
+        self.share_cache_error_ttl = max(
+            float(getattr(settings, "NEXTCLOUD_SHARE_MAP_ERROR_TTL", 2) or 0),
+            0,
+        )
         self._public_share_cache_loaded = False
         self._public_share_cache: dict[str, NextcloudShare] = {}
         self._user_share_cache: dict[tuple[str, str], dict[str, NextcloudShare]] = {}
@@ -324,6 +329,9 @@ class NextcloudApiClient:
                 if cached is not None:
                     self.prime_user_share_cache(owner_user_id, share_with_user_id, cached)
                     return cached
+                cached_error = self._get_cached_user_share_error_locked(key)
+                if cached_error:
+                    raise NextcloudApiError(cached_error)
                 if key not in self._share_cache_loading:
                     self._share_cache_loading.add(key)
                     break
@@ -355,6 +363,13 @@ class NextcloudApiClient:
                 self._share_cache[key] = (time.monotonic() + self.share_cache_ttl, dict(shares))
             self.prime_user_share_cache(owner_user_id, share_with_user_id, shares)
             return shares
+        except NextcloudApiError as exc:
+            with self._share_cache_condition:
+                self._share_cache_errors[key] = (
+                    time.monotonic() + self.share_cache_error_ttl,
+                    str(exc),
+                )
+            raise
         finally:
             with self._share_cache_condition:
                 self._share_cache_loading.discard(key)
@@ -648,6 +663,16 @@ class NextcloudApiClient:
             return None
         return dict(shares)
 
+    def _get_cached_user_share_error_locked(self, key) -> str:
+        cached = self._share_cache_errors.get(key)
+        if cached is None:
+            return ""
+        expires_at, message = cached
+        if expires_at <= time.monotonic():
+            self._share_cache_errors.pop(key, None)
+            return ""
+        return message
+
     def _get_cached_user_shares(self, owner_user_id: str, share_with_user_id: str):
         key = self._user_share_cache_key(owner_user_id, share_with_user_id)
         with self._share_cache_condition:
@@ -658,11 +683,13 @@ class NextcloudApiClient:
         self._user_share_cache.pop((str(owner_user_id), str(share_with_user_id)), None)
         with self._share_cache_condition:
             self._share_cache.pop(key, None)
+            self._share_cache_errors.pop(key, None)
 
     @classmethod
     def _invalidate_all_user_share_caches(cls) -> None:
         with cls._share_cache_condition:
             cls._share_cache.clear()
+            cls._share_cache_errors.clear()
 
     @staticmethod
     def _normalize_folder_path(path: str) -> str:
