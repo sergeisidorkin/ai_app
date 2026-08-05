@@ -82,6 +82,18 @@ class NextcloudDeploymentConfigTests(SimpleTestCase):
         self.assertEqual(settings["redis.session.lock_wait_time"], "20000")
         self.assertEqual(settings["redis.session.lock_retries"], "500")
 
+    def test_required_bind_mount_files_are_in_install_instructions(self):
+        root = Path(__file__).resolve().parents[1]
+        docs = (root / "docs" / "nextcloud.md").read_text()
+
+        for filename in (
+            "apache-mpm-prefork.conf",
+            "nextcloud-container-healthcheck.php",
+            "php-session-locks.ini",
+        ):
+            self.assertIn(f"deploy/nextcloud/{filename}", docs)
+            self.assertIn(f"/opt/nextcloud/{filename}", docs)
+
 
 class NextcloudProvisioningTests(TestCase):
     def setUp(self):
