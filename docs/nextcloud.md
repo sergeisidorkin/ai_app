@@ -39,6 +39,10 @@ is mostly a copy operation.
 - `deploy/nextcloud/nginx-cloud.example.com.conf.example`: reverse proxy example for the host `nginx`.
 - `deploy/nextcloud/nextcloud-compose.service.example`: optional `systemd` unit to keep the compose stack up after reboot.
 - `deploy/nextcloud/apache-mpm-prefork.conf`: bounded Apache/PHP worker pool.
+- `deploy/nextcloud/nextcloud-container-healthcheck.php`: bounded container
+  probe that requires Nextcloud to report `installed: true`.
+- `deploy/nextcloud/php-session-locks.ini`: bounded Redis PHP session-lock
+  expiry and retry settings.
 - `deploy/nextcloud/nextcloud-healthcheck.sh`: post-start `occ` and local HTTP verification.
 - `deploy/nextcloud/cloud-folder-metadata-sync.{service,timer}.example`: one
   process periodically refreshes checklist file counts and latest-upload dates.
@@ -63,6 +67,8 @@ is mostly a copy operation.
   docker-compose.yml
   nextcloud.env
   apache-mpm-prefork.conf
+  nextcloud-container-healthcheck.php
+  php-session-locks.ini
   nextcloud-healthcheck.sh
   html/
   data/
@@ -78,6 +84,8 @@ is mostly a copy operation.
    - `deploy/nextcloud/docker-compose.yml` -> `/opt/nextcloud/docker-compose.yml`
    - `deploy/nextcloud/nextcloud.env.example` -> `/opt/nextcloud/nextcloud.env`
    - `deploy/nextcloud/apache-mpm-prefork.conf` -> `/opt/nextcloud/apache-mpm-prefork.conf`
+   - `deploy/nextcloud/nextcloud-container-healthcheck.php` -> `/opt/nextcloud/nextcloud-container-healthcheck.php`
+   - `deploy/nextcloud/php-session-locks.ini` -> `/opt/nextcloud/php-session-locks.ini`
    - `deploy/nextcloud/nextcloud-healthcheck.sh` -> `/opt/nextcloud/nextcloud-healthcheck.sh`
    Then make the healthcheck executable with `chmod 755 /opt/nextcloud/nextcloud-healthcheck.sh`.
 4. Replace placeholder passwords and set the real subdomain in `/opt/nextcloud/nextcloud.env`.
@@ -259,6 +267,12 @@ requires `/status.php` to report `installed: true`; do not replace it with a
 children running after the shell is killed. The container init process reaps
 abandoned children, and a 256-process limit provides a final guard against
 process leaks.
+
+PHP sessions remain serialized through Redis, but their locks are bounded:
+each lock expires after 60 seconds and a request waits at most about 10 seconds
+(`500` attempts at `20` ms). Do not restore infinite retries or zero expiry;
+one abandoned session lock can otherwise occupy every Apache worker through
+repeated `/index.php/204` polling even when there is no file traffic.
 
 ## Checklist Folder Metrics
 
