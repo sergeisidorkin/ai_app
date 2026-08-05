@@ -260,6 +260,12 @@ children running after the shell is killed. The container init process reaps
 abandoned children, and a 256-process limit provides a final guard against
 process leaks.
 
+PHP sessions remain serialized through Redis, but their locks are bounded:
+each lock expires after 60 seconds and a request waits at most about 10 seconds
+(`500` attempts at `20` ms). Do not restore infinite retries or zero expiry;
+one abandoned session lock can otherwise occupy every Apache worker through
+repeated `/index.php/204` polling even when there is no file traffic.
+
 ## Checklist Folder Metrics
 
 The checklist tables read `file_count` and `last_upload_at` from local folder

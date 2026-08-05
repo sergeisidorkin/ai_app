@@ -59,6 +59,29 @@ class NextcloudDeploymentConfigTests(SimpleTestCase):
         self.assertIs(nextcloud["init"], True)
         self.assertEqual(nextcloud["pids_limit"], 256)
 
+    def test_redis_session_locks_are_bounded(self):
+        deploy_dir = (
+            Path(__file__).resolve().parents[1]
+            / "deploy"
+            / "nextcloud"
+        )
+        config = yaml.safe_load((deploy_dir / "docker-compose.yml").read_text())
+        nextcloud = config["services"]["nextcloud"]
+        settings = dict(
+            line.split("=", 1)
+            for line in (deploy_dir / "php-session-locks.ini").read_text().splitlines()
+            if line
+        )
+
+        self.assertIn(
+            "./php-session-locks.ini:/usr/local/etc/php/conf.d/zz-session-locks.ini:ro",
+            nextcloud["volumes"],
+        )
+        self.assertEqual(settings["redis.session.locking_enabled"], "1")
+        self.assertEqual(settings["redis.session.lock_expire"], "60")
+        self.assertEqual(settings["redis.session.lock_wait_time"], "20000")
+        self.assertEqual(settings["redis.session.lock_retries"], "500")
+
 
 class NextcloudProvisioningTests(TestCase):
     def setUp(self):

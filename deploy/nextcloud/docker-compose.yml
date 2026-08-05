@@ -73,6 +73,7 @@ services:
       - "${ROOT}/data:/var/www/html/data"
       - "./apache-mpm-prefork.conf:/etc/apache2/mods-available/mpm_prefork.conf:ro"
       - "./nextcloud-container-healthcheck.php:/usr/local/bin/nextcloud-container-healthcheck.php:ro"
+      - "./php-session-locks.ini:/usr/local/etc/php/conf.d/zz-session-locks.ini:ro"
     pids_limit: 256
     healthcheck:
       test: ["CMD", "php", "/usr/local/bin/nextcloud-container-healthcheck.php"]
