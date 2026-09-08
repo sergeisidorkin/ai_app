@@ -4645,6 +4645,14 @@
       return true;
     }
 
+    function serviceRowIdentityKey(row) {
+      return [
+        String(row?.code || '').trim(),
+        String(row?.service_name || '').trim(),
+        normalizeProposalMergeWithoutCode(row?.merge_without_code) ? '1' : '0',
+      ].join('\u0000');
+    }
+
     function syncHiddenInputs() {
       commercialInput.value = JSON.stringify(serializeCommercialRows());
       serviceInput.value = JSON.stringify(serializeServiceRows());
@@ -4719,8 +4727,21 @@
         const currentRows = api.getRows();
         const currentTravelRow = currentRows.find(isProposalTravelExpensesRow) || normalizeProposalTravelExpensesRow({});
         const forceAutofill = meta?.forceAutofill === true;
+        const isRowMove = meta?.reason === 'row-move';
+        const currentRowsByService = new Map();
+        if (isRowMove) {
+          currentRows.filter(function (row) {
+            return !isProposalTravelExpensesRow(row);
+          }).forEach(function (row) {
+            const key = serviceRowIdentityKey(row);
+            const bucket = currentRowsByService.get(key) || [];
+            bucket.push(row);
+            currentRowsByService.set(key, bucket);
+          });
+        }
         rows = ensureSystemDscServiceRows(nextRows).map(function (row, index) {
-          const currentRow = currentRows[index] || {};
+          const matchingRows = isRowMove ? currentRowsByService.get(serviceRowIdentityKey(row)) : null;
+          const currentRow = matchingRows?.shift() || currentRows[index] || {};
           const nextServiceName = String(row?.service_name || '').trim();
           const currentServiceName = String(currentRow?.service_name || '').trim();
           const nextCode = String(row?.code || '').trim();
@@ -4736,6 +4757,11 @@
         });
         rows.push(normalizeProposalTravelExpensesRow(currentTravelRow));
         syncHiddenInputs();
+        if (meta?.deferLinkedRender !== true) {
+          emit(meta, { includeServiceSections: true });
+        }
+      },
+      flushDeferredServiceRows: function (meta) {
         emit(meta, { includeServiceSections: true });
       },
       replaceFromType: function (meta) {
@@ -6662,6 +6688,9 @@
     if (!payloadInput || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
     if (scope.dataset.serviceSectionsBound === '1') return scope.__proposalServiceSectionsTableApi || null;
     scope.dataset.serviceSectionsBound = '1';
+    const SERVICE_MOVE_SYNC_DELAY_MS = 1200;
+    let serviceMoveSyncTimerId = null;
+    let deferredServiceMoveMeta = null;
 
     function parsePayload() {
       if (servicesStore) return servicesStore.getServiceRows();
@@ -6714,11 +6743,52 @@
       };
     }
 
+    function cancelDeferredServiceMoveSync() {
+      if (serviceMoveSyncTimerId !== null) {
+        window.clearTimeout(serviceMoveSyncTimerId);
+        serviceMoveSyncTimerId = null;
+      }
+      deferredServiceMoveMeta = null;
+    }
+
+    function flushDeferredServiceMoveSync() {
+      if (!servicesStore || !deferredServiceMoveMeta) return false;
+      if (serviceMoveSyncTimerId !== null) {
+        window.clearTimeout(serviceMoveSyncTimerId);
+        serviceMoveSyncTimerId = null;
+      }
+      const meta = deferredServiceMoveMeta;
+      deferredServiceMoveMeta = null;
+      servicesStore.flushDeferredServiceRows(meta);
+      return true;
+    }
+
+    function scheduleDeferredServiceMoveSync(meta) {
+      if (!servicesStore) return;
+      if (serviceMoveSyncTimerId !== null) {
+        window.clearTimeout(serviceMoveSyncTimerId);
+      }
+      deferredServiceMoveMeta = meta;
+      serviceMoveSyncTimerId = window.setTimeout(function () {
+        serviceMoveSyncTimerId = null;
+        flushDeferredServiceMoveSync();
+      }, SERVICE_MOVE_SYNC_DELAY_MS);
+    }
+
     function updatePayload(meta) {
       const rows = getRows().map(serializeRow);
       syncActions();
       if (servicesStore) {
-        servicesStore.commitServiceRows(rows, { ...(meta || {}), source: 'service-view' });
+        const storeMeta = { ...(meta || {}), source: 'service-view' };
+        const deferLinkedRender = storeMeta.reason === 'row-move';
+        // The row and shared payload move immediately; only expensive linked
+        // commercial/editor renders are coalesced while the user keeps moving rows.
+        if (!deferLinkedRender) cancelDeferredServiceMoveSync();
+        servicesStore.commitServiceRows(rows, {
+          ...storeMeta,
+          deferLinkedRender: deferLinkedRender,
+        });
+        if (deferLinkedRender) scheduleDeferredServiceMoveSync(storeMeta);
         return;
       }
       payloadInput.value = JSON.stringify(rows);
@@ -6837,20 +6907,24 @@
 
     function moveSelected(direction) {
       const rows = getRows();
+      let moved = false;
       if (direction === 'up') {
         for (let i = 1; i < rows.length; i += 1) {
           if (rows[i].querySelector('.proposal-service-section-check:checked') && !rows[i - 1].querySelector('.proposal-service-section-check:checked')) {
             if (rows[i - 1].dataset.systemDsc === '1') continue;
             tbody.insertBefore(rows[i], rows[i - 1]);
+            moved = true;
           }
         }
       } else {
         for (let i = rows.length - 2; i >= 0; i -= 1) {
           if (rows[i].querySelector('.proposal-service-section-check:checked') && !rows[i + 1].querySelector('.proposal-service-section-check:checked')) {
             tbody.insertBefore(rows[i + 1], rows[i]);
+            moved = true;
           }
         }
       }
+      if (!moved) return;
       updatePayload({ reason: 'row-move' });
     }
 
@@ -6879,6 +6953,12 @@
       });
       syncActions();
     });
+
+    const owningForm = getProposalOwningForm(scope);
+    if (owningForm) {
+      owningForm.addEventListener('submit', flushDeferredServiceMoveSync, true);
+      owningForm.addEventListener('htmx:beforeRequest', flushDeferredServiceMoveSync, true);
+    }
 
     if (servicesStore) {
       servicesStore.subscribe(function (detail) {
@@ -6910,6 +6990,7 @@
         return servicesStore ? servicesStore.getServiceRows() : getRows().map(serializeRow);
       },
       replaceRows: function (rowsData, meta) {
+        cancelDeferredServiceMoveSync();
         if (servicesStore) {
           servicesStore.commitServiceRows(rowsData || [], { ...(meta || {}), source: 'service-view' });
           return;
