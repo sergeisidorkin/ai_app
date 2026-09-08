@@ -18,6 +18,7 @@ The second stage uses Django as the OpenID Connect Provider, so users can enter 
 - `deploy/moodle/moodle.env.example`: environment file template for the compose stack.
 - `deploy/moodle/nginx-learn.imcmontanai.ru.conf.example`: reverse proxy config for the existing `nginx`.
 - `deploy/moodle/moodle-compose.service.example`: optional `systemd` unit to keep the compose stack up.
+- `deploy/moodle/moodle-helper-watch.service.example` and `moodle-helper-watch.timer.example`: restore `local_imc_sso` if a container recreate wipes it without going through systemd.
 - `deploy/moodle/moodle-healthcheck.sh`: post-start verification script for front page, `auth_oidc`, and `local_imc_sso`.
 - `deploy/moodle/prod.env.moodle.example`: Django-side variables to place into `$HOME/ai_appdir/env/prod.env`.
 - `auth_oidc_moodle45_2024100720.zip`: optional fallback archive for `auth_oidc`; the preferred deploy path is `MOODLE_PLUGINS_JSON` from the upstream Git repo.
@@ -137,12 +138,28 @@ Useful operational commands:
 
 ```bash
 sudo systemctl restart moodle-compose
+sudo systemctl reload moodle-compose
 sudo systemctl status moodle-compose
 sudo journalctl -u moodle-compose -n 100 --no-pager
 sudo /usr/bin/env bash /opt/moodle/moodle-healthcheck.sh
 ```
 
+Do not start or recreate Moodle with a raw `docker compose up -d`. That returns before the image finishes mutating `/opt/moodle/local/imc_sso/` and does not run the helper restore. After a compose-file change use `sudo systemctl reload moodle-compose`, which runs `up -d` and then `moodle-healthcheck.sh`.
+
 This is the recommended reboot flow for production: after a host reboot, Moodle should recover through `systemd` without any manual `docker compose` steps.
+
+The image can still wipe `local_imc_sso` on a container recreate that bypasses systemd. To close that gap, also install the watch timer:
+
+1. Copy `deploy/moodle/moodle-helper-watch.service.example` to `/etc/systemd/system/moodle-helper-watch.service`.
+2. Copy `deploy/moodle/moodle-helper-watch.timer.example` to `/etc/systemd/system/moodle-helper-watch.timer`.
+3. Run:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now moodle-helper-watch.timer
+```
+
+The timer only copies the two plugin files from the app repo into `/opt/moodle/local/imc_sso/` when they are missing or differ. It does not restart Moodle or any other stack.
 
 Important:
 
@@ -225,8 +242,10 @@ plugin layer driven by `MOODLE_PLUGINS_JSON`.
 Set this in `/opt/moodle/moodle.env`:
 
 ```dotenv
-MOODLE_PLUGINS_JSON=[{"giturl":"https://github.com/microsoft/moodle-auth_oidc.git","branch":"MOODLE_405_STABLE","installpath":"auth/oidc"}]
+MOODLE_PLUGINS_JSON=[{"giturl":"https://github.com/microsoft/moodle-auth_oidc.git","branch":"MOODLE_405_STABLE","installpath":"auth/oidc"},{"giturl":"https://github.com/dualcube/moodle-qtype_ddmatch.git","branch":"f64991e48cc84337e4e03650aab6b9fc9bce2e62","installpath":"question/type/ddmatch"}]
 ```
+
+`qtype_ddmatch` is pinned to DualCube **2.5.4** (`f64991e48cc84337e4e03650aab6b9fc9bce2e62`) because current `master` requires Moodle 5.0, while this stack runs Moodle 4.5. After the container fetches the plugin, run `upgrade.php` so **Drag-and-drop matching** appears in the question bank.
 
 If the plugin is not yet present and you want the container to fetch it on the
 next restart, temporarily set:
@@ -392,13 +411,17 @@ Recommended migration flow:
 To preserve the same reboot behavior on the new server, also copy:
 
 - `/opt/moodle/moodle-healthcheck.sh`
+- `/opt/moodle/moodle-sync-local-helper.sh`
 - `/etc/systemd/system/moodle-compose.service`
+- `/etc/systemd/system/moodle-helper-watch.service`
+- `/etc/systemd/system/moodle-helper-watch.timer`
 
 Then run:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now moodle-compose
+sudo systemctl enable --now moodle-helper-watch.timer
 ```
 
 ## Notes

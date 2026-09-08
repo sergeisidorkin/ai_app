@@ -13,10 +13,20 @@ require_file() {
   fi
 }
 
+files_match() {
+  local name="$1"
+  cmp -s "$SOURCE_DIR/$name" "$TARGET_DIR/$name"
+}
+
 require_file "$SOURCE_DIR/version.php"
 require_file "$SOURCE_DIR/logout_first.php"
 
 install -d -m 2750 "$TARGET_DIR"
+
+if files_match version.php && files_match logout_first.php; then
+  exit 0
+fi
+
 install -m 644 "$SOURCE_DIR/version.php" "$TARGET_DIR/version.php"
 install -m 644 "$SOURCE_DIR/logout_first.php" "$TARGET_DIR/logout_first.php"
 

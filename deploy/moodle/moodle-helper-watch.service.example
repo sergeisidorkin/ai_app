@@ -1,0 +1,9 @@
+[Unit]
+Description=Restore Moodle local_imc_sso helper if the image wiped it
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=APP_ROOT=/home/sergei/ai_appdir/ai_app
+ExecStart=/usr/bin/env bash /opt/moodle/moodle-sync-local-helper.sh
