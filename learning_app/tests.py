@@ -5,9 +5,16 @@ from django.test import Client
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from learning_app.models import LearningUserLink
+from learning_app.models import (
+    LearningCourse,
+    LearningCourseResult,
+    LearningEnrollment,
+    LearningSyncRun,
+    LearningUserLink,
+)
 from learning_app.moodle_api import MoodleApiError
 from learning_app.provisioning import ensure_moodle_account
+from learning_app.sync import sync_staff_learning, sync_user_learning
 
 User = get_user_model()
 
@@ -227,3 +234,92 @@ class MoodleLaunchFlowTests(TestCase):
         response = self.client.get(reverse("learning_app:launch"))
 
         self.assertRedirects(response, "/#learning", fetch_redirect_response=False)
+
+
+class MoodleLearningSyncTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="learner@example.com",
+            email="learner@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        self.link = LearningUserLink.objects.create(
+            user=self.user,
+            moodle_user_id=56,
+            moodle_username=self.user.username,
+            moodle_email=self.user.email,
+        )
+
+    def _client(self):
+        client = Mock()
+        client.config.base_url = "https://learn.example.com"
+        client.get_user_courses.return_value = [
+            {
+                "id": 3,
+                "shortname": "DB",
+                "fullname": "Database basics",
+                "visible": True,
+            }
+        ]
+        client.get_users_by_id.return_value = [
+            {
+                "id": 56,
+                "username": self.user.username,
+                "email": self.user.email,
+            }
+        ]
+        client.get_activities_completion_status.return_value = {"statuses": []}
+        return client
+
+    @patch("learning_app.sync.ensure_moodle_account")
+    def test_saves_enrollment_when_completion_api_is_unavailable(self, mocked_ensure):
+        mocked_ensure.return_value = self.link
+        client = self._client()
+        client.get_course_completion_status.side_effect = MoodleApiError(
+            "Course does not have completion criteria."
+        )
+
+        stats = sync_user_learning(self.user, client=client)
+
+        course = LearningCourse.objects.get(moodle_course_id=3)
+        self.assertTrue(LearningEnrollment.objects.filter(user=self.user, course=course).exists())
+        self.assertFalse(LearningCourseResult.objects.filter(user=self.user, course=course).exists())
+        self.assertEqual(stats["enrollments_upserted"], 1)
+        self.assertEqual(stats["results_upserted"], 0)
+        self.assertEqual(stats["results_skipped"], 1)
+
+    @patch("learning_app.sync.ensure_moodle_account")
+    def test_course_list_api_error_still_fails_user_sync(self, mocked_ensure):
+        mocked_ensure.return_value = self.link
+        client = self._client()
+        client.get_user_courses.side_effect = MoodleApiError("Course list unavailable.")
+
+        with self.assertRaisesMessage(MoodleApiError, "Course list unavailable."):
+            sync_user_learning(self.user, client=client)
+
+        self.assertFalse(LearningEnrollment.objects.filter(user=self.user).exists())
+
+    @patch("learning_app.sync.ensure_moodle_account")
+    def test_sync_run_records_skipped_completion_results(self, mocked_ensure):
+        mocked_ensure.return_value = self.link
+        client = self._client()
+        client.get_course_completion_status.side_effect = MoodleApiError(
+            "Course does not have completion criteria."
+        )
+        run = LearningSyncRun.objects.create(
+            scope=LearningSyncRun.Scope.FULL,
+            status=LearningSyncRun.Status.STARTED,
+        )
+
+        stats = sync_staff_learning(
+            users=User.objects.filter(pk=self.user.pk),
+            client=client,
+            run=run,
+        )
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, LearningSyncRun.Status.SUCCESS)
+        self.assertEqual(stats["results_skipped"], 1)
+        self.assertEqual(run.stats["results_skipped"], 1)

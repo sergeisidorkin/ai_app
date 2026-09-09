@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -19,6 +20,7 @@ from .moodle_api import MoodleApiClient, MoodleApiError
 from .provisioning import ensure_moodle_account
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -30,6 +32,7 @@ class SyncStats:
     enrollments_upserted: int = 0
     enrollments_removed: int = 0
     results_upserted: int = 0
+    results_skipped: int = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -40,6 +43,7 @@ class SyncStats:
             "enrollments_upserted": self.enrollments_upserted,
             "enrollments_removed": self.enrollments_removed,
             "results_upserted": self.results_upserted,
+            "results_skipped": self.results_skipped,
         }
 
 
@@ -65,6 +69,7 @@ def sync_staff_learning(
         stats.enrollments_upserted += synced["enrollments_upserted"]
         stats.enrollments_removed += synced["enrollments_removed"]
         stats.results_upserted += synced["results_upserted"]
+        stats.results_skipped += synced["results_skipped"]
 
     if run is not None:
         run.stats = stats.as_dict()
@@ -85,6 +90,7 @@ def sync_user_learning(user, *, client: MoodleApiClient | None = None) -> dict[s
             "enrollments_upserted": 0,
             "enrollments_removed": 0,
             "results_upserted": 0,
+            "results_skipped": 0,
         }
 
     now = timezone.now()
@@ -94,6 +100,7 @@ def sync_user_learning(user, *, client: MoodleApiClient | None = None) -> dict[s
         courses_upserted = 0
         enrollments_upserted = 0
         results_upserted = 0
+        results_skipped = 0
 
         for course_payload in courses:
             course, _ = _upsert_course(course_payload, now=now, client=client)
@@ -113,15 +120,26 @@ def sync_user_learning(user, *, client: MoodleApiClient | None = None) -> dict[s
             )
             enrollments_upserted += 1
 
-            _sync_course_result(
-                user=user,
-                course=course,
-                moodle_user_id=link.moodle_user_id,
-                course_payload=course_payload,
-                client=client,
-                now=now,
-            )
-            results_upserted += 1
+            try:
+                _sync_course_result(
+                    user=user,
+                    course=course,
+                    moodle_user_id=link.moodle_user_id,
+                    course_payload=course_payload,
+                    client=client,
+                    now=now,
+                )
+            except MoodleApiError as exc:
+                results_skipped += 1
+                logger.warning(
+                    "Moodle enrollment synced without completion result for Django user %s "
+                    "and Moodle course %s: %s",
+                    user.pk,
+                    course.moodle_course_id,
+                    exc,
+                )
+            else:
+                results_upserted += 1
 
         removed, _ = LearningEnrollment.objects.filter(user=user).exclude(course_id__in=seen_course_ids).delete()
         refreshed_users = client.get_users_by_id(link.moodle_user_id)
@@ -140,6 +158,7 @@ def sync_user_learning(user, *, client: MoodleApiClient | None = None) -> dict[s
         "enrollments_upserted": enrollments_upserted,
         "enrollments_removed": removed,
         "results_upserted": results_upserted,
+        "results_skipped": results_skipped,
     }
 
 
