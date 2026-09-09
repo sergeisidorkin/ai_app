@@ -1,0 +1,12 @@
+[Unit]
+Description=Synchronize Django learning data from Moodle
+Wants=network-online.target
+After=network-online.target moodle-compose.service
+
+[Service]
+Type=oneshot
+User=sergei
+Group=sergei
+WorkingDirectory=/home/sergei/ai_appdir/ai_app
+EnvironmentFile=/home/sergei/ai_appdir/env/prod.env
+ExecStart=/home/sergei/ai_appdir/ai_appenv/bin/python manage.py sync_moodle_learning

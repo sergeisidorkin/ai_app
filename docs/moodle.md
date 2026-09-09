@@ -19,6 +19,7 @@ The second stage uses Django as the OpenID Connect Provider, so users can enter 
 - `deploy/moodle/nginx-learn.imcmontanai.ru.conf.example`: reverse proxy config for the existing `nginx`.
 - `deploy/moodle/moodle-compose.service.example`: optional `systemd` unit to keep the compose stack up.
 - `deploy/moodle/moodle-helper-watch.service.example` and `moodle-helper-watch.timer.example`: restore `local_imc_sso` if a container recreate wipes it without going through systemd.
+- `deploy/moodle/moodle-learning-sync.service.example` and `moodle-learning-sync.timer.example`: synchronize Django learning assignments and results every 15 minutes without overlapping runs.
 - `deploy/moodle/moodle-healthcheck.sh`: post-start verification script for front page, `auth_oidc`, and `local_imc_sso`.
 - `deploy/moodle/prod.env.moodle.example`: Django-side variables to place into `$HOME/ai_appdir/env/prod.env`.
 - `auth_oidc_moodle45_2024100720.zip`: optional fallback archive for `auth_oidc`; the preferred deploy path is `MOODLE_PLUGINS_JSON` from the upstream Git repo.
@@ -380,6 +381,54 @@ python manage.py sync_moodle_learning --email staff-user@example.com
 ```
 
 6. Open the `Обучение` tab in Django and confirm the course appears.
+
+## Scheduled Learning Synchronization
+
+The Learning panel reads assignments and results from the Django database. It
+does not call Moodle during a page request. Install the dedicated timer after a
+successful targeted and full synchronization:
+
+```bash
+sudo install -m 0644 deploy/moodle/moodle-learning-sync.service.example \
+  /etc/systemd/system/moodle-learning-sync.service
+sudo install -m 0644 deploy/moodle/moodle-learning-sync.timer.example \
+  /etc/systemd/system/moodle-learning-sync.timer
+sudo systemctl daemon-reload
+```
+
+Before the first run, preserve the current learning tables:
+
+```bash
+mkdir -p "$HOME/ai_appdir/backups"
+python manage.py dumpdata learning_app --indent 2 \
+  > "$HOME/ai_appdir/backups/learning-before-moodle-sync.json"
+```
+
+Validate one user first, then run the same service command used by the timer:
+
+```bash
+python manage.py sync_moodle_learning --email staff-user@example.com
+sudo systemctl start moodle-learning-sync.service
+sudo systemctl enable --now moodle-learning-sync.timer
+```
+
+The service is `Type=oneshot`; systemd will not run a second instance while the
+first one is active. The timer runs every 15 minutes and catches up once after a
+host outage because `Persistent=true`.
+
+Useful checks:
+
+```bash
+sudo systemctl status moodle-learning-sync.timer
+sudo systemctl status moodle-learning-sync.service
+sudo systemctl list-timers moodle-learning-sync.timer
+sudo journalctl -u moodle-learning-sync.service -n 100 --no-pager
+```
+
+Course assignments are authoritative even when Moodle has no completion
+criteria. In that case the assignment is saved, the completion result is left
+unchanged or absent, and the run reports `results_skipped` with a warning in the
+service journal.
 
 ## Backup And Migration Checklist
 
