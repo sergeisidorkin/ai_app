@@ -5750,6 +5750,21 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   min-width: 100%;
 }
 
+#proposals-pane .proposal-commercial-sync-pending .proposal-commercial-editor {
+  cursor: wait;
+}
+
+#proposals-pane .proposal-commercial-sync-pending .proposal-commercial-editor .form-control,
+#proposals-pane .proposal-commercial-sync-pending .proposal-commercial-editor .form-select {
+  background-color: #f8f9fa !important;
+  color: #6c757d !important;
+  opacity: 1;
+}
+
+#proposals-pane .proposal-commercial-sync-pending .proposal-commercial-editor button {
+  opacity: .65;
+}
+
 #proposals-pane .proposal-commercial-table th[rowspan="2"] {
   vertical-align: bottom;
   padding-bottom: var(--bs-table-cell-padding-y, .5rem);
@@ -5896,6 +5911,15 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   min-width: 0;
   max-width: none;
   text-align: right;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table input.proposal-commercial-cell-selected,
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table input.proposal-commercial-cell-selected:focus {
+  position: relative;
+  z-index: 3;
+  border-color: #86b7fe !important;
+  outline: 0;
+  box-shadow: 0 0 0 .25rem rgba(13, 110, 253, .25) !important;
 }
 
 #proposals-pane .proposal-commercial-table .proposal-commercial-day-count,
@@ -6268,6 +6292,155 @@ html.worktime-progress-cursor * {
   background-color: #f8f9fa !important;
   border-color: #ced4da !important;
   opacity: 1 !important;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody tr > td {
+  transition: background-color .12s ease, color .12s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover > td {
+    background-color: #f6f8fa;
+    color: #747d86;
+  }
+
+  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .form-control:not(.readonly-field),
+  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .form-select:not(.readonly-field) {
+    background-color: #fafbfc;
+    color: #747d86;
+  }
+
+  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .readonly-field {
+    background-color: #eef0f2 !important;
+    color: #606870 !important;
+  }
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody td.proposal-asset-check-cell {
+  position: relative;
+  overflow: visible;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody > tr.proposal-commercial-data-row > td {
+  transition: background-color .12s ease, color .12s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover > td {
+    background-color: #f6f8fa;
+    color: #212529;
+  }
+
+  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .form-control:not(.readonly-field),
+  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .form-select:not(.readonly-field) {
+    background-color: #fafbfc;
+    color: #212529;
+  }
+
+  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .readonly-field {
+    background-color: #eef0f2 !important;
+    color: #495057 !important;
+  }
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody td.proposal-asset-check-cell {
+  position: relative;
+  overflow: visible;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert {
+  position: absolute;
+  left: 50%;
+  z-index: 4;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #6c757d;
+  cursor: pointer;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert::before {
+  content: "";
+  position: absolute;
+  left: var(--proposal-service-row-insert-mask-left, 0);
+  top: 50%;
+  z-index: 0;
+  width: var(--proposal-service-row-insert-mask-width, calc(50% - .5625rem));
+  height: 3px;
+  background-color: #fff;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert::after {
+  content: "";
+  position: absolute;
+  left: var(--proposal-service-row-insert-line-left, calc(50% + .5625rem));
+  top: 50%;
+  z-index: 0;
+  width: var(--proposal-service-row-insert-line-width, 0);
+  height: 1px;
+  background-color: rgba(108, 117, 125, .38);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) tr.proposal-service-insert-before .proposal-row-insert {
+  top: 0;
+  transform: translate(-50%, -50%);
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) tr.proposal-service-insert-after .proposal-row-insert {
+  bottom: 0;
+  transform: translate(-50%, 50%);
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert > svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  width: 1.125rem;
+  height: 1.125rem;
+  overflow: visible;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-row-insert-shape {
+  fill: #fdfdfe;
+  stroke: #9ea7b0;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-row-insert-plus {
+  fill: none;
+  stroke: #6c757d;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert:hover .proposal-service-row-insert-shape,
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert:focus-visible .proposal-service-row-insert-shape {
+  fill: #f8f9fa;
+  stroke: #6c757d;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert:hover .proposal-service-row-insert-plus,
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert:focus-visible .proposal-service-row-insert-plus {
+  stroke: #343a40;
+}
+
+:is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert:focus-visible {
+  outline: 2px solid rgba(108, 117, 125, .22);
+  outline-offset: -3px;
+  border-radius: 1rem;
 }
 
 #proposals-pane #proposal-assets-table .proposal-asset-short-cell,
@@ -7084,6 +7257,27 @@ html.worktime-progress-cursor * {
   margin-top: var(--bs-gutter-y, 1rem);
   padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
   padding-right: calc(var(--bs-gutter-x, 1.5rem) * .5);
+}
+
+#proposals-pane :is(.proposal-service-sections-actions, .proposal-commercial-actions) {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  padding-top: .75rem;
+  padding-bottom: .75rem;
+  background: linear-gradient(to top, #fff 78%, rgba(255, 255, 255, .96) 100%);
+}
+
+#proposals-pane :is(.proposal-service-sections-actions, .proposal-commercial-actions).is-stuck {
+  box-shadow: 0 -1px 0 rgba(222, 226, 230, .9);
+}
+
+#proposals-pane .proposal-sticky-actions-marker {
+  display: block;
+  height: 1px;
+  margin-top: -1px;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 #proposals-pane .proposal-stage-commercial-block {

@@ -261,6 +261,7 @@ class MoodleLearningSyncTests(TestCase):
                 "shortname": "DB",
                 "fullname": "Database basics",
                 "visible": True,
+                "progress": 50,
             }
         ]
         client.get_users_by_id.return_value = [
@@ -270,11 +271,13 @@ class MoodleLearningSyncTests(TestCase):
                 "email": self.user.email,
             }
         ]
-        client.get_activities_completion_status.return_value = {"statuses": []}
+        client.get_activities_completion_status.return_value = {
+            "statuses": [{"state": 1}, {"state": 0}]
+        }
         return client
 
     @patch("learning_app.sync.ensure_moodle_account")
-    def test_saves_enrollment_when_completion_api_is_unavailable(self, mocked_ensure):
+    def test_saves_activity_progress_when_course_completion_api_is_unavailable(self, mocked_ensure):
         mocked_ensure.return_value = self.link
         client = self._client()
         client.get_course_completion_status.side_effect = MoodleApiError(
@@ -285,8 +288,29 @@ class MoodleLearningSyncTests(TestCase):
 
         course = LearningCourse.objects.get(moodle_course_id=3)
         self.assertTrue(LearningEnrollment.objects.filter(user=self.user, course=course).exists())
-        self.assertFalse(LearningCourseResult.objects.filter(user=self.user, course=course).exists())
+        result = LearningCourseResult.objects.get(user=self.user, course=course)
+        self.assertEqual(result.status, LearningCourseResult.Status.IN_PROGRESS)
+        self.assertEqual(result.progress_percent, 50)
         self.assertEqual(stats["enrollments_upserted"], 1)
+        self.assertEqual(stats["results_upserted"], 1)
+        self.assertEqual(stats["results_skipped"], 0)
+
+    @patch("learning_app.sync.ensure_moodle_account")
+    def test_keeps_enrollment_when_all_completion_apis_are_unavailable(self, mocked_ensure):
+        mocked_ensure.return_value = self.link
+        client = self._client()
+        client.get_course_completion_status.side_effect = MoodleApiError(
+            "Course does not have completion criteria."
+        )
+        client.get_activities_completion_status.side_effect = MoodleApiError(
+            "Activity completion is unavailable."
+        )
+
+        stats = sync_user_learning(self.user, client=client)
+
+        course = LearningCourse.objects.get(moodle_course_id=3)
+        self.assertTrue(LearningEnrollment.objects.filter(user=self.user, course=course).exists())
+        self.assertFalse(LearningCourseResult.objects.filter(user=self.user, course=course).exists())
         self.assertEqual(stats["results_upserted"], 0)
         self.assertEqual(stats["results_skipped"], 1)
 
@@ -302,7 +326,7 @@ class MoodleLearningSyncTests(TestCase):
         self.assertFalse(LearningEnrollment.objects.filter(user=self.user).exists())
 
     @patch("learning_app.sync.ensure_moodle_account")
-    def test_sync_run_records_skipped_completion_results(self, mocked_ensure):
+    def test_sync_run_records_activity_result_without_course_completion(self, mocked_ensure):
         mocked_ensure.return_value = self.link
         client = self._client()
         client.get_course_completion_status.side_effect = MoodleApiError(
@@ -321,5 +345,7 @@ class MoodleLearningSyncTests(TestCase):
 
         run.refresh_from_db()
         self.assertEqual(run.status, LearningSyncRun.Status.SUCCESS)
-        self.assertEqual(stats["results_skipped"], 1)
-        self.assertEqual(run.stats["results_skipped"], 1)
+        self.assertEqual(stats["results_upserted"], 1)
+        self.assertEqual(stats["results_skipped"], 0)
+        self.assertEqual(run.stats["results_upserted"], 1)
+        self.assertEqual(run.stats["results_skipped"], 0)

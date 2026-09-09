@@ -10,6 +10,7 @@ sys.modules.setdefault("ai_app.proposals_app.urls", sys.modules[__name__])
 
 urlpatterns = [
     path("proposals/partial/", views.proposals_partial, name="proposals_partial"),
+    path("proposals/commercial/xlsx/", views.proposal_commercial_xlsx_export, name="proposal_commercial_xlsx_export"),
     path("proposals/cbr-eur-rate/", views.proposal_cbr_eur_rate, name="proposal_cbr_eur_rate"),
     path("proposals/products/<int:product_id>/autofill/", views.proposal_product_autofill, name="proposal_product_autofill"),
     path("proposals/row-order/", views.proposal_row_order, name="proposal_row_order"),

@@ -23,9 +23,14 @@
       </table>
     </div>
     {% if not is_summary %}
-      <div class="d-flex align-items-stretch gap-2 mt-3">
+      <div class="d-flex align-items-stretch gap-2 mt-3 proposal-commercial-actions">
         <button type="button" id="proposal-commercial-add-btn" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center">
           <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <button type="button"
+                class="btn btn-sm proposal-asset-add-btn d-none align-items-center"
+                data-proposal-commercial-xlsx="1">
+          <i class="bi bi-arrow-down-circle me-2"></i>Скачать XLSX
         </button>
         <div id="proposal-commercial-row-actions" class="d-none">
           <div class="btn-group">

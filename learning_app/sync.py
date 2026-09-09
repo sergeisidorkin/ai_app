@@ -206,12 +206,28 @@ def _upsert_course(course_payload: dict[str, Any], *, now, client: MoodleApiClie
 
 
 def _sync_course_result(*, user, course, moodle_user_id: int, course_payload, client, now) -> None:
-    completion_payload = client.get_course_completion_status(course.moodle_course_id, moodle_user_id)
+    try:
+        completion_payload = client.get_course_completion_status(course.moodle_course_id, moodle_user_id)
+    except MoodleApiError as exc:
+        completion_payload = {}
+        logger.warning(
+            "Moodle course completion status is unavailable for Django user %s "
+            "and Moodle course %s; using enrollment and activity progress: %s",
+            user.pk,
+            course.moodle_course_id,
+            exc,
+        )
+
     activities_payload = client.get_activities_completion_status(course.moodle_course_id, moodle_user_id)
 
-    progress_percent = _calculate_progress_percent(activities_payload)
+    course_progress = _extract_course_progress(course_payload)
+    progress_percent = (
+        course_progress
+        if course_progress is not None
+        else _calculate_progress_percent(activities_payload)
+    )
     status, completed_at = _derive_status_and_completion(
-        completion_payload=completion_payload,
+        completion_payload=completion_payload or course_payload,
         activities_payload=activities_payload,
         progress_percent=progress_percent,
     )
@@ -250,6 +266,16 @@ def _calculate_progress_percent(activities_payload: dict[str, Any]) -> int:
             completed += 1
 
     return int(round((completed / max(len(activities), 1)) * 100))
+
+
+def _extract_course_progress(course_payload: dict[str, Any]) -> int | None:
+    value = course_payload.get("progress")
+    if value in (None, ""):
+        return None
+    try:
+        return max(0, min(100, int(round(float(value)))))
+    except (TypeError, ValueError):
+        return None
 
 
 def _derive_status_and_completion(*, completion_payload, activities_payload, progress_percent):

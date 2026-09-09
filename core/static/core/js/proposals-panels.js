@@ -2909,62 +2909,55 @@
     return syncOptionsSelect(select, getProposalLegalEntityShortNameOptions(form), selectedValue);
   }
 
+  const proposalJsonMapCache = new WeakMap();
+
+  function parseProposalJsonMapScript(script) {
+    if (!script) return {};
+    const source = script.textContent || '{}';
+    const cached = proposalJsonMapCache.get(script);
+    if (cached && cached.source === source) return cached.value;
+    let value = {};
+    try {
+      value = JSON.parse(source) || {};
+    } catch (error) {
+      value = {};
+    }
+    proposalJsonMapCache.set(script, { source: source, value: value });
+    return value;
+  }
+
   function getProposalTypicalSectionsMap(form) {
     const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-typical-sections-data');
-    if (!script) return {};
-    try {
-      return JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      return {};
-    }
+    return parseProposalJsonMapScript(script);
   }
 
   function getProposalServiceGoalReportsMap(form) {
     const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-service-goal-reports-data');
-    if (!script) return {};
-    try {
-      return JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      return {};
-    }
+    return parseProposalJsonMapScript(script);
   }
 
   function getProposalTypicalServiceCompositionsMap(form) {
     const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-typical-service-compositions-data');
-    if (!script) return {};
-    try {
-      return JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      return {};
-    }
+    return parseProposalJsonMapScript(script);
   }
 
   function getProposalTypicalServiceTermsMap(form) {
     const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-typical-service-terms-data');
-    if (!script) return {};
-    try {
-      return JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      return {};
-    }
+    return parseProposalJsonMapScript(script);
   }
 
   function setProposalJsonMapEntry(form, scriptId, productId, value) {
     const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#' + scriptId);
     if (!script || !productId) return;
-    let data = {};
-    try {
-      data = JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      data = {};
-    }
+    const data = { ...parseProposalJsonMapScript(script) };
     data[String(productId)] = value;
     script.textContent = JSON.stringify(data);
+    proposalJsonMapCache.set(script, { source: script.textContent, value: data });
   }
 
   function getProposalProductAutofillUrl(form, productId) {
@@ -4525,6 +4518,8 @@
       const specialistStatus = getProposalCommercialSpecialistStatus(scope, serviceName, specialist, code);
       const currentRate = String(row?.rate_eur_per_day || '').trim();
       const autofillRate = getProposalCommercialRateValue(scope, serviceName, specialist, code);
+      const preserveExplicitRate = options?.preserveExplicitRate === true
+        && Object.prototype.hasOwnProperty.call(row || {}, 'rate_eur_per_day');
       const currentDayCounts = Array.isArray(row?.asset_day_counts)
         ? row.asset_day_counts.map(function (value) { return String(value ?? '').trim(); })
         : [];
@@ -4541,7 +4536,9 @@
         service_name: serviceName,
         code: getProposalTypicalSectionCode(scope, serviceName, code) || code,
         merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
-        rate_eur_per_day: forceAutofill ? (autofillRate || currentRate) : (currentRate || autofillRate),
+        rate_eur_per_day: forceAutofill
+          ? (autofillRate || currentRate)
+          : (preserveExplicitRate ? currentRate : (currentRate || autofillRate)),
         asset_day_counts: forceAutofill
           ? autofillDayCounts
           : (currentDayCounts.length ? currentDayCounts : autofillDayCounts),
@@ -4645,12 +4642,46 @@
       return true;
     }
 
-    function serviceRowIdentityKey(row) {
-      return [
-        String(row?.code || '').trim(),
-        String(row?.service_name || '').trim(),
-        normalizeProposalMergeWithoutCode(row?.merge_without_code) ? '1' : '0',
-      ].join('\u0000');
+    function serviceRowPermutation(meta, currentRows, nextRows) {
+      const permutation = meta?.rowPermutation;
+      if (!Array.isArray(permutation) || permutation.length !== nextRows.length || currentRows.length !== nextRows.length) {
+        return null;
+      }
+      const seen = new Set();
+      for (let index = 0; index < permutation.length; index += 1) {
+        const sourceIndex = permutation[index];
+        if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= currentRows.length || seen.has(sourceIndex)) {
+          return null;
+        }
+        seen.add(sourceIndex);
+      }
+      return permutation;
+    }
+
+    function serviceRowInsertionSources(meta, currentRows, nextRows) {
+      const sourceIndexes = meta?.rowSourceIndexes;
+      if (
+        meta?.reason !== 'row-add'
+        || !Array.isArray(sourceIndexes)
+        || sourceIndexes.length !== nextRows.length
+        || nextRows.length !== currentRows.length + 1
+      ) {
+        return null;
+      }
+      const seen = new Set();
+      let insertedCount = 0;
+      for (let index = 0; index < sourceIndexes.length; index += 1) {
+        const sourceIndex = sourceIndexes[index];
+        if (sourceIndex === -1) {
+          insertedCount += 1;
+          continue;
+        }
+        if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= currentRows.length || seen.has(sourceIndex)) {
+          return null;
+        }
+        seen.add(sourceIndex);
+      }
+      return insertedCount === 1 && seen.size === currentRows.length ? sourceIndexes : null;
     }
 
     function syncHiddenInputs() {
@@ -4709,11 +4740,14 @@
       commitCommercialRows: function (nextRows, meta) {
         const previousServiceRows = serializeServiceRows();
         const currentSystemRows = rows.filter(isProposalSystemDscRow);
+        const preserveExplicitRate = meta?.preserveExplicitRate === true;
         rows = [
           ...currentSystemRows,
           ...(Array.isArray(nextRows) ? nextRows : [])
             .filter(function (row) { return !isProposalSystemDscRow(row); })
-            .map(normalizeRow),
+            .map(function (row) {
+              return normalizeRow(row, { preserveExplicitRate: preserveExplicitRate });
+            }),
         ];
         if (!rows.some(isProposalTravelExpensesRow)) {
           rows.push(normalizeProposalTravelExpensesRow({}));
@@ -4728,33 +4762,41 @@
         const currentTravelRow = currentRows.find(isProposalTravelExpensesRow) || normalizeProposalTravelExpensesRow({});
         const forceAutofill = meta?.forceAutofill === true;
         const isRowMove = meta?.reason === 'row-move';
-        const currentRowsByService = new Map();
-        if (isRowMove) {
-          currentRows.filter(function (row) {
-            return !isProposalTravelExpensesRow(row);
-          }).forEach(function (row) {
-            const key = serviceRowIdentityKey(row);
-            const bucket = currentRowsByService.get(key) || [];
-            bucket.push(row);
-            currentRowsByService.set(key, bucket);
+        const currentServiceRows = currentRows.filter(function (row) {
+          return !isProposalTravelExpensesRow(row);
+        });
+        const nextServiceRows = ensureSystemDscServiceRows(nextRows);
+        const rowPermutation = isRowMove
+          ? serviceRowPermutation(meta, currentServiceRows, nextServiceRows)
+          : null;
+        const rowInsertionSources = serviceRowInsertionSources(meta, currentServiceRows, nextServiceRows);
+        if (rowPermutation) {
+          rows = rowPermutation.map(function (sourceIndex) {
+            return currentServiceRows[sourceIndex];
+          });
+        } else if (rowInsertionSources) {
+          rows = rowInsertionSources.map(function (sourceIndex, index) {
+            return sourceIndex === -1
+              ? normalizeRow(nextServiceRows[index], { forceAutofill: true })
+              : currentServiceRows[sourceIndex];
+          });
+        } else {
+          rows = nextServiceRows.map(function (row, index) {
+            const currentRow = currentServiceRows[index] || {};
+            const nextServiceName = String(row?.service_name || '').trim();
+            const currentServiceName = String(currentRow?.service_name || '').trim();
+            const nextCode = String(row?.code || '').trim();
+            const currentCode = String(currentRow?.code || '').trim();
+            return normalizeRow({
+              ...currentRow,
+              service_name: nextServiceName,
+              code: nextCode,
+              merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
+            }, {
+              forceAutofill: forceAutofill || nextServiceName !== currentServiceName || nextCode !== currentCode,
+            });
           });
         }
-        rows = ensureSystemDscServiceRows(nextRows).map(function (row, index) {
-          const matchingRows = isRowMove ? currentRowsByService.get(serviceRowIdentityKey(row)) : null;
-          const currentRow = matchingRows?.shift() || currentRows[index] || {};
-          const nextServiceName = String(row?.service_name || '').trim();
-          const currentServiceName = String(currentRow?.service_name || '').trim();
-          const nextCode = String(row?.code || '').trim();
-          const currentCode = String(currentRow?.code || '').trim();
-          return normalizeRow({
-            ...currentRow,
-            service_name: nextServiceName,
-            code: nextCode,
-            merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
-          }, {
-            forceAutofill: forceAutofill || nextServiceName !== currentServiceName || nextCode !== currentCode,
-          });
-        });
         rows.push(normalizeProposalTravelExpensesRow(currentTravelRow));
         syncHiddenInputs();
         if (meta?.deferLinkedRender !== true) {
@@ -4804,6 +4846,84 @@
     return api;
   }
 
+  function createProposalRowInsertButton(title) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'proposal-row-insert';
+    button.title = title || 'Добавить строку в этом месте';
+    button.setAttribute('aria-label', button.title);
+    button.innerHTML = [
+      '<svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">',
+      '<circle class="proposal-service-row-insert-shape" cx="9" cy="9" r="8"></circle>',
+      '<path class="proposal-service-row-insert-plus" d="M9 5.5V12.5M5.5 9H12.5"></path>',
+      '</svg>',
+    ].join('');
+    return button;
+  }
+
+  function syncProposalRowInsertGeometry(button, row, checkCell) {
+    const iconRect = button?.querySelector('svg')?.getBoundingClientRect();
+    const buttonRect = button?.getBoundingClientRect();
+    const checkCellRect = checkCell?.getBoundingClientRect();
+    const rowRect = row?.getBoundingClientRect();
+    if (!iconRect || !buttonRect || !checkCellRect || !rowRect) return;
+    button.style.setProperty(
+      '--proposal-service-row-insert-mask-left',
+      Math.max(0, checkCellRect.left - buttonRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-mask-width',
+      Math.max(0, iconRect.left - checkCellRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-line-left',
+      Math.max(0, iconRect.right - buttonRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-line-width',
+      Math.max(0, rowRect.right - iconRect.right) + 'px'
+    );
+  }
+
+  function moveSelectedProposalRowBlocks(tbody, rows, direction, isSelected, canCross) {
+    const selected = rows.map(function (row) {
+      return !!isSelected(row);
+    });
+    let moved = false;
+
+    if (direction === 'up') {
+      for (let index = 1; index < rows.length; index += 1) {
+        if (!selected[index] || selected[index - 1]) continue;
+        let blockEnd = index;
+        while (blockEnd + 1 < rows.length && selected[blockEnd + 1]) {
+          blockEnd += 1;
+        }
+        const crossingRow = rows[index - 1];
+        if (!canCross || canCross(crossingRow, direction)) {
+          tbody.insertBefore(crossingRow, rows[blockEnd].nextElementSibling);
+          moved = true;
+        }
+        index = blockEnd;
+      }
+      return moved;
+    }
+
+    for (let index = rows.length - 2; index >= 0; index -= 1) {
+      if (!selected[index] || selected[index + 1]) continue;
+      let blockStart = index;
+      while (blockStart - 1 >= 0 && selected[blockStart - 1]) {
+        blockStart -= 1;
+      }
+      const crossingRow = rows[index + 1];
+      if (!canCross || canCross(crossingRow, direction)) {
+        tbody.insertBefore(crossingRow, rows[blockStart]);
+        moved = true;
+      }
+      index = blockStart;
+    }
+    return moved;
+  }
+
   function attachProposalCommercialTable(root, assetsApi) {
     if (!root) return null;
     const scope = getProposalScope(root);
@@ -4828,6 +4948,176 @@
     ) return null;
     if (scope.dataset.commercialBound === '1') return scope.__proposalCommercialTableApi || null;
     scope.dataset.commercialBound = '1';
+    if (!isSummaryCommercialBlock) {
+      attachProposalActionsStickyState(scope, '.proposal-commercial-actions');
+    }
+    const rowInsertButton = isSummaryCommercialBlock ? null : createProposalRowInsertButton();
+    let rowInsertTarget = null;
+    let rowInsertPosition = '';
+    const selectedCommercialCells = new Set();
+    let commercialCellSelectionAnchor = null;
+    let commercialCellDragAnchor = null;
+    let commercialCellDragBase = new Set();
+    let commercialCellDragAdditive = false;
+    let commercialSpinnerPointerInput = null;
+    let bulkCommercialRateSourceInput = null;
+    let syncingCommercialCellValues = false;
+
+    function isSelectableCommercialCell(input) {
+      if (isSummaryCommercialBlock || !(input instanceof HTMLInputElement)) return false;
+      if (input.disabled || input.readOnly) return false;
+      const row = input.closest('tr.proposal-commercial-data-row');
+      if (!row || row.parentElement !== tbody) return false;
+      return input.classList.contains('proposal-commercial-rate')
+        || input.classList.contains('proposal-commercial-day-count');
+    }
+
+    function getSelectableCommercialCell(target) {
+      const input = target instanceof Element
+        ? target.closest('input.proposal-commercial-rate, input.proposal-commercial-day-count')
+        : null;
+      return isSelectableCommercialCell(input) ? input : null;
+    }
+
+    function pruneCommercialCellSelection() {
+      Array.from(selectedCommercialCells).forEach(function (input) {
+        if (!input.isConnected || !isSelectableCommercialCell(input)) {
+          input.classList.remove('proposal-commercial-cell-selected');
+          input.removeAttribute('aria-selected');
+          selectedCommercialCells.delete(input);
+        }
+      });
+      if (!isSelectableCommercialCell(commercialCellSelectionAnchor)) {
+        commercialCellSelectionAnchor = null;
+      }
+    }
+
+    function setCommercialCellSelection(inputs, anchor) {
+      const nextSelection = new Set(
+        Array.from(inputs || []).filter(isSelectableCommercialCell)
+      );
+      selectedCommercialCells.forEach(function (input) {
+        if (nextSelection.has(input)) return;
+        input.classList.remove('proposal-commercial-cell-selected');
+        input.removeAttribute('aria-selected');
+      });
+      nextSelection.forEach(function (input) {
+        input.classList.add('proposal-commercial-cell-selected');
+        input.setAttribute('aria-selected', 'true');
+      });
+      selectedCommercialCells.clear();
+      nextSelection.forEach(function (input) {
+        selectedCommercialCells.add(input);
+      });
+      if (isSelectableCommercialCell(anchor)) {
+        commercialCellSelectionAnchor = anchor;
+      } else if (!selectedCommercialCells.has(commercialCellSelectionAnchor)) {
+        commercialCellSelectionAnchor = selectedCommercialCells.values().next().value || null;
+      }
+    }
+
+    function clearCommercialCellSelection() {
+      setCommercialCellSelection([], null);
+      commercialCellSelectionAnchor = null;
+      commercialCellDragAnchor = null;
+      commercialCellDragBase = new Set();
+      commercialCellDragAdditive = false;
+    }
+
+    function getSelectableCommercialGrid() {
+      return getEditableRows().map(function (row) {
+        return [
+          row.querySelector('.proposal-commercial-rate'),
+          ...getDayInputs(row),
+        ].filter(isSelectableCommercialCell);
+      });
+    }
+
+    function getCommercialCellRange(startInput, endInput) {
+      const grid = getSelectableCommercialGrid();
+      let startRow = -1;
+      let startColumn = -1;
+      let endRow = -1;
+      let endColumn = -1;
+      grid.forEach(function (rowInputs, rowIndex) {
+        const startIndex = rowInputs.indexOf(startInput);
+        const endIndex = rowInputs.indexOf(endInput);
+        if (startIndex !== -1) {
+          startRow = rowIndex;
+          startColumn = startIndex;
+        }
+        if (endIndex !== -1) {
+          endRow = rowIndex;
+          endColumn = endIndex;
+        }
+      });
+      if (startRow === -1 || endRow === -1) return [];
+      const firstRow = Math.min(startRow, endRow);
+      const lastRow = Math.max(startRow, endRow);
+      const firstColumn = Math.min(startColumn, endColumn);
+      const lastColumn = Math.max(startColumn, endColumn);
+      const range = [];
+      for (let rowIndex = firstRow; rowIndex <= lastRow; rowIndex += 1) {
+        for (let columnIndex = firstColumn; columnIndex <= lastColumn; columnIndex += 1) {
+          const input = grid[rowIndex]?.[columnIndex];
+          if (input) range.push(input);
+        }
+      }
+      return range;
+    }
+
+    function focusCommercialCell(input) {
+      if (!isSelectableCommercialCell(input)) return;
+      input.focus({ preventScroll: true });
+      input.select();
+    }
+
+    function normalizeBulkCommercialCellValue(input, value, sourceInput) {
+      const text = String(value ?? '');
+      if (
+        text
+        && input !== sourceInput
+        && input.classList.contains('proposal-commercial-rate')
+      ) {
+        return formatMoneyWithPrecision(text, 2);
+      }
+      if (input.type !== 'number') return text;
+      return text.replace(/[\s\u00a0]/g, '').replace(',', '.');
+    }
+
+    function applyBulkCommercialCellValue(value, sourceInput, commit) {
+      pruneCommercialCellSelection();
+      if (selectedCommercialCells.size < 2) return;
+      syncingCommercialCellValues = true;
+      selectedCommercialCells.forEach(function (input) {
+        if (input === sourceInput && input.value === String(value ?? '')) return;
+        const nextValue = normalizeBulkCommercialCellValue(input, value, sourceInput);
+        if (input.value === nextValue) return;
+        input.value = nextValue;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      syncingCommercialCellValues = false;
+      const bulkEditMeta = {
+        reason: 'commercial-bulk-cell-edit',
+        preserveExplicitRate: true,
+      };
+      if (commit) {
+        flushScheduledUpdatePayload(bulkEditMeta);
+      } else {
+        scheduleUpdatePayload(bulkEditMeta);
+      }
+    }
+
+    function isNumericCommercialCellValue(value) {
+      const compactValue = String(value ?? '').replace(/[\s\u00a0]/g, '');
+      return compactValue === '' || /^\d*(?:[.,]\d*)?$/.test(compactValue);
+    }
+
+    function announceCommercialCellSelection() {
+      formRoot.dispatchEvent(new CustomEvent('proposal-commercial-cell-selection-start', {
+        detail: { scope: scope },
+      }));
+    }
 
     function hasVisibleSummaryCommercialBlock() {
       const summaryBlock = formRoot.querySelector('[data-proposal-commercial-summary="1"]');
@@ -4976,6 +5266,35 @@
       return getEditableRows().filter(function (row) {
         return !!row.querySelector('.proposal-commercial-check:checked');
       });
+    }
+
+    function clearRowInsertMarker() {
+      rowInsertTarget?.classList.remove('proposal-service-insert-before', 'proposal-service-insert-after');
+      tbody.classList.remove('proposal-commercial-insert-active');
+      rowInsertButton?.remove();
+      rowInsertTarget = null;
+      rowInsertPosition = '';
+    }
+
+    function showRowInsertMarker(row, position) {
+      if (!rowInsertButton || !row || isFixedRow(row) || (position !== 'before' && position !== 'after')) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (rowInsertTarget !== row || rowInsertPosition !== position) {
+        clearRowInsertMarker();
+        rowInsertTarget = row;
+        rowInsertPosition = position;
+        row.classList.add(position === 'before'
+          ? 'proposal-service-insert-before'
+          : 'proposal-service-insert-after');
+      }
+      const checkCell = row.querySelector('.proposal-asset-check-cell');
+      if (checkCell && rowInsertButton.parentElement !== checkCell) {
+        checkCell.appendChild(rowInsertButton);
+      }
+      syncProposalRowInsertGeometry(rowInsertButton, row, checkCell);
+      tbody.classList.add('proposal-commercial-insert-active');
     }
 
     function getAssetRows() {
@@ -5962,6 +6281,7 @@
 
     function createRow(data) {
       const row = document.createElement('tr');
+      row.className = 'proposal-commercial-data-row';
       const autofill = getProposalCommercialAutofill(form, data.service_name || '', data.code || '');
       row.dataset.commercialCode = String(data.code || '').trim();
       row.dataset.mergeWithoutCode = normalizeProposalMergeWithoutCode(data.merge_without_code) ? '1' : '0';
@@ -6500,6 +6820,8 @@
     }
 
     function renderRows(dataRows) {
+      clearRowInsertMarker();
+      clearCommercialCellSelection();
       tbody.innerHTML = '';
       const rowsList = Array.isArray(dataRows) ? dataRows : [];
       const regularRows = rowsList.filter(function (item) {
@@ -6550,42 +6872,268 @@
       syncCommercialCodeColumnWidth();
     }
 
+    function applyServiceRowMovePermutation(permutation) {
+      const currentRows = getDataRows();
+      if (!Array.isArray(permutation) || permutation.length !== currentRows.length) return false;
+      const seen = new Set();
+      for (let index = 0; index < permutation.length; index += 1) {
+        const sourceIndex = permutation[index];
+        if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= currentRows.length || seen.has(sourceIndex)) {
+          return false;
+        }
+        seen.add(sourceIndex);
+      }
+      const firstFixedRow = getRows().find(function (row) {
+        return isFixedRow(row);
+      }) || null;
+      permutation.forEach(function (sourceIndex) {
+        tbody.insertBefore(currentRows[sourceIndex], firstFixedRow);
+      });
+      syncSummaryRowValues();
+      syncSummaryWithTravelRowValues();
+      syncCommercialFinancialRows();
+      syncActions();
+      syncCommercialCodeColumnWidth();
+      return true;
+    }
+
     function moveSelected(direction) {
       const rows = getEditableRows();
-      if (direction === 'up') {
-        for (let i = 1; i < rows.length; i += 1) {
-          if (rows[i].querySelector('.proposal-commercial-check:checked') && !rows[i - 1].querySelector('.proposal-commercial-check:checked')) {
-            tbody.insertBefore(rows[i], rows[i - 1]);
-          }
-        }
-      } else {
-        for (let i = rows.length - 2; i >= 0; i -= 1) {
-          if (rows[i].querySelector('.proposal-commercial-check:checked') && !rows[i + 1].querySelector('.proposal-commercial-check:checked')) {
-            tbody.insertBefore(rows[i + 1], rows[i]);
-          }
-        }
-      }
+      const moved = moveSelectedProposalRowBlocks(tbody, rows, direction, function (row) {
+        return !!row.querySelector('.proposal-commercial-check:checked');
+      });
+      if (!moved) return;
       updatePayload({ reason: 'row-move' });
     }
 
     function deleteSelected() {
+      clearRowInsertMarker();
       getSelectedRows().forEach(function (row) {
         row.remove();
       });
       updatePayload({ reason: 'row-delete' });
     }
 
+    function addRowAt(referenceRow, position) {
+      const row = createRow({});
+      if (referenceRow && referenceRow.parentElement === tbody && !isFixedRow(referenceRow)) {
+        const anchor = position === 'before' ? referenceRow : referenceRow.nextElementSibling;
+        tbody.insertBefore(row, anchor);
+      } else {
+        const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
+        tbody.insertBefore(row, firstFixedRow || null);
+      }
+      clearRowInsertMarker();
+      updatePayload({ reason: 'row-add', rowIndex: getEditableRows().indexOf(row) });
+      row.querySelector('.proposal-commercial-specialist')?.focus();
+    }
+
     if (!isSummaryCommercialBlock && addBtn) {
       addBtn.addEventListener('click', function () {
-        const row = createRow({});
-        const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
-        if (firstFixedRow) {
-          tbody.insertBefore(row, firstFixedRow);
-        } else {
-          tbody.appendChild(row);
+        addRowAt(null, 'after');
+      });
+
+      tbody.addEventListener('pointermove', function (event) {
+        if (event.pointerType === 'touch') {
+          clearRowInsertMarker();
+          return;
         }
-        updatePayload({ reason: 'row-add', rowIndex: getEditableRows().length - 1 });
-        row.querySelector('.proposal-commercial-specialist')?.focus();
+        if (event.target.closest('.proposal-row-insert')) return;
+        if (rowInsertTarget && rowInsertButton?.isConnected) {
+          const activeRateCell = rowInsertTarget.querySelector('.proposal-commercial-rate-cell');
+          if (!activeRateCell || event.clientX >= activeRateCell.getBoundingClientRect().left) {
+            clearRowInsertMarker();
+            return;
+          }
+          const activeRect = rowInsertTarget.getBoundingClientRect();
+          const activeBoundaryY = rowInsertPosition === 'before' ? activeRect.top : activeRect.bottom;
+          if (Math.abs(event.clientY - activeBoundaryY) <= 14) return;
+        }
+        const row = event.target.closest('tr');
+        if (!row || row.parentElement !== tbody || isFixedRow(row)) {
+          clearRowInsertMarker();
+          return;
+        }
+        const rateCell = row.querySelector('.proposal-commercial-rate-cell');
+        if (!rateCell || event.clientX >= rateCell.getBoundingClientRect().left) {
+          clearRowInsertMarker();
+          return;
+        }
+        const rect = row.getBoundingClientRect();
+        const distanceFromTop = event.clientY - rect.top;
+        const distanceFromBottom = rect.bottom - event.clientY;
+        const boundaryHoverSize = 10;
+        if (Math.min(distanceFromTop, distanceFromBottom) > boundaryHoverSize) {
+          clearRowInsertMarker();
+          return;
+        }
+        showRowInsertMarker(row, distanceFromTop <= distanceFromBottom ? 'before' : 'after');
+      });
+
+      tbody.addEventListener('pointerleave', function () {
+        clearRowInsertMarker();
+      });
+
+      rowInsertButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!rowInsertTarget || !rowInsertPosition) return;
+        addRowAt(rowInsertTarget, rowInsertPosition);
+      });
+    }
+
+    if (!isSummaryCommercialBlock) {
+      formRoot.addEventListener('proposal-commercial-cell-selection-start', function (event) {
+        if (event.detail?.scope !== scope) clearCommercialCellSelection();
+      });
+
+      formRoot.addEventListener('pointerdown', function (event) {
+        if (!scope.contains(event.target) || !getSelectableCommercialCell(event.target)) {
+          clearCommercialCellSelection();
+        }
+      });
+
+      tbody.addEventListener('pointerdown', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (!input || event.button !== 0) return;
+        const inputRect = input.getBoundingClientRect();
+        const isNumberSpinnerClick = (
+          input.type === 'number'
+          && !event.shiftKey
+          && !event.ctrlKey
+          && !event.metaKey
+          && event.clientX >= inputRect.right - 24
+        );
+        if (isNumberSpinnerClick) {
+          commercialSpinnerPointerInput = input;
+          return;
+        }
+        commercialSpinnerPointerInput = null;
+        event.preventDefault();
+        announceCommercialCellSelection();
+        pruneCommercialCellSelection();
+
+        const additive = event.ctrlKey || event.metaKey;
+        const selectionBeforePointerDown = new Set(selectedCommercialCells);
+        if (event.shiftKey && commercialCellSelectionAnchor) {
+          const range = getCommercialCellRange(commercialCellSelectionAnchor, input);
+          setCommercialCellSelection(
+            additive ? new Set([...selectionBeforePointerDown, ...range]) : range,
+            commercialCellSelectionAnchor
+          );
+          commercialCellDragAnchor = null;
+        } else if (additive) {
+          const nextSelection = new Set(selectionBeforePointerDown);
+          if (nextSelection.has(input)) {
+            nextSelection.delete(input);
+          } else {
+            nextSelection.add(input);
+          }
+          setCommercialCellSelection(nextSelection, input);
+          commercialCellDragAnchor = input;
+          commercialCellDragBase = selectionBeforePointerDown;
+          commercialCellDragAdditive = true;
+        } else {
+          setCommercialCellSelection([input], input);
+          commercialCellDragAnchor = input;
+          commercialCellDragBase = new Set();
+          commercialCellDragAdditive = false;
+        }
+        focusCommercialCell(input);
+      });
+
+      tbody.addEventListener('pointermove', function (event) {
+        if (!commercialCellDragAnchor) return;
+        if ((event.buttons & 1) !== 1) {
+          commercialCellDragAnchor = null;
+          return;
+        }
+        const input = getSelectableCommercialCell(event.target);
+        if (!input || input === commercialCellDragAnchor) return;
+        const range = getCommercialCellRange(commercialCellDragAnchor, input);
+        setCommercialCellSelection(
+          commercialCellDragAdditive
+            ? new Set([...commercialCellDragBase, ...range])
+            : range,
+          commercialCellDragAnchor
+        );
+      });
+
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (eventName) {
+        tbody.addEventListener(eventName, function () {
+          commercialCellDragAnchor = null;
+          commercialCellDragBase = new Set();
+          commercialCellDragAdditive = false;
+          if (eventName !== 'pointerup') commercialSpinnerPointerInput = null;
+        });
+      });
+
+      tbody.addEventListener('focusin', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (
+          !input
+          || input === commercialSpinnerPointerInput
+          || selectedCommercialCells.has(input)
+        ) return;
+        announceCommercialCellSelection();
+        setCommercialCellSelection([input], input);
+      });
+
+      tbody.addEventListener('click', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (!input || input !== commercialSpinnerPointerInput) return;
+        commercialSpinnerPointerInput = null;
+        window.setTimeout(function () {
+          if (!input.isConnected) return;
+          announceCommercialCellSelection();
+          setCommercialCellSelection([input], input);
+        }, 0);
+      });
+
+      tbody.addEventListener('keydown', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (!input) return;
+        pruneCommercialCellSelection();
+        if (selectedCommercialCells.size < 2 || !selectedCommercialCells.has(input)) return;
+        if (event.key !== 'Backspace' && event.key !== 'Delete') return;
+        event.preventDefault();
+        bulkCommercialRateSourceInput = null;
+        applyBulkCommercialCellValue('', null, true);
+        focusCommercialCell(input);
+      });
+
+      tbody.addEventListener('input', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (
+          syncingCommercialCellValues
+          || !input
+          || !selectedCommercialCells.has(input)
+          || selectedCommercialCells.size < 2
+          || !isNumericCommercialCellValue(input.value)
+        ) return;
+        if (input.classList.contains('proposal-commercial-rate')) {
+          bulkCommercialRateSourceInput = input;
+        }
+        applyBulkCommercialCellValue(input.value, input, false);
+      });
+
+      tbody.addEventListener('focusout', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (!input || input !== bulkCommercialRateSourceInput) return;
+        bulkCommercialRateSourceInput = null;
+        const formattedValue = input.value
+          ? formatMoneyWithPrecision(input.value, 2)
+          : '';
+        if (input.value !== formattedValue) {
+          input.value = formattedValue;
+          syncingCommercialCellValues = true;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          syncingCommercialCellValues = false;
+        }
+        flushScheduledUpdatePayload({
+          reason: 'commercial-bulk-cell-edit',
+          preserveExplicitRate: true,
+        });
       });
     }
 
@@ -6600,6 +7148,7 @@
     }
 
     formRoot.addEventListener('proposal-assets-changed', function (event) {
+      clearCommercialCellSelection();
       const rows = Array.isArray(event.detail?.rows) ? event.detail.rows : getAssetRows();
       const meta = event.detail?.meta || {};
       renderHeader(rows);
@@ -6638,6 +7187,12 @@
     if (servicesStore) {
       servicesStore.subscribe(function (detail) {
         if (detail?.meta?.source === 'commercial-view') return;
+        if (
+          detail?.meta?.reason === 'row-move'
+          && applyServiceRowMovePermutation(detail.meta.commercialRowPermutation)
+        ) {
+          return;
+        }
         renderRows(detail?.rows || []);
       });
     }
@@ -6658,6 +7213,10 @@
       getSerializedRows: function () {
         return servicesStore ? servicesStore.getCommercialRows() : getRows().map(serializeRow).filter(Boolean);
       },
+      flush: function (meta) {
+        flushScheduledUpdatePayload(meta);
+        return servicesStore ? servicesStore.getCommercialRows() : getRows().map(serializeRow).filter(Boolean);
+      },
       replaceRows: function (rowsData, meta) {
         renderHeader(getAssetRows());
         if (servicesStore) {
@@ -6670,6 +7229,52 @@
     };
     scope.__proposalCommercialTableApi = api;
     return api;
+  }
+
+  function attachProposalActionsStickyState(root, actionBarSelector) {
+    const actionBar = root?.querySelector(actionBarSelector);
+    const editor = actionBar?.closest('.proposal-assets-editor');
+    if (!actionBar || !editor || !root.closest('#proposals-pane')) return;
+    if (actionBar.dataset.stickyStateBound === '1') return;
+    actionBar.dataset.stickyStateBound = '1';
+
+    const marker = document.createElement('span');
+    marker.className = 'proposal-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    actionBar.insertAdjacentElement('afterend', marker);
+
+    let intersectionObserver = null;
+    let resizeObserver = null;
+
+    function syncStickyState() {
+      if (!actionBar.isConnected) {
+        intersectionObserver?.disconnect();
+        resizeObserver?.disconnect();
+        return;
+      }
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const editorRect = editor.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const isStuck = (
+        editorRect.top < viewportHeight
+        && editorRect.bottom > 0
+        && markerRect.top >= viewportHeight
+      );
+      actionBar.classList.toggle('is-stuck', isStuck);
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(syncStickyState, {
+        threshold: [0, 1],
+      });
+      intersectionObserver.observe(editor);
+      intersectionObserver.observe(marker);
+    }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(syncStickyState);
+      resizeObserver.observe(editor);
+    }
+    window.requestAnimationFrame(syncStickyState);
   }
 
   function attachProposalServiceSectionsTable(root) {
@@ -6688,9 +7293,18 @@
     if (!payloadInput || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
     if (scope.dataset.serviceSectionsBound === '1') return scope.__proposalServiceSectionsTableApi || null;
     scope.dataset.serviceSectionsBound = '1';
+    attachProposalActionsStickyState(scope, '.proposal-service-sections-actions');
     const SERVICE_MOVE_SYNC_DELAY_MS = 1200;
+    const owningForm = getProposalOwningForm(scope);
+    const stageKey = getProposalStageKey(scope);
+    const relatedCommercialRoot = owningForm && stageKey
+      ? getProposalStageRootByKind(owningForm, stageKey, 'commercial')
+      : null;
+    const rowInsertButton = createProposalRowInsertButton('Добавить услугу в этом месте');
     let serviceMoveSyncTimerId = null;
     let deferredServiceMoveMeta = null;
+    let rowInsertTarget = null;
+    let rowInsertPosition = '';
 
     function parsePayload() {
       if (servicesStore) return servicesStore.getServiceRows();
@@ -6710,6 +7324,39 @@
       return getRows().filter(function (row) {
         return row.dataset.systemDsc !== '1' && !!row.querySelector('.proposal-service-section-check:checked');
       });
+    }
+
+    function clearRowInsertMarker() {
+      rowInsertTarget?.classList.remove('proposal-service-insert-before', 'proposal-service-insert-after');
+      tbody.classList.remove('proposal-service-insert-active');
+      rowInsertButton.remove();
+      rowInsertTarget = null;
+      rowInsertPosition = '';
+    }
+
+    function showRowInsertMarker(row, position) {
+      if (!row || (position !== 'before' && position !== 'after')) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (row.dataset.systemDsc === '1' && position === 'before') {
+        clearRowInsertMarker();
+        return;
+      }
+      if (rowInsertTarget !== row || rowInsertPosition !== position) {
+        clearRowInsertMarker();
+        rowInsertTarget = row;
+        rowInsertPosition = position;
+        row.classList.add(position === 'before'
+          ? 'proposal-service-insert-before'
+          : 'proposal-service-insert-after');
+      }
+      const checkCell = row.querySelector('.proposal-asset-check-cell');
+      if (checkCell && rowInsertButton.parentElement !== checkCell) {
+        checkCell.appendChild(rowInsertButton);
+      }
+      syncProposalRowInsertGeometry(rowInsertButton, row, checkCell);
+      tbody.classList.add('proposal-service-insert-active');
     }
 
     function syncActions() {
@@ -6743,24 +7390,89 @@
       };
     }
 
+    function setRelatedCommercialEditingLocked(locked) {
+      if (!relatedCommercialRoot) return;
+      if (locked) {
+        if (relatedCommercialRoot.classList.contains('proposal-commercial-sync-pending')) return;
+        relatedCommercialRoot.dataset.serviceMoveHadInert = relatedCommercialRoot.hasAttribute('inert') ? '1' : '0';
+        relatedCommercialRoot.dataset.serviceMoveHadAriaBusy = relatedCommercialRoot.hasAttribute('aria-busy') ? '1' : '0';
+        relatedCommercialRoot.classList.add('proposal-commercial-sync-pending');
+        relatedCommercialRoot.setAttribute('inert', '');
+        relatedCommercialRoot.setAttribute('aria-busy', 'true');
+        return;
+      }
+      if (!relatedCommercialRoot.classList.contains('proposal-commercial-sync-pending')) return;
+      relatedCommercialRoot.classList.remove('proposal-commercial-sync-pending');
+      if (relatedCommercialRoot.dataset.serviceMoveHadInert !== '1') {
+        relatedCommercialRoot.removeAttribute('inert');
+      }
+      if (relatedCommercialRoot.dataset.serviceMoveHadAriaBusy !== '1') {
+        relatedCommercialRoot.removeAttribute('aria-busy');
+      }
+      delete relatedCommercialRoot.dataset.serviceMoveHadInert;
+      delete relatedCommercialRoot.dataset.serviceMoveHadAriaBusy;
+    }
+
     function cancelDeferredServiceMoveSync() {
       if (serviceMoveSyncTimerId !== null) {
         window.clearTimeout(serviceMoveSyncTimerId);
         serviceMoveSyncTimerId = null;
       }
       deferredServiceMoveMeta = null;
+      setRelatedCommercialEditingLocked(false);
     }
 
     function flushDeferredServiceMoveSync() {
-      if (!servicesStore || !deferredServiceMoveMeta) return false;
+      if (!servicesStore || !deferredServiceMoveMeta) {
+        setRelatedCommercialEditingLocked(false);
+        return false;
+      }
       if (serviceMoveSyncTimerId !== null) {
         window.clearTimeout(serviceMoveSyncTimerId);
         serviceMoveSyncTimerId = null;
       }
       const meta = deferredServiceMoveMeta;
       deferredServiceMoveMeta = null;
-      servicesStore.flushDeferredServiceRows(meta);
+      try {
+        servicesStore.flushDeferredServiceRows(meta);
+      } finally {
+        setRelatedCommercialEditingLocked(false);
+      }
       return true;
+    }
+
+    function composeCommercialRowPermutations(previousPermutation, nextPermutation) {
+      if (
+        !Array.isArray(previousPermutation)
+        || !Array.isArray(nextPermutation)
+        || previousPermutation.length !== nextPermutation.length
+      ) {
+        return null;
+      }
+      const length = previousPermutation.length;
+      const seenPrevious = new Set();
+      const seenNext = new Set();
+      for (let index = 0; index < length; index += 1) {
+        const previousIndex = previousPermutation[index];
+        const nextIndex = nextPermutation[index];
+        if (
+          !Number.isInteger(previousIndex)
+          || previousIndex < 0
+          || previousIndex >= length
+          || seenPrevious.has(previousIndex)
+          || !Number.isInteger(nextIndex)
+          || nextIndex < 0
+          || nextIndex >= length
+          || seenNext.has(nextIndex)
+        ) {
+          return null;
+        }
+        seenPrevious.add(previousIndex);
+        seenNext.add(nextIndex);
+      }
+      return nextPermutation.map(function (sourceIndex) {
+        return previousPermutation[sourceIndex];
+      });
     }
 
     function scheduleDeferredServiceMoveSync(meta) {
@@ -6768,7 +7480,14 @@
       if (serviceMoveSyncTimerId !== null) {
         window.clearTimeout(serviceMoveSyncTimerId);
       }
-      deferredServiceMoveMeta = meta;
+      const cumulativeCommercialPermutation = composeCommercialRowPermutations(
+        deferredServiceMoveMeta?.commercialRowPermutation,
+        meta?.commercialRowPermutation
+      );
+      deferredServiceMoveMeta = cumulativeCommercialPermutation
+        ? { ...meta, commercialRowPermutation: cumulativeCommercialPermutation }
+        : meta;
+      setRelatedCommercialEditingLocked(true);
       serviceMoveSyncTimerId = window.setTimeout(function () {
         serviceMoveSyncTimerId = null;
         flushDeferredServiceMoveSync();
@@ -6898,6 +7617,7 @@
     }
 
     function renderRows(rowsData) {
+      clearRowInsertMarker();
       tbody.innerHTML = '';
       rowsData.forEach(function (item) {
         tbody.appendChild(createRow(item));
@@ -6907,39 +7627,100 @@
 
     function moveSelected(direction) {
       const rows = getRows();
-      let moved = false;
-      if (direction === 'up') {
-        for (let i = 1; i < rows.length; i += 1) {
-          if (rows[i].querySelector('.proposal-service-section-check:checked') && !rows[i - 1].querySelector('.proposal-service-section-check:checked')) {
-            if (rows[i - 1].dataset.systemDsc === '1') continue;
-            tbody.insertBefore(rows[i], rows[i - 1]);
-            moved = true;
-          }
-        }
-      } else {
-        for (let i = rows.length - 2; i >= 0; i -= 1) {
-          if (rows[i].querySelector('.proposal-service-section-check:checked') && !rows[i + 1].querySelector('.proposal-service-section-check:checked')) {
-            tbody.insertBefore(rows[i + 1], rows[i]);
-            moved = true;
-          }
-        }
-      }
+      const moved = moveSelectedProposalRowBlocks(tbody, rows, direction, function (row) {
+        return !!row.querySelector('.proposal-service-section-check:checked');
+      }, function (crossingRow) {
+        return crossingRow.dataset.systemDsc !== '1';
+      });
       if (!moved) return;
-      updatePayload({ reason: 'row-move' });
+      const reorderedRows = getRows();
+      const rowPermutation = reorderedRows.map(function (row) {
+        return rows.indexOf(row);
+      });
+      const currentCommercialRows = rows.filter(function (row) {
+        return row.dataset.systemDsc !== '1';
+      });
+      const commercialRowPermutation = reorderedRows.filter(function (row) {
+        return row.dataset.systemDsc !== '1';
+      }).map(function (row) {
+        return currentCommercialRows.indexOf(row);
+      });
+      updatePayload({
+        reason: 'row-move',
+        rowPermutation: rowPermutation,
+        commercialRowPermutation: commercialRowPermutation,
+      });
     }
 
     function deleteSelected() {
+      clearRowInsertMarker();
       getSelectedRows().forEach(function (row) {
         row.remove();
       });
       updatePayload({ reason: 'row-delete' });
     }
 
-    addBtn.addEventListener('click', function () {
+    function addRowAt(referenceRow, position) {
+      const sourceRows = getRows();
       const row = createRow({});
-      tbody.appendChild(row);
-      updatePayload({ reason: 'row-add', rowIndex: getRows().length - 1 });
+      if (referenceRow && referenceRow.parentElement === tbody) {
+        const anchor = position === 'before' ? referenceRow : referenceRow.nextElementSibling;
+        tbody.insertBefore(row, anchor);
+      } else {
+        tbody.appendChild(row);
+      }
+      clearRowInsertMarker();
+      const nextRows = getRows();
+      updatePayload({
+        reason: 'row-add',
+        rowIndex: nextRows.indexOf(row),
+        rowSourceIndexes: nextRows.map(function (nextRow) {
+          return sourceRows.indexOf(nextRow);
+        }),
+      });
       row.querySelector('.proposal-service-section-name')?.focus();
+    }
+
+    addBtn.addEventListener('click', function () {
+      addRowAt(null, 'after');
+    });
+
+    tbody.addEventListener('pointermove', function (event) {
+      if (event.pointerType === 'touch') {
+        clearRowInsertMarker();
+        return;
+      }
+      if (event.target.closest('.proposal-row-insert')) return;
+      if (rowInsertTarget && rowInsertButton.isConnected) {
+        const activeRect = rowInsertTarget.getBoundingClientRect();
+        const activeBoundaryY = rowInsertPosition === 'before' ? activeRect.top : activeRect.bottom;
+        if (Math.abs(event.clientY - activeBoundaryY) <= 14) return;
+      }
+      const row = event.target.closest('tr');
+      if (!row || row.parentElement !== tbody) {
+        clearRowInsertMarker();
+        return;
+      }
+      const rect = row.getBoundingClientRect();
+      const distanceFromTop = event.clientY - rect.top;
+      const distanceFromBottom = rect.bottom - event.clientY;
+      const boundaryHoverSize = 10;
+      if (Math.min(distanceFromTop, distanceFromBottom) > boundaryHoverSize) {
+        clearRowInsertMarker();
+        return;
+      }
+      showRowInsertMarker(row, distanceFromTop <= distanceFromBottom ? 'before' : 'after');
+    });
+
+    tbody.addEventListener('pointerleave', function () {
+      clearRowInsertMarker();
+    });
+
+    rowInsertButton.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!rowInsertTarget || !rowInsertPosition) return;
+      addRowAt(rowInsertTarget, rowInsertPosition);
     });
 
     upBtn.addEventListener('click', function () { moveSelected('up'); });
@@ -6954,7 +7735,6 @@
       syncActions();
     });
 
-    const owningForm = getProposalOwningForm(scope);
     if (owningForm) {
       owningForm.addEventListener('submit', flushDeferredServiceMoveSync, true);
       owningForm.addEventListener('htmx:beforeRequest', flushDeferredServiceMoveSync, true);
@@ -8809,6 +9589,13 @@
             if (delayRow) delayRow.dataset.proposalDelayForStageKey = stageUid;
           }
         });
+        commercialBlocks.forEach(function (block, index) {
+          const exportButton = block.querySelector('[data-proposal-commercial-xlsx="1"]');
+          if (!exportButton) return;
+          const isLastBlock = index === commercialBlocks.length - 1;
+          exportButton.classList.toggle('d-none', !isLastBlock);
+          exportButton.classList.toggle('d-flex', isLastBlock);
+        });
         if (summaryCommercialBlock) {
           summaryCommercialBlock.classList.toggle('d-none', !hasMultipleStages);
           summaryCommercialBlock.dataset.proposalStageKey = 'summary';
@@ -9275,6 +10062,117 @@
         }
         summaryApi.replaceRows(summaryPayload.rows, { reason: 'summary-sync' });
       }
+
+      function buildCommercialXlsxSnapshot() {
+        const commercialBlocks = getCommercialBlocks();
+        commercialBlocks.forEach(function (block) {
+          attachProposalCommercialTable(block, assetsApi)?.flush?.({ reason: 'xlsx-export' });
+        });
+        syncSummaryCommercialBlock();
+
+        const productRows = getProductRows();
+        const assets = getAssetRows().map(function (asset, index) {
+          return String(asset?.short_name || '').trim() || ('Актив ' + (index + 1));
+        });
+        const stages = commercialBlocks.map(function (block, index) {
+          const productId = String(productRows[index]?.querySelector('.proposal-product-select')?.value || '').trim();
+          const product = productById.get(productId) || null;
+          const api = attachProposalCommercialTable(block, assetsApi);
+          api?.flush?.({ reason: 'xlsx-export' });
+          return {
+            label: String(block.querySelector('.proposal-stage-block-title')?.textContent || '').trim()
+              || ('Коммерческое предложение: Этап ' + (index + 1)),
+            product_label: String(product?.short_label || product?.label || '').trim(),
+            rows: api?.getSerializedRows?.() || [],
+            totals: parseCommercialTotalsPayload(block),
+          };
+        });
+
+        let summary = null;
+        const summaryBlock = getSummaryCommercialBlock();
+        if (summaryBlock && productRows.length > 1) {
+          const summaryApi = attachProposalCommercialTable(summaryBlock, assetsApi);
+          summaryApi?.flush?.({ reason: 'xlsx-export' });
+          summary = {
+            label: String(summaryBlock.querySelector('.proposal-stage-block-title')?.textContent || '').trim()
+              || 'Коммерческое предложение: все этапы',
+            rows: summaryApi?.getSerializedRows?.() || [],
+            totals: parseCommercialTotalsPayload(summaryBlock),
+          };
+        }
+
+        const page = form.closest('[data-header-current-label]');
+        return {
+          proposal_label: String(page?.dataset?.headerCurrentLabel || form.querySelector('[name="name"]')?.value || '').trim(),
+          assets: assets,
+          stages: stages,
+          summary: summary,
+        };
+      }
+
+      function commercialXlsxFilename(response) {
+        const disposition = String(response.headers.get('Content-Disposition') || '');
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utf8Match) {
+          try {
+            return decodeURIComponent(utf8Match[1].trim());
+          } catch (error) {
+            return utf8Match[1].trim();
+          }
+        }
+        const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+        return plainMatch ? plainMatch[1].trim() : 'commercial_offer.xlsx';
+      }
+
+      async function downloadCommercialXlsx(button) {
+        const exportUrl = String(form.dataset.commercialXlsxUrl || '').trim();
+        if (!exportUrl || button.disabled) return;
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        try {
+          const response = await fetch(exportUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': form.querySelector('[name="csrfmiddlewaretoken"]')?.value || '',
+            },
+            body: JSON.stringify(buildCommercialXlsxSnapshot()),
+          });
+          if (!response.ok) {
+            const rawError = String(await response.text()).trim();
+            let message = rawError;
+            try {
+              const data = JSON.parse(rawError || '{}');
+              message = String(data?.message || data?.error || '').trim();
+            } catch (error) {
+              message = rawError;
+            }
+            throw new Error(message || 'Не удалось сформировать XLSX.');
+          }
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = objectUrl;
+          link.download = commercialXlsxFilename(response);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 0);
+        } catch (error) {
+          alert(error.message || 'Не удалось сформировать XLSX.');
+        } finally {
+          button.disabled = false;
+          button.removeAttribute('aria-busy');
+        }
+      }
+
+      commercialStagesContainer.addEventListener('click', function (event) {
+        const button = event.target.closest('[data-proposal-commercial-xlsx="1"]');
+        if (!button || !commercialStagesContainer.contains(button)) return;
+        event.preventDefault();
+        downloadCommercialXlsx(button);
+      });
 
       let summaryCommercialSyncQueued = false;
 
