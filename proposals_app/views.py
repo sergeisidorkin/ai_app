@@ -75,6 +75,7 @@ from .document_generation import (
 from .models import ProposalRegistration, ProposalTemplate, ProposalVariable
 from .services import normalize_proposal_delivery_channels, send_proposal_dispatch_emails
 from .variable_resolver import resolve_variables
+from .xlsx_export import build_commercial_xlsx
 
 PROPOSALS_PARTIAL_TEMPLATE = "proposals_app/proposals_partial.html"
 PROPOSAL_FORM_TEMPLATE = "proposals_app/proposal_form_page.html"
@@ -273,11 +274,23 @@ def _resolve_target_path_via_user_share_lookup(
         share_lookup_cache = {}
     while current_path and current_path != "/":
         if current_path not in share_lookup_cache:
-            share_lookup_cache[current_path] = client.get_user_share(
-                owner_user_id,
-                current_path,
-                share_with_user_id,
-            )
+            try:
+                share_lookup_cache[current_path] = client.get_user_share(
+                    owner_user_id,
+                    current_path,
+                    share_with_user_id,
+                )
+            except NextcloudApiError as exc:
+                logger.warning(
+                    "Could not resolve Nextcloud share for proposal path %s "
+                    "(lookup path %s, viewer %s); leaving its link unavailable: %s",
+                    normalized_path,
+                    current_path,
+                    share_with_user_id,
+                    exc,
+                )
+                share_lookup_cache[current_path] = None
+                return "", last_share
         share = share_lookup_cache[current_path]
         if share is not None:
             last_share = share
@@ -854,11 +867,12 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                         link.nextcloud_user_id,
                     )
                 except NextcloudApiError as exc:
-                    logger.error(
-                        "Could not load Nextcloud share map for proposals table: %s",
+                    logger.warning(
+                        "Could not load Nextcloud share map for proposals table; "
+                        "rendering the registry without live share resolution: %s",
                         exc,
                     )
-                    raise
+                    live_share_lookup = False
                 client.prime_user_share_cache(
                     client.username,
                     link.nextcloud_user_id,
@@ -2110,6 +2124,36 @@ def proposal_form_create(request):
         )
     _maybe_create_nextcloud_proposal_workspace(request, proposal)
     return _render_proposals_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def proposal_commercial_xlsx_export(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+        content = build_commercial_xlsx(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        return JsonResponse(
+            {"ok": False, "message": str(error) or "Не удалось обработать данные для экспорта."},
+            status=400,
+        )
+
+    proposal_label = str(payload.get("proposal_label") or "").strip()
+    if proposal_label == "Новое ТКП":
+        proposal_label = ""
+    safe_label = "".join(
+        char if char not in '<>:"/\\|?*\r\n\t' else "_"
+        for char in proposal_label
+    ).strip(" ._")[:120]
+    filename = f"{safe_label}_commercial.xlsx" if safe_label else "commercial_offer_draft.xlsx"
+    response = HttpResponse(
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @login_required

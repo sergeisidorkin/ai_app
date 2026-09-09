@@ -7948,16 +7948,34 @@ class ProposalDispatchDiskColumnTests(TestCase):
         "nextcloud_app.api.NextcloudApiClient.list_user_shares",
         side_effect=NextcloudApiError("bulk timeout"),
     )
-    def test_proposals_partial_stops_after_bulk_share_failure(
+    def test_proposals_partial_falls_back_after_bulk_share_failure(
         self,
         mocked_list_user_shares,
         mocked_get_user_share,
     ):
         response = self.client.get(reverse("proposals_partial"))
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.proposal.short_uid)
         mocked_list_user_shares.assert_called_once()
         mocked_get_user_share.assert_not_called()
+
+    @patch(
+        "nextcloud_app.api.NextcloudApiClient.get_user_share",
+        side_effect=NextcloudApiError("Nextcloud API error 404: invalid path"),
+    )
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_proposals_partial_ignores_missing_individual_workspace(
+        self,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.proposal.short_uid)
+        mocked_list_user_shares.assert_called_once()
+        mocked_get_user_share.assert_called()
 
     @patch(
         "proposals_app.views._attach_proposal_folder_urls",
@@ -8858,3 +8876,191 @@ class ProposalAccessTests(TestCase):
         response = self.client.get(reverse("proposals_partial"))
 
         self.assertEqual(response.status_code, 302)
+
+
+class ProposalCommercialXlsxExportTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-xlsx-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    @staticmethod
+    def _stage(label, product_label, days, *, travel_mode, travel_days=None, travel_total=""):
+        return {
+            "label": label,
+            "product_label": product_label,
+            "rows": [
+                {
+                    "specialist": "Иванов",
+                    "job_title": "Эксперт",
+                    "professional_status": "Старший",
+                    "code": "A-1",
+                    "service_name": "Анализ",
+                    "rate_eur_per_day": "100",
+                    "asset_day_counts": days,
+                },
+                {
+                    "service_name": "Командировочные расходы, евро",
+                    "asset_day_counts": travel_days or ["", ""],
+                    "total_eur_without_vat": travel_total,
+                },
+            ],
+            "totals": {
+                "exchange_rate": "90",
+                "discount_percent": "5",
+                "contract_total": "0",
+                "contract_total_auto": "0",
+                "rub_total_service_text": "Курс евро:",
+                "discounted_total_service_text": "Размер скидки:",
+                "travel_expenses_mode": travel_mode,
+            },
+        }
+
+    def _multistage_payload(self):
+        return {
+            "proposal_label": "333300RU",
+            "assets": ["Актив 1", "Актив 2"],
+            "stages": [
+                self._stage(
+                    "Коммерческое предложение: Этап 1 DD",
+                    "DD",
+                    ["2", "3"],
+                    travel_mode="calculation",
+                    travel_days=["10", "20"],
+                    travel_total="30",
+                ),
+                self._stage(
+                    "Коммерческое предложение: Этап 2 VAL",
+                    "VAL",
+                    ["1", "4"],
+                    travel_mode="actual",
+                    travel_total="40",
+                ),
+            ],
+            "summary": {
+                "label": "Коммерческое предложение: все этапы",
+                "rows": [
+                    {
+                        "specialist": "Иванов",
+                        "job_title": "Эксперт",
+                        "professional_status": "Старший",
+                        "code": "A-1",
+                        "service_name": "Анализ",
+                        "rate_eur_per_day": "100",
+                    },
+                    {
+                        "service_name": "Командировочные расходы, евро",
+                        "total_eur_without_vat": "70",
+                    },
+                ],
+                "totals": {
+                    "exchange_rate": "90",
+                    "discount_percent": "5",
+                    "contract_total": "0",
+                    "contract_total_auto": "0",
+                    "travel_expenses_mode": "actual",
+                },
+            },
+        }
+
+    def test_export_builds_one_sheet_with_stage_and_cross_stage_formulas(self):
+        from openpyxl import load_workbook
+
+        response = self.client.post(
+            reverse("proposal_commercial_xlsx_export"),
+            data=json.dumps(self._multistage_payload(), ensure_ascii=False),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("333300RU_commercial.xlsx", response["Content-Disposition"])
+        workbook = load_workbook(BytesIO(response.content), data_only=False)
+        self.assertEqual(workbook.sheetnames, ["Коммерческое предложение"])
+        sheet = workbook.active
+        self.assertEqual(sheet["A1"].value, "Коммерческое предложение: Этап 1 DD")
+        self.assertEqual(sheet["A12"].value, "Коммерческое предложение: Этап 2 VAL")
+        self.assertEqual(sheet["A23"].value, "Коммерческое предложение: все этапы")
+        self.assertTrue(sheet["I3"].value.startswith("=IF(SUM("))
+        self.assertIn("F3*I3", sheet["J3"].value)
+        self.assertIn("G3", sheet["G25"].value)
+        self.assertIn("G14", sheet["I25"].value)
+        self.assertIn("J4", sheet["L26"].value)
+        self.assertIn("J15", sheet["L26"].value)
+        self.assertTrue(sheet["J9"].value.startswith("=IF("))
+        self.assertTrue(sheet["L31"].value.startswith("=IF("))
+        self.assertEqual(workbook.calculation.calcMode, "auto")
+        self.assertTrue(workbook.calculation.fullCalcOnLoad)
+
+    def test_export_preserves_actual_travel_and_manual_contract_total(self):
+        from openpyxl import load_workbook
+
+        stage = self._stage(
+            "Коммерческое предложение",
+            "DD",
+            ["2", "3"],
+            travel_mode="actual",
+            travel_total="125.50",
+        )
+        stage["totals"]["contract_total"] = "123456"
+        stage["totals"]["contract_total_auto"] = "100000"
+        response = self.client.post(
+            reverse("proposal_commercial_xlsx_export"),
+            data=json.dumps(
+                {
+                    "proposal_label": "Новое ТКП",
+                    "assets": ["Актив 1", "Актив 2"],
+                    "stages": [stage],
+                    "summary": None,
+                },
+                ensure_ascii=False,
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("commercial_offer_draft.xlsx", response["Content-Disposition"])
+        sheet = load_workbook(BytesIO(response.content), data_only=False).active
+        self.assertEqual(sheet["F4"].value, "по факту")
+        self.assertEqual(sheet["J4"].value, 125.5)
+        self.assertEqual(sheet["J9"].value, 123456)
+
+    def test_export_rejects_malformed_payload(self):
+        response = self.client.post(
+            reverse("proposal_commercial_xlsx_export"),
+            data=json.dumps({"assets": [], "stages": []}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Нет этапов", response.json()["message"])
+
+    def test_export_requires_staff(self):
+        user = get_user_model().objects.create_user(
+            username="proposal-xlsx-nonstaff",
+            password="secret",
+            is_staff=False,
+        )
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("proposal_commercial_xlsx_export"),
+            data=json.dumps(self._multistage_payload()),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+    def test_create_form_renders_xlsx_button_with_checklist_icon(self):
+        response = self.client.get(reverse("proposal_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-commercial-xlsx-url="', html=False)
+        self.assertContains(response, 'data-proposal-commercial-xlsx="1"', html=False)
+        self.assertContains(response, "bi bi-arrow-down-circle me-2", html=False)
