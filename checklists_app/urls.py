@@ -5,6 +5,7 @@ app_name = "checklists_app"
 
 urlpatterns = [
     path("partial/panel/", views.panel, name="panel_partial"),
+    path("fileshare/", views.source_data_fileshare, name="source_data_fileshare"),
     path("project-meta/<slug:uid>/", views.project_meta, name="project_meta"),
     path("grid/data/", views.grid_data, name="grid_data"),
     path("partial/table/", views.table_partial, name="table_partial"),

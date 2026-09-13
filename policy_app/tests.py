@@ -2702,6 +2702,64 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         current.refresh_from_db()
         self.assertEqual(created.section_id, current_section.pk)
         self.assertGreater(created.position, current.position)
+
+    def test_workspace_save_section_structure_insert_keeps_global_positions(self):
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="STR-GLB",
+            short_name="str-glb",
+            name_en="Global structure section",
+            name_ru="Глобальный раздел структуры",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign = SectionStructure.objects.create(
+            product=self.other_product,
+            section=foreign_section,
+            subsections="Чужая структура",
+            position=1,
+        )
+        current_section = TypicalSection.objects.create(
+            product=self.product,
+            code="STR-CUR",
+            short_name="str-cur",
+            name_en="Current structure section",
+            name_ru="Текущий раздел структуры",
+            accounting_type="Раздел",
+            position=1,
+        )
+        current = SectionStructure.objects.create(
+            product=self.product,
+            section=current_section,
+            subsections="Текущие подразделы",
+            position=2,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "section-structures": [
+                        {
+                            "id": "new-1",
+                            "new": True,
+                            "after_id": current.pk,
+                            "fields": {
+                                "section": current_section.pk,
+                                "subsections": "Вставленные подразделы",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        created = SectionStructure.objects.get(product=self.product, subsections="Вставленные подразделы")
+        foreign.refresh_from_db()
+        current.refresh_from_db()
+        self.assertEqual(foreign.position, 1)
+        self.assertEqual(current.position, 2)
+        self.assertEqual(created.position, 3)
+
+    def test_workspace_save_creates_section_structure_rejects_foreign_row(self):
         foreign_section = TypicalSection.objects.create(
             product=self.other_product,
             code="STR-FOR",
@@ -3037,6 +3095,121 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         foreign.refresh_from_db()
         self.assertEqual(foreign.service_hours, 2)
 
+    def test_workspace_save_rejects_other_owner_tariff_row(self):
+        other = get_user_model().objects.create_user(
+            username="policy-tariff-other-owner",
+            password="secret123",
+            is_staff=True,
+        )
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="TAR-OWN",
+            short_name="tar-own",
+            name_en="Owned tariff section",
+            name_ru="Раздел чужого тарифа",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign = Tariff.objects.create(
+            product=self.product,
+            section=section,
+            base_rate_vpm="3.00",
+            service_hours=2,
+            service_days_tkp=1,
+            created_by=other,
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "tariffs": [
+                        {
+                            "id": foreign.pk,
+                            "fields": {"service_hours": "99", "base_rate_vpm": "9.99"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any(
+                item["table"] == "tariffs" and "прав" in item["message"]
+                for item in payload["errors"]
+            )
+        )
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.service_hours, 2)
+        self.assertEqual(str(foreign.base_rate_vpm), "3.00")
+        self.assertEqual(foreign.created_by_id, other.pk)
+
+    def test_workspace_save_tariff_insert_keeps_owner_positions(self):
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="TAR-GLB",
+            short_name="tar-glb",
+            name_en="Global tariff section",
+            name_ru="Глобальный раздел тарифа",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign = Tariff.objects.create(
+            product=self.other_product,
+            section=foreign_section,
+            base_rate_vpm="2.00",
+            service_hours=1,
+            service_days_tkp=1,
+            created_by=self.user,
+            position=1,
+        )
+        current_section = TypicalSection.objects.create(
+            product=self.product,
+            code="TAR-CUR",
+            short_name="tar-cur",
+            name_en="Current tariff section",
+            name_ru="Текущий раздел тарифа",
+            accounting_type="Раздел",
+            position=1,
+        )
+        current = Tariff.objects.create(
+            product=self.product,
+            section=current_section,
+            base_rate_vpm="10.50",
+            service_hours=8,
+            service_days_tkp=5,
+            created_by=self.user,
+            position=2,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "tariffs": [
+                        {
+                            "id": "new-1",
+                            "new": True,
+                            "after_id": current.pk,
+                            "fields": {
+                                "section": current_section.pk,
+                                "base_rate_vpm": "1.00",
+                                "service_hours": "0",
+                                "service_days_tkp": "0",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        created = Tariff.objects.exclude(pk=current.pk).get(product=self.product, section=current_section)
+        foreign.refresh_from_db()
+        current.refresh_from_db()
+        self.assertEqual(foreign.position, 1)
+        self.assertEqual(current.position, 2)
+        self.assertEqual(created.position, 3)
+        self.assertEqual(created.created_by_id, self.user.pk)
+
     def test_workspace_save_rejects_tariff_section_from_another_product(self):
         current = TypicalSection.objects.create(
             product=self.product,
@@ -3297,6 +3470,68 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         self.assertEqual(created.section_id, current_section.pk)
         self.assertEqual(created.service_composition_editor_state, editor_state)
         self.assertGreater(created.position, current.position)
+
+    def test_workspace_save_composition_insert_keeps_global_positions(self):
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="CMP-GLB",
+            short_name="cmp-glb",
+            name_en="Global composition section",
+            name_ru="Глобальный раздел состава",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign = TypicalServiceComposition.objects.create(
+            product=self.other_product,
+            section=foreign_section,
+            service_composition="Чужой состав",
+            position=1,
+        )
+        current_section = TypicalSection.objects.create(
+            product=self.product,
+            code="CMP-CUR",
+            short_name="cmp-cur",
+            name_en="Current composition section",
+            name_ru="Текущий раздел состава",
+            accounting_type="Раздел",
+            position=1,
+        )
+        current = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=current_section,
+            service_composition="Текущий состав",
+            position=2,
+        )
+        editor_state = {"html": "<p>Вставленный состав</p>", "plain_text": "Вставленный состав"}
+        response = self._save(
+            {
+                "tables": {
+                    "typical-service-compositions": [
+                        {
+                            "id": "new-1",
+                            "new": True,
+                            "after_id": current.pk,
+                            "fields": {
+                                "section": current_section.pk,
+                                "service_composition_editor_state": editor_state,
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        created = TypicalServiceComposition.objects.get(
+            product=self.product,
+            service_composition="Вставленный состав",
+        )
+        foreign.refresh_from_db()
+        current.refresh_from_db()
+        self.assertEqual(foreign.position, 1)
+        self.assertEqual(current.position, 2)
+        self.assertEqual(created.position, 3)
+
+    def test_workspace_save_creates_typical_service_composition_rejects_foreign_row(self):
         foreign_section = TypicalSection.objects.create(
             product=self.other_product,
             code="CMP-FOR",

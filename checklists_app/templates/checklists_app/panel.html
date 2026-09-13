@@ -95,7 +95,7 @@
                 <div class="chk-filter-group ms-auto d-flex gap-2 chk-toolbar-actions">
                     <button type="button" id="chk-yadisk-btn"
                             class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1"
-                            data-yadisk-url="{{ yadisk_url }}"
+                            data-fileshare-url="{{ fileshare_url }}"
                             title="Файлообменник"
                             aria-label="Файлообменник">
                         <i class="bi bi-cloud"></i>
@@ -1579,18 +1579,20 @@
             });
         }
 
-        // --- Yandex.Disk button ---
+        // --- Source-data fileshare button ---
         const yadiskBtn = document.getElementById('chk-yadisk-btn');
         if (yadiskBtn) {
             yadiskBtn.addEventListener('click', function () {
-                const url = this.dataset.yadiskUrl;
-                if (url) {
-                    window.open(url, '_blank');
+                const projectUid = projectSel?.value || '';
+                const baseUrl = this.dataset.fileshareUrl || '';
+                if (projectUid && baseUrl) {
+                    const sep = baseUrl.includes('?') ? '&' : '?';
+                    window.open(baseUrl + sep + 'project_uid=' + encodeURIComponent(projectUid), '_blank');
                 } else {
                     const toast = document.createElement('div');
                     toast.className = 'alert alert-warning alert-dismissible fade show position-fixed bottom-0 start-50 translate-middle-x mb-4';
                     toast.style.zIndex = '1090';
-                    toast.innerHTML = 'Папка Яндекс.Диск не подключена. Перейдите в раздел <strong>Подключения</strong> для настройки.' +
+                    toast.innerHTML = 'Выберите проект, чтобы открыть папку исходных данных.' +
                         '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
                     document.body.appendChild(toast);
                     setTimeout(() => { if (toast.isConnected) toast.remove(); }, 5000);

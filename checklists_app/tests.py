@@ -1,22 +1,26 @@
 import json
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from urllib.parse import quote
 
 from policy_app.models import EXPERT_GROUP, Product, TypicalSection
-from projects_app.models import LegalEntity, Performer, ProjectRegistration, WorkVolume
+from projects_app.models import LegalEntity, Performer, ProjectRegistration, SourceDataTargetFolder, WorkVolume
 from users_app.models import Employee
 from notifications_app.models import Notification, NotificationPerformerLink
+from core.models import CloudStorageSettings
 
 from checklists_app.models import (
     ChecklistCustomerStatus,
     ChecklistItem,
     ChecklistItemAuditLog,
     ChecklistStatus,
+    ProjectWorkspace,
     SharedChecklistLink,
     SourceDataItemFolder,
+    SourceDataWorkspace,
 )
 from checklists_app.views import SOURCE_DATA_SELECT_ASSET_HINT, _project_options
 
@@ -629,4 +633,188 @@ class ChecklistSourceDataFilesScopeTests(TestCase):
         self.assertEqual(row["fileCount"], 4)
         self.assertEqual(row["sourceDataUrl"], "https://cloud.example.com/s/only")
         self.assertEqual(row["filesHint"], "")
+
+
+@override_settings(
+    NEXTCLOUD_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+)
+class SourceDataFileshareRedirectTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="fileshare-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.nextcloud_root_path = "/Corporate Root"
+        settings_obj.save()
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=8101,
+            type=self.product,
+            name="Файлообменник",
+            year=2026,
+        )
+
+    def _files_url(self, path):
+        return f"https://cloud.example.com/apps/files/files?dir={quote(path, safe='/')}"
+
+    def test_panel_points_fileshare_button_to_redirect_endpoint(self):
+        response = self.client.get(reverse("checklists_app:panel_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("checklists_app:source_data_fileshare"))
+        self.assertContains(response, 'data-fileshare-url=')
+        self.assertNotContains(response, "data-yadisk-url")
+        self.assertNotContains(response, "/apps/user_oidc/login/1")
+
+    def test_redirects_to_created_source_data_workspace(self):
+        disk_path = (
+            "/Corporate Root/03 Проекты/2026/"
+            f"{self.project.short_uid} DD Файлообменник/"
+            "05 Исходные данные/01 Запросы"
+        )
+        SourceDataWorkspace.objects.create(project=self.project, disk_path=disk_path, created_by=self.user)
+        SourceDataTargetFolder.objects.create(user=self.user, folder_name="05 Исходные данные")
+
+        response = self.client.get(
+            reverse("checklists_app:source_data_fileshare"),
+            {"project_uid": self.project.short_uid},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], self._files_url(disk_path))
+
+    def test_uses_project_workspace_plus_target_folder_when_source_data_is_missing(self):
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path="/Corporate Root/03 Проекты/2026/447500RU TDD Тест 5",
+            created_by=self.user,
+        )
+        SourceDataTargetFolder.objects.create(
+            user=self.user,
+            folder_name="05 Исходные данные/01 Запросы",
+        )
+        expected_path = (
+            "/Corporate Root/03 Проекты/2026/447500RU TDD Тест 5/"
+            "05 Исходные данные/01 Запросы"
+        )
+
+        response = self.client.get(
+            reverse("checklists_app:source_data_fileshare"),
+            {"project_uid": self.project.short_uid},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], self._files_url(expected_path))
+
+    def test_computes_target_folder_from_settings_when_workspace_is_missing(self):
+        SourceDataTargetFolder.objects.create(
+            user=self.user,
+            folder_name="05 Исходные данные/01 Запросы",
+        )
+        expected_path = (
+            "/Corporate Root/03 Проекты/2026/"
+            f"{self.project.short_uid} DD Файлообменник/"
+            "05 Исходные данные/01 Запросы"
+        )
+
+        response = self.client.get(
+            reverse("checklists_app:source_data_fileshare"),
+            {"project_uid": self.project.short_uid},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], self._files_url(expected_path))
+
+    def test_uses_default_source_data_folder_without_user_setting(self):
+        expected_path = (
+            "/Corporate Root/03 Проекты/2026/"
+            f"{self.project.short_uid} DD Файлообменник/"
+            "05 Исходные данные"
+        )
+
+        response = self.client.get(
+            reverse("checklists_app:source_data_fileshare"),
+            {"project_uid": self.project.short_uid},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], self._files_url(expected_path))
+
+    def test_rejects_non_staff_user(self):
+        outsider = get_user_model().objects.create_user(
+            username="fileshare-guest",
+            password="secret",
+            is_staff=False,
+        )
+        self.client.force_login(outsider)
+
+        response = self.client.get(
+            reverse("checklists_app:source_data_fileshare"),
+            {"project_uid": self.project.short_uid},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_requires_project(self):
+        response = self.client.get(reverse("checklists_app:source_data_fileshare"))
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_redirects_to_viewer_share_path_without_granting_new_access(self):
+        from unittest.mock import Mock, patch
+
+        from nextcloud_app.models import NextcloudUserLink
+
+        self.user.email = "fileshare-staff@example.com"
+        self.user.save(update_fields=["email"])
+        NextcloudUserLink.objects.create(
+            user=self.user,
+            nextcloud_user_id="ncstaff-fileshare",
+            nextcloud_username="ncstaff-fileshare",
+            nextcloud_email=self.user.email,
+        )
+        project_path = "/Corporate Root/03 Проекты/2026/447500RU TDD Тест 5"
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path=project_path,
+            created_by=self.user,
+        )
+        SourceDataTargetFolder.objects.create(user=self.user, folder_name="05 Исходные данные")
+        share = Mock(
+            target_path="/447500RU TDD Тест 5",
+        )
+
+        with patch("nextcloud_app.workspace.NextcloudApiClient") as client_cls:
+            client = client_cls.return_value
+            client.base_url = "https://cloud.example.com"
+            client.is_configured = True
+            client.username = "cloud-admin"
+            client.build_files_url.side_effect = (
+                lambda path: f"https://cloud.example.com/apps/files/files?dir={quote(path, safe='/')}"
+            )
+            client.list_user_shares.return_value = {project_path: share}
+
+            response = self.client.get(
+                reverse("checklists_app:source_data_fileshare"),
+                {"project_uid": self.project.short_uid},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            self._files_url("/447500RU TDD Тест 5/05 Исходные данные"),
+        )
+        client.ensure_user_share.assert_not_called()
 

@@ -27,6 +27,7 @@ from nextcloud_app.api import NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from nextcloud_app.provisioning import ensure_nextcloud_account
 from nextcloud_app.workspace import (
+    build_viewer_files_url_for_user,
     create_basic_project_workspace_stream,
     create_proposal_workspace,
     grant_project_workspace_editor_access_for_performers,
@@ -2113,3 +2114,69 @@ class HeartbeatRetryTests(TestCase):
 
         self.assertIn("429", str(ctx.exception))
         self.assertEqual(session.request.call_count, 2)
+
+
+class ViewerFilesUrlTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="viewer@example.com",
+            email="viewer@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.nextcloud_root_path = "/Corporate Root"
+        settings_obj.save()
+        NextcloudUserLink.objects.create(
+            user=self.user,
+            nextcloud_user_id=f"ncstaff-{self.user.pk}",
+            nextcloud_username=f"ncstaff-{self.user.pk}",
+            nextcloud_email=self.user.email,
+        )
+
+    def test_opens_source_data_folder_on_existing_project_share_without_granting_access(self):
+        project_path = "/Corporate Root/03 Проекты/2026/447500RU TDD Тест 5"
+        owner_path = f"{project_path}/05 Исходные данные"
+        client = Mock()
+        client.base_url = "https://cloud.example.com"
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.build_files_url.side_effect = lambda path: f"https://cloud.example.com/apps/files/files?dir={path}"
+        client.list_user_shares.return_value = {
+            project_path: NextcloudShare(
+                share_id="12",
+                path=project_path,
+                share_with=f"ncstaff-{self.user.pk}",
+                permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
+                target_path="/447500RU TDD Тест 5",
+            )
+        }
+
+        url = build_viewer_files_url_for_user(
+            self.user,
+            owner_path,
+            project_share_path=project_path,
+            client=client,
+        )
+
+        client.ensure_user_share.assert_not_called()
+        client.list_user_shares.assert_called_once_with("cloud-admin", f"ncstaff-{self.user.pk}")
+        self.assertEqual(
+            url,
+            "https://cloud.example.com/apps/files/files?dir=/447500RU TDD Тест 5/05 Исходные данные",
+        )
+
+    def test_storage_owner_opens_owner_path(self):
+        client = Mock()
+        client.base_url = "https://cloud.example.com"
+        client.is_configured = True
+        client.username = f"ncstaff-{self.user.pk}"
+        client.build_files_url.side_effect = lambda path: f"https://cloud.example.com/apps/files/files?dir={path}"
+        owner_path = "/Corporate Root/03 Проекты/2026/Proj/05 Исходные данные"
+
+        url = build_viewer_files_url_for_user(self.user, owner_path, client=client)
+
+        client.list_user_shares.assert_not_called()
+        client.ensure_user_share.assert_not_called()
+        self.assertEqual(url, f"https://cloud.example.com/apps/files/files?dir={owner_path}")
