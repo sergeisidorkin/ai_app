@@ -1402,8 +1402,8 @@ def _create_section_structure(form, *, after_id=None, place=False):
         _place_workspace_row_after(
             obj,
             after_id,
-            SectionStructure.objects.filter(product_id=obj.product_id),
-            missing_after="start",
+            SectionStructure.objects.all(),
+            missing_after="append",
         )
     return obj
 
@@ -1417,10 +1417,16 @@ def _create_typical_service_composition(form, *, after_id=None, place=False):
         _place_workspace_row_after(
             obj,
             after_id,
-            TypicalServiceComposition.objects.filter(product_id=obj.product_id),
-            missing_after="start",
+            TypicalServiceComposition.objects.all(),
+            missing_after="append",
         )
     return obj
+
+
+def _can_edit_workspace_tariff(user, tariff) -> bool:
+    if user.is_superuser:
+        return True
+    return tariff.created_by_id == user.pk
 
 
 def _create_workspace_tariff(form, *, request_user, after_id=None, place=False):
@@ -1436,8 +1442,8 @@ def _create_workspace_tariff(form, *, request_user, after_id=None, place=False):
         _place_workspace_row_after(
             obj,
             after_id,
-            Tariff.objects.filter(product_id=obj.product_id, created_by=obj.created_by),
-            missing_after="start",
+            Tariff.objects.filter(created_by=obj.created_by),
+            missing_after="append",
         )
     return obj
 
@@ -2180,6 +2186,16 @@ def product_workspace_save(request, pk: int):
                     "id": row_id or 0,
                     "field": "id",
                     "message": "Строка не относится к текущему продукту.",
+                }
+            )
+            continue
+        if not _can_edit_workspace_tariff(request.user, item):
+            errors.append(
+                {
+                    "table": "tariffs",
+                    "id": item.pk,
+                    "field": "id",
+                    "message": "Нет прав на изменение этой строки.",
                 }
             )
             continue

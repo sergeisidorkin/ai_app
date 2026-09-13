@@ -308,6 +308,77 @@ def build_folder_url(path: str) -> str:
     return "https://disk.yandex.ru/client/disk" + quote(clean)
 
 
+def resolve_source_data_folder_path(user, project) -> str:
+    """Return the source-data folder path for a project without storing per-user links.
+
+    Prefer the already created source-data workspace. Otherwise use the project
+    folder on disk plus the target folder from settings (Projects → Information
+    request → Create source data space). If that project folder is not stored
+    yet, rebuild the same path used when creating the workspace.
+    """
+    from checklists_app.models import ProjectWorkspace, SourceDataWorkspace
+    from core.cloud_paths import join_cloud_path
+    from projects_app.models import SourceDataTargetFolder
+    from yandexdisk_app.workspace import DEFAULT_SOURCE_DATA_FOLDER, _sanitize_relative_path
+
+    workspace = (
+        SourceDataWorkspace.objects.filter(project=project)
+        .only("disk_path")
+        .first()
+    )
+    disk_path = (getattr(workspace, "disk_path", "") or "").strip()
+    if disk_path:
+        return disk_path
+
+    target_obj = SourceDataTargetFolder.objects.filter(user=user).first()
+    target_folder = _sanitize_relative_path(
+        target_obj.folder_name if target_obj else DEFAULT_SOURCE_DATA_FOLDER
+    )
+
+    project_ws = (
+        ProjectWorkspace.objects.filter(project=project)
+        .only("disk_path")
+        .first()
+    )
+    project_path = (getattr(project_ws, "disk_path", "") or "").strip()
+    if project_path:
+        return join_cloud_path(project_path, target_folder)
+
+    if is_nextcloud_primary():
+        from nextcloud_app.workspace import _resolve_nextcloud_source_data_base
+
+        path, _err = _resolve_nextcloud_source_data_base(user, project)
+        return str(path or "").strip()
+
+    from yandexdisk_app.workspace import _resolve_source_data_base
+
+    path, _err = _resolve_source_data_base(user, project)
+    return str(path or "").strip()
+
+
+def get_project_source_data_folder_url(user, project) -> str:
+    owner_path = resolve_source_data_folder_path(user, project)
+    if not owner_path:
+        return ""
+
+    if is_nextcloud_primary():
+        from checklists_app.models import ProjectWorkspace
+        from nextcloud_app.workspace import build_viewer_files_url_for_user
+
+        project_ws = (
+            ProjectWorkspace.objects.filter(project=project)
+            .only("disk_path")
+            .first()
+        )
+        return build_viewer_files_url_for_user(
+            user,
+            owner_path,
+            project_share_path=(getattr(project_ws, "disk_path", "") or "").strip(),
+        )
+
+    return build_folder_url(owner_path)
+
+
 def get_user_cloud_launch_url(user) -> str:
     if is_nextcloud_primary():
         overview = build_nextcloud_overview(user)

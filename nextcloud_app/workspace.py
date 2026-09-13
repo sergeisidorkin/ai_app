@@ -28,7 +28,7 @@ from yandexdisk_app.workspace import (
     _sanitize_relative_path,
 )
 
-from .api import NextcloudApiClient, NextcloudApiError
+from .api import NextcloudApiClient, NextcloudApiError, NextcloudShare
 from .models import NextcloudUserLink
 from .provisioning import _should_manage_in_nextcloud, ensure_nextcloud_account
 
@@ -723,6 +723,130 @@ def _employee_lookup_values(employee: Employee) -> set[str]:
 
 def _normalize_person_lookup(value: str) -> str:
     return " ".join(str(value or "").replace("\xa0", " ").split()).casefold()
+
+
+def build_viewer_files_url_for_user(
+    user,
+    owner_path: str,
+    *,
+    project_share_path: str = "",
+    client: NextcloudApiClient | None = None,
+) -> str:
+    """Return a Files URL for ``owner_path`` as it appears on the current user's disk.
+
+    Project folders are already shared with participants as editors. This only
+    looks up that existing share and does not grant extra permissions.
+    """
+    from nextcloud_app.provisioning import _build_nextcloud_user_id
+
+    normalized_owner = normalize_cloud_path(owner_path)
+    if not normalized_owner or normalized_owner == "/":
+        return ""
+
+    client = client or NextcloudApiClient()
+    if not client.base_url:
+        return ""
+    if not client.is_configured:
+        return client.build_files_url(normalized_owner)
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return ""
+
+    link = NextcloudUserLink.objects.filter(user=user).first()
+    viewer_id = (getattr(link, "nextcloud_user_id", "") or "").strip() or _build_nextcloud_user_id(user)
+    if viewer_id == client.username:
+        return client.build_files_url(normalized_owner)
+
+    share_map: dict[str, NextcloudShare] = {}
+    try:
+        share_map = client.list_user_shares(client.username, viewer_id)
+    except NextcloudApiError as exc:
+        logger.warning(
+            "Could not load Nextcloud shares for user %s (%s): %s",
+            getattr(user, "pk", None),
+            viewer_id,
+            exc,
+        )
+
+    viewer_path = _resolve_viewer_path_from_shares(normalized_owner, share_map)
+    if viewer_path:
+        return client.build_files_url(viewer_path)
+
+    lookup_paths: list[str] = []
+    for candidate in (normalize_cloud_path(project_share_path), normalized_owner):
+        if candidate and candidate != "/" and candidate not in lookup_paths:
+            lookup_paths.append(candidate)
+    current = normalized_owner
+    while current and current != "/":
+        if current not in lookup_paths:
+            lookup_paths.append(current)
+        current = current.rsplit("/", 1)[0] or "/"
+
+    for share_path in lookup_paths:
+        try:
+            share = client.get_user_share(client.username, share_path, viewer_id)
+        except NextcloudApiError as exc:
+            logger.warning(
+                "Could not look up Nextcloud share for user %s at %s: %s",
+                viewer_id,
+                share_path,
+                exc,
+            )
+            continue
+        if share is None:
+            continue
+        viewer_path = _viewer_path_for_shared_folder(
+            normalized_owner,
+            share_path,
+            getattr(share, "target_path", "") or "",
+        )
+        if viewer_path:
+            return client.build_files_url(viewer_path)
+    return ""
+
+
+def _resolve_viewer_path_from_shares(owner_path: str, share_map: dict) -> str:
+    best_path = ""
+    best_shared_len = -1
+    for shared_path, share in (share_map or {}).items():
+        viewer_path = _viewer_path_for_shared_folder(
+            owner_path,
+            shared_path,
+            getattr(share, "target_path", "") or "",
+        )
+        if not viewer_path:
+            continue
+        shared_len = len(normalize_cloud_path(shared_path))
+        if shared_len > best_shared_len:
+            best_path = viewer_path
+            best_shared_len = shared_len
+    return best_path
+
+
+def _viewer_path_for_shared_folder(owner_path: str, shared_path: str, share_target_path: str) -> str:
+    owner = normalize_cloud_path(owner_path)
+    shared = normalize_cloud_path(shared_path)
+    target = _normalize_share_target_path(share_target_path)
+    if not owner or not shared or not target:
+        return ""
+    if owner == shared:
+        return target
+    prefix = f"{shared.rstrip('/')}/"
+    if owner.startswith(prefix):
+        return _join_path(target, owner[len(prefix):])
+    return ""
+
+
+def _normalize_share_target_path(path: str) -> str:
+    target = normalize_cloud_path(path)
+    if not target:
+        return ""
+    root_path = normalize_cloud_path(get_nextcloud_root_path())
+    if root_path and root_path != "/" and target.startswith(f"{root_path.rstrip('/')}/"):
+        stripped = normalize_cloud_path(target[len(root_path):])
+        if stripped:
+            return stripped
+    return target
 
 
 def _resolve_nextcloud_source_data_base(user, project):

@@ -8,8 +8,8 @@ from typing import Optional
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Count, Max, Q
-from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
@@ -17,7 +17,7 @@ from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from core.cloud_storage import get_user_cloud_launch_url
+from core.cloud_storage import get_project_source_data_folder_url
 from policy_app.models import EXPERT_GROUP, TypicalSection
 from projects_app.models import LegalEntity, Performer, ProjectRegistration
 from requests_app.models import RequestItem, RequestTable
@@ -1328,15 +1328,6 @@ def _build_grid_payload(
                 },
             })
 
-    yadisk_project_url = ""
-    try:
-        from checklists_app.models import ProjectWorkspace
-        pw = ProjectWorkspace.objects.filter(project=project).only("public_url").first()
-        if pw and pw.public_url:
-            yadisk_project_url = pw.public_url
-    except Exception:
-        pass
-
     section = scope["section"]
     create_href = ""
     if create_url and section:
@@ -1382,7 +1373,6 @@ def _build_grid_payload(
             "xlsxUrl": xlsx_url,
             "approveInfoRequestUrl": approve_info_request_url,
             "projectUid": (project.short_uid or "").strip(),
-            "yadiskProjectUrl": yadisk_project_url,
         },
         "virtualization": {
             "enabled": False,
@@ -1607,6 +1597,7 @@ def panel(request):
         meta_url_base = reverse("checklists_app:project_meta", args=["__uid__"])
         item_form_create_url = reverse("checklists_app:item_form_create")
         batch_edit_url = reverse("checklists_app:item_batch_edit")
+        fileshare_url = reverse("checklists_app:source_data_fileshare")
     except NoReverseMatch:
         table_url = "/checklists/partial/table/"
         grid_url = "/checklists/grid/data/"
@@ -1619,19 +1610,7 @@ def panel(request):
         meta_url_base = "/checklists/project-meta/__uid__/"
         item_form_create_url = "/checklists/item/form/create/"
         batch_edit_url = "/checklists/item/batch-edit/"
-
-    yadisk_url = ""
-    if request.user.is_authenticated:
-        if selected_project:
-            try:
-                from checklists_app.models import ProjectWorkspace
-                pw = ProjectWorkspace.objects.filter(project=selected_project).only("public_url").first()
-                if pw and pw.public_url:
-                    yadisk_url = pw.public_url
-            except Exception:
-                pass
-        if not yadisk_url:
-            yadisk_url = get_user_cloud_launch_url(request.user)
+        fileshare_url = "/checklists/fileshare/"
 
     return render(
         request,
@@ -1654,9 +1633,36 @@ def panel(request):
             "project_meta_url_base": meta_url_base,
             "item_form_create_url": item_form_create_url,
             "batch_edit_url": batch_edit_url,
-            "yadisk_url": yadisk_url,
+            "fileshare_url": fileshare_url,
         },
     )
+
+
+@login_required
+@require_GET
+def source_data_fileshare(request):
+    if not request.user.is_staff:
+        return HttpResponseForbidden("Недостаточно прав.")
+
+    project_uid = (request.GET.get("project_uid") or request.GET.get("project") or "").strip()
+    if not project_uid:
+        return HttpResponseBadRequest("Не выбран проект.")
+
+    project = get_object_or_404(
+        ProjectRegistration.objects.select_related("type"),
+        short_uid=project_uid,
+    )
+    target_url = get_project_source_data_folder_url(request.user, project)
+    if not target_url:
+        return HttpResponse(
+            "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\">"
+            "<title>Файлообменник</title></head><body>"
+            "<p>Не удалось определить папку исходных данных выбранного проекта.</p>"
+            "</body></html>",
+            status=404,
+            content_type="text/html; charset=utf-8",
+        )
+    return redirect(target_url)
 
 
 @require_GET
