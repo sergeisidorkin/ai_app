@@ -2034,10 +2034,20 @@ def _find_proposal_template(proposal, templates):
     return candidates[0]
 
 
+def _is_htmx_request(request):
+    return request.headers.get("HX-Request", "").lower() == "true"
+
+
+def _wants_proposal_tables(request):
+    return str(request.GET.get("tables") or "") == "1"
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_GET
 def proposals_partial(request):
+    if _is_htmx_request(request) and not _wants_proposal_tables(request):
+        return render(request, PROPOSALS_PARTIAL_TEMPLATE, {"proposal_lazy_shell": True})
     try:
         context = _proposals_context(
             request=request,

@@ -599,11 +599,13 @@
               <td id="chk-code-${row.id}" class="col-code text-nowrap ${escapeHtml(row.codeClass || "")}">${escapeHtml(row.code || "")}</td>
               <td class="col-num text-nowrap">${escapeHtml(row.number || "")}</td>
               ${renderTextCell(row, "short_name", "col-short-name-cell", isRowEditable)}
-              <td class="col-files text-nowrap">
-                <div class="chk-files-info">
-                  <div>Всего файлов: ${row.fileCount != null ? row.fileCount : "—"}</div>
-                  <div>Последняя загрузка: ${row.lastUploadAt || "—"}</div>
-                </div>
+              <td class="col-files${row.filesHint ? "" : " text-nowrap"}">
+                ${row.filesHint
+                  ? `<div class="chk-files-info chk-files-hint">${escapeHtml(row.filesHint)}</div>`
+                  : `<div class="chk-files-info">
+                      <div>Всего файлов: ${row.fileCount != null ? row.fileCount : "—"}</div>
+                      <div>Последняя загрузка: ${row.lastUploadAt || "—"}</div>
+                    </div>`}
               </td>
               ${renderTextCell(row, "name", "col-name-cell", isRowEditable)}
               ${showImcm ? (row.cells || []).map((cell) => renderStatusCell(row, cell)).join("") : ""}

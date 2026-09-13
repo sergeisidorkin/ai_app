@@ -14,6 +14,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.http import QueryDict
+from django.template.loader import render_to_string
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -6499,6 +6500,20 @@ class ProposalFormContextTests(TestCase):
             html=False,
         )
 
+    def test_proposals_partial_renders_collapsible_dispatch_and_template_section_toggles(self):
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="proposal-dispatch-section-toggle"', html=False)
+        self.assertContains(response, 'data-section-body-id="proposal-dispatch-section-body"', html=False)
+        self.assertContains(response, 'id="proposal-dispatch-section-body"', html=False)
+        self.assertContains(response, "Развернуть раздел «Отправка ТКП»")
+        self.assertContains(response, 'id="proposal-template-section-toggle"', html=False)
+        self.assertContains(response, 'data-section-body-id="proposal-template-section-body"', html=False)
+        self.assertContains(response, 'id="proposal-template-section-body"', html=False)
+        self.assertContains(response, "Развернуть раздел «Образцы шаблонов ТКП»")
+        self.assertContains(response, "bi-plus-square", html=False)
+
     def test_proposals_partial_renders_payment_schedule_table_by_product_stage(self):
         first_product = Product.objects.create(
             short_name="TDD",
@@ -7665,6 +7680,161 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, f'data-product-id="{first_product.pk}"', html=False)
         self.assertContains(response, f'data-product-id="{second_product.pk}"', html=False)
         self.assertContains(response, "Лаг", html=False)
+
+    def test_proposal_form_omits_footer_cancel_and_save_buttons(self):
+        response = self.client.get(reverse("proposal_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="proposal-registration-form"', html=False)
+        self.assertContains(response, 'data-proposal-form="1"', html=False)
+        self.assertContains(response, 'data-proposal-form-has-errors="0"', html=False)
+        self.assertNotContains(response, "data-proposal-form-cancel-btn", html=False)
+        self.assertNotContains(response, "data-proposal-form-save-btn", html=False)
+
+    def test_proposal_form_header_js_and_css_contracts(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "core" / "static" / "core" / "js" / "proposals-panels.js").read_text()
+        css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
+        index_html = (root / "templates" / "index.html").read_text()
+        form_html = (root / "proposals_app" / "templates" / "proposals_app" / "proposal_form_page.html").read_text()
+
+        self.assertIn('id="proposal-form-actions"', index_html)
+        self.assertIn("data-proposal-form-cancel-btn", index_html)
+        self.assertIn("data-proposal-form-save-btn", index_html)
+        self.assertIn("function cancelProposalForm()", source)
+        self.assertIn(
+            "if (!session.isDirty()) {\n      destroyProposalFormSession();\n      setProposalFormCancelLoading(proposalFormCancelBtn(), true);\n      await waitProposalPaint();\n      hideProposalFormActions();\n      await waitProposalPaint();\n      await loadProposalCatalogShell();",
+            source,
+        )
+        self.assertIn("function hideProposalFormActions()", source)
+        self.assertIn("hideProposalFormActions();", source)
+        self.assertIn("function loadProposalCatalogShell()", source)
+        self.assertIn("function fillProposalCatalogSkeleton(", source)
+        self.assertIn("function initProposalLazyShell(", source)
+        self.assertIn("proposalCatalogTablesUrl(catalogUrl)", source)
+        self.assertIn("window.__applyProposalColPickers", source)
+        self.assertIn("function reloadProposalFormPage()", source)
+        self.assertIn("PROPOSAL_FORM_CANCEL_MESSAGE = 'Сбросить внесённые изменения?'", source)
+        self.assertIn("PROPOSAL_FORM_LEAVE_MESSAGE", source)
+        self.assertIn("headerRootUrl", source)
+        self.assertIn("headerCurrentUrl", source)
+        self.assertIn("id=\"proposal-registration-form\"", form_html)
+        self.assertNotIn("data-proposal-form-cancel-btn", form_html)
+        self.assertNotIn("data-proposal-form-save-btn", form_html)
+        self.assertIn("#proposal-form-actions", css)
+        self.assertIn("#proposal-form-actions [data-proposal-form-save-btn]:disabled", css)
+
+
+class ProposalCatalogLazyShellTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-lazy-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        ProposalRegistration.objects.create(
+            number=4503,
+            sub_number=0,
+            group_member=group_member,
+            name="Lazy TKP",
+            year=2026,
+        )
+
+    def test_htmx_partial_is_skeleton_shell_without_tables(self):
+        response = self.client.get(
+            reverse("proposals_partial"),
+            HTTP_HX_REQUEST="true",
+        )
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-proposal-lazy-shell="1"', html=False)
+        self.assertContains(response, 'data-proposal-tables-url="', html=False)
+        self.assertContains(response, "tables=1", html=False)
+        self.assertContains(response, "Реестр ТКП")
+        self.assertContains(response, "policy-table-skeleton", html=False)
+        self.assertNotIn("<table", html)
+        self.assertNotIn("Lazy TKP", html)
+        self.assertNotIn("proposal-new-btn", html)
+
+    def test_htmx_tables_query_renders_full_registry(self):
+        response = self.client.get(
+            reverse("proposals_partial") + "?tables=1",
+            HTTP_HX_REQUEST="true",
+        )
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('data-proposal-lazy-shell="1"', html)
+        self.assertIn("<table", html)
+        self.assertIn("proposal-registry-table", html)
+        self.assertIn("Lazy TKP", html)
+        self.assertIn("proposal-new-btn", html)
+
+    def test_non_htmx_partial_remains_full_registry(self):
+        response = self.client.get(reverse("proposals_partial"))
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("<table", html)
+        self.assertIn("Lazy TKP", html)
+        self.assertNotIn('data-proposal-lazy-shell="1"', html)
+
+        shell = self.client.get(
+            reverse("proposals_partial"),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertLess(len(shell.content), len(response.content))
+
+    def test_panel_and_form_use_tables_query_and_skeleton(self):
+        panel_html = render_to_string("proposals_app/panel.html")
+        form_html = (
+            Path(__file__).resolve().parents[1]
+            / "proposals_app"
+            / "templates"
+            / "proposals_app"
+            / "proposal_form_page.html"
+        ).read_text()
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "proposals-panels.js"
+        ).read_text()
+        css = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "css"
+            / "site.css"
+        ).read_text()
+
+        self.assertIn('data-proposal-lazy-shell="1"', panel_html)
+        self.assertIn("policy-table-skeleton", panel_html)
+        self.assertIn("?tables=1", panel_html)
+        self.assertIn('hx-trigger="load"', panel_html)
+        self.assertIn("?tables=1", form_html)
+        self.assertIn("function fillProposalCatalogSkeleton(", source)
+        self.assertIn("initProposalLazyShell(target)", source)
+        self.assertIn("htmx:afterSwap", source)
+        self.assertIn("window.__applyProposalColPickers", source)
+        self.assertIn("document.getElementById(cfg.menuId)", panel_html)
+        self.assertIn("htmx:afterSwap", panel_html)
+        self.assertNotIn("htmx:afterSettle", panel_html)
+        self.assertIn("#proposals-pane[data-proposal-lazy-shell=\"1\"]", css)
+        self.assertIn(".proposal-table-placeholder-card", css)
+        self.assertIn("policy-table-skeleton", css)
 
 
 class ProposalNextcloudWorkspaceHookTests(TestCase):

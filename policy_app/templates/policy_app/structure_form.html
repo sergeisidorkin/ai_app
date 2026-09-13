@@ -8,31 +8,38 @@
 <form
     method="post"
     {% if action == "create" %}
-      hx-post="{% url 'structure_form_create' %}"
+      hx-post="{% url 'structure_form_create' %}{{ policy_form_query }}"
     {% else %}
-      hx-post="{% url 'structure_form_edit' structure.pk %}"
+      hx-post="{% url 'structure_form_edit' structure.pk %}{{ policy_form_query }}"
     {% endif %}
-    hx-target="#policy-pane"
-    hx-swap="outerHTML">
+    hx-target="#policy-modal .modal-content"
+    hx-swap="innerHTML">
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
     <div class="mb-3">
       <label class="form-label">Продукт</label>
       {{ form.product }}
+      {% for error in form.product.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
     </div>
     <div class="mb-3">
       <label class="form-label">Код</label>
       {{ form.section_code }}
+      {% for error in form.section_code.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
     </div>
     <div class="mb-3">
       <label class="form-label">Раздел (услуга)</label>
       {{ form.section }}
+      {% for error in form.section.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
     </div>
     <div class="mb-3">
       <label class="form-label">Подраздел</label>
       {{ form.subsections }}
+      {% for error in form.subsections.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
     </div>
 
+    {% for error in form.non_field_errors %}
+      <div class="alert alert-danger mb-2">{{ error }}</div>
+    {% endfor %}
     {% if form.errors %}
       <div class="alert alert-danger mb-0">
         Проверьте введённые данные.

@@ -3,12 +3,68 @@ from . import views
 
 urlpatterns = [
     path("policy/partial/", views.policy_partial, name="policy_partial"),
+    path("policy/filter-catalog/", views.policy_filter_catalog, name="policy_filter_catalog"),
+    path(
+        "policy/tables/expertise-directions/",
+        views.policy_expertise_directions_table,
+        name="policy_expertise_directions_table",
+    ),
+    path(
+        "policy/tables/consulting-directions/",
+        views.policy_consulting_directions_table,
+        name="policy_consulting_directions_table",
+    ),
+    path("policy/tables/products/", views.policy_products_table, name="policy_products_table"),
+    path(
+        "policy/tables/service-goal-reports/",
+        views.policy_service_goal_reports_table,
+        name="policy_service_goal_reports_table",
+    ),
+    path(
+        "policy/tables/typical-sections/",
+        views.policy_typical_sections_table,
+        name="policy_typical_sections_table",
+    ),
+    path(
+        "policy/tables/section-structures/",
+        views.policy_section_structures_table,
+        name="policy_section_structures_table",
+    ),
+    path(
+        "policy/tables/report-structures/",
+        views.policy_report_structures_table,
+        name="policy_report_structures_table",
+    ),
+    path(
+        "policy/tables/typical-service-compositions/",
+        views.policy_typical_service_compositions_table,
+        name="policy_typical_service_compositions_table",
+    ),
+    path(
+        "policy/tables/typical-service-terms/",
+        views.policy_typical_service_terms_table,
+        name="policy_typical_service_terms_table",
+    ),
+    path("policy/tables/grades/", views.policy_grades_table, name="policy_grades_table"),
+    path(
+        "policy/tables/expert-specialties/",
+        views.policy_expert_specialties_table,
+        name="policy_expert_specialties_table",
+    ),
+    path(
+        "policy/tables/specialty-tariffs/",
+        views.policy_specialty_tariffs_table,
+        name="policy_specialty_tariffs_table",
+    ),
+    path("policy/tables/tariffs/", views.policy_tariffs_table, name="policy_tariffs_table"),
     path("policy/consulting-direction/create/", views.consulting_dir_form_create, name="consulting_dir_form_create"),
     path("policy/consulting-direction/<int:pk>/edit/", views.consulting_dir_form_edit, name="consulting_dir_form_edit"),
     path("policy/consulting-direction/<int:pk>/delete/", views.consulting_dir_delete, name="consulting_dir_delete"),
     path("consulting-directions/<int:pk>/move-up/", views.consulting_dir_move_up, name="consulting_dir_move_up"),
     path("consulting-directions/<int:pk>/move-down/", views.consulting_dir_move_down, name="consulting_dir_move_down"),
     path("policy/product/create/", views.product_form_create, name="product_form_create"),
+    path("policy/product/<int:pk>/", views.product_workspace, name="product_workspace"),
+    path("policy/product/<int:pk>/workspace-save/", views.product_workspace_save, name="product_workspace_save"),
     path("policy/product/<int:pk>/edit/", views.product_form_edit, name="product_form_edit"),
     path("policy/product/<int:pk>/delete/", views.product_delete, name="product_delete"),
     path("policy/product/csv-upload/", views.product_csv_upload, name="product_csv_upload"),

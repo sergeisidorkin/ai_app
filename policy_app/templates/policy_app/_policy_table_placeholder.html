@@ -1,0 +1,31 @@
+<section id="{{ table_id }}"
+         class="policy-table-placeholder"
+         data-policy-lazy-placeholder="1"
+         data-policy-lazy-priority="{{ load_priority }}"
+         data-policy-lazy-state="pending"
+         data-policy-table-key="{{ table_key }}"
+         data-policy-table-url="{{ table_url }}"
+         data-policy-table-page="1"
+         data-policy-table-page-size="25"
+         data-policy-filter-query=""
+         {% if master_managed %}data-policy-master-managed="1"{% endif %}
+         aria-busy="false">
+  <div class="d-flex justify-content-between align-items-center mb-3 table-section-header">
+    <h5 class="table-section-title">
+      <i class="bi bi-table me-2"></i>
+      {{ table_label }}
+    </h5>
+    <span class="policy-table-placeholder-status visually-hidden">Ожидает загрузки</span>
+  </div>
+  <div class="policy-table-placeholder-card" role="status">
+    <div class="policy-table-skeleton" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </div>
+    <div class="policy-table-placeholder-error alert alert-danger d-none mt-3 mb-0" role="alert">
+      <span>Не удалось загрузить таблицу.</span>
+      <button type="button"
+              class="btn btn-sm btn-outline-danger ms-2"
+              data-policy-lazy-retry="1">Повторить</button>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,191 @@
+{% load classifiers_filters %}
+<section id="policy-typical-sections-section"
+         data-policy-table-key="typical-sections"
+         data-policy-table-url="{% url 'policy_typical_sections_table' %}"
+         data-policy-master-managed="1"
+         data-policy-table-page="{{ page_obj.number|default:'1' }}"
+         data-policy-table-page-size="{{ policy_page_size|default:'25' }}"
+         {% if policy_inline_edit %}data-policy-inline="1" data-policy-row-insert="1"{% endif %}>
+{% if policy_inline_edit %}
+<script type="application/json" data-policy-inline-options>{{ policy_inline_options_json|safe }}</script>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Типовые разделы (услуги)
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive">
+    <table class="table table-sm align-top typical-sections-table">
+        <thead>
+        <tr>
+            <th style="width:1%">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="sections-master"
+                               data-target-name="section-select"
+                               data-actions-id="sections-actions"
+                               aria-label="Выделить все строки разделов">
+                    </div>
+                {% endif %}
+            </th>
+            <th class="policy-workspace-product-cell">Продукт</th>
+            <th class="typical-section-code-col">Код</th>
+            <th>Краткое имя EN</th>
+            <th>Краткое имя RU</th>
+            <th>Наименование раздела (услуги) EN</th>
+            <th>Наименование раздела (услуги) RU</th>
+            <th>Тип учета</th>
+            <th class="typical-section-executor-col">Исполнитель</th>
+            <th>Экспертиза</th>
+            <th>Подразделение</th>
+            <th><i class="bi bi-ban me-1"></i>ТКП</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for s in sections %}
+             <tr data-policy-filter-row="1"
+                 data-product-id="{{ s.product_id }}"
+                 {% if policy_inline_edit and not s.is_system_dsc %}data-inline-row-id="{{ s.id }}"{% endif %}
+                 data-product-label="{{ s.product.short_name }}{% if s.product.display_name %} {{ s.product.display_name }}{% endif %}"
+                 data-consulting-type="{{ s.product.consulting_type_display }}"
+                 data-service-category="{{ s.product.service_category_display }}"
+                 data-service-subtype="{{ s.product.service_subtype_display }}"
+                 data-system-section="{% if s.is_system_dsc %}1{% else %}0{% endif %}"
+                 data-edit-url="{% url 'section_form_edit' s.pk %}"
+                 data-delete-url="{% url 'section_delete' s.pk %}"
+                 data-move-up-url="{% url 'section_move_up' s.pk %}"
+                 data-move-down-url="{% url 'section_move_down' s.pk %}"
+                 {% if s.is_system_dsc %}class="typical-section-system-row"{% endif %}>
+
+                <td class="text-nowrap policy-row-check-cell">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="section-sel-{{ s.id }}"
+                                   name="section-select"
+                                   value="{{ s.id }}"
+                                   {% if s.is_system_dsc %}disabled{% endif %}
+                                   aria-label="Выделить строку раздела">
+                        </div>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap policy-workspace-product-cell">{{ s.product.short_name }}</td>
+                <td class="text-nowrap typical-section-code-col"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="code" data-inline-type="text" data-inline-value="{{ s.code }}"{% endif %}>
+                    {% if s.is_system_dsc %}
+                        <span class="typical-section-dsc-code">{{ s.code }}</span>
+                    {% else %}
+                        {{ s.code }}
+                    {% endif %}
+                </td>
+                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="short_name" data-inline-type="text" data-inline-value="{{ s.short_name }}"{% endif %}>{{ s.short_name }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="short_name_ru" data-inline-type="text" data-inline-value="{{ s.short_name_ru }}"{% endif %}>{{ s.short_name_ru }}</td>
+                <td{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ s.name_en }}"{% endif %}>{{ s.name_en }}</td>
+                <td{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ s.name_ru }}"{% endif %}>{{ s.name_ru }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="accounting_type" data-inline-type="select" data-inline-value="{{ s.accounting_type }}"{% endif %}>{% if s.is_system_dsc %}{% else %}{{ s.accounting_type }}{% endif %}</td>
+                <td class="text-nowrap typical-section-executor-col{% if policy_inline_edit and not s.is_system_dsc %} inline-specialties-cell{% endif %}"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="specialty_ids" data-inline-type="specialties" data-inline-value="[{% for rs in s.ranked_specialties.all %}{% if not forloop.first %},{% endif %}{{ rs.specialty_id }}{% endfor %}]"{% endif %}>
+                    {% if s.is_system_dsc %}
+                    {% elif policy_inline_edit %}
+                        {% with specs=s.ranked_specialties.all %}
+                        <div class="inline-specialties" data-count="{{ specs|length }}">
+                            {% for rs in specs %}
+                            <div class="inline-specialty-row" data-index="{{ forloop.counter0 }}" data-id="{{ rs.specialty_id }}">
+                                <span class="inline-specialty-label">{{ rs.specialty.specialty }}</span>
+                                <span class="inline-specialty-icons">
+                                    <span class="inline-specialty-actions">
+                                        <button type="button" class="inline-specialty-btn" data-specialty-action="move" data-dir="-1" title="Выше" aria-label="Выше"{% if forloop.first %} disabled{% endif %}><i class="bi bi-arrow-up"></i></button>
+                                        <button type="button" class="inline-specialty-btn" data-specialty-action="move" data-dir="1" title="Ниже" aria-label="Ниже"{% if forloop.last %} disabled{% endif %}><i class="bi bi-arrow-down"></i></button>
+                                        <button type="button" class="inline-specialty-btn" data-specialty-action="remove" title="Удалить" aria-label="Удалить"><i class="bi bi-x-lg"></i></button>
+                                    </span>
+                                    <span class="inline-specialty-chevron" aria-hidden="true"></span>
+                                    <button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>
+                                </span>
+                            </div>
+                            {% empty %}
+                            <div class="inline-specialty-row" data-index="0" data-id="">
+                                <span class="inline-specialty-label">—</span>
+                                <span class="inline-specialty-icons">
+                                    <span class="inline-specialty-actions"></span>
+                                    <span class="inline-specialty-chevron" aria-hidden="true"></span>
+                                    <button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>
+                                </span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endwith %}
+                    {% else %}
+                        {% for rs in s.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}
+                    {% endif %}
+                </td>
+                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="expertise_dir" data-inline-type="select" data-inline-value="{{ s.expertise_dir_id|default_if_none:'' }}"{% endif %}>{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% endif %}</td>
+                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="expertise_direction" data-inline-type="select" data-inline-value="{{ s.expertise_direction_id|default_if_none:'' }}"{% endif %}>{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% endif %}</td>
+                <td class="text-center"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="exclude_from_tkp_autofill" data-inline-type="checkbox" data-inline-value="{% if s.exclude_from_tkp_autofill %}true{% else %}false{% endif %}"{% endif %}>
+                    <input
+                        class="form-check-input"
+                        type="checkbox"
+                        {% if s.exclude_from_tkp_autofill %}checked{% endif %}
+                        {% if not policy_inline_edit or s.is_system_dsc %}disabled{% endif %}
+                        aria-label="Исключить из автозаполнения в ТКП">
+                </td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    <div class="policy-table-footer">
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <!-- Панель под таблицей "Типовые разделы": показывается глобальным скриптом -->
+    <div class="policy-table-footer-actions products-actions-row">
+      <button
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              hx-get="{% url 'section_form_create' %}"
+              hx-target="#policy-modal .modal-content"
+              hx-swap="innerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="sections-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" id="sections-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" id="sections-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" id="sections-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" id="sections-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+      <a href="{% url 'section_csv_download' %}{% if policy_filter_query %}?{{ policy_filter_query }}{% endif %}"
+         id="sections-csv-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+         title="Скачать CSV"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </a>
+      <button type="button" id="sections-csv-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file" id="sections-csv-file-input" accept=".csv" class="d-none">
+    </div>
+    {% else %}
+    <div class="policy-table-footer-actions"></div>
+    {% endif %}
+    {% if policy_pagination_enabled %}
+        {% include "policy_app/_policy_pagination.html" with pagination_target="#policy-typical-sections-section" page_size_id="typical-sections" %}
+    {% endif %}
+    </div>
+</div>
+</section>

@@ -266,7 +266,9 @@ requires `/status.php` to report `installed: true`; do not replace it with a
 `CMD-SHELL` pipeline, because Docker's health timeout can leave pipeline
 children running after the shell is killed. The container init process reaps
 abandoned children, and a 256-process limit provides a final guard against
-process leaks.
+process leaks. Every service also uses Docker's native `json-file` rotation
+with three files of at most 10 MiB each, so access or error logs cannot grow
+without bound and exhaust the host filesystem.
 
 PHP sessions remain serialized through Redis, but their locks are bounded:
 each lock expires after 60 seconds and a request waits at most about 10 seconds

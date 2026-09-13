@@ -170,6 +170,63 @@ def _resolve_asset_names(project, asset_name: str) -> list[str]:
     return result
 
 
+SOURCE_DATA_SELECT_ASSET_HINT = "Для отображения данных выберите актив"
+
+
+def _unique_asset_labels(legal_entities) -> list[str]:
+    names = []
+    seen = set()
+    for entity in legal_entities or []:
+        work_item = getattr(entity, "work_item", None)
+        label = (
+            (getattr(work_item, "asset_name", "") or "").strip()
+            or (getattr(work_item, "name", "") or "").strip()
+        )
+        if label and label not in seen:
+            seen.add(label)
+            names.append(label)
+    return names
+
+
+def _source_data_scope_is_ambiguous(project, asset_name: str, legal_entities=None) -> bool:
+    resolved = _resolve_asset_names(project, asset_name)
+    if len(resolved) > 1:
+        return True
+    if not asset_name or asset_name == "all":
+        return len(_unique_asset_labels(legal_entities)) > 1
+    return False
+
+
+def _checklist_file_display(sd_folder, folder, *, ambiguous: bool) -> dict:
+    if ambiguous:
+        return {
+            "file_count": None,
+            "last_upload_at": None,
+            "source_data_url": "",
+            "files_hint": SOURCE_DATA_SELECT_ASSET_HINT,
+        }
+    if sd_folder:
+        return {
+            "file_count": sd_folder.file_count,
+            "last_upload_at": sd_folder.last_upload_at,
+            "source_data_url": sd_folder.public_url or "",
+            "files_hint": "",
+        }
+    if folder:
+        return {
+            "file_count": folder.file_count,
+            "last_upload_at": folder.last_upload_at,
+            "source_data_url": "",
+            "files_hint": "",
+        }
+    return {
+        "file_count": None,
+        "last_upload_at": None,
+        "source_data_url": "",
+        "files_hint": "",
+    }
+
+
 def _sections_for_asset(project, selected_asset, performer_qs=None):
     if not selected_asset:
         return []
@@ -610,6 +667,7 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
         except Exception:
             pass
 
+    files_ambiguous = _source_data_scope_is_ambiguous(project, asset_name, legal_entities)
     rows = []
     seen_additional_groups = set()
     for item in checklist_items:
@@ -632,8 +690,7 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
         ]
         folder = folder_map.get(item.id)
         sd_folder = sd_folder_map.get(item.id)
-        eff_file_count = sd_folder.file_count if sd_folder else (folder.file_count if folder else None)
-        eff_last_upload = sd_folder.last_upload_at if sd_folder else (folder.last_upload_at if folder else None)
+        files = _checklist_file_display(sd_folder, folder, ambiguous=files_ambiguous)
         rows.append({
             "item": item,
             "section_obj": section,
@@ -643,9 +700,10 @@ def _build_table_context(project, section, asset_name, checklist_items, legal_en
             "note": note_map.get(item.id),
             "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
             "additional_header": additional_header,
-            "file_count": eff_file_count,
-            "last_upload_at": eff_last_upload,
-            "source_data_url": sd_folder.public_url if sd_folder and sd_folder.public_url else "",
+            "file_count": files["file_count"],
+            "last_upload_at": files["last_upload_at"],
+            "source_data_url": files["source_data_url"],
+            "files_hint": files["files_hint"],
         })
 
     return {
@@ -731,6 +789,7 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
         except Exception:
             pass
 
+    files_ambiguous = _source_data_scope_is_ambiguous(project, asset_name, legal_entities)
     rows = []
     for sec, items in section_items_list:
         if not items:
@@ -760,8 +819,7 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
             ]
             folder = folder_map.get(item.id)
             sd_folder = sd_folder_map.get(item.id)
-            eff_file_count = sd_folder.file_count if sd_folder else (folder.file_count if folder else None)
-            eff_last_upload = sd_folder.last_upload_at if sd_folder else (folder.last_upload_at if folder else None)
+            files = _checklist_file_display(sd_folder, folder, ambiguous=files_ambiguous)
             rows.append({
                 "item": item,
                 "section_obj": sec,
@@ -771,9 +829,10 @@ def _build_all_sections_context(project, section_items_list, asset_name, legal_e
                 "note": note_map.get(item.id),
                 "history": history_map.get(item.id, {"imc_comment": [], "customer_comment": []}),
                 "additional_header": additional_header,
-                "file_count": eff_file_count,
-                "last_upload_at": eff_last_upload,
-                "source_data_url": sd_folder.public_url if sd_folder and sd_folder.public_url else "",
+                "file_count": files["file_count"],
+                "last_upload_at": files["last_upload_at"],
+                "source_data_url": files["source_data_url"],
+                "files_hint": files["files_hint"],
             })
 
     return {
@@ -1168,6 +1227,7 @@ def _build_grid_payload(
         except Exception:
             pass
 
+    files_ambiguous = _source_data_scope_is_ambiguous(project, asset_name, legal_entities)
     status_label_map = dict(ChecklistStatus.Status.choices)
     customer_status_label_map = dict(ChecklistCustomerStatus.Status.choices)
     _pending = pending_section_ids or set()
@@ -1239,8 +1299,7 @@ def _build_grid_payload(
 
             folder = folder_map.get(item.id)
             sd_folder = sd_folder_map.get(item.id)
-            eff_file_count = sd_folder.file_count if sd_folder else (folder.file_count if folder else None)
-            eff_last_upload = sd_folder.last_upload_at if sd_folder else (folder.last_upload_at if folder else None)
+            files = _checklist_file_display(sd_folder, folder, ambiguous=files_ambiguous)
             rows.append({
                 "kind": "item",
                 "id": item.id,
@@ -1252,12 +1311,13 @@ def _build_grid_payload(
                 "name": item.name,
                 "codeClass": _code_cell_class(row_statuses),
                 "comments": comment_summary_map.get(item.id, _comment_flags(None)),
-                "fileCount": eff_file_count,
+                "fileCount": files["file_count"],
                 "lastUploadAt": (
-                    timezone.localtime(eff_last_upload).strftime("%d.%m.%y %H:%M")
-                    if eff_last_upload else None
+                    timezone.localtime(files["last_upload_at"]).strftime("%d.%m.%y %H:%M")
+                    if files["last_upload_at"] else None
                 ),
-                "sourceDataUrl": sd_folder.public_url if sd_folder and sd_folder.public_url else "",
+                "sourceDataUrl": files["source_data_url"],
+                "filesHint": files["files_hint"],
                 "cells": cells,
                 "customerCells": customer_cells,
                 "actions": {

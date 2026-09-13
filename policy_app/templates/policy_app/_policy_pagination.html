@@ -1,0 +1,67 @@
+<div class="policy-table-pagination">
+    <div class="policy-table-page-size-control">
+        <label class="policy-table-page-size-label text-muted" for="policy-page-size-{{ page_size_id }}">
+            Показано строк
+        </label>
+        <select id="policy-page-size-{{ page_size_id }}"
+                class="form-select form-select-sm policy-table-page-size-select"
+                name="page_size"
+                aria-label="Показано строк"
+                hx-get="{{ policy_page_size_url }}"
+                hx-trigger="change"
+                hx-target="{{ pagination_target }}"
+                hx-swap="outerHTML">
+            {% for option in policy_page_size_options %}
+                <option value="{{ option }}"{% if option == policy_page_size %} selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <span class="policy-table-range text-muted">
+        {{ policy_pagination_start }}–{{ policy_pagination_end }} из {{ paginator.count }}
+    </span>
+    <nav aria-label="Страницы таблицы">
+        <ul class="pagination pagination-sm mb-0 classifiers-pagination">
+            <li class="page-item{% if not page_obj.has_previous %} disabled{% endif %}">
+                {% if page_obj.has_previous %}
+                    <a class="page-link"
+                       href="{{ policy_pagination_previous_url }}"
+                       hx-get="{{ policy_pagination_previous_url }}"
+                       hx-target="{{ pagination_target }}"
+                       hx-swap="outerHTML"
+                       aria-label="Предыдущая страница"><i class="bi bi-chevron-left" aria-hidden="true"></i></a>
+                {% else %}
+                    <span class="page-link" aria-hidden="true"><i class="bi bi-chevron-left" aria-hidden="true"></i></span>
+                {% endif %}
+            </li>
+            {% for item in policy_pagination_pages %}
+                {% if item.ellipsis %}
+                    <li class="page-item disabled"><span class="page-link">{{ paginator.ELLIPSIS }}</span></li>
+                {% elif item.current %}
+                    <li class="page-item active" aria-current="page">
+                        <span class="page-link">{{ item.number }}</span>
+                    </li>
+                {% else %}
+                    <li class="page-item">
+                        <a class="page-link"
+                           href="{{ item.url }}"
+                           hx-get="{{ item.url }}"
+                           hx-target="{{ pagination_target }}"
+                           hx-swap="outerHTML">{{ item.number }}</a>
+                    </li>
+                {% endif %}
+            {% endfor %}
+            <li class="page-item{% if not page_obj.has_next %} disabled{% endif %}">
+                {% if page_obj.has_next %}
+                    <a class="page-link"
+                       href="{{ policy_pagination_next_url }}"
+                       hx-get="{{ policy_pagination_next_url }}"
+                       hx-target="{{ pagination_target }}"
+                       hx-swap="outerHTML"
+                       aria-label="Следующая страница"><i class="bi bi-chevron-right" aria-hidden="true"></i></a>
+                {% else %}
+                    <span class="page-link" aria-hidden="true"><i class="bi bi-chevron-right" aria-hidden="true"></i></span>
+                {% endif %}
+            </li>
+        </ul>
+    </nav>
+</div>

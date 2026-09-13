@@ -8,12 +8,12 @@
 <form
     method="post"
     {% if action == "create" %}
-      hx-post="{% url 'section_form_create' %}"
+      hx-post="{% url 'section_form_create' %}{{ policy_form_query }}"
     {% else %}
-      hx-post="{% url 'section_form_edit' section.pk %}"
+      hx-post="{% url 'section_form_edit' section.pk %}{{ policy_form_query }}"
     {% endif %}
-    hx-target="#policy-pane"
-    hx-swap="outerHTML"
+    hx-target="#policy-modal .modal-content"
+    hx-swap="innerHTML"
     style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;">
   <div class="modal-body">
     {% csrf_token %}

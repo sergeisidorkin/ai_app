@@ -6,6 +6,7 @@ import calendar
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from types import SimpleNamespace
 from zipfile import BadZipFile
 
 from docx.opc.exceptions import PackageNotFoundError
@@ -16,10 +17,11 @@ from openpyxl.utils.exceptions import InvalidFileException
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import IntegerField, Max, Q, Value
 from django.db.models.functions import Coalesce
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, QueryDict
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -43,6 +45,8 @@ from .models import (
     Grade,
     SpecialtyTariff,
     Tariff,
+    DEPARTMENT_HEAD_GROUP,
+    DIRECTOR_GROUPS,
     MANAGER_GROUPS,
     build_consulting_catalog_meta,
     ensure_system_dsc_section,
@@ -50,9 +54,12 @@ from .models import (
 )
 from .forms import (
     ConsultingDirectionForm,
+    OWNER_GROUP_VALUE,
     ProductForm,
     TypicalSectionForm,
     SectionStructureForm,
+    _policy_section_display_label,
+    _policy_section_option_label,
     ReportStructureForm,
     ServiceGoalReportForm,
     TypicalServiceCompositionForm,
@@ -66,9 +73,32 @@ from .docx_service_compositions import (
     build_typical_service_compositions_docx,
     parse_typical_service_compositions_docx,
 )
+from .cache import (
+    get_or_build_policy_catalog,
+    schedule_policy_cache_invalidation,
+)
+from .querysets import (
+    ordered_owner_display_prefetch,
+    ordered_specialties_display_prefetch,
+    policy_consulting_directions_queryset,
+)
 
 # Вынесенные константы для единообразия шаблонов/заголовков
 POLICY_PARTIAL_TEMPLATE = "policy_app/policy_partial.html"
+POLICY_EXPERTISE_DIRECTIONS_TABLE_TEMPLATE = "policy_app/policy_expertise_directions_table.html"
+POLICY_CONSULTING_DIRECTIONS_TABLE_TEMPLATE = "policy_app/policy_consulting_directions_table.html"
+POLICY_PRODUCTS_TABLE_TEMPLATE = "policy_app/policy_products_table.html"
+POLICY_SERVICE_GOAL_REPORTS_TABLE_TEMPLATE = "policy_app/policy_service_goal_reports_table.html"
+POLICY_TYPICAL_SECTIONS_TABLE_TEMPLATE = "policy_app/policy_typical_sections_table.html"
+POLICY_SECTION_STRUCTURES_TABLE_TEMPLATE = "policy_app/policy_section_structures_table.html"
+POLICY_REPORT_STRUCTURES_TABLE_TEMPLATE = "policy_app/policy_report_structures_table.html"
+POLICY_TYPICAL_SERVICE_COMPOSITIONS_TABLE_TEMPLATE = "policy_app/policy_typical_service_compositions_table.html"
+POLICY_TYPICAL_SERVICE_TERMS_TABLE_TEMPLATE = "policy_app/policy_typical_service_terms_table.html"
+POLICY_GRADES_TABLE_TEMPLATE = "policy_app/policy_grades_table.html"
+POLICY_EXPERT_SPECIALTIES_TABLE_TEMPLATE = "policy_app/policy_expert_specialties_table.html"
+POLICY_SPECIALTY_TARIFFS_TABLE_TEMPLATE = "policy_app/policy_specialty_tariffs_table.html"
+POLICY_TARIFFS_TABLE_TEMPLATE = "policy_app/policy_tariffs_table.html"
+PRODUCT_WORKSPACE_TEMPLATE = "policy_app/product_workspace.html"
 PRODUCT_FORM_TEMPLATE = "policy_app/product_form.html"
 SECTION_FORM_TEMPLATE = "policy_app/section_form.html"
 STRUCTURE_FORM_TEMPLATE = "policy_app/structure_form.html"
@@ -83,6 +113,8 @@ SPECIALTY_TARIFF_FORM_TEMPLATE = "policy_app/specialty_tariff_form.html"
 TARIFF_FORM_TEMPLATE = "policy_app/tariff_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
+POLICY_TABLE_PAGE_SIZE = 25
+POLICY_TABLE_PAGE_SIZE_OPTIONS = (25, 50, 100)
 PRODUCT_CSV_HEADERS = [
     "Краткое имя",
     "Наименование на английском языке",
@@ -225,7 +257,7 @@ def _get_tariffs_for_user(user):
 def _get_specialty_tariffs_for_user(user):
     qs = SpecialtyTariff.objects.select_related(
         "currency", "created_by", "created_by__employee_profile"
-    ).prefetch_related("specialties")
+    ).prefetch_related(ordered_specialties_display_prefetch())
     if user.is_superuser:
         return qs
     if _is_department_head(user):
@@ -391,82 +423,733 @@ def _report_structure_form_initial_number(form, report_structure=None):
         level = form.initial.get("level", 0)
     return _report_structure_number_preview(product_id, level, report_structure)
 
-# Вспомогательные функции для устранения дублирования
-def _policy_context(request):
-    products = Product.objects.select_related(
-        "consulting_type_ref", "service_category_ref", "service_subtype_ref"
-    ).prefetch_related("owners").all()
-    sections = TypicalSection.objects.select_related(
-        "product",
-        "product__consulting_type_ref",
-        "product__service_category_ref",
-        "product__service_subtype_ref",
-        "expertise_dir",
-        "expertise_direction",
-    ).prefetch_related(
-        "ranked_specialties", "ranked_specialties__specialty"
-    ).all()
-    structures = SectionStructure.objects.select_related(
-        "product",
-        "product__consulting_type_ref",
-        "product__service_category_ref",
-        "product__service_subtype_ref",
-        "section",
-    ).all()
+def _policy_expertise_directions_context(request):
+    return {
+        "expertise_directions": ExpertiseDirection.objects.prefetch_related(
+            ordered_owner_display_prefetch()
+        ).order_by("position", "id"),
+    }
+
+
+def _policy_consulting_directions_context(request):
+    return {"consulting_directions": policy_consulting_directions_queryset()}
+
+
+def _policy_products_queryset():
+    return (
+        Product.objects.select_related(
+            "consulting_type_ref", "service_category_ref", "service_subtype_ref"
+        )
+        .prefetch_related(ordered_owner_display_prefetch())
+        .order_by("position", "id")
+    )
+
+
+def _policy_products_context(request):
+    return {"products": _policy_products_queryset()}
+
+
+def _policy_service_goal_reports_queryset():
+    return (
+        ServiceGoalReport.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+        ).order_by("position", "id")
+    )
+
+
+def _policy_service_goal_reports_context(request):
+    return {"service_goal_reports": _policy_service_goal_reports_queryset()}
+
+
+def _policy_typical_sections_queryset():
+    return (
+        TypicalSection.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+            "expertise_dir",
+            "expertise_direction",
+        )
+        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .order_by("product__short_name", "position", "id")
+    )
+
+
+def _policy_typical_sections_context(request):
+    return {"sections": _policy_typical_sections_queryset()}
+
+
+def _is_policy_workspace_request(request):
+    value = str(request.GET.get("workspace") or "").strip().lower()
+    return value in {"1", "true", "yes"}
+
+
+def _policy_filter_query_without_page(request):
+    filter_query = request.GET.copy()
+    filter_query.pop("page", None)
+    filter_query.pop("page_size", None)
+    filter_query.pop("workspace", None)
+    return filter_query
+
+
+def _policy_unpaged_context(request, queryset):
+    objects = list(queryset)
+    return {
+        "policy_pagination_enabled": False,
+        "page_obj": SimpleNamespace(object_list=objects, number=1),
+        "paginator": None,
+        "policy_pagination_pages": [],
+        "policy_pagination_previous_url": "",
+        "policy_pagination_next_url": "",
+        "policy_pagination_start": 1 if objects else 0,
+        "policy_pagination_end": len(objects),
+        "policy_page_size": len(objects) or POLICY_TABLE_PAGE_SIZE,
+        "policy_page_size_options": POLICY_TABLE_PAGE_SIZE_OPTIONS,
+        "policy_page_size_url": "",
+        "policy_filter_query": _policy_filter_query_without_page(request).urlencode(),
+        "policy_workspace": True,
+    }
+
+
+def _policy_pagination_context(request, queryset):
+    if _is_policy_workspace_request(request):
+        return _policy_unpaged_context(request, queryset)
+    try:
+        page_size = int(request.GET.get("page_size", POLICY_TABLE_PAGE_SIZE))
+    except (TypeError, ValueError):
+        page_size = POLICY_TABLE_PAGE_SIZE
+    if page_size not in POLICY_TABLE_PAGE_SIZE_OPTIONS:
+        page_size = POLICY_TABLE_PAGE_SIZE
+
+    paginator = Paginator(queryset, page_size)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    filter_query = _policy_filter_query_without_page(request)
+
+    def page_url(page_number):
+        page_query = filter_query.copy()
+        page_query["page_size"] = page_size
+        page_query["page"] = page_number
+        return f"{request.path}?{page_query.urlencode()}"
+
+    page_size_query = filter_query.copy()
+    page_size_query["page"] = 1
+    page_size_url = f"{request.path}?{page_size_query.urlencode()}"
+
+    pagination_pages = []
+    for page_number in paginator.get_elided_page_range(page_obj.number):
+        if page_number == paginator.ELLIPSIS:
+            pagination_pages.append({"ellipsis": True})
+        else:
+            pagination_pages.append(
+                {
+                    "number": page_number,
+                    "url": page_url(page_number),
+                    "current": page_number == page_obj.number,
+                }
+            )
+
+    return {
+        "policy_pagination_enabled": True,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "policy_pagination_pages": pagination_pages,
+        "policy_pagination_previous_url": page_url(page_obj.previous_page_number())
+        if page_obj.has_previous()
+        else "",
+        "policy_pagination_next_url": page_url(page_obj.next_page_number())
+        if page_obj.has_next()
+        else "",
+        "policy_pagination_start": page_obj.start_index(),
+        "policy_pagination_end": page_obj.end_index(),
+        "policy_page_size": page_size,
+        "policy_page_size_options": POLICY_TABLE_PAGE_SIZE_OPTIONS,
+        "policy_page_size_url": page_size_url,
+        "policy_filter_query": filter_query.urlencode(),
+        "policy_workspace": False,
+    }
+
+
+def _typical_section_inline_options():
+    departments = OrgUnit.objects.filter(
+        Q(unit_type="expertise") | Q(unit_type="administrative", level=1)
+    ).order_by("department_name", "id")
+    return {
+        "accounting_types": [
+            {"value": value, "label": label}
+            for value, label in TypicalSection.ACCOUNTING_TYPE_CHOICES
+        ],
+        "expertise_dirs": [
+            {"id": item.pk, "label": item.short_name}
+            for item in ExpertiseDirection.objects.order_by("position", "id")
+        ],
+        "departments": [
+            {"id": item.pk, "label": item.department_name}
+            for item in departments
+        ],
+        "specialties": _section_specialty_options(),
+    }
+
+
+def _policy_typical_sections_table_context(request):
+    sections = _apply_policy_master_product_filters(
+        _policy_typical_sections_queryset(),
+        request,
+    )
+    context = _policy_pagination_context(request, sections)
+    context["sections"] = context["page_obj"].object_list
+    if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+        context["policy_inline_options_json"] = json.dumps(
+            _typical_section_inline_options(),
+            ensure_ascii=False,
+        )
+    return context
+
+
+def _policy_section_structures_queryset():
+    return (
+        SectionStructure.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+            "section",
+        ).order_by("position", "id")
+    )
+
+
+def _policy_section_structures_context(request):
+    return {"structures": _policy_section_structures_queryset()}
+
+
+def _policy_report_structures_context(request):
     report_structures = list(_ordered_report_structures_queryset())
     report_structure_numbers = _build_report_structure_numbers(report_structures)
     for report_structure in report_structures:
         report_structure.display_number = report_structure_numbers.get(report_structure.pk, "")
-    service_goal_reports = ServiceGoalReport.objects.select_related(
-        "product",
-        "product__consulting_type_ref",
-        "product__service_category_ref",
-        "product__service_subtype_ref",
-    ).all()
-    typical_service_compositions = TypicalServiceComposition.objects.select_related(
-        "product",
-        "product__consulting_type_ref",
-        "product__service_category_ref",
-        "product__service_subtype_ref",
-        "section",
-    ).all()
-    typical_service_terms = TypicalServiceTerm.objects.select_related(
-        "product",
-        "product__consulting_type_ref",
-        "product__service_category_ref",
-        "product__service_subtype_ref",
-    ).all()
-    consulting_directions = ConsultingDirection.objects.prefetch_related(
-        "consulting_types",
-        "service_types__consulting_type",
-        "service_subtypes__service_type__consulting_type",
-    ).all()
-    expertise_directions = ExpertiseDirection.objects.prefetch_related("owners").all()
-    grades = _get_grades_for_user(request.user)
-    specialty_tariffs = _get_specialty_tariffs_for_user(request.user)
-    tariffs = _get_tariffs_for_user(request.user)
-    is_dept_head = _is_department_head(request.user)
+    return {"report_structures": report_structures}
+
+
+def _policy_typical_service_compositions_queryset():
+    return (
+        TypicalServiceComposition.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+            "section",
+        ).order_by("position", "id")
+    )
+
+
+def _policy_typical_service_compositions_context(request):
     return {
-        "products": products,
-        "sections": sections,
-        "structures": structures,
-        "report_structures": report_structures,
-        "service_goal_reports": service_goal_reports,
-        "typical_service_compositions": typical_service_compositions,
-        "typical_service_terms": typical_service_terms,
-        "consulting_directions": consulting_directions,
-        "expertise_directions": expertise_directions,
-        "grades": grades,
-        "specialty_tariffs": specialty_tariffs,
-        "tariffs": tariffs,
-        "is_admin": request.user.is_superuser,
-        "is_dept_head": is_dept_head,
+        "typical_service_compositions": _policy_typical_service_compositions_queryset(),
     }
 
-def _render_policy_updated(request):
+
+def _policy_typical_service_terms_queryset():
+    return (
+        TypicalServiceTerm.objects.select_related(
+            "product",
+            "product__consulting_type_ref",
+            "product__service_category_ref",
+            "product__service_subtype_ref",
+        ).order_by("position", "id")
+    )
+
+
+def _policy_typical_service_terms_context(request):
+    return {"typical_service_terms": _policy_typical_service_terms_queryset()}
+
+
+def _policy_grades_context(request):
+    return {
+        "grades": _get_grades_for_user(request.user),
+        "is_admin": request.user.is_superuser,
+        "is_dept_head": _is_department_head(request.user),
+    }
+
+
+def _policy_expert_specialties_context(request):
+    from experts_app.views import _specialties_queryset
+
+    return {"specialties": _specialties_queryset()}
+
+
+def _policy_expert_specialties_table_context(request):
+    from experts_app.views import _specialties_queryset
+
+    context = _policy_pagination_context(request, _specialties_queryset())
+    context["specialties"] = context["page_obj"].object_list
+    return context
+
+
+def _policy_specialty_tariffs_context(request):
+    return {
+        "specialty_tariffs": _get_specialty_tariffs_for_user(request.user),
+        "is_admin": request.user.is_superuser,
+    }
+
+
+def _policy_tariffs_context(request):
+    return {
+        "tariffs": _get_tariffs_for_user(request.user),
+        "is_admin": request.user.is_superuser,
+    }
+
+
+def _policy_paginated_table_context(
+    request,
+    queryset,
+    context_key,
+    *,
+    products=False,
+):
+    if products:
+        filtered = _apply_policy_master_filters_to_products(queryset, request)
+    else:
+        filtered = _apply_policy_master_product_filters(queryset, request)
+    context = _policy_pagination_context(request, filtered)
+    context[context_key] = context["page_obj"].object_list
+    return context
+
+
+def _policy_products_table_context(request):
+    context = _policy_paginated_table_context(
+        request,
+        _policy_products_queryset(),
+        "products",
+        products=True,
+    )
+    if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+        context["policy_inline_options_json"] = json.dumps(
+            {
+                "catalog": build_consulting_catalog_meta(),
+                "owners": list(GroupMember.objects.order_by("position", "id").values("pk", "short_name")),
+            },
+            ensure_ascii=False,
+        )
+        for product in context["products"]:
+            product.inline_owner_ids_json = json.dumps(_product_inline_owner_ids(product), ensure_ascii=False)
+    return context
+
+
+def _policy_service_goal_reports_table_context(request):
+    context = _policy_paginated_table_context(
+        request,
+        _policy_service_goal_reports_queryset(),
+        "service_goal_reports",
+    )
+    if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+    return context
+
+
+def _section_structure_inline_options(product_id):
+    qs = TypicalSection.objects.none()
+    if product_id:
+        qs = TypicalSection.objects.filter(product_id=product_id).order_by("position", "id")
+    return {
+        "sections": [
+            {
+                "id": section.pk,
+                "code": section.code or "",
+                "label": _policy_section_option_label(section),
+                "displayLabel": _policy_section_display_label(section),
+            }
+            for section in qs
+        ]
+    }
+
+
+def _policy_section_structures_table_context(request):
+    context = _policy_paginated_table_context(
+        request,
+        _policy_section_structures_queryset(),
+        "structures",
+    )
+    if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+        context["policy_inline_options_json"] = json.dumps(
+            _section_structure_inline_options(_positive_int(request.GET.get("product"))),
+            ensure_ascii=False,
+        )
+    return context
+
+
+def _policy_report_structures_table_context(request):
+    filtered = _apply_policy_master_product_filters(
+        _ordered_report_structures_queryset(),
+        request,
+    )
+    context = _policy_pagination_context(request, filtered)
+    number_items = (
+        {"key": item["id"], "product_id": item["product_id"], "level": item["level"]}
+        for item in filtered.values("id", "product_id", "level")
+    )
+    report_structure_numbers = _build_report_structure_numbers(number_items)
+    report_structures = context["page_obj"].object_list
+    for report_structure in report_structures:
+        report_structure.display_number = report_structure_numbers.get(report_structure.pk, "")
+    context["report_structures"] = report_structures
+    if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+    return context
+
+
+def _policy_typical_service_compositions_table_context(request):
+    context = _policy_paginated_table_context(
+        request,
+        _policy_typical_service_compositions_queryset(),
+        "typical_service_compositions",
+    )
+    if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+        context["policy_inline_options_json"] = json.dumps(
+            _section_structure_inline_options(_positive_int(request.GET.get("product"))),
+            ensure_ascii=False,
+        )
+        for item in context.get("typical_service_compositions") or []:
+            state = item.service_composition_editor_state or {}
+            if not isinstance(state, dict):
+                state = {}
+            item.inline_editor_state_json = json.dumps(
+                {
+                    "html": str(state.get("html") or ""),
+                    "plain_text": str(state.get("plain_text") or item.service_composition or ""),
+                },
+                ensure_ascii=False,
+            )
+    return context
+
+
+def _typical_service_term_inline_options():
+    return {
+        "units": [
+            {"value": value, "label": label}
+            for value, label in TypicalServiceTerm.TermUnit.choices
+        ]
+    }
+
+
+def _policy_typical_service_terms_table_context(request):
+    context = _policy_paginated_table_context(
+        request,
+        _policy_typical_service_terms_queryset(),
+        "typical_service_terms",
+    )
+    if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+        context["policy_inline_options_json"] = json.dumps(
+            _typical_service_term_inline_options(),
+            ensure_ascii=False,
+        )
+    return context
+
+
+def _tariff_inline_owner_options(extra_user_ids=None):
+    user_model = get_user_model()
+    group_q = Q(groups__name__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS))
+    extra_ids = [int(uid) for uid in (extra_user_ids or []) if uid]
+    qs = user_model.objects.filter(group_q)
+    if extra_ids:
+        qs = user_model.objects.filter(group_q | Q(pk__in=extra_ids))
+    return [
+        {
+            "id": user.pk,
+            "label": _tariff_owner_label(user),
+        }
+        for user in qs.select_related("employee_profile").distinct().order_by(
+            "last_name", "first_name", "username"
+        )
+    ]
+
+
+def _tariff_inline_options(product_id, extra_owner_ids=None):
+    options = _section_structure_inline_options(product_id)
+    options["owners"] = _tariff_inline_owner_options(extra_owner_ids)
+    return options
+
+
+def _policy_tariffs_table_context(request):
+    context = _policy_paginated_table_context(
+        request,
+        _get_tariffs_for_user(request.user),
+        "tariffs",
+    )
+    context["is_admin"] = request.user.is_superuser
+    if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+        extra_owner_ids = [
+            item.created_by_id
+            for item in context.get("tariffs") or []
+            if getattr(item, "created_by_id", None)
+        ]
+        context["policy_inline_options_json"] = json.dumps(
+            _tariff_inline_options(
+                _positive_int(request.GET.get("product")),
+                extra_owner_ids,
+            ),
+            ensure_ascii=False,
+        )
+    return context
+
+
+# Вспомогательная функция для полной компоновки панели.
+def _policy_context(request):
+    context = {}
+    for builder in (
+        _policy_expertise_directions_context,
+        _policy_consulting_directions_context,
+        _policy_products_context,
+        _policy_service_goal_reports_context,
+        _policy_typical_sections_context,
+        _policy_section_structures_context,
+        _policy_report_structures_context,
+        _policy_typical_service_compositions_context,
+        _policy_typical_service_terms_context,
+        _policy_grades_context,
+        _policy_expert_specialties_context,
+        _policy_specialty_tariffs_context,
+        _policy_tariffs_context,
+    ):
+        context.update(builder(request))
+    return context
+
+
+def _policy_filter_catalog_data():
+    products = Product.objects.select_related(
+        "consulting_type_ref",
+        "service_category_ref",
+        "service_subtype_ref",
+    ).order_by("position", "id")
+    product_items = []
+    options = {
+        "consulting": [],
+        "category": [],
+        "subtype": [],
+        "product": [],
+    }
+    seen = {key: set() for key in ("consulting", "category", "subtype")}
+
+    for product in products:
+        label = " ".join(part for part in (product.short_name, product.display_name) if part)
+        item = {
+            "id": product.pk,
+            "label": label,
+            "consulting": product.consulting_type_display,
+            "category": product.service_category_display,
+            "subtype": product.service_subtype_display,
+            "consulting_ref_id": product.consulting_type_ref_id,
+            "category_ref_id": product.service_category_ref_id,
+            "subtype_ref_id": product.service_subtype_ref_id,
+        }
+        product_items.append(item)
+        options["product"].append({"id": product.pk, "label": label})
+        for key in ("consulting", "category", "subtype"):
+            value = item[key]
+            if value and value not in seen[key]:
+                seen[key].add(value)
+                options[key].append(value)
+
+    return {"products": product_items, "options": options}
+
+
+def _render_policy_legacy_updated(request):
     response = render(request, POLICY_PARTIAL_TEMPLATE, _policy_context(request))
     response[HX_TRIGGER_HEADER] = HX_POLICY_UPDATED_EVENT
     return response
+
+
+def _is_htmx_request(request):
+    return request.headers.get("HX-Request", "").lower() == "true"
+
+
+POLICY_MUTATION_DEPENDENCIES = {
+    "consulting-direction": {
+        "tables": (
+            "consulting-directions",
+            "products",
+            "service-goal-reports",
+            "typical-sections",
+            "section-structures",
+            "report-structures",
+            "typical-service-compositions",
+            "typical-service-terms",
+            "tariffs",
+        ),
+        "refresh_filters": True,
+    },
+    "product": {
+        "tables": (
+            "consulting-directions",
+            "products",
+            "service-goal-reports",
+            "typical-sections",
+            "section-structures",
+            "report-structures",
+            "typical-service-compositions",
+            "typical-service-terms",
+            "tariffs",
+        ),
+        "refresh_filters": True,
+    },
+    "product-defaults": {"tables": ("products",)},
+    "expertise-direction": {
+        "tables": ("expertise-directions", "typical-sections", "specialty-tariffs"),
+    },
+    "typical-section": {
+        "tables": (
+            "typical-sections",
+            "section-structures",
+            "typical-service-compositions",
+            "tariffs",
+        ),
+    },
+    "section-structure": {"tables": ("section-structures",)},
+    "report-structure": {"tables": ("report-structures",)},
+    "service-goal-report": {"tables": ("service-goal-reports",)},
+    "typical-service-composition": {"tables": ("typical-service-compositions",)},
+    "typical-service-term": {"tables": ("typical-service-terms",)},
+    "grade": {"tables": ("grades",)},
+    "expert-specialty": {
+        "tables": ("expert-specialties", "specialty-tariffs", "typical-sections"),
+    },
+    "specialty-tariff": {"tables": ("specialty-tariffs",)},
+    "tariff": {"tables": ("tariffs",)},
+}
+
+POLICY_MUTATION_URL_ENTITY = {
+    url_name: entity
+    for entity, url_names in {
+        "consulting-direction": (
+            "consulting_dir_form_create", "consulting_dir_form_edit", "consulting_dir_delete",
+            "consulting_dir_move_up", "consulting_dir_move_down",
+        ),
+        "product": (
+            "product_form_create", "product_form_edit", "product_delete", "product_csv_upload",
+            "product_move_up", "product_move_down", "product_workspace_save",
+        ),
+        "typical-section": (
+            "section_form_create", "section_form_edit", "section_delete", "section_csv_upload",
+            "section_move_up", "section_move_down",
+        ),
+        "section-structure": (
+            "structure_form_create", "structure_form_edit", "structure_delete", "structure_csv_upload",
+            "structure_move_up", "structure_move_down",
+        ),
+        "report-structure": (
+            "report_structure_form_create", "report_structure_form_edit", "report_structure_delete",
+            "report_structure_csv_upload", "report_structure_move_up", "report_structure_move_down",
+        ),
+        "service-goal-report": (
+            "service_goal_report_form_create", "service_goal_report_form_edit",
+            "service_goal_report_delete", "service_goal_report_csv_upload",
+            "service_goal_report_move_up", "service_goal_report_move_down",
+        ),
+        "typical-service-composition": (
+            "typical_service_composition_form_create", "typical_service_composition_form_edit",
+            "typical_service_composition_delete", "typical_service_composition_csv_upload",
+            "typical_service_composition_docx_upload", "typical_service_composition_xlsx_upload",
+            "typical_service_composition_move_up", "typical_service_composition_move_down",
+        ),
+        "typical-service-term": (
+            "typical_service_term_form_create", "typical_service_term_form_edit",
+            "typical_service_term_gantt", "typical_service_term_delete",
+            "typical_service_term_csv_upload", "typical_service_term_move_up",
+            "typical_service_term_move_down",
+        ),
+        "expertise-direction": (
+            "expertise_dir_form_create", "expertise_dir_form_edit", "expertise_dir_delete",
+            "expertise_dir_move_up", "expertise_dir_move_down",
+        ),
+        "grade": (
+            "grade_form_create", "grade_form_edit", "grade_delete", "grade_move_up", "grade_move_down",
+        ),
+        "expert-specialty": (
+            "esp_form_create", "esp_form_edit", "esp_delete", "esp_csv_upload",
+            "esp_move_up", "esp_move_down",
+        ),
+        "specialty-tariff": (
+            "specialty_tariff_form_create", "specialty_tariff_form_edit", "specialty_tariff_delete",
+            "specialty_tariff_move_up", "specialty_tariff_move_down",
+        ),
+        "tariff": (
+            "tariff_form_create", "tariff_form_edit", "tariff_delete", "tariff_csv_upload",
+            "tariff_move_up", "tariff_move_down",
+        ),
+    }.items()
+    for url_name in url_names
+}
+
+POLICY_PRODUCT_REORDER_URL_NAMES = {"product_move_up", "product_move_down"}
+
+POLICY_ENTITY_TABLE_KEY = {
+    "consulting-direction": "consulting-directions",
+    "product": "products",
+    "typical-section": "typical-sections",
+    "section-structure": "section-structures",
+    "report-structure": "report-structures",
+    "service-goal-report": "service-goal-reports",
+    "typical-service-composition": "typical-service-compositions",
+    "typical-service-term": "typical-service-terms",
+    "expertise-direction": "expertise-directions",
+    "grade": "grades",
+    "expert-specialty": "expert-specialties",
+    "specialty-tariff": "specialty-tariffs",
+    "tariff": "tariffs",
+}
+
+POLICY_REORDER_URL_NAMES = {
+    url_name
+    for url_name in POLICY_MUTATION_URL_ENTITY
+    if url_name.endswith(("_move_up", "_move_down"))
+}
+
+
+def _policy_mutation_detail(request, entity=None):
+    url_name = getattr(getattr(request, "resolver_match", None), "url_name", None)
+    entity = entity or POLICY_MUTATION_URL_ENTITY.get(url_name)
+    dependency = POLICY_MUTATION_DEPENDENCIES[entity]
+    detail = {
+        "tables": list(dependency["tables"]),
+        "refreshFilters": bool(dependency.get("refresh_filters", False)),
+    }
+    if url_name in POLICY_REORDER_URL_NAMES:
+        detail["reorderedTable"] = POLICY_ENTITY_TABLE_KEY[entity]
+    if url_name in POLICY_PRODUCT_REORDER_URL_NAMES:
+        detail["productsReordered"] = True
+    return detail
+
+
+def _render_policy_mutation_updated(request, entity=None):
+    schedule_policy_cache_invalidation()
+    if not _is_htmx_request(request):
+        return _render_policy_legacy_updated(request)
+    response = HttpResponse()
+    response["HX-Reswap"] = "none"
+    response[HX_TRIGGER_HEADER] = json.dumps(
+        {HX_POLICY_UPDATED_EVENT: _policy_mutation_detail(request, entity)},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return response
+
+
+def _render_policy_updated(request):
+    return _render_policy_mutation_updated(request)
+
+
+def _policy_import_success_response(request, **payload):
+    schedule_policy_cache_invalidation()
+    payload["policyUpdate"] = _policy_mutation_detail(request)
+    return JsonResponse(payload)
 
 
 def _consulting_catalog_lookup():
@@ -502,6 +1185,389 @@ def _consulting_direction_form_context(form, action, direction=None):
     if direction:
         ctx["direction"] = direction
     return ctx
+
+def _product_workspace_label(product):
+    return " ".join(part for part in (product.short_name, product.display_name) if part)
+
+
+def _product_inline_owner_ids(product):
+    if product.is_group_owner:
+        return [OWNER_GROUP_VALUE]
+    owners = getattr(product, "_policy_owner_display_items", None)
+    if owners is None:
+        owners = product.owners.only("id").order_by("position", "id")
+    return [str(owner.pk) for owner in owners]
+
+
+def _product_workspace_save_product_payload(product):
+    return {
+        "id": product.pk,
+        "consulting_type_ref": product.consulting_type_ref_id,
+        "service_category_ref": product.service_category_ref_id,
+        "service_subtype_ref": product.service_subtype_ref_id,
+    }
+
+
+def _product_workspace_form_data(product, fields):
+    data = QueryDict(mutable=True)
+    data["short_name"] = product.short_name
+    data["name_en"] = product.name_en
+    data["name_ru"] = product.name_ru
+    data["display_name"] = product.display_name or ""
+    if product.consulting_type_ref_id:
+        data["consulting_type_ref"] = str(product.consulting_type_ref_id)
+    if product.service_category_ref_id:
+        data["service_category_ref"] = str(product.service_category_ref_id)
+    if product.service_subtype_ref_id:
+        data["service_subtype_ref"] = str(product.service_subtype_ref_id)
+    for key in (
+        "short_name",
+        "name_en",
+        "name_ru",
+        "display_name",
+        "consulting_type_ref",
+        "service_category_ref",
+        "service_subtype_ref",
+    ):
+        if key in fields:
+            value = fields[key]
+            data[key] = "" if value is None else str(value)
+    if "owner_ids" in fields:
+        owner_ids = fields.get("owner_ids")
+        if not isinstance(owner_ids, list):
+            owner_ids = [owner_ids] if owner_ids not in (None, "") else []
+        for item in owner_ids:
+            data.appendlist("owner_ids", str(item))
+    elif product.is_group_owner:
+        data.appendlist("owner_ids", OWNER_GROUP_VALUE)
+    else:
+        for owner_id in product.owners.values_list("pk", flat=True):
+            data.appendlist("owner_ids", str(owner_id))
+    return data
+
+
+SERVICE_GOAL_REPORT_INLINE_FIELDS = (
+    "service_goal",
+    "service_goal_genitive",
+    "report_title",
+    "product_name",
+)
+
+TYPICAL_SECTION_INLINE_FIELDS = (
+    "code",
+    "short_name",
+    "short_name_ru",
+    "name_en",
+    "name_ru",
+    "accounting_type",
+    "expertise_dir",
+    "expertise_direction",
+    "exclude_from_tkp_autofill",
+)
+TYPICAL_SECTION_INLINE_BOOL_FIELDS = frozenset({"exclude_from_tkp_autofill"})
+
+
+def _workspace_table_rows(tables, key):
+    rows = tables.get(key) or []
+    return rows if isinstance(rows, list) else []
+
+
+def _service_goal_report_form_data(item, fields):
+    data = QueryDict(mutable=True)
+    data["product"] = str(item.product_id)
+    for key in SERVICE_GOAL_REPORT_INLINE_FIELDS:
+        current = getattr(item, key) or ""
+        if key in fields:
+            value = fields[key]
+            current = "" if value is None else str(value)
+        data[key] = current
+    return data
+
+
+def _inline_truthy(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "on", "yes", "да"}
+
+
+def _typical_section_form_data(item, fields):
+    data = QueryDict(mutable=True)
+    data["product"] = str(item.product_id)
+    fk_fields = {"expertise_dir", "expertise_direction"}
+    for key in TYPICAL_SECTION_INLINE_FIELDS:
+        if key in TYPICAL_SECTION_INLINE_BOOL_FIELDS:
+            continue
+        if key in fk_fields:
+            current = str(getattr(item, f"{key}_id") or "")
+        else:
+            current = "" if getattr(item, key) is None else str(getattr(item, key))
+        if key in fields:
+            value = fields[key]
+            current = "" if value is None else str(value)
+        data[key] = current
+    checked = item.exclude_from_tkp_autofill
+    if "exclude_from_tkp_autofill" in fields:
+        checked = _inline_truthy(fields["exclude_from_tkp_autofill"])
+    if checked:
+        data["exclude_from_tkp_autofill"] = "on"
+    return data
+
+
+def _is_deleted_workspace_row(row):
+    return isinstance(row, dict) and bool(row.get("deleted"))
+
+
+def _is_new_workspace_row(row):
+    if not isinstance(row, dict):
+        return False
+    if row.get("new"):
+        return True
+    row_id = row.get("id")
+    return isinstance(row_id, str) and str(row_id).startswith("new-")
+
+
+def _is_new_workspace_section_row(row):
+    return _is_new_workspace_row(row)
+
+
+def _resolve_workspace_after_id(raw, created_ids):
+    if raw in (None, ""):
+        return None
+    raw = str(raw)
+    if raw.startswith("new-"):
+        return created_ids.get(raw)
+    return _positive_int(raw)
+
+
+def _resolve_section_after_id(raw, created_ids):
+    return _resolve_workspace_after_id(raw, created_ids)
+
+
+def _place_workspace_row_after(instance, after_id, queryset, *, missing_after="append"):
+    siblings = list(queryset.exclude(pk=instance.pk).order_by("position", "id"))
+    insert_at = 0 if missing_after == "start" else len(siblings)
+    if after_id:
+        insert_at = len(siblings)
+        for index, sibling in enumerate(siblings):
+            if sibling.pk == after_id:
+                insert_at = index + 1
+                break
+    siblings.insert(insert_at, instance)
+    changed = []
+    for index, item in enumerate(siblings, start=1):
+        if item.position != index:
+            item.position = index
+            changed.append(item)
+    others = [item for item in changed if item.pk != instance.pk]
+    if others:
+        instance.__class__.objects.bulk_update(others, ["position"])
+    instance.position = insert_at + 1
+    update_fields = ["position"]
+    if hasattr(instance, "updated_at"):
+        update_fields.append("updated_at")
+    instance.save(update_fields=update_fields)
+    return instance
+
+
+def _place_typical_section_after(section, after_id):
+    return _place_workspace_row_after(
+        section,
+        after_id,
+        TypicalSection.objects.filter(product_id=section.product_id),
+    )
+
+
+def _create_typical_section(form, *, specialties_callback=None, after_id=None):
+    obj = form.save(commit=False)
+    ensure_system_dsc_section(obj.product)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(TypicalSection, {"product": obj.product})
+    obj.save()
+    if specialties_callback:
+        specialties_callback(obj)
+    if after_id:
+        _place_typical_section_after(obj, after_id)
+    ensure_system_dsc_section(obj.product)
+    return obj
+
+
+def _create_section_structure(form, *, after_id=None, place=False):
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(SectionStructure)
+    obj.save()
+    if place:
+        _place_workspace_row_after(
+            obj,
+            after_id,
+            SectionStructure.objects.filter(product_id=obj.product_id),
+            missing_after="start",
+        )
+    return obj
+
+
+def _create_typical_service_composition(form, *, after_id=None, place=False):
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(TypicalServiceComposition)
+    obj.save()
+    if place:
+        _place_workspace_row_after(
+            obj,
+            after_id,
+            TypicalServiceComposition.objects.filter(product_id=obj.product_id),
+            missing_after="start",
+        )
+    return obj
+
+
+def _create_workspace_tariff(form, *, request_user, after_id=None, place=False):
+    obj = form.save(commit=False)
+    owner = None
+    if request_user.is_superuser:
+        owner = form.cleaned_data.get("owner")
+    obj.created_by = owner or request_user
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(Tariff, {"created_by": obj.created_by})
+    obj.save()
+    if place:
+        _place_workspace_row_after(
+            obj,
+            after_id,
+            Tariff.objects.filter(product_id=obj.product_id, created_by=obj.created_by),
+            missing_after="start",
+        )
+    return obj
+
+
+def _section_structure_form_data(item, fields):
+    data = QueryDict(mutable=True)
+    data["product"] = str(item.product_id)
+    data["section"] = str(item.section_id or "")
+    data["subsections"] = item.subsections or ""
+    if "section" in fields:
+        value = fields["section"]
+        data["section"] = "" if value is None else str(value)
+    if "subsections" in fields:
+        value = fields["subsections"]
+        data["subsections"] = "" if value is None else str(value)
+    return data
+
+
+def _report_structure_form_data(item, fields):
+    data = QueryDict(mutable=True)
+    data["product"] = str(item.product_id)
+    data["level"] = str(item.level)
+    data["code"] = item.code or ""
+    data["name"] = item.name or ""
+    if "name" in fields:
+        value = fields["name"]
+        data["name"] = "" if value is None else str(value)
+    return data
+
+
+TYPICAL_SERVICE_TERM_INLINE_FIELDS = (
+    "source_data_weeks",
+    "source_data_term_unit",
+    "preliminary_report_months",
+    "preliminary_report_term_unit",
+    "final_report_weeks",
+    "final_report_term_unit",
+)
+
+
+def _typical_service_term_form_data(item, fields):
+    data = QueryDict(mutable=True)
+    data["product"] = str(item.product_id)
+    for key in TYPICAL_SERVICE_TERM_INLINE_FIELDS:
+        current = getattr(item, key)
+        if key in fields:
+            value = fields[key]
+            current = "" if value is None else str(value)
+        data[key] = "" if current is None else str(current)
+    return data
+
+
+def _typical_service_composition_editor_state_payload(value, fallback_plain=""):
+    state = value if isinstance(value, dict) else {}
+    if not state and isinstance(value, str):
+        raw = value.strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = {"html": "", "plain_text": raw}
+            state = parsed if isinstance(parsed, dict) else {}
+    html = str(state.get("html") or "").strip()
+    plain = str(state.get("plain_text") or fallback_plain or "").strip()
+    return {"html": html, "plain_text": plain}
+
+
+def _typical_service_composition_form_data(item, fields):
+    data = QueryDict(mutable=True)
+    data["product"] = str(item.product_id)
+    data["section"] = str(item.section_id or "")
+    state = _typical_service_composition_editor_state_payload(
+        item.service_composition_editor_state,
+        item.service_composition or "",
+    )
+    if "section" in fields:
+        value = fields["section"]
+        data["section"] = "" if value is None else str(value)
+    if "service_composition_editor_state" in fields:
+        state = _typical_service_composition_editor_state_payload(
+            fields["service_composition_editor_state"],
+            item.service_composition or "",
+        )
+    elif "service_composition" in fields:
+        plain = "" if fields["service_composition"] is None else str(fields["service_composition"])
+        state = {"html": str(state.get("html") or ""), "plain_text": plain}
+    data["service_composition"] = state.get("plain_text") or ""
+    data["service_composition_editor_state"] = json.dumps(state, ensure_ascii=False)
+    return data
+
+
+def _tariff_form_data(item, fields):
+    data = QueryDict(mutable=True)
+    data["product"] = str(item.product_id)
+    data["section"] = str(item.section_id or "")
+    data["base_rate_vpm"] = "" if item.base_rate_vpm is None else str(item.base_rate_vpm)
+    data["service_hours"] = "" if item.service_hours is None else str(item.service_hours)
+    data["service_days_tkp"] = "" if item.service_days_tkp is None else str(item.service_days_tkp)
+    if "section" in fields:
+        value = fields["section"]
+        data["section"] = "" if value is None else str(value)
+    for key in ("base_rate_vpm", "service_hours", "service_days_tkp"):
+        if key in fields:
+            value = fields[key]
+            data[key] = "" if value is None else str(value)
+    if "owner" in fields:
+        value = fields["owner"]
+        data["owner"] = "" if value is None else str(value)
+    return data
+
+
+def _product_form_inline_errors(form, product_id):
+    return _inline_form_errors(form, "products", product_id)
+
+
+def _inline_form_errors(form, table, row_id):
+    errors = []
+    for field, messages in form.errors.items():
+        mapped_field = "" if field == "__all__" else field
+        for message in messages:
+            errors.append(
+                {
+                    "table": table,
+                    "id": row_id,
+                    "field": mapped_field,
+                    "message": str(message),
+                }
+            )
+    return errors
+
 
 def _product_form_page_context(extra: dict) -> dict:
     ctx = {
@@ -542,6 +1608,43 @@ def _product_field_initial_from_request(request):
     return {"product": product.pk} if product else {}
 
 
+def _workspace_product_form_extras(request, form, instance=None):
+    extras = {"policy_form_query": ""}
+    if form is None or "product" not in getattr(form, "fields", {}):
+        return extras
+    product = None
+    if _is_policy_workspace_request(request):
+        product = _prefill_product_from_request(request)
+        if product is None and instance is not None:
+            product = getattr(instance, "product", None)
+    if product is None:
+        return extras
+    field = form.fields["product"]
+    field.disabled = True
+    field.queryset = Product.objects.filter(pk=product.pk)
+    widget_attrs = dict(getattr(field.widget, "attrs", {}) or {})
+    classes = [part for part in str(widget_attrs.get("class", "") or "").split() if part]
+    if "readonly-field" not in classes:
+        classes.append("readonly-field")
+    widget_attrs["class"] = " ".join(classes)
+    field.widget.attrs = widget_attrs
+    form.initial["product"] = product.pk
+    extras["policy_workspace"] = True
+    extras["policy_workspace_product_id"] = product.pk
+    extras["policy_form_query"] = f"?workspace=1&product={product.pk}"
+    return extras
+
+
+def _with_workspace_product_lock(request, context, form, instance=None):
+    context.update(_workspace_product_form_extras(request, form, instance))
+    return context
+
+
+def _lock_workspace_product_field(request, form, instance=None):
+    _workspace_product_form_extras(request, form, instance)
+    return form
+
+
 def _product_ref_initial_from_request(request):
     product = _prefill_product_from_request(request)
     if product:
@@ -571,7 +1674,624 @@ def _next_position(model, filters: dict | None = None) -> int:
 @login_required
 @require_http_methods(["GET"])
 def policy_partial(request):
+    if _is_htmx_request(request):
+        return render(request, POLICY_PARTIAL_TEMPLATE, {"policy_lazy_shell": True})
     return render(request, POLICY_PARTIAL_TEMPLATE, _policy_context(request))
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_filter_catalog(request):
+    payload, cache_status = get_or_build_policy_catalog(
+        request,
+        _policy_filter_catalog_data,
+    )
+    response = JsonResponse(payload)
+    response["X-Policy-Cache"] = cache_status
+    response["Server-Timing"] = (
+        f'policy-cache;desc="{cache_status.lower()}"'
+    )
+    return response
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_expertise_directions_table(request):
+    return render(
+        request,
+        POLICY_EXPERTISE_DIRECTIONS_TABLE_TEMPLATE,
+        _policy_expertise_directions_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_consulting_directions_table(request):
+    return render(
+        request,
+        POLICY_CONSULTING_DIRECTIONS_TABLE_TEMPLATE,
+        _policy_consulting_directions_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_products_table(request):
+    return render(request, POLICY_PRODUCTS_TABLE_TEMPLATE, _policy_products_table_context(request))
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_service_goal_reports_table(request):
+    return render(
+        request,
+        POLICY_SERVICE_GOAL_REPORTS_TABLE_TEMPLATE,
+        _policy_service_goal_reports_table_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_typical_sections_table(request):
+    return render(
+        request,
+        POLICY_TYPICAL_SECTIONS_TABLE_TEMPLATE,
+        _policy_typical_sections_table_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_section_structures_table(request):
+    return render(
+        request,
+        POLICY_SECTION_STRUCTURES_TABLE_TEMPLATE,
+        _policy_section_structures_table_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_report_structures_table(request):
+    return render(
+        request,
+        POLICY_REPORT_STRUCTURES_TABLE_TEMPLATE,
+        _policy_report_structures_table_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_typical_service_compositions_table(request):
+    return render(
+        request,
+        POLICY_TYPICAL_SERVICE_COMPOSITIONS_TABLE_TEMPLATE,
+        _policy_typical_service_compositions_table_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_typical_service_terms_table(request):
+    return render(
+        request,
+        POLICY_TYPICAL_SERVICE_TERMS_TABLE_TEMPLATE,
+        _policy_typical_service_terms_table_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_grades_table(request):
+    return render(request, POLICY_GRADES_TABLE_TEMPLATE, _policy_grades_context(request))
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_expert_specialties_table(request):
+    return render(
+        request,
+        POLICY_EXPERT_SPECIALTIES_TABLE_TEMPLATE,
+        _policy_expert_specialties_table_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_specialty_tariffs_table(request):
+    return render(
+        request,
+        POLICY_SPECIALTY_TARIFFS_TABLE_TEMPLATE,
+        _policy_specialty_tariffs_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_tariffs_table(request):
+    return render(request, POLICY_TARIFFS_TABLE_TEMPLATE, _policy_tariffs_table_context(request))
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def product_workspace(request, pk: int):
+    product = get_object_or_404(
+        Product.objects.only(
+            "id",
+            "short_name",
+            "display_name",
+            "consulting_type_ref_id",
+            "service_category_ref_id",
+            "service_subtype_ref_id",
+        ),
+        pk=pk,
+    )
+    return render(
+        request,
+        PRODUCT_WORKSPACE_TEMPLATE,
+        {
+            "product": product,
+            "policy_workspace_label": _product_workspace_label(product),
+        },
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST"])
+def product_workspace_save(request, pk: int):
+    product = get_object_or_404(Product, pk=pk)
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse(
+            {
+                "ok": False,
+                "errors": [{"table": "", "id": pk, "field": "", "message": "Некорректный JSON."}],
+            },
+            status=400,
+        )
+
+    tables = payload.get("tables") if isinstance(payload, dict) else None
+    if not isinstance(tables, dict):
+        return JsonResponse(
+            {
+                "ok": False,
+                "errors": [{"table": "", "id": pk, "field": "", "message": "Ожидался объект tables."}],
+            },
+            status=400,
+        )
+
+    errors = []
+    saved_tables = []
+
+    product_rows = _workspace_table_rows(tables, "products")
+    target_row = None
+    for row in product_rows:
+        if not isinstance(row, dict):
+            continue
+        row_id = _positive_int(row.get("id"))
+        if row_id != product.pk:
+            errors.append(
+                {
+                    "table": "products",
+                    "id": row_id or 0,
+                    "field": "id",
+                    "message": "Можно сохранить только текущий продукт.",
+                }
+            )
+            continue
+        target_row = row
+
+    product_form = None
+    if target_row is not None:
+        fields = target_row.get("fields") if isinstance(target_row.get("fields"), dict) else {}
+        product_form = ProductForm(_product_workspace_form_data(product, fields), instance=product)
+        if not product_form.is_valid():
+            errors.extend(_product_form_inline_errors(product_form, product.pk))
+
+    goal_forms = []
+    for row in _workspace_table_rows(tables, "service-goal-reports"):
+        if not isinstance(row, dict):
+            continue
+        row_id = _positive_int(row.get("id"))
+        item = ServiceGoalReport.objects.filter(pk=row_id, product=product).first() if row_id else None
+        if item is None:
+            errors.append(
+                {
+                    "table": "service-goal-reports",
+                    "id": row_id or 0,
+                    "field": "id",
+                    "message": "Строка не относится к текущему продукту.",
+                }
+            )
+            continue
+        fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+        form = ServiceGoalReportForm(
+            _service_goal_report_form_data(item, fields),
+            instance=item,
+        )
+        if not form.is_valid():
+            errors.extend(_inline_form_errors(form, "service-goal-reports", item.pk))
+            continue
+        goal_forms.append(form)
+
+    section_forms = []
+    created_ids = {}
+    sections_to_delete = []
+    for row in _workspace_table_rows(tables, "typical-sections"):
+        if not isinstance(row, dict):
+            continue
+        if _is_deleted_workspace_row(row):
+            row_id = _positive_int(row.get("id"))
+            item = TypicalSection.objects.filter(pk=row_id, product=product).first() if row_id else None
+            if item is None:
+                errors.append(
+                    {
+                        "table": "typical-sections",
+                        "id": row_id or 0,
+                        "field": "id",
+                        "message": "Строка не относится к текущему продукту.",
+                    }
+                )
+                continue
+            if item.is_system_dsc:
+                errors.append(
+                    {
+                        "table": "typical-sections",
+                        "id": item.pk,
+                        "field": "",
+                        "message": "Системный раздел DSC нельзя удалить.",
+                    }
+                )
+                continue
+            sections_to_delete.append(item)
+            continue
+        fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+        if _is_new_workspace_section_row(row):
+            temp_id = str(row.get("id") or "new")
+            item = TypicalSection(product=product)
+            form = TypicalSectionForm(
+                _typical_section_form_data(item, fields),
+                instance=item,
+            )
+            if not form.is_valid():
+                errors.extend(_inline_form_errors(form, "typical-sections", temp_id))
+                continue
+            section_forms.append(
+                (
+                    form,
+                    fields["specialty_ids"] if "specialty_ids" in fields else None,
+                    "specialty_ids" in fields,
+                    {
+                        "temp_id": temp_id,
+                        "after_id": row.get("after_id"),
+                    },
+                )
+            )
+            continue
+        row_id = _positive_int(row.get("id"))
+        item = TypicalSection.objects.filter(pk=row_id, product=product).first() if row_id else None
+        if item is None:
+            errors.append(
+                {
+                    "table": "typical-sections",
+                    "id": row_id or 0,
+                    "field": "id",
+                    "message": "Строка не относится к текущему продукту.",
+                }
+            )
+            continue
+        if item.is_system_dsc:
+            errors.append(
+                {
+                    "table": "typical-sections",
+                    "id": item.pk,
+                    "field": "",
+                    "message": "Системный раздел DSC нельзя изменить.",
+                }
+            )
+            continue
+        form = TypicalSectionForm(
+            _typical_section_form_data(item, fields),
+            instance=item,
+        )
+        if not form.is_valid():
+            errors.extend(_inline_form_errors(form, "typical-sections", item.pk))
+            continue
+        section_forms.append(
+            (
+                form,
+                fields["specialty_ids"] if "specialty_ids" in fields else None,
+                "specialty_ids" in fields,
+                None,
+            )
+        )
+
+    deleted_section_ids = {item.pk for item in sections_to_delete}
+
+    structure_forms = []
+    structure_creates = []
+    created_structure_ids = {}
+    for row in _workspace_table_rows(tables, "section-structures"):
+        if not isinstance(row, dict):
+            continue
+        fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+        if _is_new_workspace_row(row):
+            temp_id = str(row.get("id") or "new")
+            item = SectionStructure(product=product)
+            form = SectionStructureForm(
+                _section_structure_form_data(item, fields),
+                instance=item,
+            )
+            if not form.is_valid():
+                errors.extend(_inline_form_errors(form, "section-structures", temp_id))
+                continue
+            structure_creates.append((form, {"temp_id": temp_id, "after_id": row.get("after_id")}))
+            continue
+        row_id = _positive_int(row.get("id"))
+        item = SectionStructure.objects.filter(pk=row_id, product=product).first() if row_id else None
+        if item is None:
+            errors.append(
+                {
+                    "table": "section-structures",
+                    "id": row_id or 0,
+                    "field": "id",
+                    "message": "Строка не относится к текущему продукту.",
+                }
+            )
+            continue
+        if item.section_id in deleted_section_ids:
+            continue
+        form = SectionStructureForm(
+            _section_structure_form_data(item, fields),
+            instance=item,
+        )
+        if not form.is_valid():
+            errors.extend(_inline_form_errors(form, "section-structures", item.pk))
+            continue
+        structure_forms.append(form)
+
+    report_structure_forms = []
+    for row in _workspace_table_rows(tables, "report-structures"):
+        if not isinstance(row, dict):
+            continue
+        row_id = _positive_int(row.get("id"))
+        item = ReportStructure.objects.filter(pk=row_id, product=product).first() if row_id else None
+        if item is None:
+            errors.append(
+                {
+                    "table": "report-structures",
+                    "id": row_id or 0,
+                    "field": "id",
+                    "message": "Строка не относится к текущему продукту.",
+                }
+            )
+            continue
+        fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+        form = ReportStructureForm(
+            _report_structure_form_data(item, fields),
+            instance=item,
+        )
+        if not form.is_valid():
+            errors.extend(_inline_form_errors(form, "report-structures", item.pk))
+            continue
+        report_structure_forms.append(form)
+
+    term_forms = []
+    for row in _workspace_table_rows(tables, "typical-service-terms"):
+        if not isinstance(row, dict):
+            continue
+        row_id = _positive_int(row.get("id"))
+        item = TypicalServiceTerm.objects.filter(pk=row_id, product=product).first() if row_id else None
+        if item is None:
+            errors.append(
+                {
+                    "table": "typical-service-terms",
+                    "id": row_id or 0,
+                    "field": "id",
+                    "message": "Строка не относится к текущему продукту.",
+                }
+            )
+            continue
+        fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+        form = TypicalServiceTermForm(
+            _typical_service_term_form_data(item, fields),
+            instance=item,
+        )
+        if not form.is_valid():
+            errors.extend(_inline_form_errors(form, "typical-service-terms", item.pk))
+            continue
+        term_forms.append(form)
+
+    composition_forms = []
+    composition_creates = []
+    created_composition_ids = {}
+    for row in _workspace_table_rows(tables, "typical-service-compositions"):
+        if not isinstance(row, dict):
+            continue
+        fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+        if _is_new_workspace_row(row):
+            temp_id = str(row.get("id") or "new")
+            item = TypicalServiceComposition(product=product)
+            form = TypicalServiceCompositionForm(
+                _typical_service_composition_form_data(item, fields),
+                instance=item,
+            )
+            if not form.is_valid():
+                errors.extend(_inline_form_errors(form, "typical-service-compositions", temp_id))
+                continue
+            composition_creates.append((form, {"temp_id": temp_id, "after_id": row.get("after_id")}))
+            continue
+        row_id = _positive_int(row.get("id"))
+        item = (
+            TypicalServiceComposition.objects.filter(pk=row_id, product=product).first()
+            if row_id
+            else None
+        )
+        if item is None:
+            errors.append(
+                {
+                    "table": "typical-service-compositions",
+                    "id": row_id or 0,
+                    "field": "id",
+                    "message": "Строка не относится к текущему продукту.",
+                }
+            )
+            continue
+        if item.section_id in deleted_section_ids:
+            continue
+        form = TypicalServiceCompositionForm(
+            _typical_service_composition_form_data(item, fields),
+            instance=item,
+        )
+        if not form.is_valid():
+            errors.extend(_inline_form_errors(form, "typical-service-compositions", item.pk))
+            continue
+        composition_forms.append(form)
+
+    tariff_forms = []
+    tariff_creates = []
+    created_tariff_ids = {}
+    for row in _workspace_table_rows(tables, "tariffs"):
+        if not isinstance(row, dict):
+            continue
+        fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+        if _is_new_workspace_row(row):
+            temp_id = str(row.get("id") or "new")
+            item = Tariff(product=product)
+            form = TariffForm(
+                _tariff_form_data(item, fields),
+                instance=item,
+                request_user=request.user,
+            )
+            if not form.is_valid():
+                errors.extend(_inline_form_errors(form, "tariffs", temp_id))
+                continue
+            tariff_creates.append((form, {"temp_id": temp_id, "after_id": row.get("after_id")}))
+            continue
+        row_id = _positive_int(row.get("id"))
+        item = Tariff.objects.filter(pk=row_id, product=product).first() if row_id else None
+        if item is None:
+            errors.append(
+                {
+                    "table": "tariffs",
+                    "id": row_id or 0,
+                    "field": "id",
+                    "message": "Строка не относится к текущему продукту.",
+                }
+            )
+            continue
+        if item.section_id in deleted_section_ids:
+            continue
+        form = TariffForm(
+            _tariff_form_data(item, fields),
+            instance=item,
+            request_user=request.user,
+        )
+        if not form.is_valid():
+            errors.extend(_inline_form_errors(form, "tariffs", item.pk))
+            continue
+        tariff_forms.append(form)
+
+    if errors:
+        return JsonResponse({"ok": False, "errors": errors}, status=400)
+
+    saved = product
+    with transaction.atomic():
+        if product_form is not None:
+            saved = product_form.save()
+            ensure_system_dsc_section(saved)
+            saved_tables.append("products")
+        for form in goal_forms:
+            form.save()
+        if goal_forms:
+            saved_tables.append("service-goal-reports")
+        created_typical_section = False
+        deleted_typical_section = False
+        for form, specialty_ids, update_specialties, extra in section_forms:
+            if extra:
+                after_id = _resolve_section_after_id(extra.get("after_id"), created_ids)
+                instance = _create_typical_section(
+                    form,
+                    specialties_callback=(
+                        (lambda section, ids=specialty_ids: _replace_section_specialties(section, ids))
+                        if update_specialties
+                        else None
+                    ),
+                    after_id=after_id,
+                )
+                created_ids[extra["temp_id"]] = instance.pk
+                created_typical_section = True
+                continue
+            instance = form.save()
+            if update_specialties:
+                _replace_section_specialties(instance, specialty_ids)
+        if sections_to_delete:
+            for item in sections_to_delete:
+                item.delete()
+            deleted_typical_section = True
+        if section_forms or deleted_typical_section:
+            ensure_system_dsc_section(saved)
+            saved_tables.append("typical-sections")
+        if created_typical_section or deleted_typical_section:
+            for table_key in POLICY_MUTATION_DEPENDENCIES["typical-section"]["tables"]:
+                if table_key not in saved_tables:
+                    saved_tables.append(table_key)
+        for form, extra in structure_creates:
+            after_id = _resolve_workspace_after_id(extra.get("after_id"), created_structure_ids)
+            instance = _create_section_structure(form, after_id=after_id, place=True)
+            created_structure_ids[extra["temp_id"]] = instance.pk
+        for form in structure_forms:
+            form.save()
+        if structure_forms or structure_creates:
+            saved_tables.append("section-structures")
+        for form in report_structure_forms:
+            form.save()
+        if report_structure_forms:
+            saved_tables.append("report-structures")
+        for form in term_forms:
+            form.save()
+        if term_forms:
+            saved_tables.append("typical-service-terms")
+        for form, extra in composition_creates:
+            after_id = _resolve_workspace_after_id(extra.get("after_id"), created_composition_ids)
+            instance = _create_typical_service_composition(form, after_id=after_id, place=True)
+            created_composition_ids[extra["temp_id"]] = instance.pk
+        for form in composition_forms:
+            form.save()
+        if composition_forms or composition_creates:
+            saved_tables.append("typical-service-compositions")
+        for form, extra in tariff_creates:
+            after_id = _resolve_workspace_after_id(extra.get("after_id"), created_tariff_ids)
+            instance = _create_workspace_tariff(
+                form,
+                request_user=request.user,
+                after_id=after_id,
+                place=True,
+            )
+            created_tariff_ids[extra["temp_id"]] = instance.pk
+        for form in tariff_forms:
+            obj = form.save(commit=False)
+            if request.user.is_superuser:
+                owner = form.cleaned_data.get("owner")
+                if owner:
+                    obj.created_by = owner
+            obj.save()
+        if tariff_forms or tariff_creates:
+            saved_tables.append("tariffs")
+
+    schedule_policy_cache_invalidation()
+    return JsonResponse(
+        {
+            "ok": True,
+            "label": _product_workspace_label(saved),
+            "product": _product_workspace_save_product_payload(saved),
+            "tables": saved_tables or ["products"],
+        }
+    )
+
 
 @login_required
 @user_passes_test(staff_required)
@@ -778,7 +2498,9 @@ def product_csv_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, warnings=warnings
+    )
 
 
 @login_required
@@ -791,9 +2513,7 @@ def product_csv_download(request):
     writer.writerow(PRODUCT_CSV_HEADERS)
 
     products = _apply_policy_master_filters_to_products(
-        Product.objects.select_related(
-            "consulting_type_ref", "service_category_ref", "service_subtype_ref"
-        ).prefetch_related("owners"),
+        _policy_products_queryset(),
         request,
     )
     for product in products:
@@ -843,6 +2563,30 @@ def _section_form_context(form, action, section=None):
     if section:
         ctx["section"] = section
     return ctx
+
+
+def _replace_section_specialties(section, raw_ids):
+    if not isinstance(raw_ids, list):
+        raw_ids = [raw_ids] if raw_ids not in (None, "") else []
+    ids = []
+    seen = set()
+    for raw in raw_ids:
+        pk = _positive_int(raw)
+        if not pk or pk in seen:
+            continue
+        seen.add(pk)
+        ids.append(pk)
+    valid = set(
+        ExpertSpecialty.objects.filter(pk__in=ids).values_list("pk", flat=True)
+    )
+    TypicalSectionSpecialty.objects.filter(section=section).delete()
+    TypicalSectionSpecialty.objects.bulk_create(
+        [
+            TypicalSectionSpecialty(section=section, specialty_id=pk, rank=rank)
+            for rank, pk in enumerate(ids, start=1)
+            if pk in valid
+        ]
+    )
 
 
 def _save_section_specialties(section, post_data):
@@ -946,11 +2690,12 @@ def _specialty_tariff_form_context(form, action, tariff=None):
     elif tariff and tariff.pk:
         selected_specialty_ids = [str(value) for value in tariff.specialties.values_list("pk", flat=True)]
 
+    specialty_options = _specialty_tariff_specialty_options()
     ctx = {
         "form": form,
         "action": action,
-        "specialty_options": _specialty_tariff_specialty_options(),
-        "specialty_options_json": json.dumps(_specialty_tariff_specialty_options(), ensure_ascii=False),
+        "specialty_options": specialty_options,
+        "specialty_options_json": json.dumps(specialty_options, ensure_ascii=False),
         "selected_specialty_ids_json": json.dumps(selected_specialty_ids, ensure_ascii=False),
     }
     if tariff:
@@ -972,17 +2717,25 @@ def _specialty_tariff_owner(request, form):
 def section_form_create(request):
     if request.method == "GET":
         form = TypicalSectionForm(initial=_product_field_initial_from_request(request))
-        return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "create"))
-    form = TypicalSectionForm(request.POST)
+        return render(
+            request,
+            SECTION_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _section_form_context(form, "create"), form),
+        )
+    form = _lock_workspace_product_field(
+        request,
+        TypicalSectionForm(request.POST, initial=_product_field_initial_from_request(request)),
+    )
     if not form.is_valid():
-        return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "create"))
-    obj = form.save(commit=False)
-    ensure_system_dsc_section(obj.product)
-    if not getattr(obj, "position", 0):
-        obj.position = _next_position(TypicalSection, {"product": obj.product})
-    obj.save()
-    _save_section_specialties(obj, request.POST)
-    ensure_system_dsc_section(obj.product)
+        return render(
+            request,
+            SECTION_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _section_form_context(form, "create"), form),
+        )
+    _create_typical_section(
+        form,
+        specialties_callback=lambda section: _save_section_specialties(section, request.POST),
+    )
     return _render_policy_updated(request)
 
 @login_required
@@ -992,10 +2745,26 @@ def section_form_edit(request, pk: int):
     section = get_object_or_404(TypicalSection, pk=pk)
     if request.method == "GET":
         form = TypicalSectionForm(instance=section)
-        return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "edit", section))
-    form = TypicalSectionForm(request.POST, instance=section)
+        return render(
+            request,
+            SECTION_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _section_form_context(form, "edit", section), form, section),
+        )
+    form = _lock_workspace_product_field(
+        request,
+        TypicalSectionForm(
+            request.POST,
+            instance=section,
+            initial=_product_field_initial_from_request(request),
+        ),
+        section,
+    )
     if not form.is_valid():
-        return render(request, SECTION_FORM_TEMPLATE, _section_form_context(form, "edit", section))
+        return render(
+            request,
+            SECTION_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _section_form_context(form, "edit", section), form, section),
+        )
     if section.is_system_dsc:
         ensure_system_dsc_section(section.product)
     else:
@@ -1020,17 +2789,32 @@ def _normalize_product_positions():
     """
     Гарантирует сквозную нумерацию позиций (1..N) в порядке текущей сортировки.
     """
-    products = Product.objects.order_by("position", "id").only("id", "position")
+    products = list(
+        Product.objects.select_for_update()
+        .order_by("position", "id")
+        .only("id", "position")
+    )
+    changed = []
     for idx, p in enumerate(products, start=1):
         if p.position != idx:
-            Product.objects.filter(pk=p.pk).update(position=idx)
+            p.position = idx
+            changed.append(p)
+    if changed:
+        Product.objects.bulk_update(changed, ["position"])
+    return products
 
 def _normalize_section_positions(product_id: int | None = None):
     """
     Гарантирует сквозную нумерацию позиций разделов внутри каждого продукта.
     Если product_id задан, нормализует только для одного продукта.
     """
-    qs = TypicalSection.objects.select_related("product").only("id", "position", "product_id", "code", "is_system")
+    qs = TypicalSection.objects.select_for_update().only(
+        "id",
+        "position",
+        "product_id",
+        "code",
+        "is_system",
+    )
     if product_id:
         groups = {product_id: list(qs.filter(product_id=product_id).order_by("position", "id"))}
     else:
@@ -1038,40 +2822,45 @@ def _normalize_section_positions(product_id: int | None = None):
         groups = {}
         for sec in qs.order_by("product_id", "position", "id"):
             groups.setdefault(sec.product_id, []).append(sec)
+    normalized_groups = {}
     for pid, items in groups.items():
         items = sorted(items, key=lambda item: (0 if item.is_system_dsc else 1, item.position, item.id))
+        changed = []
         for idx, it in enumerate(items, start=1):
             if it.position != idx:
-                TypicalSection.objects.filter(pk=it.pk).update(position=idx)
+                it.position = idx
+                changed.append(it)
+        if changed:
+            TypicalSection.objects.bulk_update(changed, ["position"])
+        normalized_groups[pid] = items
+    if product_id:
+        return normalized_groups.get(product_id, [])
+    return normalized_groups
 
 @require_http_methods(["POST", "GET"])
 @login_required
 def product_move_up(request, pk: int):
-    _normalize_product_positions()
-    items = list(Product.objects.order_by("position", "id").only("id", "position"))
-    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
-    if idx is not None and idx > 0:
-        cur = items[idx]
-        prev = items[idx - 1]
-        cur_pos, prev_pos = cur.position, prev.position
-        Product.objects.filter(pk=cur.id).update(position=prev_pos)
-        Product.objects.filter(pk=prev.id).update(position=cur_pos)
-        _normalize_product_positions()
+    with transaction.atomic():
+        items = _normalize_product_positions()
+        idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+        if idx is not None and idx > 0:
+            cur = items[idx]
+            prev = items[idx - 1]
+            cur.position, prev.position = prev.position, cur.position
+            Product.objects.bulk_update([cur, prev], ["position"])
     return _render_policy_updated(request)
 
 @require_http_methods(["POST", "GET"])
 @login_required
 def product_move_down(request, pk: int):
-    _normalize_product_positions()
-    items = list(Product.objects.order_by("position", "id").only("id", "position"))
-    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
-    if idx is not None and idx < len(items) - 1:
-        cur = items[idx]
-        nxt = items[idx + 1]
-        cur_pos, next_pos = cur.position, nxt.position
-        Product.objects.filter(pk=cur.id).update(position=next_pos)
-        Product.objects.filter(pk=nxt.id).update(position=cur_pos)
-        _normalize_product_positions()
+    with transaction.atomic():
+        items = _normalize_product_positions()
+        idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+        if idx is not None and idx < len(items) - 1:
+            cur = items[idx]
+            nxt = items[idx + 1]
+            cur.position, nxt.position = nxt.position, cur.position
+            Product.objects.bulk_update([cur, nxt], ["position"])
     return _render_policy_updated(request)
 
 @require_http_methods(["POST", "GET"])
@@ -1081,18 +2870,15 @@ def section_move_up(request, pk: int):
     if sec.is_system_dsc:
         return _render_policy_updated(request)
     pid = sec.product_id
-    _normalize_section_positions(product_id=pid)
-    items = list(TypicalSection.objects.filter(product_id=pid).order_by("position", "id").only("id", "position", "code", "is_system"))
-    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
-    if idx is not None and idx > 0:
-        cur = items[idx]
-        prev = items[idx - 1]
-        if prev.is_system_dsc:
-            return _render_policy_updated(request)
-        cur_pos, prev_pos = cur.position, prev.position
-        TypicalSection.objects.filter(pk=cur.id).update(position=prev_pos)
-        TypicalSection.objects.filter(pk=prev.id).update(position=cur_pos)
-        _normalize_section_positions(product_id=pid)
+    with transaction.atomic():
+        items = _normalize_section_positions(product_id=pid)
+        idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+        if idx is not None and idx > 0:
+            cur = items[idx]
+            prev = items[idx - 1]
+            if not prev.is_system_dsc:
+                cur.position, prev.position = prev.position, cur.position
+                TypicalSection.objects.bulk_update([cur, prev], ["position"])
     return _render_policy_updated(request)
 
 @require_http_methods(["POST", "GET"])
@@ -1102,16 +2888,14 @@ def section_move_down(request, pk: int):
     if sec.is_system_dsc:
         return _render_policy_updated(request)
     pid = sec.product_id
-    _normalize_section_positions(product_id=pid)
-    items = list(TypicalSection.objects.filter(product_id=pid).order_by("position", "id").only("id", "position"))
-    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
-    if idx is not None and idx < len(items) - 1:
-        cur = items[idx]
-        nxt = items[idx + 1]
-        cur_pos, next_pos = cur.position, nxt.position
-        TypicalSection.objects.filter(pk=cur.id).update(position=next_pos)
-        TypicalSection.objects.filter(pk=nxt.id).update(position=cur_pos)
-        _normalize_section_positions(product_id=pid)
+    with transaction.atomic():
+        items = _normalize_section_positions(product_id=pid)
+        idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+        if idx is not None and idx < len(items) - 1:
+            cur = items[idx]
+            nxt = items[idx + 1]
+            cur.position, nxt.position = nxt.position, cur.position
+            TypicalSection.objects.bulk_update([cur, nxt], ["position"])
     return _render_policy_updated(request)
 
 
@@ -1299,7 +3083,9 @@ def section_csv_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, updated=updated, warnings=warnings
+    )
 
 
 @login_required
@@ -1312,14 +3098,7 @@ def section_csv_download(request):
     writer.writerow(SECTION_CSV_HEADERS)
 
     sections = _apply_policy_master_product_filters(
-        TypicalSection.objects.select_related(
-            "product",
-            "product__consulting_type_ref",
-            "product__service_category_ref",
-            "product__service_subtype_ref",
-            "expertise_dir",
-            "expertise_direction",
-        ).prefetch_related("ranked_specialties", "ranked_specialties__specialty"),
+        _policy_typical_sections_queryset(),
         request,
     )
     for section in sections:
@@ -1357,15 +3136,26 @@ def section_csv_download(request):
 def structure_form_create(request):
     if request.method == "GET":
         form = SectionStructureForm(initial=_product_field_initial_from_request(request))
-        return render(request, STRUCTURE_FORM_TEMPLATE, _structure_form_context(form, "create"))
-    form = SectionStructureForm(request.POST)
+        return render(
+            request,
+            STRUCTURE_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _structure_form_context(form, "create"), form),
+        )
+    form = _lock_workspace_product_field(
+        request,
+        SectionStructureForm(request.POST, initial=_product_field_initial_from_request(request)),
+    )
     if not form.is_valid():
-        return render(request, STRUCTURE_FORM_TEMPLATE, _structure_form_context(form, "create"))
+        return render(
+            request,
+            STRUCTURE_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _structure_form_context(form, "create"), form),
+        )
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_position(SectionStructure)
     obj.save()
-    return _render_policy_updated(request)
+    return _render_policy_mutation_updated(request)
 
 
 @login_required
@@ -1375,12 +3165,32 @@ def structure_form_edit(request, pk: int):
     structure = get_object_or_404(SectionStructure, pk=pk)
     if request.method == "GET":
         form = SectionStructureForm(instance=structure)
-        return render(request, STRUCTURE_FORM_TEMPLATE, _structure_form_context(form, "edit", structure))
-    form = SectionStructureForm(request.POST, instance=structure)
+        return render(
+            request,
+            STRUCTURE_FORM_TEMPLATE,
+            _with_workspace_product_lock(
+                request, _structure_form_context(form, "edit", structure), form, structure
+            ),
+        )
+    form = _lock_workspace_product_field(
+        request,
+        SectionStructureForm(
+            request.POST,
+            instance=structure,
+            initial=_product_field_initial_from_request(request),
+        ),
+        structure,
+    )
     if not form.is_valid():
-        return render(request, STRUCTURE_FORM_TEMPLATE, _structure_form_context(form, "edit", structure))
+        return render(
+            request,
+            STRUCTURE_FORM_TEMPLATE,
+            _with_workspace_product_lock(
+                request, _structure_form_context(form, "edit", structure), form, structure
+            ),
+        )
     form.save()
-    return _render_policy_updated(request)
+    return _render_policy_mutation_updated(request)
 
 
 @login_required
@@ -1389,7 +3199,7 @@ def structure_form_edit(request, pk: int):
 def structure_delete(request, pk: int):
     structure = get_object_or_404(SectionStructure, pk=pk)
     structure.delete()
-    return _render_policy_updated(request)
+    return _render_policy_mutation_updated(request)
 
 
 @login_required
@@ -1486,7 +3296,9 @@ def structure_csv_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, warnings=warnings
+    )
 
 
 @login_required
@@ -1499,13 +3311,7 @@ def structure_csv_download(request):
     writer.writerow(STRUCTURE_CSV_HEADERS)
 
     structures = _apply_policy_master_product_filters(
-        SectionStructure.objects.select_related(
-            "product",
-            "product__consulting_type_ref",
-            "product__service_category_ref",
-            "product__service_subtype_ref",
-            "section",
-        ),
+        _policy_section_structures_queryset(),
         request,
     )
     for structure in structures:
@@ -1543,7 +3349,7 @@ def structure_move_up(request, pk: int):
         SectionStructure.objects.filter(pk=cur.id).update(position=prev_pos)
         SectionStructure.objects.filter(pk=prev.id).update(position=cur_pos)
         _normalize_structure_positions()
-    return _render_policy_updated(request)
+    return _render_policy_mutation_updated(request)
 
 
 @require_http_methods(["POST", "GET"])
@@ -1559,7 +3365,7 @@ def structure_move_down(request, pk: int):
         SectionStructure.objects.filter(pk=cur.id).update(position=next_pos)
         SectionStructure.objects.filter(pk=nxt.id).update(position=cur_pos)
         _normalize_structure_positions()
-    return _render_policy_updated(request)
+    return _render_policy_mutation_updated(request)
 
 
 # --- Типовая структура отчета ---
@@ -1572,10 +3378,21 @@ def report_structure_form_create(request):
         initial = {"level": 0}
         initial.update(_product_field_initial_from_request(request))
         form = ReportStructureForm(initial=initial)
-        return render(request, REPORT_STRUCTURE_FORM_TEMPLATE, _report_structure_form_context(form, "create"))
-    form = ReportStructureForm(request.POST)
+        return render(
+            request,
+            REPORT_STRUCTURE_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _report_structure_form_context(form, "create"), form),
+        )
+    form = _lock_workspace_product_field(
+        request,
+        ReportStructureForm(request.POST, initial=_product_field_initial_from_request(request)),
+    )
     if not form.is_valid():
-        return render(request, REPORT_STRUCTURE_FORM_TEMPLATE, _report_structure_form_context(form, "create"))
+        return render(
+            request,
+            REPORT_STRUCTURE_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _report_structure_form_context(form, "create"), form),
+        )
     obj = form.save(commit=False)
     obj.position = _next_position(ReportStructure, {"product": obj.product})
     obj.save()
@@ -1594,14 +3411,32 @@ def report_structure_form_edit(request, pk: int):
         return render(
             request,
             REPORT_STRUCTURE_FORM_TEMPLATE,
-            _report_structure_form_context(form, "edit", report_structure),
+            _with_workspace_product_lock(
+                request,
+                _report_structure_form_context(form, "edit", report_structure),
+                form,
+                report_structure,
+            ),
         )
-    form = ReportStructureForm(request.POST, instance=report_structure)
+    form = _lock_workspace_product_field(
+        request,
+        ReportStructureForm(
+            request.POST,
+            instance=report_structure,
+            initial=_product_field_initial_from_request(request),
+        ),
+        report_structure,
+    )
     if not form.is_valid():
         return render(
             request,
             REPORT_STRUCTURE_FORM_TEMPLATE,
-            _report_structure_form_context(form, "edit", report_structure),
+            _with_workspace_product_lock(
+                request,
+                _report_structure_form_context(form, "edit", report_structure),
+                form,
+                report_structure,
+            ),
         )
     obj = form.save(commit=False)
     if obj.product_id != old_product_id:
@@ -1716,7 +3551,9 @@ def report_structure_csv_upload(request):
 
     for product_id in changed_product_ids:
         _normalize_report_structure_positions(product_id)
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, warnings=warnings
+    )
 
 
 @login_required
@@ -1804,10 +3641,21 @@ def report_structure_move_down(request, pk: int):
 def service_goal_report_form_create(request):
     if request.method == "GET":
         form = ServiceGoalReportForm(initial=_product_field_initial_from_request(request))
-        return render(request, SERVICE_GOAL_REPORT_FORM_TEMPLATE, {"form": form, "action": "create"})
-    form = ServiceGoalReportForm(request.POST)
+        return render(
+            request,
+            SERVICE_GOAL_REPORT_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, {"form": form, "action": "create"}, form),
+        )
+    form = _lock_workspace_product_field(
+        request,
+        ServiceGoalReportForm(request.POST, initial=_product_field_initial_from_request(request)),
+    )
     if not form.is_valid():
-        return render(request, SERVICE_GOAL_REPORT_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(
+            request,
+            SERVICE_GOAL_REPORT_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, {"form": form, "action": "create"}, form),
+        )
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_position(ServiceGoalReport)
@@ -1825,14 +3673,32 @@ def service_goal_report_form_edit(request, pk: int):
         return render(
             request,
             SERVICE_GOAL_REPORT_FORM_TEMPLATE,
-            {"form": form, "action": "edit", "service_goal_report": service_goal_report},
+            _with_workspace_product_lock(
+                request,
+                {"form": form, "action": "edit", "service_goal_report": service_goal_report},
+                form,
+                service_goal_report,
+            ),
         )
-    form = ServiceGoalReportForm(request.POST, instance=service_goal_report)
+    form = _lock_workspace_product_field(
+        request,
+        ServiceGoalReportForm(
+            request.POST,
+            instance=service_goal_report,
+            initial=_product_field_initial_from_request(request),
+        ),
+        service_goal_report,
+    )
     if not form.is_valid():
         return render(
             request,
             SERVICE_GOAL_REPORT_FORM_TEMPLATE,
-            {"form": form, "action": "edit", "service_goal_report": service_goal_report},
+            _with_workspace_product_lock(
+                request,
+                {"form": form, "action": "edit", "service_goal_report": service_goal_report},
+                form,
+                service_goal_report,
+            ),
         )
     form.save()
     return _render_policy_updated(request)
@@ -1922,7 +3788,9 @@ def service_goal_report_csv_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, updated=updated, warnings=warnings
+    )
 
 
 @login_required
@@ -1935,12 +3803,7 @@ def service_goal_report_csv_download(request):
     writer.writerow(SERVICE_GOAL_REPORT_CSV_HEADERS)
 
     items = _apply_policy_master_product_filters(
-        ServiceGoalReport.objects.select_related(
-            "product",
-            "product__consulting_type_ref",
-            "product__service_category_ref",
-            "product__service_subtype_ref",
-        ),
+        _policy_service_goal_reports_queryset(),
         request,
     )
     for item in items:
@@ -2019,14 +3882,24 @@ def typical_service_composition_form_create(request):
         return render(
             request,
             TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
-            _typical_service_composition_form_context(form, "create"),
+            _with_workspace_product_lock(
+                request, _typical_service_composition_form_context(form, "create"), form
+            ),
         )
-    form = TypicalServiceCompositionForm(request.POST)
+    form = _lock_workspace_product_field(
+        request,
+        TypicalServiceCompositionForm(
+            request.POST,
+            initial=_product_field_initial_from_request(request),
+        ),
+    )
     if not form.is_valid():
         return render(
             request,
             TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
-            _typical_service_composition_form_context(form, "create"),
+            _with_workspace_product_lock(
+                request, _typical_service_composition_form_context(form, "create"), form
+            ),
         )
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
@@ -2045,14 +3918,32 @@ def typical_service_composition_form_edit(request, pk: int):
         return render(
             request,
             TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
-            _typical_service_composition_form_context(form, "edit", composition),
+            _with_workspace_product_lock(
+                request,
+                _typical_service_composition_form_context(form, "edit", composition),
+                form,
+                composition,
+            ),
         )
-    form = TypicalServiceCompositionForm(request.POST, instance=composition)
+    form = _lock_workspace_product_field(
+        request,
+        TypicalServiceCompositionForm(
+            request.POST,
+            instance=composition,
+            initial=_product_field_initial_from_request(request),
+        ),
+        composition,
+    )
     if not form.is_valid():
         return render(
             request,
             TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE,
-            _typical_service_composition_form_context(form, "edit", composition),
+            _with_workspace_product_lock(
+                request,
+                _typical_service_composition_form_context(form, "edit", composition),
+                form,
+                composition,
+            ),
         )
     form.save()
     return _render_policy_updated(request)
@@ -2159,7 +4050,9 @@ def typical_service_composition_csv_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, warnings=warnings
+    )
 
 
 def _typical_service_composition_import_lookups():
@@ -2257,14 +4150,10 @@ def _apply_policy_master_filters_to_products(qs, request):
 
 
 def _filter_typical_service_compositions_queryset(request):
-    qs = TypicalServiceComposition.objects.select_related(
-        "product",
-        "product__consulting_type_ref",
-        "product__service_category_ref",
-        "product__service_subtype_ref",
-        "section",
+    return _apply_policy_master_product_filters(
+        _policy_typical_service_compositions_queryset(),
+        request,
     )
-    return _apply_policy_master_product_filters(qs, request)
 
 
 @login_required
@@ -2403,7 +4292,9 @@ def typical_service_composition_docx_upload(request):
         except Exception as exc:
             warnings.append(f"{row_label}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, updated=updated, warnings=warnings
+    )
 
 
 @login_required
@@ -2546,7 +4437,9 @@ def typical_service_composition_xlsx_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {row_idx}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, warnings=warnings
+    )
 
 
 def _normalize_typical_service_composition_positions():
@@ -3463,14 +5356,21 @@ def typical_service_term_form_create(request):
         return render(
             request,
             TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
-            _typical_service_term_form_context(form, "create"),
+            _with_workspace_product_lock(
+                request, _typical_service_term_form_context(form, "create"), form
+            ),
         )
-    form = TypicalServiceTermForm(request.POST)
+    form = _lock_workspace_product_field(
+        request,
+        TypicalServiceTermForm(request.POST, initial=_product_field_initial_from_request(request)),
+    )
     if not form.is_valid():
         return render(
             request,
             TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
-            _typical_service_term_form_context(form, "create"),
+            _with_workspace_product_lock(
+                request, _typical_service_term_form_context(form, "create"), form
+            ),
         )
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
@@ -3489,14 +5389,26 @@ def typical_service_term_form_edit(request, pk: int):
         return render(
             request,
             TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
-            _typical_service_term_form_context(form, "edit", term),
+            _with_workspace_product_lock(
+                request, _typical_service_term_form_context(form, "edit", term), form, term
+            ),
         )
-    form = TypicalServiceTermForm(request.POST, instance=term)
+    form = _lock_workspace_product_field(
+        request,
+        TypicalServiceTermForm(
+            request.POST,
+            instance=term,
+            initial=_product_field_initial_from_request(request),
+        ),
+        term,
+    )
     if not form.is_valid():
         return render(
             request,
             TYPICAL_SERVICE_TERM_FORM_TEMPLATE,
-            _typical_service_term_form_context(form, "edit", term),
+            _with_workspace_product_lock(
+                request, _typical_service_term_form_context(form, "edit", term), form, term
+            ),
         )
     form.save()
     return _render_policy_updated(request)
@@ -3565,7 +5477,9 @@ def typical_service_term_gantt(request, pk: int):
     term.preliminary_report_months = preliminary_months
     term.final_report_weeks = final_weeks
     term.save(update_fields=["gantt_data", "source_data_weeks", "preliminary_report_months", "final_report_weeks", "updated_at"])
-    return JsonResponse(_typical_service_term_gantt_response_payload(term))
+    response_payload = _typical_service_term_gantt_response_payload(term)
+    response_payload["policyUpdate"] = _policy_mutation_detail(request)
+    return JsonResponse(response_payload)
 
 
 @login_required
@@ -3762,7 +5676,9 @@ def typical_service_term_csv_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, updated=updated, warnings=warnings
+    )
 
 
 @login_required
@@ -3775,12 +5691,7 @@ def typical_service_term_csv_download(request):
     writer.writerow(TYPICAL_SERVICE_TERM_CSV_HEADERS)
 
     terms = _apply_policy_master_product_filters(
-        TypicalServiceTerm.objects.select_related(
-            "product",
-            "product__consulting_type_ref",
-            "product__service_category_ref",
-            "product__service_subtype_ref",
-        ),
+        _policy_typical_service_terms_queryset(),
         request,
     )
     for term in terms:
@@ -4039,7 +5950,7 @@ def products_apply_defaults(request):
     if ids_checked:
         Product.objects.filter(id__in=ids_checked).update(is_default=True)
 
-    return _render_policy_updated(request)
+    return _render_policy_mutation_updated(request, "product-defaults")
 
 
 # --- Грейды ---
@@ -4328,10 +6239,25 @@ def _tariff_form_context(request, form, action, tariff=None):
 def tariff_form_create(request):
     if request.method == "GET":
         form = TariffForm(initial=_product_field_initial_from_request(request), request_user=request.user)
-        return render(request, TARIFF_FORM_TEMPLATE, _tariff_form_context(request, form, "create"))
-    form = TariffForm(request.POST, request_user=request.user)
+        return render(
+            request,
+            TARIFF_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _tariff_form_context(request, form, "create"), form),
+        )
+    form = _lock_workspace_product_field(
+        request,
+        TariffForm(
+            request.POST,
+            initial=_product_field_initial_from_request(request),
+            request_user=request.user,
+        ),
+    )
     if not form.is_valid():
-        return render(request, TARIFF_FORM_TEMPLATE, _tariff_form_context(request, form, "create"))
+        return render(
+            request,
+            TARIFF_FORM_TEMPLATE,
+            _with_workspace_product_lock(request, _tariff_form_context(request, form, "create"), form),
+        )
     obj = form.save(commit=False)
     obj.created_by = _tariff_owner(request, form)
     obj.position = _next_position(Tariff, {"created_by": obj.created_by})
@@ -4347,10 +6273,31 @@ def tariff_form_edit(request, pk: int):
         return _render_policy_updated(request)
     if request.method == "GET":
         form = TariffForm(instance=tariff, request_user=request.user)
-        return render(request, TARIFF_FORM_TEMPLATE, _tariff_form_context(request, form, "edit", tariff))
-    form = TariffForm(request.POST, instance=tariff, request_user=request.user)
+        return render(
+            request,
+            TARIFF_FORM_TEMPLATE,
+            _with_workspace_product_lock(
+                request, _tariff_form_context(request, form, "edit", tariff), form, tariff
+            ),
+        )
+    form = _lock_workspace_product_field(
+        request,
+        TariffForm(
+            request.POST,
+            instance=tariff,
+            initial=_product_field_initial_from_request(request),
+            request_user=request.user,
+        ),
+        tariff,
+    )
     if not form.is_valid():
-        return render(request, TARIFF_FORM_TEMPLATE, _tariff_form_context(request, form, "edit", tariff))
+        return render(
+            request,
+            TARIFF_FORM_TEMPLATE,
+            _with_workspace_product_lock(
+                request, _tariff_form_context(request, form, "edit", tariff), form, tariff
+            ),
+        )
     obj = form.save(commit=False)
     if request.user.is_superuser:
         owner = form.cleaned_data.get("owner")
@@ -4538,7 +6485,9 @@ def tariff_csv_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
+    return _policy_import_success_response(
+        request, ok=True, created=created, updated=updated, warnings=warnings
+    )
 
 
 @login_required

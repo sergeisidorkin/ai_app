@@ -124,11 +124,15 @@
           <td id="chk-code-{{ row.item.id }}" class="col-code text-nowrap {{ row.code_class }}">{{ row.item.code }}</td>
           <td id="chk-num-{{ row.item.id }}" class="col-num text-nowrap">{{ row.item.number|stringformat:"02d" }}</td>
           <td class="text-nowrap">{% if row.source_data_url %}<a href="{{ row.source_data_url }}" target="_blank" rel="noopener" class="text-reset text-decoration-none">{{ row.item.short_name }}</a>{% else %}{{ row.item.short_name }}{% endif %}</td>
-          <td class="col-files text-nowrap">
+          <td class="col-files{% if not row.files_hint %} text-nowrap{% endif %}">
+            {% if row.files_hint %}
+            <div class="chk-files-info chk-files-hint">{{ row.files_hint }}</div>
+            {% else %}
             <div class="chk-files-info">
               <div>Всего файлов: {{ row.file_count|default:"—" }}</div>
               <div>Последняя загрузка: {{ row.last_upload_at|date:"d.m.y H:i"|default:"—" }}</div>
             </div>
+            {% endif %}
           </td>
           <td class="col-name-cell">{{ row.item.name }}</td>
 
@@ -324,6 +328,9 @@
     #checklists-table-wrap table .col-files {
         white-space: nowrap;
     }
+    #checklists-table-wrap table td.col-files:has(.chk-files-hint) {
+        white-space: normal;
+    }
     #checklists-table-wrap table td.col-files {
         vertical-align: middle;
         padding-top: 5px !important;
@@ -333,6 +340,9 @@
         font-size: 0.7rem;
         line-height: 1.2;
         color: #6c757d;
+    }
+    .chk-files-hint {
+        white-space: normal;
     }
 
     #checklists-table-wrap table col.comment-col {

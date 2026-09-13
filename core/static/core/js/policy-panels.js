@@ -5,6 +5,11 @@
   window.__tableSel = window.__tableSel || {};
   window.__tableSelLast = window.__tableSelLast || null;
 
+  function policyPane() {
+    const panes = document.querySelectorAll('#policy-pane');
+    return panes.length ? panes[panes.length - 1] : null;
+  }
+
   function pane() {
     // The typical-service-term-gantt editor is reused (with the same ids) by
     // other sections of the application — currently the projects' "График
@@ -60,6 +65,10 @@
     return m ? m.pop() : '';
   }
   const csrftoken = getCookie('csrftoken');
+  const POLICY_WORKSPACE_LEAVE_MESSAGE = 'Есть несохранённые изменения. Уйти без сохранения?';
+  const POLICY_WORKSPACE_CANCEL_MESSAGE = 'Сбросить внесённые изменения?';
+  let policyWorkspaceSession = null;
+  let policyWorkspaceSessionUnsub = null;
   var P = window.UIPref;
   const POLICY_FILTER_ALL = '__all__';
   const POLICY_FILTER_PREF_KEY = 'policy:masterFilters';
@@ -283,6 +292,7 @@
     const fallbackLabel = String(selected?.textContent || '').trim();
     display.textContent = hasValue ? (shortLabel || fallbackLabel) : (fallbackLabel || '---------');
     display.classList.toggle('is-placeholder', !hasValue);
+    display.classList.toggle('readonly-field', !!select.disabled);
   }
 
   function enhancePolicyProductSelect(select) {
@@ -1079,6 +1089,12 @@
   }
 
   function getPolicyProductCatalog(root) {
+    if (
+      window.__policyProductCatalogAuthoritative === true
+      && Array.isArray(window.__policyProductCatalog)
+    ) {
+      return window.__policyProductCatalog;
+    }
     const products = [];
     const seen = new Set();
     qa('tr[data-policy-filter-row="1"][data-product-id][data-consulting-type-ref]', root).forEach(function (row) {
@@ -1096,7 +1112,25 @@
         subtypeRef: normalizeFilterValue(row.dataset.serviceSubtypeRef),
       });
     });
-    return products;
+    const productsWrapper = root?.querySelector?.('[data-policy-table-key="products"]');
+    const isLegacyFullPanel = productsWrapper
+      && !productsWrapper.matches('[data-policy-lazy-placeholder="1"]')
+      && !productsWrapper.querySelector('.policy-table-pagination');
+    return isLegacyFullPanel ? products : [];
+  }
+
+  function hasAuthoritativePolicyProductCatalog() {
+    return window.__policyProductCatalogAuthoritative === true
+      && Array.isArray(window.__policyProductCatalog);
+  }
+
+  function requiresAuthoritativePolicyProductCatalog(root) {
+    const productsWrapper = root?.querySelector?.('[data-policy-table-key="products"]');
+    return !!(
+      root?.matches?.('[data-policy-lazy-shell="1"]')
+      || productsWrapper?.matches?.('[data-policy-lazy-placeholder="1"]')
+      || productsWrapper?.querySelector?.('.policy-table-pagination')
+    );
   }
 
   function buildPolicyFilterOptions(rows, products) {
@@ -1323,6 +1357,10 @@
       return selectedProductIds.includes(product.id);
     });
     rows.forEach(function (row) {
+      if (row.closest('[data-policy-master-managed="1"]')) {
+        row.classList.remove('d-none');
+        return;
+      }
       let visible = rowMatchesPolicySelection(row, state);
       if (visible && selectedProductIds.length) {
         const rowProductId = normalizeFilterValue(row.dataset.productId);
@@ -1356,8 +1394,9 @@
     updatePolicyMasterFilterDownloadLinks();
   }
 
-  function initPolicyMasterFilters() {
-    const root = pane();
+  function initPolicyMasterFilters(options) {
+    options = options || {};
+    const root = policyPane();
     if (!root) return;
     const missing = POLICY_FILTER_ORDER.some(function (key) {
       const cfg = POLICY_FILTER_CONFIG[key];
@@ -1370,6 +1409,14 @@
 
     const rows = qa('tr[data-policy-filter-row="1"]', root);
     if (!rows.length) {
+      updatePolicyMasterFilterDownloadLinks();
+      return;
+    }
+    if (
+      requiresAuthoritativePolicyProductCatalog(root)
+      && !hasAuthoritativePolicyProductCatalog()
+    ) {
+      schedulePolicyProductCatalogRetry();
       updatePolicyMasterFilterDownloadLinks();
       return;
     }
@@ -1407,14 +1454,829 @@
             }
           }
           applyPolicyMasterFilters(root, rows, products, nextState);
+          refreshManagedPolicyTables(nextState, true);
         };
       });
     });
     applyPolicyMasterFilters(root, rows, products, savedState);
+    if (!options.skipManagedRefresh) refreshManagedPolicyTables(savedState, false);
+  }
+
+  function getPolicyWorkspaceProduct(root) {
+    root = root || policyPane();
+    const id = normalizeFilterValue(root?.dataset?.policyWorkspaceProductId);
+    if (!id || root?.dataset?.policyWorkspace !== '1') return null;
+    return {
+      id: id,
+      label: normalizeFilterValue(root.dataset.headerCurrentLabel) || id,
+      consultingRef: normalizeFilterValue(root.dataset.policyWorkspaceConsultingRef),
+      categoryRef: normalizeFilterValue(root.dataset.policyWorkspaceCategoryRef),
+      subtypeRef: normalizeFilterValue(root.dataset.policyWorkspaceSubtypeRef),
+    };
+  }
+
+  function isPolicyWorkspaceActive(root) {
+    root = root || policyPane();
+    return root?.dataset?.policyWorkspace === '1';
+  }
+
+  function policyWorkspaceActionsEl() {
+    return document.getElementById('policy-workspace-actions');
+  }
+
+  function policyWorkspaceSaveBtn() {
+    return document.querySelector('[data-policy-workspace-save-btn]');
+  }
+
+  function policyWorkspaceCancelBtn() {
+    return document.querySelector('[data-policy-workspace-cancel-btn]');
+  }
+
+  function confirmPolicyWorkspaceLeave() {
+    if (!policyWorkspaceSession?.isDirty()) return true;
+    return window.confirm(POLICY_WORKSPACE_LEAVE_MESSAGE);
+  }
+
+  function syncPolicyWorkspaceActions() {
+    const actions = policyWorkspaceActionsEl();
+    const saveBtn = policyWorkspaceSaveBtn();
+    const cancelBtn = policyWorkspaceCancelBtn();
+    const active = isPolicyWorkspaceActive();
+    if (actions) {
+      actions.classList.toggle('d-none', !active);
+      actions.classList.toggle('d-flex', active);
+    }
+    const dirty = !!(policyWorkspaceSession && policyWorkspaceSession.isDirty());
+    const saving = !!(policyWorkspaceSession && policyWorkspaceSession.saving);
+    if (saveBtn && !saving) saveBtn.disabled = !dirty;
+    if (cancelBtn) cancelBtn.disabled = !!saving;
+  }
+
+  function setPolicyWorkspaceSaveLoading(isLoading) {
+    const saveBtn = policyWorkspaceSaveBtn();
+    if (!saveBtn) return;
+    if (isLoading) {
+      if (!saveBtn.dataset.originalHtml) saveBtn.dataset.originalHtml = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Сохранение...';
+      return;
+    }
+    saveBtn.innerHTML = saveBtn.dataset.originalHtml || 'Сохранить';
+    syncPolicyWorkspaceActions();
+  }
+
+  function destroyPolicyWorkspaceSession() {
+    if (policyWorkspaceSessionUnsub) {
+      policyWorkspaceSessionUnsub();
+      policyWorkspaceSessionUnsub = null;
+    }
+    if (policyWorkspaceSession && window.WorkspaceInlineEditor) {
+      window.WorkspaceInlineEditor.detach(policyWorkspaceSession);
+    }
+    policyWorkspaceSession = null;
+    syncPolicyWorkspaceActions();
+  }
+
+  function ensurePolicyWorkspaceSession(root) {
+    root = root || policyPane();
+    if (!isPolicyWorkspaceActive(root) || !window.WorkspaceInlineEditor) {
+      destroyPolicyWorkspaceSession();
+      return null;
+    }
+    if (policyWorkspaceSession) return policyWorkspaceSession;
+    policyWorkspaceSession = window.WorkspaceInlineEditor.createSession();
+    window.WorkspaceInlineEditor.attach(policyWorkspaceSession);
+    policyWorkspaceSessionUnsub = policyWorkspaceSession.onChange(syncPolicyWorkspaceActions);
+    syncPolicyWorkspaceActions();
+    return policyWorkspaceSession;
+  }
+
+  function bindPolicyWorkspaceInlineSection(session, root, tableKey, createAdapter) {
+    const section = root.querySelector(
+      '[data-policy-table-key="' + tableKey + '"][data-policy-inline="1"]'
+    );
+    if (!section || section.matches('[data-policy-lazy-placeholder="1"]')) return;
+    if (!session.hasSection(section)) {
+      window.WorkspaceInlineEditor.bindSection(
+        session,
+        section,
+        createAdapter ? createAdapter(section) : {}
+      );
+    }
+    attachPolicyWorkspaceRowInsert(section, session);
+  }
+
+  const POLICY_WORKSPACE_ROW_INSERT_KEYS = {
+    'typical-sections': true,
+    'section-structures': true,
+    'typical-service-compositions': true,
+    'tariffs': true,
+  };
+
+  function policyRowPersistId(row) {
+    if (!row) return '';
+    if (row.dataset.inlineRowId) return String(row.dataset.inlineRowId);
+    const checkbox = row.querySelector('.policy-row-check-cell input.form-check-input, input.form-check-input');
+    return checkbox ? String(checkbox.value || '') : '';
+  }
+
+  function policySectionPersistId(row) {
+    return policyRowPersistId(row);
+  }
+
+  function isPolicyInlineNewRow(row) {
+    if (!row) return false;
+    return row.dataset.inlineNew === '1' || String(row.dataset.inlineRowId || '').startsWith('new-');
+  }
+
+  function syncPolicyWorkspaceNewRowAfterIds(tbody, tableKey) {
+    if (!policyWorkspaceSession || !tbody || !tableKey) return;
+    Array.from(tbody.querySelectorAll('tr[data-inline-new="1"]')).forEach(function (item) {
+      policyWorkspaceSession.updateNewRowAfterId(
+        tableKey,
+        item.dataset.inlineRowId,
+        policyRowPersistId(item.previousElementSibling)
+      );
+    });
+  }
+
+  function syncTypicalSectionNewRowAfterIds(tbody) {
+    syncPolicyWorkspaceNewRowAfterIds(tbody, 'typical-sections');
+  }
+
+  function removePolicyInlineNewRow(row) {
+    if (!row) return;
+    const tbody = row.parentElement;
+    const tableKey = row.closest('[data-policy-table-key]')?.dataset?.policyTableKey || '';
+    const rowId = row.dataset.inlineRowId;
+    if (window.WorkspaceInlineEditor) {
+      window.WorkspaceInlineEditor.closeEditors({ commitText: false, commitOwners: false });
+    }
+    row.remove();
+    if (policyWorkspaceSession && rowId) {
+      policyWorkspaceSession.removeRow(tableKey, rowId);
+      if (POLICY_WORKSPACE_ROW_INSERT_KEYS[tableKey]) {
+        syncPolicyWorkspaceNewRowAfterIds(tbody, tableKey);
+      }
+    }
+  }
+
+  function queuePolicyWorkspaceTypicalSectionDelete(row) {
+    if (!row || !policyWorkspaceSession) return;
+    if (row.dataset.systemSection === '1') return;
+    if (isPolicyInlineNewRow(row)) {
+      removePolicyInlineNewRow(row);
+      return;
+    }
+    const tbody = row.parentElement;
+    const rowId = row.dataset.inlineRowId || policySectionPersistId(row);
+    if (window.WorkspaceInlineEditor) {
+      window.WorkspaceInlineEditor.closeEditors({ commitText: false, commitOwners: false });
+    }
+    row.remove();
+    if (rowId) policyWorkspaceSession.markDeletedRow('typical-sections', rowId);
+    syncTypicalSectionNewRowAfterIds(tbody);
+  }
+
+  function createPolicyRowInsertButton() {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'proposal-row-insert';
+    button.title = 'Добавить строку в этом месте';
+    button.setAttribute('aria-label', button.title);
+    button.innerHTML = '<i class="bi bi-plus-circle" aria-hidden="true"></i>';
+    return button;
+  }
+
+  function syncPolicyRowInsertGeometry(button, row, checkCell, wrap, position) {
+    const wrapRect = wrap?.getBoundingClientRect();
+    const rowRect = row?.getBoundingClientRect();
+    const checkCellRect = checkCell?.getBoundingClientRect();
+    if (!button || !wrapRect || !rowRect || !checkCellRect) return;
+    const boundaryY = position === 'before' ? rowRect.top : rowRect.bottom;
+    button.style.left = (checkCellRect.left - wrapRect.left + wrap.scrollLeft) + 'px';
+    button.style.top = (boundaryY - wrapRect.top + wrap.scrollTop) + 'px';
+    const iconRect = button.querySelector('.bi')?.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    if (!iconRect || !buttonRect) return;
+    button.style.setProperty(
+      '--proposal-service-row-insert-mask-left',
+      Math.max(0, checkCellRect.left - buttonRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-mask-width',
+      Math.max(0, iconRect.left - checkCellRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-line-left',
+      Math.max(0, iconRect.right - buttonRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-line-width',
+      Math.max(0, rowRect.right - iconRect.right) + 'px'
+    );
+  }
+
+  function visiblePolicyRowInsertCells(row) {
+    return Array.from(row.children).filter(function (cell) {
+      return cell.tagName === 'TD' && getComputedStyle(cell).display !== 'none';
+    });
+  }
+
+  function getPolicyRowInsertHoverRight(row) {
+    const cells = visiblePolicyRowInsertCells(row);
+    if (!cells.length) return 0;
+    const limitCell = cells[1] || cells[0];
+    return limitCell.getBoundingClientRect().right;
+  }
+
+  function getTypicalSectionInsertHoverRight(row) {
+    return getPolicyRowInsertHoverRight(row);
+  }
+
+  function visibleTypicalSectionCells(row) {
+    return visiblePolicyRowInsertCells(row);
+  }
+
+  function applyPolicyWorkspaceProductAttrs(row, sample) {
+    row.setAttribute('data-policy-filter-row', '1');
+    row.dataset.productId = sample?.dataset.productId || '';
+    row.dataset.productLabel = sample?.dataset.productLabel || '';
+    row.dataset.consultingType = sample?.dataset.consultingType || '';
+    row.dataset.serviceCategory = sample?.dataset.serviceCategory || '';
+    row.dataset.serviceSubtype = sample?.dataset.serviceSubtype || '';
+  }
+
+  function appendPolicyWorkspaceProductCell(row, sample) {
+    const productTd = document.createElement('td');
+    productTd.className = 'text-nowrap policy-workspace-product-cell';
+    const productCell = sample?.querySelector('.policy-workspace-product-cell');
+    productTd.textContent = productCell ? productCell.textContent.trim() : '';
+    row.appendChild(productTd);
+  }
+
+  function appendPolicyWorkspaceCheckCell(row, rowId, name, ariaLabel) {
+    const checkTd = document.createElement('td');
+    checkTd.className = 'text-nowrap policy-row-check-cell';
+    checkTd.innerHTML = (
+      '<div class="form-check">'
+      + '<input class="form-check-input" type="checkbox" id="' + name + '-' + rowId
+      + '" name="' + name + '" value="' + rowId
+      + '" aria-label="' + ariaLabel + '">'
+      + '</div>'
+    );
+    row.appendChild(checkTd);
+  }
+
+  function policyWorkspaceNeighborSection(row) {
+    const cell = row && row.querySelector('td[data-inline-field="section"]');
+    const code = row && row.querySelector('.typical-section-dsc-code');
+    return {
+      id: cell ? String(cell.getAttribute('data-inline-value') || '') : '',
+      label: cell ? cell.textContent.trim() : '',
+      code: code ? code.textContent.trim() : '',
+    };
+  }
+
+  function appendPolicyWorkspaceSectionCells(row, neighbor) {
+    const codeTd = document.createElement('td');
+    codeTd.className = 'text-nowrap typical-section-code-col';
+    const span = document.createElement('span');
+    span.className = 'typical-section-dsc-code';
+    span.textContent = neighbor.code || '';
+    codeTd.appendChild(span);
+    row.appendChild(codeTd);
+
+    const sectionTd = document.createElement('td');
+    sectionTd.className = 'text-nowrap';
+    sectionTd.setAttribute('data-inline-field', 'section');
+    sectionTd.setAttribute('data-inline-type', 'select');
+    sectionTd.setAttribute('data-inline-value', neighbor.id || '');
+    sectionTd.textContent = neighbor.label || '';
+    row.appendChild(sectionTd);
+    return sectionTd;
+  }
+
+  function createTypicalSectionWorkspaceRow(section, rowId) {
+    const sample = section.querySelector('tbody tr[data-product-id]');
+    const productId = sample?.dataset.productId || '';
+    const productLabel = sample?.dataset.productLabel || '';
+    const consultingType = sample?.dataset.consultingType || '';
+    const serviceCategory = sample?.dataset.serviceCategory || '';
+    const serviceSubtype = sample?.dataset.serviceSubtype || '';
+    const productCell = sample?.querySelector('.policy-workspace-product-cell');
+
+    const row = document.createElement('tr');
+    row.setAttribute('data-policy-filter-row', '1');
+    row.dataset.productId = productId;
+    row.dataset.inlineRowId = rowId;
+    row.dataset.inlineNew = '1';
+    row.dataset.productLabel = productLabel;
+    row.dataset.consultingType = consultingType;
+    row.dataset.serviceCategory = serviceCategory;
+    row.dataset.serviceSubtype = serviceSubtype;
+    row.dataset.systemSection = '0';
+
+    const checkTd = document.createElement('td');
+    checkTd.className = 'text-nowrap policy-row-check-cell';
+    checkTd.innerHTML = (
+      '<div class="form-check">'
+      + '<input class="form-check-input" type="checkbox" id="section-sel-' + rowId
+      + '" name="section-select" value="' + rowId
+      + '" aria-label="Выделить строку раздела">'
+      + '</div>'
+    );
+    row.appendChild(checkTd);
+
+    const productTd = document.createElement('td');
+    productTd.className = 'text-nowrap policy-workspace-product-cell';
+    productTd.textContent = productCell ? productCell.textContent.trim() : '';
+    row.appendChild(productTd);
+
+    function textCell(field, extraClass) {
+      const td = document.createElement('td');
+      td.className = extraClass || '';
+      td.setAttribute('data-inline-field', field);
+      td.setAttribute('data-inline-type', 'text');
+      td.setAttribute('data-inline-value', '');
+      return td;
+    }
+
+    row.appendChild(textCell('code', 'text-nowrap typical-section-code-col'));
+    row.appendChild(textCell('short_name', 'text-nowrap'));
+    row.appendChild(textCell('short_name_ru', 'text-nowrap'));
+    row.appendChild(textCell('name_en'));
+    row.appendChild(textCell('name_ru'));
+
+    const typeTd = document.createElement('td');
+    typeTd.className = 'text-nowrap';
+    typeTd.setAttribute('data-inline-field', 'accounting_type');
+    typeTd.setAttribute('data-inline-type', 'select');
+    typeTd.setAttribute('data-inline-value', 'Раздел');
+    typeTd.textContent = 'Раздел';
+    row.appendChild(typeTd);
+
+    const specTd = document.createElement('td');
+    specTd.className = 'text-nowrap typical-section-executor-col inline-specialties-cell';
+    specTd.setAttribute('data-inline-field', 'specialty_ids');
+    specTd.setAttribute('data-inline-type', 'specialties');
+    specTd.setAttribute('data-inline-value', '[]');
+    specTd.innerHTML = (
+      '<div class="inline-specialties" data-count="0">'
+      + '<div class="inline-specialty-row" data-index="0" data-id="">'
+      + '<span class="inline-specialty-label">—</span>'
+      + '<span class="inline-specialty-icons">'
+      + '<span class="inline-specialty-actions"></span>'
+      + '<span class="inline-specialty-chevron" aria-hidden="true"></span>'
+      + '<button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>'
+      + '</span></div></div>'
+    );
+    row.appendChild(specTd);
+
+    function selectCell(field) {
+      const td = document.createElement('td');
+      td.className = 'text-nowrap';
+      td.setAttribute('data-inline-field', field);
+      td.setAttribute('data-inline-type', 'select');
+      td.setAttribute('data-inline-value', '');
+      return td;
+    }
+    row.appendChild(selectCell('expertise_dir'));
+    row.appendChild(selectCell('expertise_direction'));
+
+    const tkpTd = document.createElement('td');
+    tkpTd.className = 'text-center';
+    tkpTd.setAttribute('data-inline-field', 'exclude_from_tkp_autofill');
+    tkpTd.setAttribute('data-inline-type', 'checkbox');
+    tkpTd.setAttribute('data-inline-value', 'false');
+    tkpTd.innerHTML = (
+      '<input class="form-check-input" type="checkbox" aria-label="Исключить из автозаполнения в ТКП">'
+    );
+    row.appendChild(tkpTd);
+    return row;
+  }
+
+  function createSectionStructureWorkspaceRow(section, rowId, referenceRow) {
+    const sample = referenceRow || section.querySelector('tbody tr[data-product-id]');
+    const neighbor = policyWorkspaceNeighborSection(referenceRow || sample);
+    const row = document.createElement('tr');
+    applyPolicyWorkspaceProductAttrs(row, sample);
+    row.dataset.inlineRowId = rowId;
+    row.dataset.inlineNew = '1';
+    appendPolicyWorkspaceCheckCell(row, rowId, 'structure-select', 'Выделить строку структуры');
+    appendPolicyWorkspaceProductCell(row, sample);
+    const sectionTd = appendPolicyWorkspaceSectionCells(row, neighbor);
+    sectionTd.className = 'text-nowrap';
+    const subTd = document.createElement('td');
+    subTd.setAttribute('data-inline-field', 'subsections');
+    subTd.setAttribute('data-inline-type', 'text');
+    subTd.setAttribute('data-inline-value', '');
+    row.appendChild(subTd);
+    return row;
+  }
+
+  function createTypicalServiceCompositionWorkspaceRow(section, rowId, referenceRow) {
+    const sample = referenceRow || section.querySelector('tbody tr[data-product-id]');
+    const neighbor = policyWorkspaceNeighborSection(referenceRow || sample);
+    const row = document.createElement('tr');
+    applyPolicyWorkspaceProductAttrs(row, sample);
+    row.dataset.inlineRowId = rowId;
+    row.dataset.inlineNew = '1';
+    appendPolicyWorkspaceCheckCell(
+      row,
+      rowId,
+      'typical-service-composition-select',
+      'Выделить строку типового состава услуг'
+    );
+    appendPolicyWorkspaceProductCell(row, sample);
+    const sectionTd = appendPolicyWorkspaceSectionCells(row, neighbor);
+    sectionTd.className = 'policy-service-composition-section-col';
+    const richTd = document.createElement('td');
+    richTd.className = 'policy-service-composition-cell';
+    richTd.setAttribute('data-inline-field', 'service_composition_editor_state');
+    richTd.setAttribute('data-inline-type', 'rich');
+    richTd.setAttribute('data-inline-value', '{"html":"","plain_text":""}');
+    richTd.innerHTML = '<div class="policy-service-composition-content policy-service-composition-content--rich ql-editor"></div>';
+    row.appendChild(richTd);
+    return row;
+  }
+
+  function createTariffWorkspaceRow(section, rowId, referenceRow) {
+    const sample = referenceRow || section.querySelector('tbody tr[data-product-id]');
+    const neighbor = policyWorkspaceNeighborSection(referenceRow || sample);
+    const row = document.createElement('tr');
+    applyPolicyWorkspaceProductAttrs(row, sample);
+    row.dataset.inlineRowId = rowId;
+    row.dataset.inlineNew = '1';
+    appendPolicyWorkspaceCheckCell(row, rowId, 'tariff-select', 'Выделить строку тарифа');
+    appendPolicyWorkspaceProductCell(row, sample);
+    appendPolicyWorkspaceSectionCells(row, neighbor);
+
+    function numberCell(field, value, label, step) {
+      const td = document.createElement('td');
+      td.className = 'text-nowrap';
+      td.setAttribute('data-inline-field', field);
+      td.setAttribute('data-inline-type', 'number');
+      td.setAttribute('data-inline-step', step);
+      td.setAttribute('data-inline-min', '0');
+      td.setAttribute('data-inline-value', value);
+      td.textContent = label;
+      return td;
+    }
+    row.appendChild(numberCell('base_rate_vpm', '1.00', '1,00', '0.01'));
+    row.appendChild(numberCell('service_hours', '0', '0', '1'));
+    row.appendChild(numberCell('service_days_tkp', '0', '0', '1'));
+
+    const ownerSample = sample && sample.querySelector('td[data-inline-field="owner"]');
+    if (ownerSample) {
+      const ownerTd = document.createElement('td');
+      ownerTd.className = 'text-nowrap text-muted';
+      ownerTd.setAttribute('data-inline-field', 'owner');
+      ownerTd.setAttribute('data-inline-type', 'select');
+      ownerTd.setAttribute('data-inline-value', ownerSample.getAttribute('data-inline-value') || '');
+      ownerTd.textContent = ownerSample.textContent.trim();
+      row.appendChild(ownerTd);
+    }
+    return row;
+  }
+
+  function snapshotPolicyWorkspaceInsertRow(session, tableKey, row, afterId) {
+    const fields = {};
+    row.querySelectorAll('td[data-inline-field]').forEach(function (cell) {
+      fields[cell.dataset.inlineField] = window.WorkspaceInlineEditor.readCellValue(cell);
+    });
+    session.markNewRow(tableKey, row.dataset.inlineRowId, fields, { afterId: afterId || '' });
+  }
+
+  function snapshotTypicalSectionRow(session, row, afterId) {
+    snapshotPolicyWorkspaceInsertRow(session, 'typical-sections', row, afterId);
+  }
+
+  const POLICY_WORKSPACE_ROW_INSERT = {
+    'typical-sections': {
+      skipBeforeSystem: true,
+      focusField: 'code',
+      createRow: createTypicalSectionWorkspaceRow,
+    },
+    'section-structures': {
+      focusField: 'subsections',
+      createRow: createSectionStructureWorkspaceRow,
+    },
+    'typical-service-compositions': {
+      focusField: 'service_composition_editor_state',
+      createRow: createTypicalServiceCompositionWorkspaceRow,
+    },
+    'tariffs': {
+      focusField: 'base_rate_vpm',
+      createRow: createTariffWorkspaceRow,
+    },
+  };
+
+  function attachTypicalSectionRowInsert(section, session) {
+    attachPolicyWorkspaceRowInsert(section, session);
+  }
+
+  function attachPolicyWorkspaceRowInsert(section, session) {
+    if (!section || !session || section.dataset.policyRowInsertBound === '1') return;
+    const tableKey = section.dataset.policyTableKey;
+    const config = POLICY_WORKSPACE_ROW_INSERT[tableKey];
+    if (!config) return;
+    const tbody = section.querySelector('table tbody');
+    const wrap = section.querySelector('.table-responsive');
+    if (!tbody || !wrap) return;
+    section.dataset.policyRowInsertBound = '1';
+
+    const rowInsertButton = createPolicyRowInsertButton();
+    let rowInsertTarget = null;
+    let rowInsertPosition = '';
+    let newRowSeq = 0;
+
+    function isPolicyRowInsertPointerInside(target) {
+      return !!(target && (
+        rowInsertButton.contains(target)
+        || target === rowInsertButton
+        || tbody.contains(target)
+      ));
+    }
+
+    function clearRowInsertMarker() {
+      rowInsertTarget?.classList.remove('proposal-service-insert-before', 'proposal-service-insert-after');
+      tbody.classList.remove('policy-row-insert-active');
+      rowInsertButton.remove();
+      rowInsertTarget = null;
+      rowInsertPosition = '';
+    }
+
+    function showRowInsertMarker(row, position) {
+      if (!row || (position !== 'before' && position !== 'after')) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (config.skipBeforeSystem && row.dataset.systemSection === '1' && position === 'before') {
+        clearRowInsertMarker();
+        return;
+      }
+      if (rowInsertTarget === row && rowInsertPosition === position && rowInsertButton.isConnected) {
+        return;
+      }
+      if (rowInsertTarget !== row || rowInsertPosition !== position) {
+        clearRowInsertMarker();
+        rowInsertTarget = row;
+        rowInsertPosition = position;
+        row.classList.add(position === 'before'
+          ? 'proposal-service-insert-before'
+          : 'proposal-service-insert-after');
+      }
+      const checkCell = row.querySelector('.policy-row-check-cell');
+      if (!checkCell) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (rowInsertButton.parentElement !== wrap) {
+        wrap.appendChild(rowInsertButton);
+      }
+      syncPolicyRowInsertGeometry(rowInsertButton, row, checkCell, wrap, position);
+      tbody.classList.add('policy-row-insert-active');
+    }
+
+    function addRowAt(referenceRow, position) {
+      newRowSeq += 1;
+      const rowId = 'new-' + newRowSeq;
+      const row = config.createRow(section, rowId, referenceRow);
+      if (referenceRow && referenceRow.parentElement === tbody) {
+        const anchor = position === 'before' ? referenceRow : referenceRow.nextElementSibling;
+        tbody.insertBefore(row, anchor);
+      } else {
+        tbody.appendChild(row);
+      }
+      clearRowInsertMarker();
+      snapshotPolicyWorkspaceInsertRow(session, tableKey, row, policyRowPersistId(row.previousElementSibling));
+      const focusCell = row.querySelector('td[data-inline-field="' + config.focusField + '"]');
+      window.requestAnimationFrame(function () {
+        if (!focusCell) return;
+        focusCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        focusCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+      });
+    }
+
+    tbody.addEventListener('pointermove', function (event) {
+      if (event.pointerType === 'touch') {
+        clearRowInsertMarker();
+        return;
+      }
+      if (event.target.closest('.proposal-row-insert')) return;
+      if (rowInsertTarget && rowInsertButton.isConnected) {
+        if (event.clientX > getPolicyRowInsertHoverRight(rowInsertTarget)) {
+          clearRowInsertMarker();
+          return;
+        }
+        const activeRect = rowInsertTarget.getBoundingClientRect();
+        const activeBoundaryY = rowInsertPosition === 'before' ? activeRect.top : activeRect.bottom;
+        if (Math.abs(event.clientY - activeBoundaryY) <= 14) return;
+      }
+      const row = event.target.closest('tr');
+      if (!row || row.parentElement !== tbody || row.querySelector('td[colspan]')) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (event.clientX > getPolicyRowInsertHoverRight(row)) {
+        clearRowInsertMarker();
+        return;
+      }
+      const rect = row.getBoundingClientRect();
+      const distanceFromTop = event.clientY - rect.top;
+      const distanceFromBottom = rect.bottom - event.clientY;
+      const boundaryHoverSize = 10;
+      if (Math.min(distanceFromTop, distanceFromBottom) > boundaryHoverSize) {
+        clearRowInsertMarker();
+        return;
+      }
+      showRowInsertMarker(row, distanceFromTop <= distanceFromBottom ? 'before' : 'after');
+    });
+
+    tbody.addEventListener('pointerleave', function (event) {
+      if (isPolicyRowInsertPointerInside(event.relatedTarget)) return;
+      clearRowInsertMarker();
+    });
+
+    rowInsertButton.addEventListener('pointerleave', function (event) {
+      if (isPolicyRowInsertPointerInside(event.relatedTarget)) return;
+      clearRowInsertMarker();
+    });
+
+    wrap.addEventListener('scroll', function () {
+      if (!rowInsertTarget || !rowInsertButton.isConnected) return;
+      syncPolicyRowInsertGeometry(
+        rowInsertButton,
+        rowInsertTarget,
+        rowInsertTarget.querySelector('.policy-row-check-cell'),
+        wrap,
+        rowInsertPosition
+      );
+    });
+
+    rowInsertButton.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!rowInsertTarget || !rowInsertPosition) return;
+      addRowAt(rowInsertTarget, rowInsertPosition);
+    });
+  }
+
+  function bindPolicyWorkspaceInlineTables(root) {
+    root = root || policyPane();
+    const session = ensurePolicyWorkspaceSession(root);
+    if (!session || !window.WorkspaceInlineEditor) return;
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'products',
+      window.WorkspaceInlineEditor.createPolicyProductsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'service-goal-reports',
+      window.WorkspaceInlineEditor.createPolicyServiceGoalReportsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'typical-sections',
+      window.WorkspaceInlineEditor.createPolicyTypicalSectionsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'section-structures',
+      window.WorkspaceInlineEditor.createPolicySectionStructuresAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'report-structures',
+      window.WorkspaceInlineEditor.createPolicyReportStructuresAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'tariffs',
+      window.WorkspaceInlineEditor.createPolicyTariffsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'typical-service-terms',
+      window.WorkspaceInlineEditor.createPolicyTypicalServiceTermsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'typical-service-compositions',
+      window.WorkspaceInlineEditor.createPolicyTypicalServiceCompositionsAdapter
+    );
+  }
+
+  function refreshPolicyWorkspaceInlineFragments(tableKeys) {
+    const keys = tableKeys && tableKeys.length
+      ? tableKeys
+      : ['products', 'service-goal-reports', 'typical-sections', 'section-structures', 'report-structures', 'typical-service-terms', 'typical-service-compositions', 'tariffs'];
+    return Promise.all(keys.map(function (tableKey) {
+      return refreshLoadedPolicyFragment(tableKey);
+    }));
+  }
+
+  function applyPolicyWorkspaceSaveResult(data) {
+    const root = policyPane();
+    if (!root || !data) return;
+    if (data.label) {
+      root.dataset.headerCurrentLabel = data.label;
+      updatePolicyHeaderPath();
+    }
+    const product = data.product || {};
+    if (Object.prototype.hasOwnProperty.call(product, 'consulting_type_ref')) {
+      root.dataset.policyWorkspaceConsultingRef = String(product.consulting_type_ref || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(product, 'service_category_ref')) {
+      root.dataset.policyWorkspaceCategoryRef = String(product.service_category_ref || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(product, 'service_subtype_ref')) {
+      root.dataset.policyWorkspaceSubtypeRef = String(product.service_subtype_ref || '');
+    }
+  }
+
+  async function savePolicyWorkspace() {
+    const root = policyPane();
+    const session = policyWorkspaceSession;
+    const url = root?.dataset?.policyWorkspaceSaveUrl;
+    if (!session || !url || session.saving) return;
+    if (window.WorkspaceInlineEditor) {
+      window.WorkspaceInlineEditor.closeEditors({ commitText: true, commitOwners: true });
+    }
+    if (!session.isDirty()) return;
+    const tables = session.collectTables();
+    session.clearErrors();
+    session.setSaving(true);
+    setPolicyWorkspaceSaveLoading(true);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrftoken,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ tables: tables }),
+      });
+      const data = await response.json().catch(function () { return {}; });
+      if (!response.ok || data.ok === false) {
+        session.setErrors(data.errors || [{
+          table: 'products',
+          id: root.dataset.policyWorkspaceProductId,
+          field: '',
+          message: data.error || 'Не удалось сохранить изменения.',
+        }]);
+        if (window.WorkspaceInlineEditor) window.WorkspaceInlineEditor.applyErrorsToDom(session, root);
+        return;
+      }
+      applyPolicyWorkspaceSaveResult(data);
+      destroyPolicyWorkspaceSession();
+      await refreshPolicyWorkspaceInlineFragments(data.tables);
+      bindPolicyWorkspaceInlineTables(policyPane());
+    } catch (err) {
+      session.setErrors([{
+        table: 'products',
+        id: root?.dataset?.policyWorkspaceProductId,
+        field: '',
+        message: 'Не удалось сохранить изменения.',
+      }]);
+      if (window.WorkspaceInlineEditor) window.WorkspaceInlineEditor.applyErrorsToDom(session, root);
+    } finally {
+      if (policyWorkspaceSession) policyWorkspaceSession.setSaving(false);
+      setPolicyWorkspaceSaveLoading(false);
+    }
+  }
+
+  async function cancelPolicyWorkspace() {
+    const session = policyWorkspaceSession;
+    if (!session || session.saving) return;
+    if (window.WorkspaceInlineEditor) window.WorkspaceInlineEditor.closeEditors();
+    if (!session.isDirty()) {
+      destroyPolicyWorkspaceSession();
+      await loadPolicyCatalogShell();
+      return;
+    }
+    if (!window.confirm(POLICY_WORKSPACE_CANCEL_MESSAGE)) return;
+    forgetPolicyTableSelection('section-select');
+    destroyPolicyWorkspaceSession();
+    await refreshPolicyWorkspaceInlineFragments();
+    bindPolicyWorkspaceInlineTables(policyPane());
   }
 
   function getSelectedPolicyMasterProduct() {
     const root = pane();
+    const workspaceProduct = getPolicyWorkspaceProduct(root);
+    if (workspaceProduct) return workspaceProduct;
     if (!root) return null;
     const state = filterStateWithDefaults(window.__policyMasterFilters);
     const productValues = state.product || [];
@@ -1425,6 +2287,13 @@
   }
 
   function buildPolicyMasterFilterQueryString(state) {
+    const workspaceProduct = getPolicyWorkspaceProduct(policyPane());
+    if (workspaceProduct) {
+      const params = new URLSearchParams();
+      params.set('product', workspaceProduct.id);
+      params.set('workspace', '1');
+      return '?' + params.toString();
+    }
     state = filterStateWithDefaults(state || window.__policyMasterFilters);
     const params = new URLSearchParams();
     POLICY_FILTER_ORDER.forEach(function (key) {
@@ -1440,6 +2309,815 @@
     const query = params.toString();
     return query ? ('?' + query) : '';
   }
+
+  function getPolicyTablePageSize(wrapper) {
+    const value = normalizeFilterValue(wrapper?.dataset?.policyTablePageSize);
+    return ['25', '50', '100'].includes(value) ? value : '25';
+  }
+
+  let policyManagedRefreshTimer = null;
+  let policyManagedRefreshQueue = [];
+  let policyManagedRefreshActive = 0;
+  let policyManagedRefreshGeneration = 0;
+  let policyLoadedFragmentRequestToken = 0;
+  const policyLoadedFragmentRequests = new Map();
+  const policyManagedOutstandingTableKeys = new Set();
+  const POLICY_MANAGED_REFRESH_CONCURRENCY = 2;
+  let policyLazyRefreshQueue = [];
+  let policyLazyRefreshActive = 0;
+  let policyLazyObserver = null;
+  const policyLazyRequestTokens = new Map();
+  const policyLazyRequestControllers = new Map();
+  const POLICY_LAZY_REFRESH_CONCURRENCY = 2;
+
+  function syncPolicyLazyPlaceholderQuery(placeholder) {
+    if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) return;
+    placeholder.dataset.policyFilterQuery =
+      buildPolicyMasterFilterQueryString(window.__policyMasterFilters).replace(/^\?/, '');
+  }
+
+  function nextPolicyLazyRequestToken(tableKey) {
+    const token = (policyLazyRequestTokens.get(tableKey) || 0) + 1;
+    policyLazyRequestTokens.set(tableKey, token);
+    return token;
+  }
+
+  function isPolicyLazyPlaceholderNearViewport(placeholder) {
+    const rect = placeholder.getBoundingClientRect();
+    return rect.bottom >= -500 && rect.top <= window.innerHeight + 500;
+  }
+
+  function updatePolicyLazyPlaceholderState(placeholder, options) {
+    if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) return;
+    options = options || {};
+    syncPolicyLazyPlaceholderQuery(placeholder);
+    const tableKey = normalizeFilterValue(placeholder.dataset.policyTableKey);
+    const state = placeholder.dataset.policyLazyState;
+    const wasLoading = state === 'loading';
+    if (wasLoading && options.invalidateLoading) {
+      nextPolicyLazyRequestToken(tableKey);
+      policyLazyRequestControllers.get(tableKey)?.abort();
+      setPolicyLazyPlaceholderStatus(placeholder, 'pending', 'Ожидает актуальной загрузки');
+    }
+    if (
+      options.requeueNear
+      && placeholder.dataset.policyLazyState !== 'queued'
+      && placeholder.dataset.policyLazyState !== 'loading'
+      && (wasLoading || isPolicyLazyPlaceholderNearViewport(placeholder))
+    ) {
+      enqueuePolicyLazyPlaceholder(placeholder, { priority: !!options.priority });
+    }
+  }
+
+  function updateAllPolicyLazyPlaceholderStates(options) {
+    qa('[data-policy-lazy-placeholder="1"]', policyPane()).forEach(function (placeholder) {
+      updatePolicyLazyPlaceholderState(placeholder, options);
+    });
+  }
+
+  function policyLazyPlaceholderUrl(placeholder) {
+    syncPolicyLazyPlaceholderQuery(placeholder);
+    const baseUrl = normalizeFilterValue(placeholder.dataset.policyTableUrl);
+    const query = normalizeFilterValue(placeholder.dataset.policyFilterQuery);
+    const page = normalizeFilterValue(placeholder.dataset.policyTablePage) || '1';
+    const pageSize = getPolicyTablePageSize(placeholder);
+    const params = new URLSearchParams(query);
+    params.set('page', page);
+    params.set('page_size', pageSize);
+    return baseUrl + '?' + params.toString();
+  }
+
+  function setPolicyLazyPlaceholderStatus(placeholder, state, label) {
+    placeholder.dataset.policyLazyState = state;
+    placeholder.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false');
+    const status = placeholder.querySelector('.policy-table-placeholder-status');
+    const error = placeholder.querySelector('.policy-table-placeholder-error');
+    if (status) status.textContent = label;
+    if (error) error.classList.toggle('d-none', state !== 'error');
+  }
+
+  function pumpPolicyLazyRefreshQueue() {
+    while (
+      policyLazyRefreshActive < POLICY_LAZY_REFRESH_CONCURRENCY
+      && policyLazyRefreshQueue.length
+    ) {
+      const placeholderId = policyLazyRefreshQueue.shift();
+      const placeholder = document.getElementById(placeholderId);
+      if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) continue;
+      if (placeholder.dataset.policyLazyState !== 'queued') continue;
+      policyLazyRefreshActive += 1;
+      const tableKey = normalizeFilterValue(placeholder.dataset.policyTableKey);
+      const requestToken = nextPolicyLazyRequestToken(tableKey);
+      const controller = new AbortController();
+      policyLazyRequestControllers.set(tableKey, controller);
+      placeholder.dataset.policyLazyRequestToken = String(requestToken);
+      setPolicyLazyPlaceholderStatus(placeholder, 'loading', 'Загрузка…');
+      fetch(policyLazyPlaceholderUrl(placeholder), {
+        signal: controller.signal,
+        headers: { 'HX-Request': 'true', 'X-Requested-With': 'fetch' },
+      }).then(function (response) {
+        if (!response.ok) throw new Error('Не удалось загрузить таблицу.');
+        return response.text();
+      }).then(function (html) {
+        const current = document.getElementById(placeholderId);
+        if (
+          !current?.matches?.('[data-policy-lazy-placeholder="1"]')
+          || policyLazyRequestTokens.get(tableKey) !== requestToken
+          || current.dataset.policyLazyRequestToken !== String(requestToken)
+        ) return;
+        const template = document.createElement('template');
+        template.innerHTML = html.trim();
+        const replacement = template.content.firstElementChild;
+        if (!replacement || replacement.id !== placeholderId) {
+          throw new Error('Сервер вернул некорректный фрагмент таблицы.');
+        }
+        current.replaceWith(replacement);
+        if (window.htmx) window.htmx.process(replacement);
+        initializeArrivingPolicyFragment(replacement);
+      }).catch(function () {
+        const current = document.getElementById(placeholderId);
+        if (
+          current?.matches?.('[data-policy-lazy-placeholder="1"]')
+          && policyLazyRequestTokens.get(tableKey) === requestToken
+        ) {
+          setPolicyLazyPlaceholderStatus(current, 'error', 'Ошибка загрузки');
+        }
+      }).finally(function () {
+        if (policyLazyRequestControllers.get(tableKey) === controller) {
+          policyLazyRequestControllers.delete(tableKey);
+        }
+        policyLazyRefreshActive -= 1;
+        pumpPolicyLazyRefreshQueue();
+      });
+    }
+  }
+
+  function enqueuePolicyLazyPlaceholder(placeholder, options) {
+    if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) return;
+    options = options || {};
+    const state = placeholder.dataset.policyLazyState;
+    if (state === 'queued') {
+      if (options.priority) {
+        policyLazyRefreshQueue = policyLazyRefreshQueue.filter(function (id) {
+          return id !== placeholder.id;
+        });
+        policyLazyRefreshQueue.unshift(placeholder.id);
+        pumpPolicyLazyRefreshQueue();
+      }
+      return;
+    }
+    if (state === 'loading') return;
+    if (policyLazyObserver) policyLazyObserver.unobserve(placeholder);
+    syncPolicyLazyPlaceholderQuery(placeholder);
+    setPolicyLazyPlaceholderStatus(placeholder, 'queued', 'В очереди…');
+    if (options.priority) policyLazyRefreshQueue.unshift(placeholder.id);
+    else policyLazyRefreshQueue.push(placeholder.id);
+    pumpPolicyLazyRefreshQueue();
+  }
+
+  function initPolicyLazyShell(root) {
+    if (!root?.matches?.('#policy-pane[data-policy-lazy-shell="1"]')) return;
+    if (root.dataset.policyLazyInitialized === '1') return;
+    root.dataset.policyLazyInitialized = '1';
+    policyLazyRefreshQueue = [];
+    updateAllPolicyLazyPlaceholderStates();
+    qa('[data-policy-lazy-priority="immediate"]', root).forEach(
+      enqueuePolicyLazyPlaceholder
+    );
+    const isWorkspace = root.dataset.policyWorkspace === '1';
+    if (isWorkspace) {
+      if (policyLazyObserver) {
+        policyLazyObserver.disconnect();
+        policyLazyObserver = null;
+      }
+      qa('[data-policy-lazy-priority="deferred"]', root).forEach(
+        enqueuePolicyLazyPlaceholder
+      );
+    } else if ('IntersectionObserver' in window) {
+      if (policyLazyObserver) policyLazyObserver.disconnect();
+      policyLazyObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) enqueuePolicyLazyPlaceholder(entry.target);
+        });
+      }, { root: null, rootMargin: '500px 0px', threshold: 0.01 });
+      qa('[data-policy-lazy-priority="deferred"]', root).forEach(function (placeholder) {
+        policyLazyObserver.observe(placeholder);
+      });
+    } else {
+      qa('[data-policy-lazy-priority="deferred"]', root).forEach(
+        enqueuePolicyLazyPlaceholder
+      );
+    }
+    if (!isWorkspace) {
+      refreshPolicyProductCatalog().catch(function () {
+        // Table loading remains available if the lightweight catalog fails.
+      });
+      destroyPolicyWorkspaceSession();
+    } else {
+      ensurePolicyWorkspaceSession(root);
+    }
+    updatePolicyHeaderPath();
+    if (isWorkspace) {
+      bindPolicyWorkspaceInlineTables(root);
+      scrollPolicyWorkspaceToTop(root);
+    }
+  }
+
+  function scrollPolicyWorkspaceToTop(root) {
+    root = root || policyPane();
+    if (root?.dataset?.policyWorkspace !== '1') return;
+    window.__policyScrollRestoreY = null;
+    const jump = function () {
+      window.scrollTo(0, 0);
+    };
+    jump();
+    window.requestAnimationFrame(jump);
+  }
+
+  function updatePolicyHeaderPath() {
+    const heading = document.getElementById('policy-section-heading');
+    if (!heading) return;
+    const root = policyPane();
+    const filterDropdowns = Object.keys(POLICY_FILTER_CONFIG).map(function (key) {
+      return document.getElementById(POLICY_FILTER_CONFIG[key].dropdownId);
+    });
+    if (!root) {
+      heading.textContent = 'Продукты';
+      filterDropdowns.forEach(function (dropdown) {
+        if (dropdown) dropdown.classList.remove('d-none');
+      });
+      syncPolicyWorkspaceActions();
+      return;
+    }
+
+    const rootLabel = root.dataset.headerRootLabel || 'Продукты';
+    const rootUrl = root.dataset.headerRootUrl || '';
+    const currentLabel = root.dataset.headerCurrentLabel || '';
+    const currentUrl = root.dataset.headerCurrentUrl || '';
+    filterDropdowns.forEach(function (dropdown) {
+      if (dropdown) dropdown.classList.toggle('d-none', !!currentLabel);
+    });
+
+    if (!currentLabel) {
+      heading.textContent = rootLabel;
+      syncPolicyWorkspaceActions();
+      return;
+    }
+
+    heading.replaceChildren();
+    const rootLink = document.createElement('a');
+    rootLink.className = 'proposal-header-link';
+    rootLink.href = '#policy';
+    rootLink.textContent = rootLabel;
+    if (rootUrl) {
+      rootLink.setAttribute('hx-get', rootUrl);
+      rootLink.setAttribute('hx-target', '#policy-pane');
+      rootLink.setAttribute('hx-swap', 'outerHTML');
+    }
+    const separator = document.createElement('span');
+    separator.className = 'proposal-header-separator';
+    separator.textContent = ' / ';
+    const currentLink = document.createElement('a');
+    currentLink.className = 'proposal-header-link';
+    currentLink.href = '#policy';
+    currentLink.textContent = currentLabel;
+    if (currentUrl) {
+      currentLink.setAttribute('hx-get', currentUrl);
+      currentLink.setAttribute('hx-target', '#policy-pane');
+      currentLink.setAttribute('hx-swap', 'outerHTML');
+    }
+    heading.append(rootLink, separator, currentLink);
+    if (window.htmx) window.htmx.process(heading);
+    syncPolicyWorkspaceActions();
+  }
+
+  function loadPolicyCatalogShell() {
+    const root = policyPane();
+    const catalogUrl = normalizeFilterValue(root?.dataset?.headerRootUrl) || '/policy/policy/partial/';
+    if (!window.htmx) return Promise.resolve();
+    return Promise.resolve(
+      htmx.ajax('GET', catalogUrl, { target: '#policy-pane', swap: 'outerHTML' })
+    );
+  }
+
+  function loadPolicyShellOnce() {
+    const root = policyPane();
+    const shellUrl = normalizeFilterValue(root?.dataset?.policyShellUrl);
+    if (!root || !shellUrl || root.dataset.policyShellState === 'loading' || root.dataset.policyShellState === 'loaded') {
+      return Promise.resolve();
+    }
+    root.dataset.policyShellState = 'loading';
+    const loading = root.querySelector('#policy-loading');
+    if (loading) {
+      loading.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span><span>Загрузка таблиц…</span>';
+    }
+    return Promise.resolve(
+      htmx.ajax('GET', shellUrl, { target: '#policy-pane', swap: 'outerHTML' })
+    ).then(function () {
+      const shell = policyPane();
+      if (shell) shell.dataset.policyShellState = 'loaded';
+      initPolicyLazyShell(shell);
+    }).catch(function () {
+      const current = policyPane();
+      if (!current) return;
+      current.dataset.policyShellState = 'error';
+      current.innerHTML =
+        '<div class="alert alert-danger mb-0">Не удалось загрузить таблицы. ' +
+        '<button type="button" class="btn btn-sm btn-outline-danger ms-2" data-policy-shell-retry="1">Повторить</button></div>';
+    });
+  }
+
+  function clearManagedPolicyTableSelection(wrapper) {
+    qa('tbody input.form-check-input[name]', wrapper).forEach(function (checkbox) {
+      checkbox.checked = false;
+    });
+    qa('input.form-check-input[data-target-name]', wrapper).forEach(function (master) {
+      master.checked = false;
+      master.indeterminate = false;
+    });
+    qa('div[id$="-actions"]:not([data-policy-actions-always-visible="1"])', wrapper).forEach(function (actions) {
+      actions.classList.add('d-none');
+    });
+  }
+
+  function pumpManagedPolicyRefreshQueue() {
+    while (
+      policyManagedRefreshActive < POLICY_MANAGED_REFRESH_CONCURRENCY
+      && policyManagedRefreshQueue.length
+    ) {
+      const task = policyManagedRefreshQueue.shift();
+      const current = document.getElementById(task.wrapperId);
+      if (!current || task.generation !== policyManagedRefreshGeneration) {
+        if (task.generation === policyManagedRefreshGeneration) {
+          policyManagedOutstandingTableKeys.delete(task.tableKey);
+        }
+        continue;
+      }
+      policyManagedRefreshActive += 1;
+      Promise.resolve(
+        refreshLoadedPolicyFragment(task.tableKey, {
+          preserveScroll: true,
+          page: task.page,
+          generation: task.generation,
+        })
+      ).catch(function () {
+        // The existing fragment remains visible on network failure.
+      }).finally(function () {
+        policyManagedRefreshActive -= 1;
+        if (task.generation === policyManagedRefreshGeneration) {
+          policyManagedOutstandingTableKeys.delete(task.tableKey);
+        }
+        pumpManagedPolicyRefreshQueue();
+      });
+    }
+  }
+
+  function abortOlderPolicyLoadedFragmentRequests(generation) {
+    policyLoadedFragmentRequests.forEach(function (request) {
+      if (request.generation < generation) request.controller.abort();
+    });
+  }
+
+  function enqueueManagedPolicyTableRefreshes(state) {
+    const requested = new Set(policyManagedOutstandingTableKeys);
+    const resetToFirstPage = new Set();
+    qa('[data-policy-master-managed="1"][data-policy-table-url]', policyPane()).forEach(function (wrapper) {
+      const tableKey = normalizeFilterValue(wrapper.dataset.policyTableKey);
+      if (!tableKey) return;
+      if (wrapper.matches('[data-policy-lazy-placeholder="1"]')) {
+        updatePolicyLazyPlaceholderState(wrapper, {
+          invalidateLoading: true,
+          requeueNear: true,
+          priority: true,
+        });
+        return;
+      }
+      requested.add(tableKey);
+      resetToFirstPage.add(tableKey);
+      clearManagedPolicyTableSelection(wrapper);
+    });
+    policyManagedRefreshGeneration += 1;
+    const generation = policyManagedRefreshGeneration;
+    abortOlderPolicyLoadedFragmentRequests(generation);
+    policyManagedRefreshQueue = [];
+    policyManagedOutstandingTableKeys.clear();
+    requested.forEach(function (tableKey) {
+      const wrapper = policyPane()?.querySelector(
+        '[data-policy-table-key="' + CSS.escape(tableKey) + '"][data-policy-table-url]'
+      );
+      if (!wrapper?.id) return;
+      if (wrapper.matches('[data-policy-lazy-placeholder="1"]')) {
+        updatePolicyLazyPlaceholderState(wrapper, {
+          invalidateLoading: true,
+          requeueNear: true,
+          priority: true,
+        });
+        return;
+      }
+      policyManagedOutstandingTableKeys.add(tableKey);
+      policyManagedRefreshQueue.push({
+        generation: generation,
+        wrapperId: wrapper.id,
+        tableKey: tableKey,
+        page: resetToFirstPage.has(tableKey) ? '1' : undefined,
+      });
+    });
+    pumpManagedPolicyRefreshQueue();
+  }
+
+  function refreshManagedPolicyTables(state, debounce) {
+    if (!window.htmx) return;
+    updateAllPolicyLazyPlaceholderStates({
+      invalidateLoading: true,
+      requeueNear: true,
+    });
+    if (policyManagedRefreshTimer) {
+      window.clearTimeout(policyManagedRefreshTimer);
+    }
+    if (debounce) {
+      policyManagedRefreshTimer = window.setTimeout(function () {
+        policyManagedRefreshTimer = null;
+        enqueueManagedPolicyTableRefreshes(state);
+      }, 250);
+    } else {
+      policyManagedRefreshTimer = null;
+      enqueueManagedPolicyTableRefreshes(state);
+    }
+  }
+
+  function refreshLoadedPolicyFragment(tableKey, options) {
+    options = options || {};
+    const root = policyPane();
+    const wrapper = root?.querySelector(
+      '[data-policy-table-key="' + CSS.escape(tableKey) + '"][data-policy-table-url]'
+    );
+    const baseUrl = normalizeFilterValue(wrapper?.dataset?.policyTableUrl);
+    if (!wrapper || !baseUrl || !window.htmx) return Promise.resolve();
+    if (wrapper.matches('[data-policy-lazy-placeholder="1"]')) {
+      updatePolicyLazyPlaceholderState(wrapper, {
+        invalidateLoading: true,
+        requeueNear: true,
+        priority: true,
+      });
+      return Promise.resolve();
+    }
+
+    const page = normalizeFilterValue(options.page || wrapper.dataset.policyTablePage) || '1';
+    const pageSize = getPolicyTablePageSize(wrapper);
+    const query = buildPolicyMasterFilterQueryString(window.__policyMasterFilters);
+    const params = new URLSearchParams(query.replace(/^\?/, ''));
+    params.set('page', page);
+    params.set('page_size', pageSize);
+    const requestUrl = baseUrl + '?' + params.toString();
+    const beforeRect = wrapper.getBoundingClientRect();
+    const beforeTop = beforeRect.top;
+    const preserveAnchor = beforeRect.bottom >= 0 && beforeRect.top <= window.innerHeight;
+    const master = wrapper.querySelector('input.form-check-input[data-target-name]');
+    const selectionName = master?.dataset?.targetName || '';
+    const selectedIds = selectionName && window.__tableSel?.[selectionName]
+      ? Array.from(window.__tableSel[selectionName])
+      : [];
+
+    const previousRequest = policyLoadedFragmentRequests.get(tableKey);
+    if (previousRequest) previousRequest.controller.abort();
+    const controller = new AbortController();
+    policyLoadedFragmentRequestToken += 1;
+    const requestToken = policyLoadedFragmentRequestToken;
+    const requestGeneration = options.generation || policyManagedRefreshGeneration;
+    policyLoadedFragmentRequests.set(tableKey, {
+      controller: controller,
+      token: requestToken,
+      generation: requestGeneration,
+    });
+
+    return fetch(requestUrl, {
+      signal: controller.signal,
+      headers: { 'HX-Request': 'true', 'X-Requested-With': 'fetch' },
+    }).then(function (response) {
+      if (!response.ok) throw new Error('Не удалось обновить таблицу.');
+      return response.text();
+    }).then(function (html) {
+      const activeRequest = policyLoadedFragmentRequests.get(tableKey);
+      const current = document.getElementById(wrapper.id);
+      if (
+        !activeRequest
+        || activeRequest.token !== requestToken
+        || requestGeneration !== policyManagedRefreshGeneration
+        || !current
+        || current.dataset.policyTableKey !== tableKey
+      ) return;
+      const template = document.createElement('template');
+      template.innerHTML = html.trim();
+      const refreshed = template.content.firstElementChild;
+      if (!refreshed || refreshed.id !== wrapper.id) {
+        throw new Error('Сервер вернул некорректный фрагмент таблицы.');
+      }
+      current.replaceWith(refreshed);
+      if (window.htmx) window.htmx.process(refreshed);
+      initializeArrivingPolicyFragment(refreshed);
+      if (selectionName && selectedIds.length) {
+        const selected = new Set(selectedIds.map(String));
+        qa(
+          'tbody input.form-check-input[name="' + CSS.escape(selectionName) + '"]',
+          refreshed
+        ).forEach(function (checkbox) {
+          checkbox.checked = selected.has(String(checkbox.value));
+        });
+        updateMasterStateFor(selectionName);
+        updateRowHighlightFor(selectionName);
+        ensureActionsVisibility(selectionName);
+      }
+      if (options.preserveScroll !== false && preserveAnchor) {
+        const afterTop = refreshed.getBoundingClientRect().top;
+        window.scrollBy(0, afterTop - beforeTop);
+      }
+      if (selectionName) {
+        try { delete window.__tableSel[selectionName]; } catch (_) { window.__tableSel[selectionName] = []; }
+        if (window.__tableSelLast === selectionName) window.__tableSelLast = null;
+      }
+    }).catch(function (error) {
+      if (error.name === 'AbortError') return;
+      const current = document.getElementById(wrapper.id);
+      if (current?.dataset?.policyTableKey === tableKey) {
+        current.dataset.policyRefreshError = '1';
+        current.dispatchEvent(new CustomEvent('policy-fragment-error', {
+          bubbles: true,
+          detail: { table: tableKey },
+        }));
+      }
+      throw error;
+    }).finally(function () {
+      const activeRequest = policyLoadedFragmentRequests.get(tableKey);
+      if (activeRequest?.token === requestToken) {
+        policyLoadedFragmentRequests.delete(tableKey);
+      }
+    });
+  }
+
+  function enqueuePolicyDependencyRefreshes(tables, options) {
+    options = options || {};
+    const skipTables = new Set(options.skipTables || []);
+    skipTables.forEach(function (tableKey) {
+      const activeRequest = policyLoadedFragmentRequests.get(tableKey);
+      if (activeRequest) {
+        activeRequest.controller.abort();
+        policyLoadedFragmentRequests.delete(tableKey);
+      }
+      policyManagedOutstandingTableKeys.delete(tableKey);
+    });
+    const requested = new Set(policyManagedOutstandingTableKeys);
+    policyManagedRefreshQueue.forEach(function (task) {
+      if (task.tableKey) requested.add(task.tableKey);
+    });
+    policyLoadedFragmentRequests.forEach(function (_, tableKey) {
+      requested.add(tableKey);
+    });
+    (Array.isArray(tables) ? tables : []).forEach(function (tableKey) {
+      requested.add(tableKey);
+    });
+    skipTables.forEach(function (tableKey) {
+      requested.delete(tableKey);
+    });
+    policyManagedRefreshGeneration += 1;
+    const generation = policyManagedRefreshGeneration;
+    abortOlderPolicyLoadedFragmentRequests(generation);
+    policyManagedRefreshQueue = [];
+    policyManagedOutstandingTableKeys.clear();
+    requested.forEach(function (tableKey) {
+      if (skipTables.has(tableKey)) return;
+      const wrapper = policyPane()?.querySelector(
+        '[data-policy-table-key="' + CSS.escape(tableKey) + '"][data-policy-table-url]'
+      );
+      if (!wrapper?.id) return;
+      if (wrapper.matches('[data-policy-lazy-placeholder="1"]')) {
+        updatePolicyLazyPlaceholderState(wrapper, {
+          invalidateLoading: true,
+          requeueNear: true,
+          priority: true,
+        });
+        return;
+      }
+      policyManagedOutstandingTableKeys.add(tableKey);
+      policyManagedRefreshQueue.push({
+        generation: generation,
+        wrapperId: wrapper.id,
+        tableKey: tableKey,
+      });
+    });
+    pumpManagedPolicyRefreshQueue();
+  }
+
+  let policyProductCatalogRequest = null;
+  let policyProductCatalogRetryTimer = null;
+  let policyProductCatalogNeedsRefresh = true;
+  let policyProductCatalogRetryAttempt = 0;
+
+  function schedulePolicyProductCatalogRetry() {
+    if (
+      policyProductCatalogRequest
+      || policyProductCatalogRetryTimer
+      || !policyProductCatalogNeedsRefresh
+      || !policyPane()?.matches?.('[data-policy-lazy-shell="1"]')
+    ) return;
+    const retryDelay = Math.min(30000, 1500 * (2 ** policyProductCatalogRetryAttempt));
+    policyProductCatalogRetryAttempt += 1;
+    policyProductCatalogRetryTimer = window.setTimeout(function () {
+      policyProductCatalogRetryTimer = null;
+      refreshPolicyProductCatalog().catch(function () {
+        // refreshPolicyProductCatalog schedules the next bounded retry.
+      });
+    }, retryDelay);
+  }
+
+  function refreshPolicyProductCatalog() {
+    if (policyProductCatalogRequest) return policyProductCatalogRequest;
+    policyProductCatalogNeedsRefresh = true;
+    if (policyProductCatalogRetryTimer) {
+      window.clearTimeout(policyProductCatalogRetryTimer);
+      policyProductCatalogRetryTimer = null;
+    }
+    policyProductCatalogRequest = fetch('/policy/policy/filter-catalog/', {
+      headers: { 'X-Requested-With': 'fetch' },
+    }).then(function (response) {
+      if (!response.ok) throw new Error('Не удалось обновить каталог продуктов.');
+      return response.json();
+    }).then(function (data) {
+      const catalog = (Array.isArray(data.products) ? data.products : []).map(function (product) {
+        return {
+          id: normalizeFilterValue(product.id),
+          label: normalizeFilterValue(product.label),
+          consulting: normalizeFilterValue(product.consulting),
+          category: normalizeFilterValue(product.category),
+          subtype: normalizeFilterValue(product.subtype),
+          consultingRef: normalizeFilterValue(product.consulting_ref_id),
+          categoryRef: normalizeFilterValue(product.category_ref_id),
+          subtypeRef: normalizeFilterValue(product.subtype_ref_id),
+        };
+      });
+      window.__policyProductCatalog = catalog;
+      window.__policyProductCatalogAuthoritative = true;
+      policyProductCatalogNeedsRefresh = false;
+      policyProductCatalogRetryAttempt = 0;
+      initPolicyMasterFilters({ skipManagedRefresh: true });
+      document.body.dispatchEvent(new CustomEvent('products-reordered', {
+        detail: { catalog: catalog },
+      }));
+      return catalog;
+    }).finally(function () {
+      policyProductCatalogRequest = null;
+      if (policyProductCatalogNeedsRefresh) schedulePolicyProductCatalogRetry();
+    });
+    return policyProductCatalogRequest;
+  }
+
+  function moveSelectedPolicyRowBlocks(tbody, rows, direction, isSelected, canCross) {
+    const selected = rows.map(function (row) {
+      return !!isSelected(row);
+    });
+    let moved = false;
+
+    if (direction === 'up') {
+      for (let index = 1; index < rows.length; index += 1) {
+        if (!selected[index] || selected[index - 1]) continue;
+        let blockEnd = index;
+        while (blockEnd + 1 < rows.length && selected[blockEnd + 1]) {
+          blockEnd += 1;
+        }
+        const crossingRow = rows[index - 1];
+        if (!canCross || canCross(crossingRow, direction, rows[index])) {
+          tbody.insertBefore(crossingRow, rows[blockEnd].nextElementSibling);
+          moved = true;
+        }
+        index = blockEnd;
+      }
+      return moved;
+    }
+
+    for (let index = rows.length - 2; index >= 0; index -= 1) {
+      if (!selected[index] || selected[index + 1]) continue;
+      let blockStart = index;
+      while (blockStart - 1 >= 0 && selected[blockStart - 1]) {
+        blockStart -= 1;
+      }
+      const crossingRow = rows[index + 1];
+      if (!canCross || canCross(crossingRow, direction, rows[blockStart])) {
+        tbody.insertBefore(crossingRow, rows[blockStart]);
+        moved = true;
+      }
+      index = blockStart;
+    }
+    return moved;
+  }
+
+  function getPolicyReorderRows(wrapper) {
+    const tbody = wrapper?.querySelector('table tbody');
+    if (!tbody) return { tbody: null, rows: [] };
+    const rows = Array.from(tbody.children).filter(function (row) {
+      return row.tagName === 'TR'
+        && !row.classList.contains('d-none')
+        && (row.dataset.moveUpUrl || row.dataset.moveDownUrl || isPolicyInlineNewRow(row));
+    });
+    return { tbody: tbody, rows: rows };
+  }
+
+  function makePolicyReorderCanCross(tableKey) {
+    if (tableKey === 'typical-sections') {
+      return function (crossingRow, _direction, anchorRow) {
+        if (crossingRow.dataset.systemSection === '1') return false;
+        return String(crossingRow.dataset.productId || '') === String(anchorRow?.dataset?.productId || '');
+      };
+    }
+    if (tableKey === 'report-structures') {
+      return function (crossingRow, _direction, anchorRow) {
+        return String(crossingRow.dataset.productId || '') === String(anchorRow?.dataset?.productId || '');
+      };
+    }
+    return null;
+  }
+
+  function parsePolicyUpdatedPayloadFromTrigger(header) {
+    if (!header) return null;
+    const trimmed = String(header).trim();
+    if (trimmed === 'policy-updated') return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      const detail = parsed && parsed['policy-updated'];
+      if (detail && typeof detail === 'object') return detail;
+      if (detail) return {};
+    } catch (_) {
+      // HX-Trigger can be a plain event name when the legacy fallback is used.
+    }
+    return null;
+  }
+
+  let policyReorderPersistQueue = Promise.resolve();
+
+  function persistPolicyRowMoves(urls, options) {
+    options = options || {};
+    const headers = {
+      'X-CSRFToken': csrftoken,
+      'HX-Request': 'true',
+      'X-Requested-With': 'fetch',
+    };
+    let lastPayload = null;
+    return urls.reduce(function (chain, url) {
+      return chain.then(function () {
+        return fetch(url, { method: 'POST', headers: headers }).then(function (response) {
+          if (!response.ok) throw new Error('Не удалось переместить строку.');
+          lastPayload = parsePolicyUpdatedPayloadFromTrigger(response.headers.get('HX-Trigger'));
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      if (!lastPayload) return;
+      if (options.skipSourceRefresh && options.tableKey) {
+        lastPayload = Object.assign({}, lastPayload, { skipTable: options.tableKey });
+      }
+      handlePolicyUpdated(lastPayload);
+    });
+  }
+
+  function enqueuePolicyReorderPersist(urls, options) {
+    policyReorderPersistQueue = policyReorderPersistQueue.then(function () {
+      return persistPolicyRowMoves(urls, options).catch(function () {
+        if (options.tableKey) return refreshLoadedPolicyFragment(options.tableKey);
+      });
+    });
+  }
+
+  function refreshExpertsPaneIfLoaded() {
+    const expertsPane = document.getElementById('experts-pane');
+    const url = expertsPane?.getAttribute('hx-get');
+    if (!expertsPane || !url || !window.htmx) return;
+    if (document.querySelector('#experts-modal.show, #experts-profile-modal.show, #experts-contract-details-modal.show')) {
+      window.__expertsPaneDirty = true;
+      return;
+    }
+    window.htmx.ajax('GET', url, { target: '#experts-pane', swap: 'outerHTML' });
+  }
+
+  function handlePolicyUpdated(payload) {
+    payload = payload && typeof payload === 'object' ? payload : {};
+    const skipTables = payload.skipTable ? [payload.skipTable] : [];
+    const tables = payload.tables || [];
+    const refresh = function () {
+      enqueuePolicyDependencyRefreshes(tables, { skipTables: skipTables });
+      if (tables.indexOf('expert-specialties') !== -1) {
+        refreshExpertsPaneIfLoaded();
+      }
+    };
+    if (payload.refreshFilters) {
+      refreshPolicyProductCatalog().catch(function () {
+        // Keep the current catalog if the lightweight refresh fails.
+      }).finally(refresh);
+    } else {
+      refresh();
+    }
+  }
+
+  document.body.addEventListener('policy-updated', function (event) {
+    const detail = event.detail || {};
+    handlePolicyUpdated(detail.value && typeof detail.value === 'object' ? detail.value : detail);
+  });
 
   const POLICY_MASTER_FILTER_DOWNLOAD_BTN_IDS = [
     'typical-service-compositions-csv-download-btn',
@@ -1531,9 +3209,64 @@
     panel.classList.toggle('d-none', !anyChecked);
   }
 
+  function forgetPolicyTableSelection(name) {
+    try { delete window.__tableSel[name]; } catch (_) { window.__tableSel[name] = []; }
+    if (window.__tableSelLast === name) window.__tableSelLast = null;
+  }
+
+  function clearPolicyTableSelectionByName(name) {
+    getRowChecksByName(name).forEach(function (checkbox) {
+      checkbox.checked = false;
+    });
+    forgetPolicyTableSelection(name);
+    updateMasterStateFor(name);
+    updateRowHighlightFor(name);
+    ensureActionsVisibility(name);
+    if (name === TYPICAL_SERVICE_TERM_GANTT_SELECTION_NAME) syncTypicalServiceTermGanttEditButton();
+  }
+
+  function markPolicyModalClearSelectionOnHide(name) {
+    const modalEl = document.getElementById('policy-modal');
+    if (!modalEl || !name) return;
+    modalEl.dataset.policyClearSelectionName = name;
+    forgetPolicyTableSelection(name);
+  }
+
+  function typicalServiceTermSectionIn(root) {
+    return (root || document).querySelector('#policy-typical-service-terms-section');
+  }
+
+  function typicalServiceTermDataRows(root) {
+    const section = typicalServiceTermSectionIn(root);
+    if (!section) return [];
+    return Array.from(section.querySelectorAll('tbody tr[data-gantt-url]'));
+  }
+
+  function isTypicalServiceTermWorkspaceChrome(button) {
+    const paneEl = (button && button.closest('#policy-pane')) || policyPane();
+    return paneEl?.dataset?.policyWorkspace === '1';
+  }
+
+  function selectTypicalServiceTermWorkspaceRow(row, root) {
+    typicalServiceTermDataRows(root).forEach(function (item) {
+      item.classList.toggle('typical-service-term-workspace-selected', item === row);
+    });
+  }
+
+  function getTypicalServiceTermWorkspaceRow(root) {
+    const rows = typicalServiceTermDataRows(root);
+    if (!rows.length) return null;
+    return rows.find(function (row) {
+      return row.classList.contains('typical-service-term-workspace-selected');
+    }) || rows[0];
+  }
+
   function getTypicalServiceTermSelectedRow() {
     const checked = getCheckedByName(TYPICAL_SERVICE_TERM_GANTT_SELECTION_NAME);
-    return checked.length === 1 ? checked[0].closest('tr') : null;
+    if (checked.length === 1) return checked[0].closest('tr');
+    const button = pane()?.querySelector('[data-typical-service-term-gantt-edit]');
+    if (isTypicalServiceTermWorkspaceChrome(button)) return getTypicalServiceTermWorkspaceRow(pane());
+    return null;
   }
 
   function syncTypicalServiceTermGanttEditButton() {
@@ -1541,14 +3274,28 @@
     if (!root) return;
     const button = root.querySelector('[data-typical-service-term-gantt-edit]');
     if (!button) return;
+    const workspace = isTypicalServiceTermWorkspaceChrome(button);
+    if (workspace) {
+      const current = getTypicalServiceTermSelectedRow();
+      if (current) selectTypicalServiceTermWorkspaceRow(current, root);
+    }
     const row = getTypicalServiceTermSelectedRow();
     const ganttUrl = normalizeFilterValue(row?.dataset?.ganttUrl);
     const enabled = !!row && !!ganttUrl;
     button.disabled = !enabled;
-    button.classList.toggle('d-none', !enabled);
+    if (workspace) {
+      button.classList.remove('d-none');
+      button.classList.add('d-flex');
+    } else {
+      button.classList.toggle('d-none', !enabled);
+    }
     button.dataset.ganttUrl = enabled ? ganttUrl : '';
-    button.dataset.termId = enabled ? normalizeFilterValue(row.querySelector('input[name="typical-service-term-select"]')?.value) : '';
-    button.dataset.productLabel = enabled ? normalizeFilterValue(row.dataset.productLabel || row.children[1]?.textContent) : '';
+    button.dataset.termId = enabled ? normalizeFilterValue(
+      row.querySelector('input[name="typical-service-term-select"]')?.value
+      || row.dataset.inlineRowId
+      || ''
+    ) : '';
+    button.dataset.productLabel = enabled ? normalizeFilterValue(row.dataset.productLabel || '') : '';
   }
 
   function getTypicalServiceTermGanttScale(root) {
@@ -8788,10 +10535,14 @@
         window.__tableSelLast = null;
       }
       setTypicalServiceTermGanttFullscreen(root, false);
-      rememberPolicyScrollPosition();
-      var refreshUrl = normalizeFilterValue(editor?.dataset?.refreshUrl) || '/policy/policy/partial/';
-      var refreshTarget = normalizeFilterValue(editor?.dataset?.refreshTarget) || '#policy-pane';
-      await htmx.ajax('GET', refreshUrl, { target: refreshTarget, swap: 'outerHTML' });
+      if (root.id === 'policy-pane' && data.policyUpdate) {
+        handlePolicyUpdated(data.policyUpdate);
+      } else {
+        rememberPolicyScrollPosition();
+        var refreshUrl = normalizeFilterValue(editor?.dataset?.refreshUrl) || '/policy/policy/partial/';
+        var refreshTarget = normalizeFilterValue(editor?.dataset?.refreshTarget) || '#policy-pane';
+        await htmx.ajax('GET', refreshUrl, { target: refreshTarget, swap: 'outerHTML' });
+      }
     } catch (error) {
       showTypicalServiceTermGanttMessage(root, error.message || 'Не удалось сохранить диаграмму.', true);
       setTypicalServiceTermGanttSaveLoading(saveButton, false);
@@ -9331,12 +11082,48 @@
 
   // Делегирование: клики по кнопкам панелей
   document.addEventListener('click', async (e) => {
+    const shellRetry = e.target.closest('[data-policy-shell-retry="1"]');
+    if (shellRetry && policyPane()?.contains(shellRetry)) {
+      const shell = policyPane();
+      shell.dataset.policyShellState = 'pending';
+      await loadPolicyShellOnce();
+      return;
+    }
+    const lazyRetry = e.target.closest('[data-policy-lazy-retry="1"]');
+    if (lazyRetry && policyPane()?.contains(lazyRetry)) {
+      enqueuePolicyLazyPlaceholder(lazyRetry.closest('[data-policy-lazy-placeholder="1"]'));
+      return;
+    }
+    const productQuickEdit = e.target.closest('.product-quick-edit');
+    const policyRoot = policyPane();
+    const workspaceSaveBtn = e.target.closest('[data-policy-workspace-save-btn]');
+    if (workspaceSaveBtn) {
+      e.preventDefault();
+      savePolicyWorkspace();
+      return;
+    }
+    const workspaceCancelBtn = e.target.closest('[data-policy-workspace-cancel-btn]');
+    if (workspaceCancelBtn) {
+      e.preventDefault();
+      cancelPolicyWorkspace();
+      return;
+    }
+    if (productQuickEdit && policyRoot?.contains(productQuickEdit)) {
+      e.preventDefault();
+      const tr = productQuickEdit.closest('tr');
+      const url = tr?.dataset?.workspaceUrl;
+      if (!url || !window.htmx) return;
+      await htmx.ajax('GET', url, { target: '#policy-pane', swap: 'outerHTML' });
+      scrollPolicyWorkspaceToTop(policyPane());
+      return;
+    }
     const root = pane();
     if (!root) return;
     const wrapToggle = e.target.closest('#typical-service-compositions-wrap-toggle');
     if (wrapToggle && root.contains(wrapToggle)) {
       const table = document.getElementById('typical-service-compositions-table');
       if (!table) return;
+      if (table.querySelector('.inline-cell-editing')) return;
       table.classList.toggle('clf-truncated');
       const active = table.classList.contains('clf-truncated');
       wrapToggle.classList.toggle('active', active);
@@ -9350,6 +11137,15 @@
       collapseSpecialtyTariffsSpecialties();
       if (P) P.set('policy:specialtyTariffsSpecialtiesCollapsed', !!window.__policySpecialtyTariffsSpecialtiesCollapsed);
       return;
+    }
+    const termWorkspaceRow = e.target.closest('#policy-typical-service-terms-section tbody tr[data-gantt-url]');
+    if (
+      termWorkspaceRow
+      && root.contains(termWorkspaceRow)
+      && isTypicalServiceTermWorkspaceChrome(root.querySelector('[data-typical-service-term-gantt-edit]'))
+    ) {
+      selectTypicalServiceTermWorkspaceRow(termWorkspaceRow, root);
+      syncTypicalServiceTermGanttEditButton();
     }
     const ganttEditButton = e.target.closest('[data-typical-service-term-gantt-edit]');
     if (ganttEditButton && root.contains(ganttEditButton)) {
@@ -9369,6 +11165,8 @@
     e.preventDefault();
     const panel = btn.closest('div[id$="-actions"]');
     if (!panel) return;
+    const managedWrapper = panel.closest('[data-policy-table-key][data-policy-table-url]');
+    const fragmentScopedPolicy = !!managedWrapper;
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
     const name = getNameForPanel(panel);
     if (!name) return;
@@ -9383,8 +11181,22 @@
     if (action === 'edit') {
       const first = checked[0];
       const tr = first.closest('tr');
-      const url = tr?.dataset?.editUrl;
+      let url = tr?.dataset?.editUrl;
       if (!url) return;
+      const workspaceProduct = getPolicyWorkspaceProduct(policyPane());
+      if (workspaceProduct) {
+        try {
+          const parsed = new URL(url, window.location.origin);
+          parsed.searchParams.set('workspace', '1');
+          parsed.searchParams.set('product', String(workspaceProduct.id));
+          url = parsed.pathname + parsed.search;
+        } catch (err) {
+          // Keep the original edit URL if it cannot be rewritten.
+        }
+      }
+      if (name === 'product-select') {
+        markPolicyModalClearSelectionOnHide(name);
+      }
       await htmx.ajax('GET', url, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
       // На случай если модалка не перерисовывает pane — поддержим видимость панели
       ensureActionsVisibility(name);
@@ -9394,38 +11206,115 @@
     if (action === 'delete') {
       if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
       btn.blur();
-      rememberPolicyScrollPosition();
-      const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+      const workspaceDelete = fragmentScopedPolicy
+        && policyPane()?.dataset?.policyWorkspace === '1'
+        && managedWrapper?.dataset?.policyTableKey === 'typical-sections'
+        && !!policyWorkspaceSession;
+      if (workspaceDelete) {
+        checked.forEach(function (ch) {
+          queuePolicyWorkspaceTypicalSectionDelete(ch.closest('tr'));
+        });
+        forgetPolicyTableSelection(name);
+        ensureActionsVisibility(name);
+        return;
+      }
+      const newRows = checked.filter(function (ch) {
+        return isPolicyInlineNewRow(ch.closest('tr'));
+      });
+      const persisted = checked.filter(function (ch) {
+        return !isPolicyInlineNewRow(ch.closest('tr'));
+      });
+      newRows.forEach(function (ch) {
+        removePolicyInlineNewRow(ch.closest('tr'));
+      });
+      if (!persisted.length) {
+        ensureActionsVisibility(name);
+        return;
+      }
+      if (!fragmentScopedPolicy) rememberPolicyScrollPosition();
+      const leavingWorkspace = name === 'product-select'
+        && !!normalizeFilterValue(policyPane()?.dataset?.policyWorkspaceProductId);
+      const urls = persisted.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+      if (!urls.length) {
+        ensureActionsVisibility(name);
+        return;
+      }
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#policy-pane', swap: 'outerHTML' });
+          await htmx.ajax('POST', urls[i], {
+            target: fragmentScopedPolicy ? '#' + managedWrapper.id : '#policy-pane',
+            swap: fragmentScopedPolicy ? 'none' : 'outerHTML',
+          });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          const headers = { 'X-CSRFToken': csrftoken };
+          if (fragmentScopedPolicy) headers['HX-Request'] = 'true';
+          await fetch(urls[i], { method: 'POST', headers: headers }).catch(() => {});
         }
+      }
+      if (leavingWorkspace) {
+        await loadPolicyCatalogShell();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
       btn.blur();
-      rememberPolicyScrollPosition();
+      if (!fragmentScopedPolicy) rememberPolicyScrollPosition();
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
       if (action === 'down') urls = urls.reverse();
+      if (fragmentScopedPolicy) {
+        const tableKey = normalizeFilterValue(managedWrapper.dataset.policyTableKey);
+        const reorder = getPolicyReorderRows(managedWrapper);
+        const moved = !!(reorder.tbody && reorder.rows.length && moveSelectedPolicyRowBlocks(
+          reorder.tbody,
+          reorder.rows,
+          action,
+          function (row) {
+            return !!row.querySelector(
+              'input.form-check-input[name="' + CSS.escape(name) + '"]:checked:not(:disabled)'
+            );
+          },
+          makePolicyReorderCanCross(tableKey)
+        ));
+        if (moved && POLICY_WORKSPACE_ROW_INSERT_KEYS[tableKey]) {
+          syncPolicyWorkspaceNewRowAfterIds(reorder.tbody, tableKey);
+        }
+        if (urls.length) {
+          enqueuePolicyReorderPersist(urls, {
+            tableKey: tableKey,
+            skipSourceRefresh: moved,
+          });
+        }
+        ensureActionsVisibility(name);
+        return;
+      }
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#policy-pane', swap: 'outerHTML' });
+          await htmx.ajax('POST', urls[i], {
+            target: '#policy-pane',
+            swap: 'outerHTML',
+          });
         } else {
           await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
         }
       }
-      // Пока ждём перерисовку, не прячем панель (на случай без перерисовки)
       ensureActionsVisibility(name);
       return;
     }
+  });
+
+  document.addEventListener('hidden.bs.modal', function (e) {
+    const modalEl = e.target;
+    if (!modalEl || modalEl.id !== 'policy-modal') return;
+    restorePolicyModalSize(modalEl);
+    const name = modalEl.dataset.policyClearSelectionName;
+    if (!name) return;
+    delete modalEl.dataset.policyClearSelectionName;
+    clearPolicyTableSelectionByName(name);
   });
 
   // Делегирование: мастер-чекбокс
@@ -9484,6 +11373,9 @@
     e.detail.parameters.consulting_type_ref = product.consultingRef;
     e.detail.parameters.service_category_ref = product.categoryRef;
     e.detail.parameters.service_subtype_ref = product.subtypeRef;
+    if (getPolicyWorkspaceProduct(policyPane())) {
+      e.detail.parameters.workspace = '1';
+    }
   });
 
   // CSV result modal helper
@@ -9522,7 +11414,7 @@
           html += '</div>';
         }
         showPolicyCsvResult(html);
-        await htmx.ajax('GET', '/policy/policy/partial/', { target: '#policy-pane', swap: 'innerHTML' });
+        handlePolicyUpdated(data.policyUpdate);
       } else {
         showPolicyCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
           (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
@@ -9543,7 +11435,9 @@
       'tariffs-csv-upload-btn': 'tariffs-csv-file-input',
       'typical-service-compositions-csv-upload-btn': 'typical-service-compositions-csv-file-input',
       'typical-service-compositions-docx-upload-btn': 'typical-service-compositions-docx-file-input',
+      'typical-service-compositions-xlsx-upload-btn': 'typical-service-compositions-xlsx-file-input',
       'typical-service-terms-csv-upload-btn': 'typical-service-terms-csv-file-input',
+      'esp-csv-upload-btn': 'esp-csv-file-input',
     };
     for (var btnId in mapping) {
       var btn = e.target.closest('#' + btnId);
@@ -9565,7 +11459,9 @@
       'tariffs-csv-file-input': '/policy/policy/tariff/csv-upload/',
       'typical-service-compositions-csv-file-input': '/policy/policy/typical-service-composition/csv-upload/',
       'typical-service-compositions-docx-file-input': '/policy/policy/typical-service-composition/docx-upload/',
+      'typical-service-compositions-xlsx-file-input': '/policy/policy/typical-service-composition/xlsx-upload/',
       'typical-service-terms-csv-file-input': '/policy/policy/typical-service-term/csv-upload/',
+      'esp-csv-file-input': '/experts/specialty/csv-upload/',
     };
     var url = mapping[e.target.id];
     if (!url) return;
@@ -9574,9 +11470,266 @@
     await handlePolicyTableUpload(url, file);
   });
 
+  function attachPolicyTableFooterStickyState(footer) {
+    const editor = footer?.closest('.policy-table-editor');
+    if (!footer || !editor || !footer.closest('#policy-pane')) return;
+    if (footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    const marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    let intersectionObserver = null;
+    let resizeObserver = null;
+
+    function syncStickyState() {
+      if (!footer.isConnected) {
+        intersectionObserver?.disconnect();
+        resizeObserver?.disconnect();
+        return;
+      }
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const editorRect = editor.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const isStuck = (
+        editorRect.top < viewportHeight
+        && editorRect.bottom > 0
+        && markerRect.top >= viewportHeight
+      );
+      footer.classList.toggle('is-stuck', isStuck);
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(syncStickyState, {
+        threshold: [0, 1],
+      });
+      intersectionObserver.observe(editor);
+      intersectionObserver.observe(marker);
+    }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(syncStickyState);
+      resizeObserver.observe(editor);
+    }
+    window.requestAnimationFrame(syncStickyState);
+  }
+
+  function attachPolicyTableHeaderStickyState(section) {
+    if (!section || !section.closest('#policy-pane[data-policy-workspace="1"]')) return;
+    if (section.dataset.policyTableKey !== 'typical-service-compositions') return;
+    const thead = section.querySelector('thead');
+    const wrap = section.querySelector('#typical-service-compositions-table-wrap');
+    if (!thead || !wrap || thead.dataset.stickyStateBound === '1') return;
+    thead.dataset.stickyStateBound = '1';
+
+    const pane = section.closest('#policy') || document.getElementById('policy');
+    const pageHeader = pane ? pane.querySelector('.section-header') : document.querySelector('#policy .section-header');
+    let intersectionObserver = null;
+
+    function syncStickyOffset() {
+      const headerHeight = pageHeader ? Math.round(pageHeader.getBoundingClientRect().height) : 76;
+      section.style.setProperty('--policy-sticky-thead-top', headerHeight + 'px');
+    }
+
+    function syncStickyState() {
+      if (!thead.isConnected) {
+        intersectionObserver?.disconnect();
+        return;
+      }
+      syncStickyOffset();
+      const headerHeight = pageHeader ? pageHeader.getBoundingClientRect().height : 76;
+      const wrapRect = wrap.getBoundingClientRect();
+      const theadRect = thead.getBoundingClientRect();
+      const isStuck = theadRect.top <= headerHeight + 1
+        && wrapRect.bottom > headerHeight + theadRect.height;
+      thead.classList.toggle('is-stuck', isStuck);
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(syncStickyState, {
+        threshold: [0, 1],
+      });
+      intersectionObserver.observe(wrap);
+      if (pageHeader) intersectionObserver.observe(pageHeader);
+    }
+    window.addEventListener('scroll', syncStickyState, true);
+    window.addEventListener('resize', syncStickyState);
+    window.requestAnimationFrame(syncStickyState);
+  }
+
+  function initPolicyTableHeaderStickyState(root) {
+    const scope = root || document;
+    const sections = scope.matches?.('[data-policy-table-key="typical-service-compositions"]')
+      ? [scope]
+      : qa('[data-policy-table-key="typical-service-compositions"]', scope);
+    sections.forEach(attachPolicyTableHeaderStickyState);
+  }
+
+  function initPolicyTableFooterStickyState(root) {
+    const scope = root || document;
+    const footers = scope.matches?.('.policy-table-footer')
+      ? [scope]
+      : qa('.policy-table-footer', scope);
+    footers.forEach(attachPolicyTableFooterStickyState);
+  }
+
+  function syncPolicyModalSize(modalEl) {
+    const dialog = modalEl?.querySelector('.modal-dialog');
+    if (!dialog) return;
+    const wantsXl = !!modalEl.querySelector('[data-policy-modal-size="xl"]');
+    dialog.classList.toggle('modal-xl', wantsXl);
+    dialog.classList.toggle('modal-lg', !wantsXl);
+    dialog.classList.toggle('modal-dialog-scrollable', !wantsXl);
+  }
+
+  function restorePolicyModalSize(modalEl) {
+    const dialog = modalEl?.querySelector('.modal-dialog');
+    if (!dialog) return;
+    dialog.classList.remove('modal-xl');
+    dialog.classList.add('modal-lg', 'modal-dialog-scrollable');
+  }
+
+  function updateExpertSpecialtiesTableScrollGaps(root) {
+    const wrap = (root || document).querySelector('.experts-specialties-table-wrap');
+    if (!wrap) return;
+    wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+  }
+
+  function expertSpecialtiesColpickerEls() {
+    return {
+      wrap: document.getElementById('esp-colpicker-wrap'),
+      btn: document.getElementById('esp-colpicker-btn'),
+      menu: document.getElementById('esp-colpicker-menu'),
+      table: document.getElementById('esp-table'),
+      allCb: document.getElementById('esp-col-all'),
+    };
+  }
+
+  function setExpertSpecialtiesColpickerOpen(menu, wrap, shouldShow) {
+    if (menu) menu.classList.toggle('show', !!shouldShow);
+    const header = wrap && wrap.closest('.table-section-header');
+    if (header) header.classList.toggle('esp-colpicker-open', !!shouldShow);
+  }
+
+  function applyExpertSpecialtiesColumnVisibility() {
+    const els = expertSpecialtiesColpickerEls();
+    if (!els.menu || !els.table) return;
+    const pref = window.UIPref;
+    const stored = pref ? pref.get('experts:espHiddenCols', {}) : {};
+    const hidden = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    const items = els.menu.querySelectorAll('input.form-check-input:not([value="all"])');
+    items.forEach(function (cb) {
+      cb.checked = !hidden[cb.value];
+    });
+    if (els.allCb) {
+      let allChecked = true;
+      items.forEach(function (cb) { if (!cb.checked) allChecked = false; });
+      els.allCb.checked = allChecked;
+    }
+    if (els.btn) {
+      let checked = 0;
+      items.forEach(function (cb) { if (cb.checked) checked += 1; });
+      els.btn.textContent = checked === items.length ? 'Все поля' : (checked + ' из ' + items.length);
+    }
+    const hiddenKeys = Object.keys(hidden);
+    els.table.querySelectorAll('[data-col]').forEach(function (cell) {
+      cell.style.display = hiddenKeys.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
+    });
+    updateExpertSpecialtiesTableScrollGaps(els.table.closest('#policy-expert-specialties-section') || document);
+  }
+
+  function persistExpertSpecialtiesColumnVisibility(menu) {
+    const pref = window.UIPref;
+    const hidden = {};
+    menu.querySelectorAll('input.form-check-input:not([value="all"])').forEach(function (item) {
+      if (!item.checked) hidden[item.value] = true;
+    });
+    if (pref) pref.set('experts:espHiddenCols', hidden);
+    applyExpertSpecialtiesColumnVisibility();
+  }
+
+  function bindExpertSpecialtiesColumnPicker() {
+    if (window.__espColpickerDocBound) return;
+    window.__espColpickerDocBound = true;
+    document.addEventListener('click', function (event) {
+      const els = expertSpecialtiesColpickerEls();
+      if (!els.wrap || !els.btn || !els.menu) return;
+      if (els.btn === event.target || els.btn.contains(event.target)) {
+        event.stopPropagation();
+        setExpertSpecialtiesColpickerOpen(
+          els.menu,
+          els.wrap,
+          !els.menu.classList.contains('show')
+        );
+        return;
+      }
+      if (!els.wrap.contains(event.target)) {
+        setExpertSpecialtiesColpickerOpen(els.menu, els.wrap, false);
+      }
+    });
+    document.addEventListener('change', function (event) {
+      const els = expertSpecialtiesColpickerEls();
+      if (!els.menu || !els.menu.contains(event.target)) return;
+      const cb = event.target;
+      if (!cb.classList.contains('form-check-input')) return;
+      const items = els.menu.querySelectorAll('input.form-check-input:not([value="all"])');
+      if (cb.value === 'all') {
+        items.forEach(function (item) { item.checked = cb.checked; });
+      } else if (els.allCb) {
+        let all = true;
+        items.forEach(function (item) { if (!item.checked) all = false; });
+        els.allCb.checked = all;
+      }
+      persistExpertSpecialtiesColumnVisibility(els.menu);
+    });
+    window.addEventListener('resize', function () {
+      const section = document.getElementById('policy-expert-specialties-section');
+      if (section) updateExpertSpecialtiesTableScrollGaps(section);
+    });
+  }
+
+  function initExpertSpecialtiesColumnPicker(root) {
+    bindExpertSpecialtiesColumnPicker();
+    applyExpertSpecialtiesColumnVisibility();
+    if (root) updateExpertSpecialtiesTableScrollGaps(root);
+  }
+
+  function initializeArrivingPolicyFragment(fragment) {
+    if (!fragment?.matches?.('[data-policy-table-key][data-policy-table-url]')) return;
+    clearManagedPolicyTableSelection(fragment);
+    qa('input.form-check-input[data-target-name]', fragment).forEach(function (master) {
+        syncPolicySelectionToVisible(master.dataset.targetName);
+    });
+    updatePolicyMasterFilterDownloadLinks();
+    if (fragment.dataset.policyTableKey === 'typical-service-compositions') {
+      initTypicalServiceCompositionWrapToggle();
+    }
+    if (fragment.dataset.policyTableKey === 'typical-service-terms') {
+      initTypicalServiceTermGanttEditor(fragment);
+    }
+    if (fragment.dataset.policyTableKey === 'expert-specialties') {
+      initExpertSpecialtiesColumnPicker(fragment);
+      updateExpertSpecialtiesTableScrollGaps(fragment);
+    }
+    initPolicyMasterFilters({ skipManagedRefresh: true });
+    initPolicyTableFooterStickyState(fragment);
+    initPolicyTableHeaderStickyState(fragment);
+    bindPolicyWorkspaceInlineTables(policyPane());
+  }
+
   // Восстановление выбора только для таблицы, где было действие
   document.body.addEventListener('htmx:afterSettle', function (e) {
+    if (e.target?.matches?.('[data-policy-table-key][data-policy-table-url]')) {
+      initializeArrivingPolicyFragment(e.target);
+      return;
+    }
     if (!(e.target && e.target.id === 'policy-pane')) return;
+    if (e.target.matches('[data-policy-lazy-shell="1"]')) {
+      initPolicyLazyShell(e.target);
+      updatePolicyHeaderPath();
+      return;
+    }
     const restoreY = window.__policyScrollRestoreY;
     if (typeof restoreY === 'number') {
       requestAnimationFrame(function () {
@@ -9588,6 +11741,8 @@
     collapseSpecialtyTariffsSpecialties();
     initPolicyMasterFilters();
     initTypicalServiceTermGanttEditor(e.target);
+    initPolicyTableFooterStickyState(e.target);
+    initPolicyTableHeaderStickyState(e.target);
     const last = window.__tableSelLast;
     if (!last) return;
     const ids = (window.__tableSel && window.__tableSel[last]) || [];
@@ -9603,6 +11758,10 @@
 
   document.body.addEventListener('htmx:afterSwap', function (e) {
     if (!e.target) return;
+    if (e.target.id === 'policy-pane') updatePolicyHeaderPath();
+    if (e.target.closest && e.target.closest('#policy-modal')) {
+      syncPolicyModalSize(document.getElementById('policy-modal'));
+    }
     initPolicyProductSelects(e.target);
     initPolicySectionSelects(e.target);
   });
@@ -9628,12 +11787,56 @@
     try { initTypicalServiceTermGanttEditor(e.target); } catch (_) { /* noop */ }
   });
 
+  document.addEventListener('click', function (event) {
+    const navLink = event.target.closest('a.nav-link[href="#policy"][data-bs-toggle="tab"]');
+    if (!navLink) return;
+    if (policyPane()?.dataset?.policyWorkspace !== '1') return;
+    if (!confirmPolicyWorkspaceLeave()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    destroyPolicyWorkspaceSession();
+    loadPolicyCatalogShell();
+  });
+  document.body.addEventListener('htmx:beforeRequest', function (e) {
+    if (!policyWorkspaceSession?.isDirty()) return;
+    const target = e.detail?.target;
+    if (!target || target.id !== 'policy-pane') return;
+    if (!confirmPolicyWorkspaceLeave()) {
+      e.preventDefault();
+      return;
+    }
+    destroyPolicyWorkspaceSession();
+  });
+  window.addEventListener('beforeunload', function (e) {
+    if (!policyWorkspaceSession?.isDirty()) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+  document.addEventListener('shown.bs.tab', function (event) {
+    if (event.target?.getAttribute?.('href') === '#policy') loadPolicyShellOnce();
+  });
+  document.addEventListener('policy:show', loadPolicyShellOnce);
+  window.addEventListener('hashchange', function () {
+    if (window.location.hash === '#policy') loadPolicyShellOnce();
+  });
+  if (
+    window.location.hash === '#policy'
+    || document.querySelector('a[href="#policy"][data-bs-toggle="tab"].active')
+  ) {
+    window.requestAnimationFrame(loadPolicyShellOnce);
+  }
+
   initPolicyProductSelects(document);
   initPolicySectionSelects(document);
   initTypicalServiceCompositionWrapToggle();
   collapseSpecialtyTariffsSpecialties();
   initPolicyMasterFilters();
   initTypicalServiceTermGanttEditor(document);
+  initPolicyTableFooterStickyState(document);
+  initPolicyTableHeaderStickyState(document);
+  bindExpertSpecialtiesColumnPicker();
 
   // Public API so other panes (currently the projects "График проекта") can
   // drive the same typical-service-term-gantt editor without duplicating its

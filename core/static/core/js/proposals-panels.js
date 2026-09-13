@@ -41,6 +41,11 @@
   }
 
   const csrftoken = getCookie('csrftoken');
+  const PROPOSAL_FORM_LEAVE_MESSAGE = 'Есть несохранённые изменения. Уйти без сохранения?';
+  const PROPOSAL_FORM_CANCEL_MESSAGE = 'Сбросить внесённые изменения?';
+  let proposalFormSession = null;
+  let proposalFormDirtySyncScheduled = false;
+  let proposalFormActionsHideLock = false;
   const SELECT_NAMES = ['proposal-select', 'proposal-dispatch-select', 'proposal-template-select', 'proposal-variable-select'];
   const PROPOSAL_SEND_PREF_KEY = 'proposals:dispatch-send-settings';
   const PROPOSAL_KIND_FILTER_PREF_KEY = 'proposals:kind-filter';
@@ -48,15 +53,35 @@
   const PROPOSAL_PAYMENT_VIEW_PREF_KEY = 'proposals:payment-schedule-view';
   const PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY = 'proposals:payment-schedule-gantt-scale';
   const PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY = 'proposals:payment-schedule-gantt-open-groups';
-  const PROPOSAL_PAYMENT_SECTION_COLLAPSED_PREF_KEY = 'proposals:payment-section-collapsed';
-  const PROPOSAL_PAYMENT_SECTION_CFG = {
-    toggleId: 'proposal-payment-section-toggle',
-    controlsId: 'proposal-payment-header-controls',
-    viewControlsId: 'proposal-payment-view-dropdown',
-    bodyId: 'proposal-payment-section-body',
-    collapsedLabel: 'Развернуть раздел «Сроки и порядок платежей»',
-    expandedLabel: 'Свернуть раздел «Сроки и порядок платежей»',
-  };
+  const PROPOSAL_SECTION_TOGGLES = [
+    {
+      toggleId: 'proposal-payment-section-toggle',
+      controlsIds: ['proposal-payment-header-controls', 'proposal-payment-view-dropdown'],
+      bodyId: 'proposal-payment-section-body',
+      prefKey: 'proposals:payment-section-collapsed',
+      defaultCollapsed: true,
+      collapsedLabel: 'Развернуть раздел «Сроки и порядок платежей»',
+      expandedLabel: 'Свернуть раздел «Сроки и порядок платежей»',
+    },
+    {
+      toggleId: 'proposal-dispatch-section-toggle',
+      controlsIds: ['proposal-dispatch-header-controls'],
+      bodyId: 'proposal-dispatch-section-body',
+      prefKey: 'proposals:dispatch-section-collapsed',
+      defaultCollapsed: true,
+      collapsedLabel: 'Развернуть раздел «Отправка ТКП»',
+      expandedLabel: 'Свернуть раздел «Отправка ТКП»',
+    },
+    {
+      toggleId: 'proposal-template-section-toggle',
+      controlsIds: [],
+      bodyId: 'proposal-template-section-body',
+      prefKey: 'proposals:template-section-collapsed',
+      defaultCollapsed: true,
+      collapsedLabel: 'Развернуть раздел «Образцы шаблонов ТКП»',
+      expandedLabel: 'Свернуть раздел «Образцы шаблонов ТКП»',
+    },
+  ];
   const PROPOSAL_PAYMENT_VIEW_TABLE = 'table';
   const PROPOSAL_PAYMENT_VIEW_GANTT = 'gantt';
   const PROPOSAL_PAYMENT_GANTT_SCALE_DAY = 'day';
@@ -183,12 +208,16 @@
     const heading = document.getElementById('proposals-section-heading');
     const kindFilterDropdown = document.getElementById('master-proposal-kind-filter-dropdown');
     const statusFilterDropdown = document.getElementById('master-proposal-status-filter-dropdown');
-    if (!heading) return;
+    if (!heading) {
+      syncProposalFormActions();
+      return;
+    }
     const root = pane();
     if (!root) {
       heading.textContent = 'ТКП';
       if (kindFilterDropdown) kindFilterDropdown.classList.add('d-none');
       if (statusFilterDropdown) statusFilterDropdown.classList.add('d-none');
+      syncProposalFormActions();
       return;
     }
 
@@ -202,6 +231,7 @@
 
     if (!currentLabel) {
       heading.textContent = rootLabel;
+      syncProposalFormActions();
       return;
     }
 
@@ -218,6 +248,291 @@
       + '<a class="proposal-header-link" ' + currentHrefAttrs + '>' + currentLabel + '</a>';
 
     if (window.htmx) window.htmx.process(heading);
+    syncProposalFormActions();
+  }
+
+  function isProposalFormActive(root) {
+    root = root || pane();
+    return !!(root && root.querySelector('form[data-proposal-form]') && root.dataset.headerCurrentLabel);
+  }
+
+  function proposalFormActionsEl() {
+    return document.getElementById('proposal-form-actions');
+  }
+
+  function proposalFormSaveBtn() {
+    return document.querySelector('#proposal-form-actions [data-proposal-form-save-btn]');
+  }
+
+  function proposalFormCancelBtn() {
+    return document.querySelector('#proposal-form-actions [data-proposal-form-cancel-btn]');
+  }
+
+  function getProposalRegistrationForm() {
+    return pane()?.querySelector('form[data-proposal-form]') || null;
+  }
+
+  function serializeProposalForm(form) {
+    if (!form) return '';
+    const data = new FormData(form);
+    const parts = [];
+    data.forEach(function (value, key) {
+      if (key === 'csrfmiddlewaretoken') return;
+      parts.push(key + '=' + (value instanceof File ? (value.name + ':' + value.size + ':' + value.type) : String(value)));
+    });
+    parts.sort();
+    return parts.join('\n');
+  }
+
+  function scheduleProposalFormDirtySync() {
+    if (proposalFormDirtySyncScheduled) return;
+    proposalFormDirtySyncScheduled = true;
+    window.requestAnimationFrame(function () {
+      proposalFormDirtySyncScheduled = false;
+      syncProposalFormActions();
+    });
+  }
+
+  function onProposalFormDirtyEvent() {
+    scheduleProposalFormDirtySync();
+  }
+
+  function waitProposalPaint() {
+    return new Promise(function (resolve) {
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(resolve);
+      });
+    });
+  }
+
+  function hideProposalFormActions() {
+    proposalFormActionsHideLock = true;
+    clearProposalFormActionLoading();
+    const actions = proposalFormActionsEl();
+    if (actions) {
+      actions.classList.add('d-none');
+      actions.classList.remove('d-flex');
+    }
+  }
+
+  function syncProposalFormActions() {
+    const actions = proposalFormActionsEl();
+    const saveBtn = proposalFormSaveBtn();
+    const cancelBtn = proposalFormCancelBtn();
+    const active = !proposalFormActionsHideLock && isProposalFormActive();
+    if (actions) {
+      actions.classList.toggle('d-none', !active);
+      actions.classList.toggle('d-flex', active);
+    }
+    const dirty = !!(proposalFormSession && proposalFormSession.isDirty());
+    const saving = !!(proposalFormSession && proposalFormSession.saving);
+    if (saveBtn && saveBtn.dataset.loading !== '1') saveBtn.disabled = !active || saving || !dirty;
+    if (cancelBtn && cancelBtn.dataset.loading !== '1') cancelBtn.disabled = !active || saving;
+  }
+
+  function destroyProposalFormSession() {
+    if (proposalFormSession?.form) {
+      proposalFormSession.form.removeEventListener('input', onProposalFormDirtyEvent);
+      proposalFormSession.form.removeEventListener('change', onProposalFormDirtyEvent);
+      proposalFormSession.form.removeEventListener('click', onProposalFormDirtyEvent);
+    }
+    proposalFormSession = null;
+    clearProposalFormActionLoading();
+    syncProposalFormActions();
+  }
+
+  function clearProposalFormActionLoading() {
+    const saveBtn = proposalFormSaveBtn();
+    const cancelBtn = proposalFormCancelBtn();
+    if (saveBtn?.dataset?.loading === '1') {
+      saveBtn.innerHTML = saveBtn.dataset.originalHtml || 'Сохранить';
+      delete saveBtn.dataset.loading;
+    }
+    if (cancelBtn?.dataset?.loading === '1') {
+      cancelBtn.innerHTML = cancelBtn.dataset.originalHtml || 'Отмена';
+      delete cancelBtn.dataset.loading;
+    }
+  }
+
+  function ensureProposalFormSession(form) {
+    form = form || getProposalRegistrationForm();
+    proposalFormActionsHideLock = false;
+    if (!form || !isProposalFormActive()) {
+      destroyProposalFormSession();
+      return null;
+    }
+    if (proposalFormSession && proposalFormSession.form === form) {
+      syncProposalFormActions();
+      return proposalFormSession;
+    }
+    destroyProposalFormSession();
+    const session = {
+      form: form,
+      baseline: '',
+      saving: false,
+      ready: false,
+      hasErrors: form.dataset.proposalFormHasErrors === '1',
+      isDirty: function () {
+        if (this.hasErrors) return true;
+        if (!this.ready) return false;
+        return serializeProposalForm(this.form) !== this.baseline;
+      },
+    };
+    proposalFormSession = session;
+    clearProposalFormActionLoading();
+    form.addEventListener('input', onProposalFormDirtyEvent);
+    form.addEventListener('change', onProposalFormDirtyEvent);
+    form.addEventListener('click', onProposalFormDirtyEvent);
+    window.requestAnimationFrame(function () {
+      window.requestAnimationFrame(function () {
+        if (proposalFormSession !== session) return;
+        session.baseline = serializeProposalForm(form);
+        session.ready = true;
+        syncProposalFormActions();
+      });
+    });
+    syncProposalFormActions();
+    return session;
+  }
+
+  function proposalCatalogTablesUrl(catalogUrl) {
+    const url = String(catalogUrl || '/proposals/partial/');
+    if (url.indexOf('tables=1') !== -1) return url;
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 'tables=1';
+  }
+
+  function proposalRequestPath(event) {
+    const detail = event?.detail || {};
+    return String(
+      detail.path
+      || detail.requestConfig?.path
+      || detail.requestConfig?.pathInfo?.requestPath
+      || ''
+    );
+  }
+
+  function isProposalCatalogPartialRequest(event) {
+    return proposalRequestPath(event).indexOf('/proposals/partial/') !== -1;
+  }
+
+  function isProposalTablesRequest(event) {
+    return proposalRequestPath(event).indexOf('tables=1') !== -1;
+  }
+
+  const PROPOSAL_CATALOG_SKELETON_INNER =
+    '<div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap">'
+    + '<h5 class="table-section-title mb-0 d-flex align-items-center gap-2">'
+    + '<i class="bi bi-table"></i> Реестр ТКП'
+    + '</h5>'
+    + '</div>'
+    + '<div class="policy-table-placeholder-card proposal-table-placeholder-card" role="status">'
+    + '<span class="visually-hidden">Загрузка реестра ТКП</span>'
+    + '<div class="policy-table-skeleton proposal-table-skeleton" aria-hidden="true">'
+    + '<span></span><span></span><span></span>'
+    + '</div>'
+    + '<div class="proposal-table-placeholder-error alert alert-danger d-none mt-3 mb-0" role="alert">'
+    + '<span>Не удалось загрузить реестр ТКП.</span>'
+    + '<button type="button" class="btn btn-sm btn-outline-danger ms-2" data-proposal-lazy-retry="1">Повторить</button>'
+    + '</div>'
+    + '</div>';
+
+  function fillProposalCatalogSkeleton(root) {
+    root = root || pane();
+    if (!root || root.dataset.proposalLazyShell === '1') return;
+    hideProposalFormActions();
+    root.classList.remove('proposal-form-page');
+    root.classList.add('proposal-catalog-shell');
+    delete root.dataset.headerCurrentLabel;
+    delete root.dataset.headerCurrentUrl;
+    root.dataset.proposalLazyShell = '1';
+    root.setAttribute('aria-busy', 'true');
+    root.innerHTML = PROPOSAL_CATALOG_SKELETON_INNER;
+    updateHeaderPath();
+    syncProposalFormActions();
+  }
+
+  function showProposalCatalogLoadError(root) {
+    root = root || pane();
+    if (!root) return;
+    root.dataset.proposalLazyShell = '1';
+    delete root.dataset.proposalLazyInitialized;
+    root.setAttribute('aria-busy', 'false');
+    let error = root.querySelector('.proposal-table-placeholder-error');
+    if (!error) {
+      root.classList.add('proposal-catalog-shell');
+      root.innerHTML = PROPOSAL_CATALOG_SKELETON_INNER;
+      error = root.querySelector('.proposal-table-placeholder-error');
+    }
+    if (error) error.classList.remove('d-none');
+  }
+
+  function initProposalLazyShell(root) {
+    root = root || pane();
+    if (!root?.matches?.('#proposals-pane[data-proposal-lazy-shell="1"]')) return;
+    if (root.dataset.proposalLazyInitialized === '1') return;
+    const tablesUrl = root.dataset.proposalTablesUrl
+      || proposalCatalogTablesUrl(root.dataset.headerRootUrl || '/proposals/partial/');
+    if (!tablesUrl || !window.htmx) return;
+    root.dataset.proposalLazyInitialized = '1';
+    Promise.resolve(
+      htmx.ajax('GET', tablesUrl, { target: '#proposals-pane', swap: 'outerHTML' })
+    ).catch(function () {
+      showProposalCatalogLoadError(pane());
+    });
+  }
+
+  function loadProposalCatalogShell() {
+    const root = pane();
+    const catalogUrl = root?.dataset?.headerRootUrl || '/proposals/partial/';
+    fillProposalCatalogSkeleton(root);
+    if (!window.htmx) return Promise.resolve();
+    return Promise.resolve(
+      htmx.ajax('GET', proposalCatalogTablesUrl(catalogUrl), { target: '#proposals-pane', swap: 'outerHTML' })
+    );
+  }
+
+  function reloadProposalFormPage() {
+    const root = pane();
+    const currentUrl = root?.dataset?.headerCurrentUrl || '';
+    if (!currentUrl || !window.htmx) return Promise.resolve();
+    return Promise.resolve(
+      htmx.ajax('GET', currentUrl, { target: '#proposals-pane', swap: 'outerHTML' })
+    );
+  }
+
+  function saveProposalForm() {
+    const session = proposalFormSession;
+    const form = getProposalRegistrationForm();
+    if (!form || (session && session.saving)) return;
+    if (session && !session.isDirty()) return;
+    if (typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+      return;
+    }
+    form.submit();
+  }
+
+  async function cancelProposalForm() {
+    const session = proposalFormSession;
+    if (!session || session.saving) return;
+    if (!session.isDirty()) {
+      destroyProposalFormSession();
+      setProposalFormCancelLoading(proposalFormCancelBtn(), true);
+      await waitProposalPaint();
+      hideProposalFormActions();
+      await waitProposalPaint();
+      await loadProposalCatalogShell();
+      return;
+    }
+    if (!window.confirm(PROPOSAL_FORM_CANCEL_MESSAGE)) return;
+    destroyProposalFormSession();
+    setProposalFormCancelLoading(proposalFormCancelBtn(), true);
+    await reloadProposalFormPage();
+  }
+
+  function confirmProposalFormLeave() {
+    if (!proposalFormSession?.isDirty()) return true;
+    return window.confirm(PROPOSAL_FORM_LEAVE_MESSAGE);
   }
 
   function getMaster(name) {
@@ -1285,18 +1600,16 @@
     if (isGantt) requestAnimationFrame(() => renderProposalPaymentGantt(root));
   }
 
-  function applyProposalPaymentSectionState(root, collapsed) {
-    const cfg = PROPOSAL_PAYMENT_SECTION_CFG;
+  function applyProposalSectionState(root, cfg, collapsed) {
     const toggle = root?.querySelector('#' + cfg.toggleId);
     if (!toggle) return;
 
-    const controls = root.querySelector('#' + cfg.controlsId);
-    const viewControls = root.querySelector('#' + cfg.viewControlsId);
     const body = root.querySelector('#' + cfg.bodyId);
     const icon = toggle.querySelector('i');
     const label = collapsed ? cfg.collapsedLabel : cfg.expandedLabel;
 
-    [controls, viewControls].forEach((node) => {
+    (cfg.controlsIds || []).forEach((controlsId) => {
+      const node = root.querySelector('#' + controlsId);
       if (!node) return;
       node.classList.toggle('classifiers-section-controls-hidden', collapsed);
       node.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
@@ -1310,26 +1623,57 @@
     if (icon) icon.className = collapsed ? 'bi bi-plus-square' : 'bi bi-dash-square';
   }
 
-  function initProposalPaymentSectionToggle() {
+  function syncProposalCollapsedSectionHeaderSpacing(root) {
+    if (!root) return;
+    const items = qa('.proposal-section-toggle', root).map((toggle) => {
+      const header = toggle.closest('.table-section-header');
+      const bodyId = toggle.dataset.sectionBodyId;
+      const body = bodyId ? root.querySelector('#' + bodyId) : null;
+      if (!header || !body) return null;
+      if (!header.dataset.baseMarginTop) {
+        header.dataset.baseMarginTop = header.style.marginTop || '0px';
+      }
+      return {
+        header,
+        collapsed: body.classList.contains('d-none'),
+        baseMarginTop: header.dataset.baseMarginTop,
+      };
+    }).filter(Boolean);
+
+    items.forEach((item, index) => {
+      const prev = items[index - 1];
+      const basePx = parseFloat(item.baseMarginTop) || 0;
+      const nextPx = prev && prev.collapsed && item.collapsed && basePx > 0 ? basePx / 4 : basePx;
+      item.header.style.marginTop = `${nextPx}px`;
+    });
+  }
+
+  function initProposalSectionToggles() {
     const root = pane();
     if (!root) return;
-    const toggle = root.querySelector('#' + PROPOSAL_PAYMENT_SECTION_CFG.toggleId);
-    if (!toggle) return;
 
-    const collapsed = window.UIPref
-      ? !!UIPref.get(PROPOSAL_PAYMENT_SECTION_COLLAPSED_PREF_KEY, true)
-      : true;
-    applyProposalPaymentSectionState(root, collapsed);
+    PROPOSAL_SECTION_TOGGLES.forEach((cfg) => {
+      const toggle = root.querySelector('#' + cfg.toggleId);
+      if (!toggle) return;
 
-    if (toggle.dataset.bound === '1') return;
-    toggle.dataset.bound = '1';
-    toggle.addEventListener('click', () => {
-      const body = root.querySelector('#' + PROPOSAL_PAYMENT_SECTION_CFG.bodyId);
-      const isCollapsed = !!body && body.classList.contains('d-none');
-      const nextCollapsed = !isCollapsed;
-      applyProposalPaymentSectionState(root, nextCollapsed);
-      if (window.UIPref) UIPref.set(PROPOSAL_PAYMENT_SECTION_COLLAPSED_PREF_KEY, nextCollapsed);
+      const collapsed = window.UIPref
+        ? !!UIPref.get(cfg.prefKey, cfg.defaultCollapsed)
+        : cfg.defaultCollapsed;
+      applyProposalSectionState(root, cfg, collapsed);
+
+      if (toggle.dataset.bound === '1') return;
+      toggle.dataset.bound = '1';
+      toggle.addEventListener('click', () => {
+        const body = root.querySelector('#' + cfg.bodyId);
+        const isCollapsed = !!body && body.classList.contains('d-none');
+        const nextCollapsed = !isCollapsed;
+        applyProposalSectionState(root, cfg, nextCollapsed);
+        if (window.UIPref) UIPref.set(cfg.prefKey, nextCollapsed);
+        syncProposalCollapsedSectionHeaderSpacing(root);
+        scheduleProposalTableScrollGapsUpdate();
+      });
     });
+    syncProposalCollapsedSectionHeaderSpacing(root);
   }
 
   function initProposalPaymentScheduleViewSwitch() {
@@ -8732,7 +9076,10 @@
   function initProposalForm() {
     const root = pane();
     const form = root?.querySelector('form[data-proposal-form]');
-    if (!form) return;
+    if (!form) {
+      destroyProposalFormSession();
+      return;
+    }
 
     function parsePercentValue(input) {
       const raw = String(input?.value || '').trim().replace(',', '.');
@@ -10709,6 +11056,7 @@
     assetsApi?.fillEmptyRowsFromDefaults();
       applyProposalReportTermsLockState();
     stageProductsApi?.sync();
+    ensureProposalFormSession(form);
   }
 
   function initProposalDispatchForm() {
@@ -10736,7 +11084,7 @@
     if (!(target instanceof Element)) return null;
     if (target.matches('form[data-proposal-form]')) return target;
     if (target.matches('[data-proposal-form-save-btn]')) {
-      return target.closest('form[data-proposal-form]');
+      return target.closest('form[data-proposal-form]') || getProposalRegistrationForm();
     }
     return null;
   }
@@ -10763,9 +11111,9 @@
   }
 
   function setProposalFormSaveLoading(form, isLoading) {
-    if (!form) return;
-    const saveBtn = form.querySelector('[data-proposal-form-save-btn]');
+    const saveBtn = proposalFormSaveBtn() || form?.querySelector?.('[data-proposal-form-save-btn]');
     if (!(saveBtn instanceof HTMLButtonElement)) return;
+    if (proposalFormSession) proposalFormSession.saving = !!isLoading;
 
     if (isLoading) {
       if (saveBtn.dataset.loading === '1') return;
@@ -10773,14 +11121,16 @@
       saveBtn.dataset.originalHtml = saveBtn.innerHTML;
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Сохранение...';
+      const cancelBtn = proposalFormCancelBtn();
+      if (cancelBtn && cancelBtn.dataset.loading !== '1') cancelBtn.disabled = true;
       return;
     }
 
     if (saveBtn.dataset.originalHtml) {
       saveBtn.innerHTML = saveBtn.dataset.originalHtml;
     }
-    saveBtn.disabled = false;
     delete saveBtn.dataset.loading;
+    syncProposalFormActions();
   }
 
   function getProposalFormCancelButtonForRequest(target) {
@@ -10798,6 +11148,7 @@
       button.dataset.originalHtml = button.innerHTML;
       button.disabled = true;
       button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Отмена';
+      syncProposalFormActions();
       return;
     }
 
@@ -10806,6 +11157,7 @@
     }
     button.disabled = false;
     delete button.dataset.loading;
+    syncProposalFormActions();
   }
 
   function getProposalCreateButtonForRequest(target) {
@@ -10838,6 +11190,21 @@
     if (target.matches('.proposal-header-link[hx-target="#proposals-pane"]')) return target;
     return target.closest('.proposal-header-link[hx-target="#proposals-pane"]');
   }
+
+  document.addEventListener('click', async (event) => {
+    const headerSaveBtn = event.target.closest('#proposal-form-actions [data-proposal-form-save-btn]');
+    if (headerSaveBtn) {
+      event.preventDefault();
+      saveProposalForm();
+      return;
+    }
+    const headerCancelBtn = event.target.closest('#proposal-form-actions [data-proposal-form-cancel-btn]');
+    if (headerCancelBtn) {
+      event.preventDefault();
+      await cancelProposalForm();
+      return;
+    }
+  });
 
   document.addEventListener('click', async (event) => {
     const root = pane();
@@ -11344,6 +11711,20 @@
     }
   });
 
+  document.body.addEventListener('htmx:afterSwap', function (event) {
+    const target = event.target;
+    if (!(target instanceof Element) || target.id !== 'proposals-pane') return;
+    if (typeof window.__applyProposalColPickers === 'function') {
+      window.__applyProposalColPickers();
+    }
+    updateProposalTableScrollGaps();
+    if (!target.querySelector('form[data-proposal-form]')) {
+      clearProposalFormActionLoading();
+      syncProposalFormActions();
+    }
+    initProposalLazyShell(target);
+  });
+
   document.body.addEventListener('htmx:afterSettle', function (event) {
     if (!(event.target && event.target.id === 'proposals-pane')) return;
     const last = window.__tableSelLast;
@@ -11355,7 +11736,7 @@
     initProposalMasterFilters();
     syncProposalRelatedTablesOrder();
     initProposalPaymentScheduleViewSwitch();
-    initProposalPaymentSectionToggle();
+    initProposalSectionToggles();
     initProposalForm();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
@@ -11436,6 +11817,29 @@
   });
 
   document.body.addEventListener('htmx:beforeRequest', function (event) {
+    if (!proposalFormSession?.isDirty()) return;
+    const target = event.detail?.target;
+    if (!target || target.id !== 'proposals-pane') return;
+    const elt = event.detail?.elt;
+    if (elt && elt.matches?.('form[data-proposal-form]')) return;
+    if (!confirmProposalFormLeave()) {
+      event.preventDefault();
+      document.documentElement.classList.remove('proposal-progress-cursor');
+      return;
+    }
+    destroyProposalFormSession();
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    if (event.defaultPrevented) return;
+    const target = event.detail?.target;
+    if (!target || target.id !== 'proposals-pane') return;
+    if (!isProposalCatalogPartialRequest(event)) return;
+    if (isProposalTablesRequest(event) && target.dataset.proposalLazyShell === '1') return;
+    fillProposalCatalogSkeleton(target);
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
     const form = getProposalFormForRequest(event.detail?.elt);
     if (!form) return;
     setProposalFormSaveLoading(form, true);
@@ -11460,6 +11864,7 @@
   });
 
   document.body.addEventListener('htmx:beforeRequest', function (event) {
+    if (event.defaultPrevented) return;
     const headerLink = getProposalHeaderLinkForRequest(event.detail?.elt);
     if (!headerLink) return;
     document.documentElement.classList.add('proposal-progress-cursor');
@@ -11467,7 +11872,7 @@
 
   document.body.addEventListener('htmx:afterRequest', function (event) {
     const form = getProposalFormForRequest(event.detail?.elt);
-    if (!form || !document.body.contains(form)) return;
+    if (!form) return;
     setProposalFormSaveLoading(form, false);
   });
 
@@ -11496,6 +11901,17 @@
     const headerLink = getProposalHeaderLinkForRequest(event.detail?.elt);
     if (!headerLink) return;
     document.documentElement.classList.remove('proposal-progress-cursor');
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    if (event.detail?.successful) return;
+    const target = event.detail?.target;
+    if (!target || target.id !== 'proposals-pane') return;
+    const cancelBtn = proposalFormCancelBtn();
+    if (cancelBtn?.dataset?.loading === '1') setProposalFormCancelLoading(cancelBtn, false);
+    if (isProposalCatalogPartialRequest(event) || pane()?.dataset?.proposalLazyShell === '1') {
+      showProposalCatalogLoadError(pane());
+    }
   });
 
   document.body.addEventListener('htmx:afterRequest', function (event) {
@@ -11507,7 +11923,7 @@
 
   document.body.addEventListener('htmx:sendError', function (event) {
     const form = getProposalFormForRequest(event.detail?.elt);
-    if (!form || !document.body.contains(form)) return;
+    if (!form) return;
     setProposalFormSaveLoading(form, false);
   });
 
@@ -11539,6 +11955,14 @@
     const target = event.detail?.target || event.target;
     if (!isProposalVariablesSectionElement(target)) return;
     clearProposalPendingScrollRestore();
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    const target = event.detail?.target;
+    if (!target || target.id !== 'proposals-pane') return;
+    if (isProposalCatalogPartialRequest(event) || pane()?.dataset?.proposalLazyShell === '1') {
+      showProposalCatalogLoadError(pane());
+    }
   });
 
   document.body.addEventListener('htmx:afterSwap', function (event) {
@@ -11561,13 +11985,43 @@
     disposeProposalPaymentGanttInstance();
   });
 
+  document.addEventListener('click', function (event) {
+    const retry = event.target.closest('[data-proposal-lazy-retry="1"]');
+    if (!retry) return;
+    const root = retry.closest('#proposals-pane');
+    if (!root) return;
+    event.preventDefault();
+    const error = root.querySelector('.proposal-table-placeholder-error');
+    if (error) error.classList.add('d-none');
+    delete root.dataset.proposalLazyInitialized;
+    root.setAttribute('aria-busy', 'true');
+    initProposalLazyShell(root);
+  });
+
+  document.addEventListener('click', function (event) {
+    const tabLink = event.target.closest('[data-bs-toggle="tab"]');
+    if (!tabLink) return;
+    const href = tabLink.getAttribute('href');
+    if (!href || href === '#proposals') return;
+    if (!confirmProposalFormLeave()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+
+  window.addEventListener('beforeunload', function (event) {
+    if (!proposalFormSession?.isDirty()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
   document.addEventListener('DOMContentLoaded', function () {
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
     syncProposalRelatedTablesOrder();
     initProposalPaymentScheduleViewSwitch();
-    initProposalPaymentSectionToggle();
+    initProposalSectionToggles();
     initProposalForm();
     restoreProposalSendSettings();
     scheduleProposalTableScrollGapsUpdate();

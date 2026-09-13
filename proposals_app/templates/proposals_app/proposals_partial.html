@@ -1,4 +1,7 @@
 {% load classifiers_filters %}
+{% if proposal_lazy_shell %}
+{% include "proposals_app/_proposals_lazy_shell.html" %}
+{% else %}
 <div id="proposals-pane">
   <div id="proposals-loading" class="text-muted htmx-indicator d-none">Загрузка…</div>
 
@@ -182,7 +185,7 @@
       </h5>
       <button type="button"
               id="proposal-payment-section-toggle"
-              class="btn btn-link btn-sm text-secondary text-decoration-none p-0 d-inline-flex align-items-center classifiers-section-toggle proposal-payment-section-toggle active"
+              class="btn btn-link btn-sm text-secondary text-decoration-none p-0 d-inline-flex align-items-center classifiers-section-toggle proposal-section-toggle proposal-payment-section-toggle active"
               data-section-controls-id="proposal-payment-header-controls"
               data-section-view-controls-id="proposal-payment-view-dropdown"
               data-section-body-id="proposal-payment-section-body"
@@ -337,10 +340,22 @@
   </div>
 
   <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
-    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
-      <i class="bi bi-envelope-at"></i> Отправка ТКП
-    </h5>
-    <div class="d-flex align-items-center gap-2">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+        <i class="bi bi-envelope-at"></i> Отправка ТКП
+      </h5>
+      <button type="button"
+              id="proposal-dispatch-section-toggle"
+              class="btn btn-link btn-sm text-secondary text-decoration-none p-0 d-inline-flex align-items-center classifiers-section-toggle proposal-section-toggle active"
+              data-section-controls-id="proposal-dispatch-header-controls"
+              data-section-body-id="proposal-dispatch-section-body"
+              aria-expanded="false"
+              aria-label="Развернуть раздел «Отправка ТКП»"
+              title="Развернуть раздел «Отправка ТКП»">
+        <i class="bi bi-plus-square"></i>
+      </button>
+    </div>
+    <div class="d-flex align-items-center justify-content-end gap-2 flex-wrap ms-auto classifiers-section-controls-hidden" id="proposal-dispatch-header-controls" aria-hidden="true">
       <span class="small text-muted text-nowrap">Отображаемые поля:</span>
       <div class="tkp-colpicker" id="proposal-dispatch-colpicker-wrap">
         <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="proposal-dispatch-colpicker-btn">
@@ -361,6 +376,7 @@
     </div>
   </div>
 
+  <div id="proposal-dispatch-section-body" class="d-none">
   <div class="proposal-dispatch-table-wrap">
     <table id="proposal-dispatch-table" class="table table-sm align-middle proposal-dispatch-table">
       <colgroup>
@@ -539,7 +555,10 @@
       </button>
       <div id="proposal-dispatch-actions" class="d-none"></div>
     </div>
+  {% endif %}
+  </div>
 
+  {% if request.user.is_authenticated and request.user.is_staff %}
       <div class="modal fade" id="proposal-send-modal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog">
           <div class="modal-content">
@@ -585,12 +604,24 @@
       </div>
 
       <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
-        <h5 class="table-section-title">
-          <i class="bi bi-layout-text-window me-2"></i>
-          Образцы шаблонов ТКП
-        </h5>
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+            <i class="bi bi-layout-text-window"></i>
+            Образцы шаблонов ТКП
+          </h5>
+          <button type="button"
+                  id="proposal-template-section-toggle"
+                  class="btn btn-link btn-sm text-secondary text-decoration-none p-0 d-inline-flex align-items-center classifiers-section-toggle proposal-section-toggle active"
+                  data-section-body-id="proposal-template-section-body"
+                  aria-expanded="false"
+                  aria-label="Развернуть раздел «Образцы шаблонов ТКП»"
+                  title="Развернуть раздел «Образцы шаблонов ТКП»">
+            <i class="bi bi-plus-square"></i>
+          </button>
+        </div>
       </div>
 
+      <div id="proposal-template-section-body" class="d-none">
       <div class="table-responsive proposal-template-table-wrap">
         <table class="table table-sm align-top proposal-template-table">
           <thead>
@@ -676,7 +707,9 @@
           </div>
         </div>
       </div>
+      </div>
 
       {% include "proposals_app/proposal_variables_section.html" %}
     {% endif %}
 </div>
+{% endif %}

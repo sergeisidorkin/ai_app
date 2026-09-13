@@ -1,0 +1,155 @@
+{% load classifiers_filters %}
+<section id="policy-products-section"
+         data-policy-table-key="products"
+         data-policy-table-url="{% url 'policy_products_table' %}"
+         data-policy-master-managed="1"
+         data-policy-table-page="{{ page_obj.number|default:'1' }}"
+         data-policy-table-page-size="{{ policy_page_size|default:'25' }}"
+         {% if policy_inline_edit %}data-policy-inline="1"{% endif %}>
+{% if policy_inline_edit %}
+<script type="application/json" data-policy-inline-options>{{ policy_inline_options_json|safe }}</script>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Типовые продукты
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive">
+    <table class="table table-sm align-top">
+        <thead>
+        <tr>
+            <th class="product-workspace-checkbox-cell" style="width:1%">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="products-master"
+                               data-target-name="product-select"
+                               data-actions-id="products-actions"
+                               aria-label="Выделить все строки продуктов">
+                    </div>
+                {% endif %}
+            </th>
+            <th class="product-workspace-short-name-cell">Краткое имя</th>
+            <th class="product-workspace-edit-cell" style="width:1%"></th>
+            <th>Наименование на английском языке</th>
+            <th>Наименование на русском языке</th>
+            <th>Отображаемое в системе имя</th>
+            <th>Вид консалтинга</th>
+            <th>Тип услуг</th>
+            <th>Код</th>
+            <th>Подтип услуги</th>
+            <th>Владелец</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for p in products %}
+            <tr data-policy-filter-row="1"
+                data-product-id="{{ p.id }}"
+                data-inline-row-id="{{ p.id }}"
+                data-product-label="{{ p.short_name }}{% if p.display_name %} {{ p.display_name }}{% endif %}"
+                data-consulting-type="{{ p.consulting_type_display }}"
+                data-service-category="{{ p.service_category_display }}"
+                data-service-subtype="{{ p.service_subtype_display }}"
+                data-consulting-type-ref="{{ p.consulting_type_ref_id|default_if_none:'' }}"
+                data-service-category-ref="{{ p.service_category_ref_id|default_if_none:'' }}"
+                data-service-subtype-ref="{{ p.service_subtype_ref_id|default_if_none:'' }}"
+                data-edit-url="{% url 'product_form_edit' p.pk %}"
+                data-workspace-url="{% url 'product_workspace' p.pk %}"
+                data-delete-url="{% url 'product_delete' p.pk %}"
+                data-move-up-url="{% url 'product_move_up' p.pk %}"
+                data-move-down-url="{% url 'product_move_down' p.pk %}">
+
+                <td class="text-nowrap product-workspace-checkbox-cell">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="prod-def-{{ p.id }}"
+                                   name="product-select"
+                                   value="{{ p.id }}"
+                                   aria-label="Выделить строку">
+                        </div>
+                    {% else %}
+                    {% endif %}
+                </td>
+                <td class="text-nowrap product-workspace-short-name-cell"{% if policy_inline_edit %} data-inline-field="short_name" data-inline-type="text" data-inline-value="{{ p.short_name }}"{% endif %}>{{ p.short_name }}</td>
+                <td class="product-workspace-edit-cell text-nowrap">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <i class="bi bi-pencil-square text-secondary product-quick-edit me-1"
+                           role="button"
+                           title="Редактировать"
+                           aria-label="Редактировать продукт"></i>
+                    {% endif %}
+                </td>
+                <td{% if policy_inline_edit %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ p.name_en }}"{% endif %}>{{ p.name_en }}</td>
+                <td{% if policy_inline_edit %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ p.name_ru }}"{% endif %}>{{ p.name_ru }}</td>
+                <td{% if policy_inline_edit %} data-inline-field="display_name" data-inline-type="text" data-inline-value="{{ p.display_name }}"{% endif %}>{{ p.display_name }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="consulting_type_ref" data-inline-type="select" data-inline-value="{{ p.consulting_type_ref_id|default_if_none:'' }}"{% endif %}>{{ p.consulting_type_display }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="service_category_ref" data-inline-type="select" data-inline-value="{{ p.service_category_ref_id|default_if_none:'' }}"{% endif %}>{{ p.service_category_display }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="service_code"{% endif %}>{{ p.service_code }}</td>
+                <td{% if policy_inline_edit %} data-inline-field="service_subtype_ref" data-inline-type="select" data-inline-value="{{ p.service_subtype_ref_id|default_if_none:'' }}"{% endif %}>{{ p.service_subtype_display }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="owner_ids" data-inline-type="owners" data-inline-value="{{ p.inline_owner_ids_json }}"{% endif %}>{{ p.owner_display }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    <div class="policy-table-footer">
+    {% if request.user.is_authenticated and request.user.is_staff %}
+        <!-- Панель под таблицей: кнопка "Добавить строку" + динамические иконки действий -->
+        <div class="policy-table-footer-actions products-actions-row">
+            <button
+                    class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+
+                    hx-get="{% url 'product_form_create' %}"
+                    hx-target="#policy-modal .modal-content"
+                    hx-swap="innerHTML">
+                <i class="bi bi-plus-circle me-2"></i>Добавить строку
+            </button>
+            <div id="products-actions" class="d-none d-flex">
+                <div class="btn-group">
+                    <button type="button" id="products-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0 policy-workspace-catalog-only" title="Переместить вверх" aria-label="Переместить вверх">
+                        <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" id="products-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0 policy-workspace-catalog-only" title="Переместить вниз" aria-label="Переместить вниз">
+                        <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" id="products-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0 policy-workspace-catalog-only" title="Изменить" aria-label="Изменить">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" id="products-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                        <i class="bi bi-x-square"></i>
+                    </button>
+                </div>
+            </div>
+            <a href="{% url 'product_csv_download' %}{% if policy_filter_query %}?{{ policy_filter_query }}{% endif %}"
+               id="products-csv-download-btn"
+               class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+               title="Скачать CSV"
+               role="button">
+                <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+            </a>
+            <button type="button"
+                    id="products-csv-upload-btn"
+                    class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+                    title="Загрузить CSV">
+                <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+            </button>
+            <input type="file" id="products-csv-file-input" accept=".csv" class="d-none">
+        </div>
+    {% else %}
+        <div class="policy-table-footer-actions"></div>
+    {% endif %}
+    {% if policy_pagination_enabled %}
+        {% include "policy_app/_policy_pagination.html" with pagination_target="#policy-products-section" page_size_id="products" %}
+    {% endif %}
+    </div>
+</div>
+</section>

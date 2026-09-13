@@ -2,6 +2,11 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command:
       - postgres
       - -c
@@ -27,6 +32,11 @@ services:
   redis:
     image: redis:alpine
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - "${ROOT}/redis:/data"
@@ -39,6 +49,11 @@ services:
   nextcloud:
     image: nextcloud:apache
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     init: true
     env_file:
       - nextcloud.env
@@ -85,6 +100,11 @@ services:
   cron:
     image: nextcloud:apache
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     entrypoint: /cron.sh
     env_file:
       - nextcloud.env

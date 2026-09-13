@@ -1,0 +1,182 @@
+{% load classifiers_filters %}
+<section id="policy-typical-service-compositions-section"
+         data-policy-table-key="typical-service-compositions"
+         data-policy-table-url="{% url 'policy_typical_service_compositions_table' %}"
+         data-policy-master-managed="1"
+         data-policy-table-page="{{ page_obj.number|default:'1' }}"
+         data-policy-table-page-size="{{ policy_page_size|default:'25' }}"
+         {% if policy_inline_edit %}data-policy-inline="1" data-policy-row-insert="1"{% endif %}>
+{% if policy_inline_edit %}
+<script type="application/json" data-policy-inline-options>{{ policy_inline_options_json|safe }}</script>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Типовой состав услуг в ТКП
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive" id="typical-service-compositions-table-wrap">
+    <table class="table table-sm align-top" id="typical-service-compositions-table">
+        <colgroup>
+            <col style="width: 1%;">
+            <col class="policy-workspace-product-cell">
+            <col class="typical-section-code-col">
+            <col class="policy-service-composition-section-col">
+            <col>
+        </colgroup>
+        <thead>
+        <tr>
+            <th style="width:30px">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="typical-service-compositions-master"
+                               data-target-name="typical-service-composition-select"
+                               data-actions-id="typical-service-compositions-actions"
+                               aria-label="Выделить все строки типового состава услуг">
+                    </div>
+                {% endif %}
+            </th>
+            <th class="policy-workspace-product-cell">Продукт</th>
+            <th class="typical-section-code-col">Код</th>
+            <th class="policy-service-composition-section-col">Раздел (услуга)</th>
+            <th class="policy-service-composition-header" style="width:72%">
+                <div class="policy-service-composition-header__row">
+                <div class="policy-service-composition-header__title">
+                    Состав услуг
+                    <button type="button" class="clf-wrap-btn active" id="typical-service-compositions-wrap-toggle"
+                            title="Свернуть/развернуть строки">
+                      <i class="bi bi-text-wrap"></i>
+                    </button>
+                </div>
+                {% if policy_inline_edit %}
+                <div class="policy-service-composition-inline-toolbar">
+                    {% include "policy_app/_service_composition_toolbar.html" with toolbar_id="typical-service-composition-inline-toolbar" %}
+                </div>
+                <div class="policy-service-composition-edit-actions">
+                    <button type="button"
+                            class="btn btn-outline-primary btn-sm"
+                            data-rich-edit-action="commit"
+                            title="Сохранить"
+                            aria-label="Сохранить">
+                      <i class="bi bi-check-lg"></i>
+                    </button>
+                    <button type="button"
+                            class="btn btn-outline-secondary btn-sm"
+                            data-rich-edit-action="cancel"
+                            title="Отмена"
+                            aria-label="Отмена">
+                      <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+                {% endif %}
+                </div>
+            </th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for item in typical_service_compositions %}
+            <tr data-policy-filter-row="1"
+                {% if policy_inline_edit %}data-inline-row-id="{{ item.id }}"{% endif %}
+                data-product-id="{{ item.product_id }}"
+                data-product-label="{{ item.product.short_name }}{% if item.product.display_name %} {{ item.product.display_name }}{% endif %}"
+                data-consulting-type="{{ item.product.consulting_type_display }}"
+                data-service-category="{{ item.product.service_category_display }}"
+                data-service-subtype="{{ item.product.service_subtype_display }}"
+                data-edit-url="{% url 'typical_service_composition_form_edit' item.pk %}"
+                data-delete-url="{% url 'typical_service_composition_delete' item.pk %}"
+                data-move-up-url="{% url 'typical_service_composition_move_up' item.pk %}"
+                data-move-down-url="{% url 'typical_service_composition_move_down' item.pk %}">
+                <td class="text-nowrap policy-row-check-cell">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="typical-service-composition-sel-{{ item.id }}"
+                                   name="typical-service-composition-select"
+                                   value="{{ item.id }}"
+                                   aria-label="Выделить строку типового состава услуг">
+                        </div>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap policy-workspace-product-cell">{{ item.product.short_name }}</td>
+                <td class="text-nowrap typical-section-code-col"><span class="typical-section-dsc-code">{{ item.section.code }}</span></td>
+                <td class="policy-service-composition-section-col"{% if policy_inline_edit %} data-inline-field="section" data-inline-type="select" data-inline-value="{{ item.section_id }}"{% endif %}>{{ item.section.name_ru|default:item.section.name_en }}</td>
+                <td class="policy-service-composition-cell"{% if policy_inline_edit %} data-inline-field="service_composition_editor_state" data-inline-type="rich" data-inline-value="{{ item.inline_editor_state_json }}"{% endif %}>
+                    <div class="policy-service-composition-content policy-service-composition-content--rich ql-editor">{{ item.service_composition_editor_state|policy_quill_html:item.service_composition }}</div>
+                </td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    <div class="policy-table-footer">
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="policy-table-footer-actions products-actions-row">
+      <button
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              hx-get="{% url 'typical_service_composition_form_create' %}"
+              hx-target="#policy-modal .modal-content"
+              hx-swap="innerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="typical-service-compositions-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" id="typical-service-compositions-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" id="typical-service-compositions-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" id="typical-service-compositions-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" id="typical-service-compositions-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+      <a href="{% url 'typical_service_composition_csv_download' %}{% if policy_filter_query %}?{{ policy_filter_query }}{% endif %}"
+         id="typical-service-compositions-csv-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+         title="Скачать CSV"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </a>
+      <button type="button"
+              id="typical-service-compositions-csv-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+              title="Загрузить CSV">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file" id="typical-service-compositions-csv-file-input" accept=".csv" class="d-none">
+      <a href="{% url 'typical_service_composition_docx_download' %}{% if policy_filter_query %}?{{ policy_filter_query }}{% endif %}"
+         id="typical-service-compositions-docx-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+         title="Скачать DOCX"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать DOCX
+      </a>
+      <button type="button"
+              id="typical-service-compositions-docx-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+              title="Загрузить DOCX">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить DOCX
+      </button>
+      <input type="file" id="typical-service-compositions-docx-file-input" accept=".docx" class="d-none">
+    </div>
+    {% else %}
+    <div class="policy-table-footer-actions"></div>
+    {% endif %}
+    {% if policy_pagination_enabled %}
+        {% include "policy_app/_policy_pagination.html" with pagination_target="#policy-typical-service-compositions-section" page_size_id="typical-service-compositions" %}
+    {% endif %}
+    </div>
+</div>
+</section>

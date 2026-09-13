@@ -106,6 +106,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    "core.middleware.PolicyObservabilityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -140,6 +141,20 @@ LOGGING = {
 
 LOGGING["loggers"]["office_addin"] = {"handlers": ["console"], "level": "DEBUG"}
 LOGGING["loggers"]["office_addin.consumers"] = {"handlers": ["console"], "level": "DEBUG"}
+LOGGING["loggers"]["policy.performance"] = {
+    "handlers": ["console"],
+    "level": env("POLICY_OBSERVABILITY_LOG_LEVEL", default="INFO"),
+    "propagate": False,
+}
+
+POLICY_OBSERVABILITY_LATENCY_WARNING_MS = env.float(
+    "POLICY_OBSERVABILITY_LATENCY_WARNING_MS",
+    default=750.0,
+)
+POLICY_OBSERVABILITY_BYTES_WARNING = env.int(
+    "POLICY_OBSERVABILITY_BYTES_WARNING",
+    default=512 * 1024,
+)
 
 # Аутентификация: куда редиректить после логина/логаута
 LOGIN_URL = "login"
@@ -300,6 +315,46 @@ TEMPLATES = [
 
 DATABASES = {
     "default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR/'db.sqlite3'}")
+}
+
+POLICY_CACHE_URL = env("POLICY_CACHE_URL", default="").strip()
+POLICY_CACHE_KEY_PREFIX = env(
+    "POLICY_CACHE_KEY_PREFIX",
+    default="ai_app:policy",
+).strip()
+POLICY_CACHE_TIMEOUT = env.int("POLICY_CACHE_TIMEOUT", default=300)
+
+# Keep Django's existing default cache behavior for other applications. Policy
+# uses a dedicated alias and never falls back to the Channels REDIS_URL.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    },
+    "policy": (
+        {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": POLICY_CACHE_URL,
+            "KEY_PREFIX": POLICY_CACHE_KEY_PREFIX,
+            "TIMEOUT": POLICY_CACHE_TIMEOUT,
+            "OPTIONS": {
+                "socket_connect_timeout": env.float(
+                    "POLICY_CACHE_CONNECT_TIMEOUT",
+                    default=0.2,
+                ),
+                "socket_timeout": env.float(
+                    "POLICY_CACHE_SOCKET_TIMEOUT",
+                    default=0.2,
+                ),
+            },
+        }
+        if POLICY_CACHE_URL
+        else {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "ai-app-policy-dev",
+            "KEY_PREFIX": POLICY_CACHE_KEY_PREFIX,
+            "TIMEOUT": POLICY_CACHE_TIMEOUT,
+        }
+    ),
 }
 
 LANGUAGE_CODE = "en-us"

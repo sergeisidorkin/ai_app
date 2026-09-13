@@ -12,8 +12,8 @@
     {% else %}
       hx-post="{% url 'expertise_dir_form_edit' direction.pk %}"
     {% endif %}
-    hx-target="#policy-pane"
-    hx-swap="outerHTML"
+    hx-target="#policy-modal .modal-content"
+    hx-swap="innerHTML"
     id="expdir-form">
   <div class="modal-body">
     {% csrf_token %}

@@ -807,6 +807,9 @@
     #checklists-table-wrap table .col-files {
         white-space: nowrap;
     }
+    #checklists-table-wrap table td.col-files:has(.chk-files-hint) {
+        white-space: normal;
+    }
     #checklists-table-wrap table td.col-files {
         vertical-align: middle;
         padding-top: 5px !important;
@@ -816,6 +819,9 @@
         font-size: 0.7rem;
         line-height: 1.2;
         color: #6c757d;
+    }
+    .chk-files-hint {
+        white-space: normal;
     }
     #checklists-table-wrap table col.status-col {
         min-width: 200px;

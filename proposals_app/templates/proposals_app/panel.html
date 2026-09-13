@@ -40,15 +40,15 @@
 <div class="card shadow-sm">
   <div class="card-body">
     <div id="proposals-pane"
-         hx-get="{% url 'proposals_partial' %}"
+         class="proposal-catalog-shell"
+         data-proposal-lazy-shell="1"
+         data-proposal-tables-url="{% url 'proposals_partial' %}?tables=1"
+         hx-get="{% url 'proposals_partial' %}?tables=1"
          hx-trigger="load"
          hx-target="#proposals-pane"
          hx-swap="outerHTML"
-         hx-indicator="#proposals-loading">
-      <div id="proposals-loading" class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
-        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
-        <span>Загрузка ТКП…</span>
-      </div>
+         aria-busy="true">
+      {% include "proposals_app/_proposals_catalog_skeleton.html" %}
     </div>
     <div class="modal fade" id="proposals-modal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-scrollable">
@@ -122,7 +122,11 @@
         function getHidden(cfg) {
           if (!cfg.hidden) {
             var saved = P ? P.get(cfg.prefKey, null) : null;
-            cfg.hidden = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : getDefaultHidden(cfg);
+            if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+              cfg.hidden = saved;
+            } else if (document.getElementById(cfg.menuId)) {
+              cfg.hidden = getDefaultHidden(cfg);
+            }
           }
           return cfg.hidden || {};
         }
@@ -197,6 +201,12 @@
           };
         }
 
+        function applyAllVisibility() {
+          configs.forEach(applyVisibility);
+        }
+
+        window.__applyProposalColPickers = applyAllVisibility;
+
         function initPickers() {
           configs.forEach(initPicker);
         }
@@ -209,9 +219,13 @@
           });
         });
 
-        document.body.addEventListener('htmx:afterSettle', function(e) {
+        document.body.addEventListener('htmx:afterSwap', function(e) {
           var pane = document.getElementById('proposals-pane');
-          if (pane && pane.contains(e.target)) initPickers();
+          if (!pane) return;
+          if (e.target === pane || pane.contains(e.target)) {
+            applyAllVisibility();
+            initPickers();
+          }
         });
 
         document.addEventListener('DOMContentLoaded', initPickers);

@@ -1,15 +1,79 @@
+upstream ai_app_wsgi {
+    server unix:/run/ai_app/ai_app.sock fail_timeout=0;
+    keepalive 32;
+}
+
 server {
     listen 80;
     server_name 130.193.53.106;  # можно добавить домен, если появится
 
-    # статика, которую собирает Django
+    # This example keeps the existing HTTP listener. If nginx terminates TLS,
+    # add the managed listen 443 ssl http2/certificate configuration here.
+    # If TLS terminates at a load balancer, restrict a dedicated internal
+    # listener to that trusted proxy and replace the $scheme header below with
+    # a fixed trusted "https"; never trust a public client-supplied value.
+
+    gzip on;
+    gzip_static on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_min_length 1024;
+    gzip_comp_level 5;
+    gzip_types
+        application/javascript
+        application/json
+        application/manifest+json
+        application/xhtml+xml
+        application/xml
+        image/svg+xml
+        text/css
+        text/javascript
+        text/plain
+        text/xml;
+
+    # Only ManifestStaticFilesStorage names containing a 12-hex content hash
+    # receive an immutable one-year cache policy.
+    location ~* ^/static/.+\.[0-9a-f]{12}\.[^/]+$ {
+        root /var/www/ai_app;
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # Conservative fallback for unhashed/admin/vendor static names.
     location /static/ {
         alias /var/www/ai_app/static/;
+        try_files $uri =404;
+        expires 1h;
+        add_header Cache-Control "public, max-age=3600";
+        add_header X-Content-Type-Options "nosniff" always;
     }
 
     location / {
-        include proxy_params;
-        # ВАЖНО: путь к вашему сокету и двоеточие в конце
-        proxy_pass http://unix:/run/ai_app/ai_app.sock:;
+        proxy_pass http://ai_app_wsgi;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
     }
+
+    # Do not send WebSockets to this WSGI upstream. If /ws/ is enabled in
+    # production, run a separate ASGI service/socket and enable a location like:
+    #
+    # location /ws/ {
+    #     proxy_pass http://ai_app_asgi;
+    #     proxy_http_version 1.1;
+    #     proxy_set_header Upgrade $http_upgrade;
+    #     proxy_set_header Connection "upgrade";
+    #     proxy_set_header Host $host;
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #     proxy_set_header X-Forwarded-Proto $scheme;
+    #     proxy_read_timeout 300s;
+    # }
 }

@@ -8,12 +8,12 @@
 <form
     method="post"
     {% if action == "create" %}
-      hx-post="{% url 'tariff_form_create' %}"
+      hx-post="{% url 'tariff_form_create' %}{{ policy_form_query }}"
     {% else %}
-      hx-post="{% url 'tariff_form_edit' tariff.pk %}"
+      hx-post="{% url 'tariff_form_edit' tariff.pk %}{{ policy_form_query }}"
     {% endif %}
-    hx-target="#policy-pane"
-    hx-swap="outerHTML">
+    hx-target="#policy-modal .modal-content"
+    hx-swap="innerHTML">
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
 

@@ -1,0 +1,99 @@
+{% load classifiers_filters %}
+<section id="policy-expertise-directions-section"
+         data-policy-table-key="expertise-directions"
+         data-policy-table-url="{% url 'policy_expertise_directions_table' %}"
+         data-policy-table-page="1">
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Направления экспертизы
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive">
+    <table class="table table-sm align-top">
+        <thead>
+        <tr>
+            <th style="width:1%; vertical-align: top;">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="expdir-master"
+                               data-target-name="expdir-select"
+                               data-actions-id="expdir-actions"
+                               aria-label="Выделить все строки направлений экспертизы">
+                    </div>
+                {% endif %}
+            </th>
+            <th style="width:9%">Краткое имя</th>
+            <th style="width:20%">Наименование направления</th>
+            <th>Расчет стоимости услуг</th>
+            <th>Область специализации</th>
+            <th style="width:35%">Владелец</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for ed in expertise_directions %}
+            <tr data-edit-url="{% url 'expertise_dir_form_edit' ed.pk %}"
+                data-delete-url="{% url 'expertise_dir_delete' ed.pk %}"
+                data-move-up-url="{% url 'expertise_dir_move_up' ed.pk %}"
+                data-move-down-url="{% url 'expertise_dir_move_down' ed.pk %}">
+
+                <td class="text-nowrap">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="expdir-sel-{{ ed.id }}"
+                                   name="expdir-select"
+                                   value="{{ ed.id }}"
+                                   aria-label="Выделить строку">
+                        </div>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap">{{ ed.short_name }}</td>
+                <td>{{ ed.name }}</td>
+                <td class="text-nowrap">{{ ed.get_pricing_method_display }}</td>
+                <td>{{ ed.specialization_area|default:"—" }}</td>
+                <td class="text-nowrap">{{ ed.owner_display }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="6" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="policy-table-footer">
+        <div class="policy-table-footer-actions products-actions-row">
+            <button
+                    class="btn btn-primary btn-sm d-flex align-items-center"
+                    hx-get="{% url 'expertise_dir_form_create' %}"
+                    hx-target="#policy-modal .modal-content"
+                    hx-swap="innerHTML">
+                <i class="bi bi-plus-circle me-2"></i>Добавить строку
+            </button>
+            <div id="expdir-actions" class="d-none d-flex">
+                <div class="btn-group">
+                    <button type="button" id="expdir-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                        <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" id="expdir-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                        <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" id="expdir-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" id="expdir-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                        <i class="bi bi-x-square"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        </div>
+    {% endif %}
+</div>
+</section>

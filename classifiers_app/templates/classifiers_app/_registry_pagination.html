@@ -14,10 +14,10 @@
                             hx-target="{{ pagination.target }}"
                             hx-swap="{{ pagination.swap }}"
                             aria-label="Предыдущая страница">
-                        <span aria-hidden="true">&laquo;</span>
+                        <i class="bi bi-chevron-left" aria-hidden="true"></i>
                     </button>
                 {% else %}
-                    <span class="page-link" aria-hidden="true">&laquo;</span>
+                    <span class="page-link" aria-hidden="true"><i class="bi bi-chevron-left" aria-hidden="true"></i></span>
                 {% endif %}
             </li>
             {% for item in pagination.pages %}
@@ -45,10 +45,10 @@
                             hx-target="{{ pagination.target }}"
                             hx-swap="{{ pagination.swap }}"
                             aria-label="Следующая страница">
-                        <span aria-hidden="true">&raquo;</span>
+                        <i class="bi bi-chevron-right" aria-hidden="true"></i>
                     </button>
                 {% else %}
-                    <span class="page-link" aria-hidden="true">&raquo;</span>
+                    <span class="page-link" aria-hidden="true"><i class="bi bi-chevron-right" aria-hidden="true"></i></span>
                 {% endif %}
             </li>
         </ul>

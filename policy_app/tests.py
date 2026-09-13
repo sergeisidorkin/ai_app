@@ -2,18 +2,38 @@ import csv
 import copy
 import io
 import json
+import re
+import unittest
+from unittest import mock
+from html import unescape
 from decimal import Decimal
+from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 from docx import Document
 from openpyxl import Workbook, load_workbook
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import connection
+from django.contrib.auth.models import Group
+from django.core.cache import caches
+from django.db import connection, transaction
 from django.db.migrations.executor import MigrationExecutor
+from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.http import QueryDict
-from django.test import Client, TestCase, TransactionTestCase
+from django.test import (
+    Client,
+    RequestFactory,
+    TestCase,
+    TransactionTestCase,
+    override_settings,
+)
+from django.test.utils import CaptureQueriesContext
+from django.template.loader import render_to_string
 from django.urls import reverse
+from redis.exceptions import RedisError
 
 from classifiers_app.models import OKVCurrency
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
@@ -31,6 +51,7 @@ from policy_app.models import (
     ConsultingDirectionType,
     ConsultingServiceSubtype,
     ConsultingServiceType,
+    DEPARTMENT_HEAD_GROUP,
     ExpertiseDirection,
     Product,
     ReportStructure,
@@ -45,6 +66,10 @@ from policy_app.models import (
     ensure_system_dsc_section,
 )
 from users_app.models import Employee
+from policy_app import cache as policy_cache
+from policy_app import signals as policy_signals
+from policy_app import views as policy_views
+from core import context_processors as core_context_processors
 
 
 class RemoveTypicalSectionExecutorMigrationTests(TransactionTestCase):
@@ -259,6 +284,4104 @@ class ConsultingCatalogBackfillMigrationTests(TransactionTestCase):
         self.assertTrue(
             ConsultingServiceSubtype.objects.filter(name="Аудит проектных решений").exists()
         )
+
+
+class PolicyTablePartialEndpointsTests(TestCase):
+    endpoint_cases = (
+        ("policy_consulting_directions_table", "policy-consulting-directions-section", "Направления консалтинга"),
+        ("policy_expertise_directions_table", "policy-expertise-directions-section", "Направления экспертизы"),
+        ("policy_expert_specialties_table", "policy-expert-specialties-section", "Специальности исполнителей"),
+        ("policy_products_table", "policy-products-section", "Типовые продукты"),
+        ("policy_service_goal_reports_table", "policy-service-goal-reports-section", "Цели услуг и названия отчетов"),
+        ("policy_typical_sections_table", "policy-typical-sections-section", "Типовые разделы (услуги)"),
+        (
+            "policy_section_structures_table",
+            "policy-section-structures-section",
+            "Типовая структура раздела (состава услуг)",
+        ),
+        ("policy_report_structures_table", "policy-report-structures-section", "Типовая структура отчета"),
+        (
+            "policy_typical_service_compositions_table",
+            "policy-typical-service-compositions-section",
+            "Типовой состав услуг в ТКП",
+        ),
+        ("policy_typical_service_terms_table", "policy-typical-service-terms-section", "Типовые сроки оказания услуг"),
+        ("policy_grades_table", "policy-grades-section", "Грейды"),
+        ("policy_specialty_tariffs_table", "policy-specialty-tariffs-section", "Тарифы специальностей"),
+        ("policy_tariffs_table", "policy-tariffs-section", "Тарифы разделов (услуг)"),
+    )
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="policy-table-partials-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def test_each_table_endpoint_renders_its_wrapper_and_heading(self):
+        for endpoint_name, wrapper_id, heading in self.endpoint_cases:
+            with self.subTest(endpoint=endpoint_name):
+                response = self.client.get(reverse(endpoint_name))
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, f'id="{wrapper_id}"', html=False)
+                self.assertContains(response, heading)
+                self.assertNotContains(response, 'id="policy-pane"', html=False)
+
+    def test_policy_partial_still_contains_every_table_section(self):
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="policy-pane"', html=False)
+        self.assertContains(response, "Спецификации продуктов")
+        self.assertContains(response, "Общие настройки продуктов")
+        for _, wrapper_id, heading in self.endpoint_cases:
+            with self.subTest(wrapper=wrapper_id):
+                self.assertContains(response, f'id="{wrapper_id}"', html=False)
+                self.assertContains(response, heading)
+
+    def test_anonymous_user_is_redirected_from_each_table_endpoint(self):
+        anonymous_client = Client()
+
+        for endpoint_name, _, _ in self.endpoint_cases:
+            with self.subTest(endpoint=endpoint_name):
+                response = anonymous_client.get(reverse(endpoint_name))
+
+                self.assertEqual(response.status_code, 302)
+
+    def test_table_endpoints_reject_non_get_requests(self):
+        for endpoint_name, _, _ in self.endpoint_cases:
+            with self.subTest(endpoint=endpoint_name):
+                response = self.client.post(reverse(endpoint_name))
+
+                self.assertEqual(response.status_code, 405)
+
+    def test_report_structure_endpoint_preserves_computed_numbering(self):
+        product = Product.objects.create(
+            short_name="RPT-PARTIAL",
+            name_en="Report partial",
+            display_name="Report partial",
+            name_ru="Структура отчета",
+            position=1,
+        )
+        ReportStructure.objects.create(
+            product=product,
+            level=1,
+            code="SEC",
+            name="Раздел",
+            position=1,
+        )
+        ReportStructure.objects.create(
+            product=product,
+            level=2,
+            code="SUB",
+            name="Подраздел",
+            position=2,
+        )
+
+        response = self.client.get(reverse("policy_report_structures_table"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "1.1")
+
+
+class PolicyStageFiveQueryBudgetTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_superuser(
+            username="policy-stage-five-admin",
+            password="secret123",
+            email="stage-five@example.test",
+        )
+        self.client.force_login(self.user)
+        self.owner = GroupMember.objects.create(
+            short_name="Stage Five Owner",
+            country_name="Test",
+            position=1,
+        )
+
+    def _endpoint_query_count(self, url_name):
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(reverse(url_name))
+        self.assertEqual(response.status_code, 200)
+        return len(queries), response
+
+    def test_products_query_budget_is_constant_for_one_and_fifty_rows(self):
+        def create_products(start, stop):
+            products = Product.objects.bulk_create(
+                [
+                    Product(
+                        short_name=f"S5-P-{index:03d}",
+                        name_en=f"Product {index}",
+                        name_ru=f"Продукт {index}",
+                        position=index,
+                    )
+                    for index in range(start, stop)
+                ]
+            )
+            for product in products:
+                product.owners.add(self.owner)
+
+        create_products(1, 2)
+        one_count, _ = self._endpoint_query_count("policy_products_table")
+        create_products(2, 51)
+        fifty_count, response = self._endpoint_query_count("policy_products_table")
+
+        self.assertEqual((one_count, fifty_count), (5, 5))
+        self.assertEqual(len(response.context["products"]), 25)
+        self.assertLessEqual(len(response.context["products"]), policy_views.POLICY_TABLE_PAGE_SIZE)
+
+    def test_owner_display_fallbacks_keep_deterministic_order(self):
+        later_owner = GroupMember.objects.create(
+            short_name="Later Owner",
+            country_name="Test",
+            position=2,
+        )
+        product = Product.objects.create(
+            short_name="S5-FALLBACK-P",
+            name_en="Fallback",
+            name_ru="Fallback",
+            position=1,
+        )
+        expertise = ExpertiseDirection.objects.create(
+            name="Fallback",
+            short_name="S5-FALLBACK-E",
+            position=1,
+        )
+        product.owners.add(later_owner, self.owner)
+        expertise.owners.add(later_owner, self.owner)
+
+        with self.assertNumQueries(1):
+            self.assertEqual(product.owner_display, "Stage Five Owner, Later Owner")
+        with self.assertNumQueries(1):
+            self.assertEqual(expertise.owner_display, "Stage Five Owner, Later Owner")
+
+    def test_expertise_query_budget_is_constant_for_one_and_fifty_rows(self):
+        def create_directions(start, stop):
+            directions = ExpertiseDirection.objects.bulk_create(
+                [
+                    ExpertiseDirection(
+                        name=f"Stage five direction {index}",
+                        short_name=f"S5-E-{index:03d}",
+                        position=index,
+                    )
+                    for index in range(start, stop)
+                ]
+            )
+            for direction in directions:
+                direction.owners.add(self.owner)
+
+        create_directions(1, 2)
+        one_count, _ = self._endpoint_query_count("policy_expertise_directions_table")
+        create_directions(2, 51)
+        fifty_count, _ = self._endpoint_query_count("policy_expertise_directions_table")
+
+        self.assertEqual((one_count, fifty_count), (4, 4))
+
+    def test_consulting_query_budget_is_constant_for_one_and_fifty_rows(self):
+        def create_directions(start, stop):
+            for index in range(start, stop):
+                direction = ConsultingDirection.objects.create(position=index)
+                consulting_type = ConsultingDirectionType.objects.create(
+                    direction=direction,
+                    name=f"Stage five consulting {index}",
+                    position=1,
+                )
+                service_type = ConsultingServiceType.objects.create(
+                    direction=direction,
+                    consulting_type=consulting_type,
+                    name=f"Stage five service {index}",
+                    code=f"S5-{index}",
+                    position=1,
+                )
+                ConsultingServiceSubtype.objects.create(
+                    direction=direction,
+                    service_type=service_type,
+                    name=f"Stage five subtype {index}",
+                    position=1,
+                )
+
+        create_directions(1, 2)
+        one_count, _ = self._endpoint_query_count("policy_consulting_directions_table")
+        create_directions(2, 51)
+        fifty_count, _ = self._endpoint_query_count("policy_consulting_directions_table")
+
+        self.assertEqual((one_count, fifty_count), (6, 6))
+        with self.assertNumQueries(4):
+            directions = list(
+                policy_views._policy_consulting_directions_context(None)[
+                    "consulting_directions"
+                ]
+            )
+        with self.assertNumQueries(0):
+            for direction in directions:
+                self.assertTrue(direction.consulting_types_display)
+                self.assertTrue(direction.service_types_display)
+                self.assertTrue(direction.service_codes_display)
+                self.assertTrue(direction.service_subtypes_display)
+                self.assertTrue(direction.table_rows)
+
+    def test_specialty_tariff_query_budget_is_constant_for_one_and_fifty_rows(self):
+        expertise = ExpertiseDirection.objects.create(
+            name="Stage five tariff expertise",
+            short_name="S5-T",
+            position=1,
+        )
+
+        def create_tariffs(start, stop):
+            for index in range(start, stop):
+                specialty = ExpertSpecialty.objects.create(
+                    specialty=f"Stage five specialty {index}",
+                    expertise_dir=expertise,
+                    position=index,
+                )
+                tariff = SpecialtyTariff.objects.create(
+                    specialty_group=f"Stage five group {index}",
+                    created_by=self.user,
+                    position=index,
+                )
+                tariff.specialties.add(specialty)
+
+        create_tariffs(1, 2)
+        one_count, _ = self._endpoint_query_count("policy_specialty_tariffs_table")
+        create_tariffs(2, 51)
+        fifty_count, response = self._endpoint_query_count("policy_specialty_tariffs_table")
+
+        self.assertEqual((one_count, fifty_count), (4, 4))
+        self.assertContains(response, "S5-T")
+        with self.assertNumQueries(2):
+            tariffs = list(policy_views._get_specialty_tariffs_for_user(self.user))
+        with self.assertNumQueries(0):
+            for tariff in tariffs:
+                self.assertTrue(tariff.display_specialties)
+                self.assertEqual(tariff.expertise_direction_display, "S5-T")
+
+
+class PolicyStageFiveRoutingAndReorderTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="policy-stage-five-routing",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def test_context_processor_fast_path_is_route_scoped(self):
+        factory = RequestFactory()
+
+        table_request = factory.get("/policy/policy/tables/products/")
+        lazy_request = factory.get(
+            "/policy/policy/partial/",
+            HTTP_HX_REQUEST="true",
+        )
+        catalog_request = factory.get("/policy/policy/filter-catalog/")
+        workspace_request = factory.get("/policy/policy/product/12/")
+        legacy_partial_request = factory.get("/policy/policy/partial/")
+        product_form_request = factory.get("/policy/policy/product/create/")
+        product_edit_request = factory.get("/policy/policy/product/12/edit/")
+        home_request = factory.get("/")
+        requests_request = factory.get("/requests/partial/")
+
+        for request in (table_request, lazy_request, catalog_request, workspace_request):
+            with self.subTest(path=request.path, htmx=request.headers.get("HX-Request")):
+                self.assertTrue(core_context_processors._is_policy_lightweight_request(request))
+        for request in (
+            legacy_partial_request,
+            product_form_request,
+            product_edit_request,
+            home_request,
+            requests_request,
+        ):
+            with self.subTest(path=request.path):
+                self.assertFalse(core_context_processors._is_policy_lightweight_request(request))
+
+    def test_product_reorder_normalizes_in_bulk_and_keeps_boundaries(self):
+        products = Product.objects.bulk_create(
+            [
+                Product(
+                    short_name=f"S5-MOVE-P-{index:03d}",
+                    name_en=f"Product {index}",
+                    name_ru=f"Продукт {index}",
+                    position=index * 2,
+                )
+                for index in range(1, 52)
+            ]
+        )
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.post(
+                reverse("product_move_up", args=[products[0].pk]),
+                HTTP_HX_REQUEST="true",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(len(queries), 8)
+        self.assertEqual(
+            list(Product.objects.order_by("position", "id").values_list("position", flat=True)),
+            list(range(1, 52)),
+        )
+        self.assertEqual(Product.objects.order_by("position", "id").first().pk, products[0].pk)
+
+        response = self.client.post(
+            reverse("product_move_down", args=[products[-1].pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Product.objects.order_by("position", "id").last().pk, products[-1].pk)
+
+    def test_section_reorder_is_product_scoped_and_bulk_normalized(self):
+        product = Product.objects.create(
+            short_name="S5-MOVE-SECTIONS",
+            name_en="Sections",
+            name_ru="Разделы",
+            position=1,
+        )
+        other_product = Product.objects.create(
+            short_name="S5-MOVE-OTHER",
+            name_en="Other",
+            name_ru="Другой",
+            position=2,
+        )
+        sections = TypicalSection.objects.bulk_create(
+            [
+                TypicalSection(
+                    product=product,
+                    code=f"S5-{index:03d}",
+                    short_name=f"s5-{index:03d}",
+                    name_en=f"Section {index}",
+                    name_ru=f"Раздел {index}",
+                    position=index * 2,
+                )
+                for index in range(1, 52)
+            ]
+        )
+        other = TypicalSection.objects.create(
+            product=other_product,
+            code="OTHER",
+            short_name="other",
+            name_en="Other",
+            name_ru="Другой",
+            position=99,
+        )
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.post(
+                reverse("section_move_up", args=[sections[-1].pk]),
+                HTTP_HX_REQUEST="true",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(len(queries), 10)
+        ordered = list(
+            TypicalSection.objects.filter(product=product)
+            .order_by("position", "id")
+            .values_list("pk", "position")
+        )
+        self.assertEqual([position for _, position in ordered], list(range(1, 52)))
+        self.assertEqual(ordered[-2][0], sections[-1].pk)
+        other.refresh_from_db()
+        self.assertEqual(other.position, 99)
+
+
+@unittest.skipUnless(connection.vendor == "postgresql", "PostgreSQL planner test")
+class PolicyPostgreSQLPlannerTests(TestCase):
+    def test_filtered_typical_section_query_supports_analyze_buffers(self):
+        product = Product.objects.create(
+            short_name="S5-PLAN",
+            name_en="Planner",
+            name_ru="Планировщик",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            code="S5-PLAN",
+            short_name="plan",
+            name_en="Planner",
+            name_ru="Планировщик",
+            position=1,
+        )
+
+        plan = (
+            policy_views._policy_typical_sections_queryset()
+            .filter(product=product)
+            .explain(analyze=True, buffers=True)
+        )
+
+        self.assertIn("Planning Time", plan)
+        self.assertIn("Execution Time", plan)
+        self.assertIn("Scan", plan)
+
+
+class PolicyLazyLoadingContractTests(TestCase):
+    ordered_keys = [
+        "products",
+        "service-goal-reports",
+        "typical-sections",
+        "section-structures",
+        "report-structures",
+        "typical-service-compositions",
+        "typical-service-terms",
+        "tariffs",
+        "consulting-directions",
+        "expertise-directions",
+        "expert-specialties",
+        "specialty-tariffs",
+        "grades",
+    ]
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="policy-lazy-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="LAZY",
+            name_en="Lazy loading",
+            display_name="Lazy loading",
+            name_ru="Ленивая загрузка",
+            position=1,
+        )
+
+    def test_htmx_partial_is_small_ordered_placeholder_shell(self):
+        response = self.client.get(
+            reverse("policy_partial"),
+            HTTP_HX_REQUEST="true",
+        )
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-policy-lazy-shell="1"', html=False)
+        self.assertEqual(html.count('data-policy-lazy-placeholder="1"'), 13)
+        self.assertNotIn("<table", html)
+        self.assertNotIn('data-policy-filter-row="1"', html)
+        self.assertNotIn("data-edit-url=", html)
+        keys = re.findall(r'data-policy-table-key="([^"]+)"', html)
+        self.assertEqual(keys, self.ordered_keys)
+        self.assertEqual(html.count('data-policy-lazy-priority="immediate"'), 1)
+        self.assertEqual(html.count('data-policy-lazy-priority="deferred"'), 12)
+        self.assertEqual(html.count("table-section-title"), 13)
+        self.assertEqual(html.count("bi-table me-2"), 13)
+        self.assertEqual(html.count('class="card shadow-sm policy-group-card"'), 2)
+        self.assertEqual(html.count("bi-box-seam me-2"), 1)
+        self.assertEqual(html.count("bi-sliders me-2"), 1)
+        self.assertIn("Спецификации продуктов", html)
+        self.assertIn("Общие настройки продуктов", html)
+        self.assertIn("Типовые продукты", html)
+        self.assertNotIn("fw-semibold", html)
+
+    def test_non_htmx_partial_remains_full_legacy_compositor(self):
+        response = self.client.get(reverse("policy_partial"))
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="policy-pane"', html=False)
+        self.assertContains(response, 'id="policy-products-section"', html=False)
+        self.assertContains(response, "LAZY")
+        self.assertIn("<table", html)
+        self.assertNotIn('data-policy-lazy-placeholder="1"', html)
+
+        shell = self.client.get(
+            reverse("policy_partial"),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertLess(len(shell.content), len(response.content))
+
+    def test_panel_has_show_only_trigger_contract(self):
+        html = render_to_string("policy_app/panel.html")
+
+        self.assertIn('data-policy-shell-url="', html)
+        self.assertIn('data-policy-shell-state="pending"', html)
+        self.assertNotIn('hx-trigger="load"', html)
+        self.assertNotIn('hx-get="', html)
+
+    def test_lazy_js_has_filtered_queue_retry_and_once_guards(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (
+            root / "core" / "static" / "core" / "js" / "policy-panels.js"
+        ).read_text()
+        css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
+
+        self.assertIn("POLICY_LAZY_REFRESH_CONCURRENCY = 2", source)
+        self.assertIn("new IntersectionObserver", source)
+        self.assertIn("rootMargin: '500px 0px'", source)
+        self.assertIn("data-policy-lazy-retry", source)
+        self.assertIn("policyLazyPlaceholderUrl(placeholder)", source)
+        self.assertIn("updateAllPolicyLazyPlaceholderStates()", source)
+        self.assertIn("wrapper.matches('[data-policy-lazy-placeholder=\"1\"]')", source)
+        self.assertIn("document.addEventListener('shown.bs.tab'", source)
+        self.assertIn("window.location.hash === '#policy'", source)
+        self.assertIn("policyLazyObserver.unobserve(placeholder)", source)
+        self.assertIn("min-height: 360px", css)
+        self.assertIn("contain-intrinsic-size: auto 360px", css)
+        self.assertIn(".policy-table-placeholder > .table-section-header", css)
+
+    def test_product_catalog_requires_authoritative_json_for_lazy_panel(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "policy-panels.js"
+        ).read_text()
+
+        self.assertIn("window.__policyProductCatalogAuthoritative === true", source)
+        self.assertIn("return isLegacyFullPanel ? products : []", source)
+        self.assertNotIn("window.__policyProductCatalog = products", source)
+        self.assertIn("requiresAuthoritativePolicyProductCatalog(root)", source)
+        self.assertIn("schedulePolicyProductCatalogRetry()", source)
+        self.assertIn("policyProductCatalogRequest", source)
+        self.assertIn("policyProductCatalogNeedsRefresh", source)
+        self.assertIn("Math.min(30000", source)
+
+    def test_stale_lazy_response_is_token_guarded_and_requeued(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "policy-panels.js"
+        ).read_text()
+
+        self.assertIn("const policyLazyRequestTokens = new Map()", source)
+        self.assertIn("const policyLazyRequestControllers = new Map()", source)
+        self.assertIn("policyLazyRequestControllers.get(tableKey)?.abort()", source)
+        self.assertIn("nextPolicyLazyRequestToken(tableKey)", source)
+        self.assertIn("policyLazyRequestTokens.get(tableKey) !== requestToken", source)
+        self.assertIn("current.dataset.policyLazyRequestToken !== String(requestToken)", source)
+        self.assertIn("invalidateLoading: true", source)
+        self.assertIn("requeueNear: true", source)
+        self.assertIn("isPolicyLazyPlaceholderNearViewport", source)
+        self.assertIn("headers: { 'HX-Request': 'true'", source)
+        self.assertIn("current.replaceWith(replacement)", source)
+        self.assertIn("initializeArrivingPolicyFragment(replacement)", source)
+        self.assertIn("getPolicyTablePageSize(placeholder)", source)
+        self.assertIn("params.set('page_size', pageSize)", source)
+        self.assertIn("getPolicyTablePageSize(wrapper)", source)
+
+    def test_dependency_queue_preserves_keys_and_aborts_stale_loaded_requests(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "policy-panels.js"
+        ).read_text()
+
+        self.assertIn("const policyManagedOutstandingTableKeys = new Set()", source)
+        self.assertIn("const policyLoadedFragmentRequests = new Map()", source)
+        self.assertIn("requested.add(tableKey)", source)
+        self.assertIn("abortOlderPolicyLoadedFragmentRequests(generation)", source)
+        self.assertIn("request.controller.abort()", source)
+        self.assertIn("requestGeneration !== policyManagedRefreshGeneration", source)
+        self.assertIn("activeRequest.token !== requestToken", source)
+        self.assertIn("current.replaceWith(refreshed)", source)
+        self.assertIn("initializeArrivingPolicyFragment(refreshed)", source)
+        self.assertIn("priority: true", source)
+        self.assertNotIn(
+            "htmx.ajax('GET', requestUrl,",
+            source,
+        )
+
+    def test_product_edit_modal_clears_row_selection_on_hide(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "policy-panels.js"
+        ).read_text()
+
+        self.assertIn("function forgetPolicyTableSelection(name)", source)
+        self.assertIn("function clearPolicyTableSelectionByName(name)", source)
+        self.assertIn("function markPolicyModalClearSelectionOnHide(name)", source)
+        self.assertIn("modalEl.dataset.policyClearSelectionName = name", source)
+        self.assertIn("if (name === 'product-select') {", source)
+        self.assertIn("markPolicyModalClearSelectionOnHide(name)", source)
+        self.assertIn("document.addEventListener('hidden.bs.modal'", source)
+        self.assertIn("modalEl.id !== 'policy-modal'", source)
+        self.assertIn("clearPolicyTableSelectionByName(name)", source)
+
+
+class PolicyProductWorkspaceTests(TestCase):
+    workspace_keys = [
+        "products",
+        "service-goal-reports",
+        "typical-sections",
+        "section-structures",
+        "report-structures",
+        "typical-service-compositions",
+        "typical-service-terms",
+        "tariffs",
+    ]
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="policy-workspace-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="WS",
+            name_en="Workspace product",
+            display_name="Workspace display",
+            name_ru="Продукт workspace",
+            position=1,
+        )
+        self.other_product = Product.objects.create(
+            short_name="OTHER-WS",
+            name_en="Other workspace product",
+            display_name="Other display",
+            name_ru="Другой продукт workspace",
+            position=2,
+        )
+        ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Цель WS",
+            service_goal_genitive="Цели WS",
+            report_title="Титул WS",
+            product_name="Имя WS",
+            position=1,
+        )
+
+    def test_workspace_renders_product_scoped_lazy_shell(self):
+        response = self.client.get(reverse("product_workspace", args=[self.product.pk]))
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-policy-workspace="1"', html=False)
+        self.assertContains(
+            response,
+            f'data-policy-workspace-product-id="{self.product.pk}"',
+            html=False,
+        )
+        self.assertContains(response, 'data-header-root-label="Продукты"', html=False)
+        self.assertContains(response, 'data-header-current-label="WS Workspace display"', html=False)
+        self.assertContains(response, reverse("policy_partial"), html=False)
+        self.assertContains(
+            response,
+            reverse("product_workspace", args=[self.product.pk]),
+            html=False,
+        )
+        self.assertContains(
+            response,
+            reverse("product_workspace_save", args=[self.product.pk]),
+            html=False,
+        )
+        self.assertContains(response, 'data-policy-workspace-save-url="', html=False)
+        self.assertEqual(html.count('data-policy-lazy-placeholder="1"'), 8)
+        self.assertNotIn("<table", html)
+        keys = re.findall(r'data-policy-table-key="([^"]+)"', html)
+        self.assertEqual(keys, self.workspace_keys)
+        self.assertNotIn("expertise-directions", keys)
+        self.assertNotIn("consulting-directions", keys)
+        self.assertNotIn("grades", keys)
+        self.assertNotIn("specialty-tariffs", keys)
+        self.assertNotIn("expert-specialties", keys)
+        self.assertEqual(html.count('data-policy-lazy-priority="immediate"'), 1)
+        self.assertEqual(html.count('data-policy-lazy-priority="deferred"'), 7)
+        self.assertEqual(html.count("table-section-title"), 8)
+        self.assertEqual(html.count("bi-table me-2"), 8)
+        self.assertEqual(html.count('class="card shadow-sm policy-group-card"'), 1)
+        self.assertEqual(html.count("bi-box-seam me-2"), 1)
+        self.assertNotIn("bi-sliders me-2", html)
+        self.assertIn("Спецификации продуктов", html)
+        self.assertNotIn("Общие настройки продуктов", html)
+        self.assertIn("Типовые продукты", html)
+
+    def test_workspace_requires_staff_and_existing_product(self):
+        missing = self.client.get(reverse("product_workspace", args=[self.product.pk + 1000]))
+        self.assertEqual(missing.status_code, 404)
+
+        anonymous = Client()
+        anonymous_response = anonymous.get(reverse("product_workspace", args=[self.product.pk]))
+        self.assertEqual(anonymous_response.status_code, 302)
+
+        nonstaff = get_user_model().objects.create_user(
+            username="policy-workspace-nonstaff",
+            password="secret123",
+            is_staff=False,
+        )
+        self.client.force_login(nonstaff)
+        forbidden = self.client.get(reverse("product_workspace", args=[self.product.pk]))
+        self.assertEqual(forbidden.status_code, 302)
+
+    def test_products_table_includes_workspace_edit_icon_for_staff(self):
+        response = self.client.get(reverse("policy_products_table"))
+        html = response.content.decode()
+
+        self.assertContains(response, "product-quick-edit", html=False)
+        self.assertContains(response, "product-workspace-edit-cell", html=False)
+        self.assertContains(
+            response,
+            f'data-workspace-url="{reverse("product_workspace", args=[self.product.pk])}"',
+            html=False,
+        )
+        self.assertIn("bi-pencil-square", html)
+        self.assertIn("Наименование на английском языке", html)
+        short_name_index = html.index("Краткое имя")
+        english_index = html.index("Наименование на английском языке")
+        pencil_index = html.index("product-workspace-edit-cell")
+        self.assertLess(short_name_index, pencil_index)
+        self.assertLess(pencil_index, english_index)
+
+        nonstaff = get_user_model().objects.create_user(
+            username="policy-workspace-table-nonstaff",
+            password="secret123",
+            is_staff=False,
+        )
+        self.client.force_login(nonstaff)
+        nonstaff_response = self.client.get(reverse("policy_products_table"))
+        self.assertNotContains(nonstaff_response, "product-quick-edit")
+        self.assertContains(nonstaff_response, "product-workspace-edit-cell", html=False)
+
+    def test_products_table_filter_keeps_single_product_page(self):
+        response = self.client.get(
+            reverse("policy_products_table"),
+            {"product": self.product.pk},
+        )
+        html = response.content.decode()
+
+        self.assertContains(response, "WS")
+        self.assertNotContains(response, "OTHER-WS")
+        self.assertIn(f'data-product-id="{self.product.pk}"', html)
+        self.assertNotIn(f'data-product-id="{self.other_product.pk}"', html)
+
+    def test_workspace_js_and_css_contracts(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "core" / "static" / "core" / "js" / "policy-panels.js").read_text()
+        css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
+
+        self.assertIn("function updatePolicyHeaderPath()", source)
+        self.assertIn("function getPolicyWorkspaceProduct(root)", source)
+        self.assertIn("function ensurePolicyWorkspaceSession(root)", source)
+        self.assertIn("function savePolicyWorkspace()", source)
+        self.assertIn("function bindPolicyWorkspaceInlineTables(root)", source)
+        self.assertIn("service-goal-reports", source)
+        self.assertIn("refreshPolicyWorkspaceInlineFragments", source)
+        self.assertIn("function cancelPolicyWorkspace()", source)
+        self.assertIn("if (!session.isDirty()) {\n      destroyPolicyWorkspaceSession();\n      await loadPolicyCatalogShell();", source)
+        self.assertIn("e.detail.parameters.workspace = '1'", source)
+        self.assertIn("parsed.searchParams.set('workspace', '1')", source)
+        self.assertIn("dataset.policyWorkspace === '1'", source)
+        self.assertIn("closest('.product-quick-edit')", source)
+        self.assertIn("tr?.dataset?.workspaceUrl", source)
+        self.assertIn("leavingWorkspace", source)
+        self.assertIn("params.set('workspace', '1')", source)
+        self.assertIn("function loadPolicyCatalogShell()", source)
+        self.assertIn("display.classList.toggle('readonly-field', !!select.disabled)", source)
+        self.assertIn("#policy-modal .policy-product-select-display.readonly-field", css)
+        self.assertIn("function scrollPolicyWorkspaceToTop(root)", source)
+        self.assertIn('a.nav-link[href="#policy"][data-bs-toggle="tab"]', source)
+        self.assertIn("data-policy-workspace-save-btn", source)
+        self.assertIn("WorkspaceInlineEditor", source)
+        editor_js = (root / "core" / "static" / "core" / "js" / "inline-table-editor.js").read_text()
+        self.assertIn("createSession", editor_js)
+        self.assertIn("createPolicyProductsAdapter", editor_js)
+        self.assertIn("createPolicyServiceGoalReportsAdapter", editor_js)
+        self.assertIn("createPolicyReportStructuresAdapter", editor_js)
+        self.assertIn("createPolicyReportStructuresAdapter", source)
+        self.assertIn("createPolicyTypicalSectionsAdapter", editor_js)
+        self.assertIn("createPolicyTypicalSectionsAdapter", source)
+        self.assertIn("function attachTypicalSectionRowInsert(section, session)", source)
+        self.assertIn("function attachPolicyWorkspaceRowInsert(section, session)", source)
+        self.assertIn("function createSectionStructureWorkspaceRow(section, rowId, referenceRow)", source)
+        self.assertIn("function createTypicalServiceCompositionWorkspaceRow(section, rowId, referenceRow)", source)
+        self.assertIn("function createTariffWorkspaceRow(section, rowId, referenceRow)", source)
+        self.assertIn("createPolicyRowInsertButton", source)
+        self.assertIn("rowRect.right - iconRect.right", source)
+        self.assertIn("wrap.appendChild(rowInsertButton)", source)
+        self.assertIn("getTypicalSectionInsertHoverRight", source)
+        self.assertIn("getPolicyRowInsertHoverRight", source)
+        self.assertIn("function removePolicyInlineNewRow(row)", source)
+        self.assertIn("function queuePolicyWorkspaceTypicalSectionDelete(row)", source)
+        self.assertIn("forgetPolicyTableSelection(name);\n        ensureActionsVisibility(name);", source)
+        self.assertIn("forgetPolicyTableSelection('section-select');", source)
+        self.assertIn("markDeletedRow", editor_js)
+        self.assertIn("deleted: true", editor_js)
+        self.assertIn("function syncTypicalSectionNewRowAfterIds(tbody)", source)
+        self.assertIn("isPolicyInlineNewRow(row)", source)
+        self.assertIn("button.innerHTML = '<i class=\"bi bi-plus-circle\" aria-hidden=\"true\"></i>';", source)
+        self.assertIn("markNewRow", editor_js)
+        self.assertIn("removeRow: function (tableKey, rowId)", editor_js)
+        self.assertIn("_create_typical_section", (root / "policy_app" / "views.py").read_text())
+        self.assertIn("_create_section_structure", (root / "policy_app" / "views.py").read_text())
+        self.assertIn("_create_typical_service_composition", (root / "policy_app" / "views.py").read_text())
+        self.assertIn("_create_workspace_tariff", (root / "policy_app" / "views.py").read_text())
+        self.assertIn("createPolicySectionStructuresAdapter", editor_js)
+        self.assertIn("createPolicySectionStructuresAdapter", source)
+        self.assertIn("createPolicyTariffsAdapter", editor_js)
+        self.assertIn("createPolicyTariffsAdapter", source)
+        self.assertIn("createPolicyTypicalServiceTermsAdapter", editor_js)
+        self.assertIn("createPolicyTypicalServiceTermsAdapter", source)
+        self.assertIn("createPolicyTypicalServiceCompositionsAdapter", editor_js)
+        self.assertIn("createPolicyTypicalServiceCompositionsAdapter", source)
+        self.assertIn("'typical-service-compositions'", source)
+        self.assertIn("function attachPolicyTableHeaderStickyState(section)", source)
+        self.assertIn("function initPolicyTableHeaderStickyState(root)", source)
+        self.assertIn("function openRichEditor(cell)", editor_js)
+        self.assertIn('data-inline-type="rich"', editor_js)
+        self.assertIn("expandTypicalServiceCompositionRows", editor_js)
+        self.assertIn("setCompositionToolbarVisible", editor_js)
+        self.assertIn("inline-table-rich-wrap", editor_js)
+        editor_mod = (root / "core" / "static" / "core" / "js" / "service-composition-editor.js").read_text()
+        self.assertIn("global.ServiceCompositionEditor", editor_mod)
+        self.assertIn("function mount(options)", editor_mod)
+        self.assertIn("selectTypicalServiceTermWorkspaceRow", source)
+        self.assertIn("typical-service-term-workspace-selected", source)
+        self.assertNotIn("item.classList.toggle('table-active', item === row)", source)
+        self.assertIn("function sectionOptionLabel", editor_js)
+        self.assertNotIn("useVisibleMenu", editor_js)
+        self.assertNotIn("inline-table-select-menu", editor_js)
+        self.assertIn("section-structures", source)
+        self.assertIn("'report-structures'", source)
+        self.assertIn("'tariffs'", source)
+        self.assertIn("'typical-service-terms'", source)
+        self.assertIn("expand: 'left'", editor_js)
+        self.assertIn("inline-table-text-input", editor_js)
+        self.assertIn("inline-table-number-input", editor_js)
+        self.assertIn("inline-table-number-wrap", editor_js)
+        self.assertIn("if (textEdit && textEdit.cell === cell) return", editor_js)
+        self.assertIn("function getNumberCellRange", editor_js)
+        self.assertIn("function applyBulkNumberValue", editor_js)
+        self.assertIn("function snapshotBulkNumberOriginals", editor_js)
+        self.assertIn("function placeNumberCaretAtEnd", editor_js)
+        self.assertIn("textarea.type = 'number'", editor_js)
+        self.assertIn("textarea.lang = document.documentElement.getAttribute('lang') || 'ru'", editor_js)
+        self.assertIn("if (isNumber) {\n      cell.style.width = cellW + 'px';", editor_js)
+        self.assertIn("cell.style.maxWidth = cellW + 'px';", editor_js)
+        self.assertNotIn("inline-table-number-spinner", editor_js)
+        self.assertNotIn("textarea.type = 'text'", editor_js)
+        self.assertIn("if (lockCaretAtEnd) placeNumberCaretAtEnd(textarea);", editor_js)
+        self.assertNotIn("if (suppressNumberSelect) placeNumberCaretAtEnd(textarea);", editor_js)
+        self.assertIn("{ seed: event.key === ',' ? '.' : event.key }", editor_js)
+        self.assertNotIn("skipDisplay: true", editor_js)
+        self.assertNotIn("function collapseNumberCaretToEnd", editor_js)
+        self.assertIn("function setSelectedCells", editor_js)
+        self.assertIn("function syncSelectionEdges", editor_js)
+        self.assertIn("function shouldDrawSelectionEdge", editor_js)
+        self.assertNotIn("function isEditingSelectionCell", editor_js)
+        self.assertIn("if (!isNumber) {", editor_js)
+        self.assertIn("textarea.select();", editor_js)
+        self.assertNotIn("if (!isNumber) textarea.select();", editor_js)
+        self.assertIn("inline-cell-sel-r", editor_js)
+        self.assertNotIn("proposal-commercial-cell-selected", editor_js)
+        self.assertIn("isNumber ? 3 : 0", editor_js)
+        self.assertIn("inline-table-layout-sizer", editor_js)
+        self.assertNotIn("freezeTableColumns", editor_js)
+        self.assertNotIn("unfreezeTableColumns", editor_js)
+        self.assertNotIn("inline-table-editing-scroller", editor_js)
+        self.assertNotIn(
+            "tr.style.height = tr.getBoundingClientRect().height",
+            editor_js,
+        )
+        self.assertNotIn("cell.textContent = '';", editor_js)
+        self.assertIn("overflow-wrap: break-word", css)
+        self.assertIn(".typical-section-system-row > td", css)
+        self.assertIn(".typical-section-code-col", css)
+        self.assertIn(".report-structure-compact-col", css)
+        self.assertIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #report-structures-table .report-structure-compact-col {\n  width: 1%;\n  white-space: nowrap;\n  text-align: left;\n}",
+            css,
+        )
+        self.assertIn(".inline-table-layout-sizer", css)
+        self.assertIn(".inline-table-number-input {", css)
+        self.assertIn(".inline-table-number-wrap {", css)
+        self.assertIn("padding-right: 3px", css)
+        self.assertIn(
+            ".inline-table-number-wrap {\n  padding-right: 3px;\n  outline: none;\n  box-shadow: none;\n  border: none;\n  display: flex;\n  align-items: center;\n}",
+            css,
+        )
+        self.assertIn(".inline-table-number-input::-webkit-inner-spin-button", css)
+        self.assertIn("margin: auto 2px auto 0", css)
+        self.assertNotIn("inline-table-editing-scroller", css)
+        self.assertNotIn("max-width: max-content", css)
+        self.assertIn("top: calc(0.25rem + (1lh - 12px) / 2 + 2px)", css)
+        self.assertIn(".inline-cell-editing {\n  position: relative;\n  z-index: 2;\n  overflow: visible !important;", css)
+        self.assertIn(".inline-cell-selected.inline-cell-sel-t::after", css)
+        self.assertIn(".inline-cell-selected.inline-cell-sel-r::after", css)
+        self.assertIn("box-shadow: inset 0 0 0 2px var(--bs-primary, #0d6efd);", css)
+        self.assertIn("resizeWrap(false)", editor_js)
+        self.assertIn("isCheckedValue", editor_js)
+        self.assertIn("type === 'checkbox'", editor_js)
+        self.assertIn("type === 'number'", editor_js)
+        self.assertIn("normalizeSpecialtyIds", editor_js)
+        self.assertIn("inline-specialty-row", editor_js)
+        self.assertIn("data-specialty-action", editor_js)
+        self.assertIn("bi-arrow-up", editor_js)
+        self.assertIn("bi-arrow-down", editor_js)
+        self.assertIn("inline-specialty-chevron", editor_js)
+        self.assertNotIn("if (newRow) openSelectEditor", editor_js)
+        self.assertIn(".inline-specialty-row {", css)
+        self.assertIn(".inline-specialty-actions {", css)
+        self.assertIn(".inline-specialty-actions {\n  display: none;\n  align-items: center;\n  gap: var(--inline-specialty-icon-gap);\n  background: transparent;\n  box-shadow: none;", css)
+        self.assertIn(
+            ".inline-specialties[data-count]:not([data-count=\"0\"]):not([data-count=\"1\"]) .inline-specialty-actions {\n  display: inline-flex;\n  opacity: 0;",
+            css,
+        )
+        self.assertIn(".inline-specialty-add {", css)
+        self.assertIn(".typical-section-executor-col {\n  min-width: 16rem;", css)
+        self.assertIn("#policy-pane[data-policy-workspace=\"1\"] [data-policy-row-insert=\"1\"] .proposal-row-insert {", css)
+        self.assertIn("--policy-workspace-row-insert-gutter: 0.875rem;", css)
+        self.assertNotIn(
+            "#policy:has(#policy-pane[data-policy-workspace=\"1\"]) > .templates-bleed > .ps-3 {",
+            css,
+        )
+        self.assertNotIn(
+            "#policy:has(#policy-pane[data-policy-workspace=\"1\"]) > .templates-bleed > .section-header > .px-3 {",
+            css,
+        )
+        self.assertIn("overflow-y: hidden;", css)
+        self.assertIn("padding-bottom: 0.875rem;", css)
+        self.assertIn("margin-bottom: -0.875rem;", css)
+        self.assertIn("#policy-pane[data-policy-workspace=\"1\"] [data-policy-row-insert=\"1\"] .policy-table-footer {\n  margin-top: calc(24px - .75rem);\n}", css)
+        self.assertIn(".policy-row-check-cell {", css)
+        self.assertIn(".proposal-row-insert > .bi {", css)
+        self.assertIn("[data-policy-row-insert=\"1\"] .table-responsive {\n  position: relative;", css)
+        self.assertIn("[data-policy-row-insert=\"1\"] .proposal-row-insert {\n  position: absolute;\n  left: 0;\n  top: 0;\n  z-index: 30;", css)
+        self.assertNotIn(
+            "tr.proposal-service-insert-before > td {\n  box-shadow:",
+            css,
+        )
+        self.assertNotIn(
+            "[data-policy-row-insert=\"1\"] tbody.policy-row-insert-active",
+            css,
+        )
+        self.assertIn("repeating-linear-gradient(\n    to right,\n    rgba(33, 37, 41, .22) 0,", css)
+        self.assertIn(".inline-editing-row > td", css)
+        base_html = (root / "core" / "templates" / "core" / "base.html").read_text()
+        self.assertIn("inline-table-editor.js", base_html)
+        self.assertIn("service-composition-editor.js", base_html)
+        index_html = (root / "templates" / "index.html").read_text()
+        self.assertIn('id="policy-workspace-actions"', index_html)
+        self.assertIn("data-policy-workspace-save-btn", index_html)
+        self.assertIn("data-policy-workspace-cancel-btn", index_html)
+        self.assertIn("#policy-section-heading .proposal-header-separator", css)
+        self.assertIn(".product-quick-edit", css)
+        self.assertIn('#policy-pane[data-policy-workspace="1"] .product-workspace-edit-cell', css)
+        self.assertIn(".product-workspace-checkbox-cell", css)
+        self.assertIn(".policy-workspace-checkbox-cell", css)
+        self.assertIn(".policy-workspace-product-cell", css)
+        self.assertNotIn(
+            "#policy-pane[data-policy-workspace=\"1\"] .product-workspace-short-name-cell",
+            css,
+        )
+        self.assertIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #policy-products-section .table-section-header",
+            css,
+        )
+        self.assertIn("#policy-pane .table-section-header", css)
+        self.assertIn("margin-top: 24px !important", css)
+        self.assertIn(
+            "#policy-pane .policy-group-card > .card-body > :first-child > .table-section-header",
+            css,
+        )
+        self.assertIn(
+            "#policy-pane .policy-group-card {\n  --bs-card-border-radius: .75rem;\n  --bs-card-border-color: #ced4da;\n  margin-bottom: 1.25rem;\n  overflow: visible;\n  border: 1px solid #ced4da;\n  border-radius: .75rem;",
+            css,
+        )
+        self.assertIn("#policy-pane .policy-group-card-header {\n  background: #e7f1ff;", css)
+        self.assertIn("#policy-pane .policy-group-card-title {\n  margin: 0;\n  display: flex;\n  align-items: center;\n  padding-left: 5px;\n  font-weight: 600;\n  font-size: 1.3rem;", css)
+        self.assertIn("#policy-pane .policy-group-card-title > .bi,\n#policy-pane .policy-group-card .table-section-title > .bi {", css)
+        self.assertIn(".policy-table-placeholder > .table-section-header {\n  margin-top: 24px;", css)
+        self.assertIn(
+            "#policy-pane .policy-group-card > .card-body > .policy-table-placeholder:first-child > .table-section-header",
+            css,
+        )
+        products_table = (root / "policy_app" / "templates" / "policy_app" / "policy_products_table.html").read_text()
+        self.assertIn('style="margin-top: 24px;"', products_table)
+        self.assertNotIn('style="margin-top: 50px;"', products_table)
+        self.assertIn(".inline-cell-dirty", css)
+        self.assertIn("rgba(7, 93, 148, .07)", css)
+        self.assertNotIn("background-color: #fff8e1;", css)
+        self.assertIn(".inline-table-select-editor,\n.inline-table-select-editor:focus", css)
+        self.assertIn("padding-left: .625rem", css)
+        self.assertIn("background-size: 16px 12px", css)
+        self.assertIn("addEventListener('pointerdown'", editor_js)
+        self.assertIn("selectEl.blur()", editor_js)
+        self.assertIn("showPicker", editor_js)
+        self.assertIn("dataset.inlineOpen", editor_js)
+        self.assertIn("overflow: hidden", css)
+        self.assertIn(".policy-workspace-catalog-only", css)
+        self.assertIn("#typical-service-terms-gantt-edit-btn", css)
+        self.assertIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #typical-service-terms-gantt-edit-btn {\n"
+            "  display: inline-flex !important;\n"
+            "  color: #fff !important;\n"
+            "  background-color: var(--bs-primary, #075D94) !important;\n"
+            "  border-color: var(--bs-primary, #075D94) !important;\n"
+            "}",
+            css,
+        )
+        self.assertIn(".typical-service-term-unit-col", css)
+        self.assertIn(".typical-service-term-value-col", css)
+        self.assertIn("#policy-typical-service-compositions-section thead th", css)
+        self.assertIn("--policy-sticky-thead-top", css)
+        self.assertIn(".policy-service-composition-inline-toolbar", css)
+        self.assertIn(".policy-service-composition-edit-actions", css)
+        self.assertIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #policy-typical-service-compositions-section thead th {\n  position: sticky;\n  top: var(--policy-sticky-thead-top, 76px);\n  z-index: 21;\n  background: #fff;\n  box-shadow: none;\n  overflow: visible;\n  padding-top: .5rem;\n  padding-bottom: .65rem;\n}",
+            css,
+        )
+        self.assertIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #policy-typical-service-compositions-section thead.is-stuck th::after",
+            css,
+        )
+        self.assertIn("background: #dee2e6", css)
+        self.assertNotIn("inset 0 -1px 0 #ced4da, 0 1px 0 #ced4da", css)
+        self.assertNotIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #typical-service-compositions-table {\n  border-collapse: separate;",
+            css,
+        )
+        self.assertIn(
+            "#typical-service-compositions-table .policy-service-composition-section-col {\n  width: 1%;\n  max-width: none;\n  white-space: nowrap;\n}",
+            css,
+        )
+        self.assertIn(".inline-table-rich-wrap .ql-editor .ql-font-cambria", css)
+        self.assertIn(".inline-table-rich-wrap", css)
+        self.assertIn('td[data-inline-type="rich"]', css)
+        self.assertIn("applyFontToDocument", editor_mod)
+        self.assertIn("formatText(0, len - 1, 'font'", editor_mod)
+        self.assertIn("[data-rich-edit-action]", editor_js)
+        self.assertIn("richPointerStartedInEditor", editor_js)
+        self.assertIn("function lockCompositionTableColumns", editor_js)
+        self.assertIn("function unlockCompositionTableColumns", editor_js)
+        self.assertIn("wrap.style.fontSize = displayFontSize", editor_js)
+        self.assertIn(
+            ".policy-service-composition-header.is-rich-editing .policy-service-composition-inline-toolbar {\n  visibility: visible;\n  pointer-events: auto;\n}",
+            css,
+        )
+        self.assertIn(".policy-service-composition-inline-toolbar {\n  display: flex;\n  align-items: center;\n  visibility: hidden;", css)
+        self.assertIn(
+            "#proposals-pane .proposal-service-text-toolbar__btn.is-active,\n"
+            "#policy-modal .proposal-service-text-toolbar__btn.is-active,\n"
+            "#policy-pane .proposal-service-text-toolbar__btn.is-active {",
+            css,
+        )
+        self.assertNotIn(
+            "#proposals-pane .proposal-service-text-toolbar__btn.is-active,\n"
+            "#policy-modal .proposal-service-text-toolbar__btn,\n"
+            "#policy-pane .proposal-service-text-toolbar__btn.is-active {",
+            css,
+        )
+        self.assertIn("editState.hadUserChange", editor_js)
+        self.assertIn(
+            "#typical-service-compositions-table .policy-service-composition-content--rich ol,\n"
+            "#typical-service-compositions-table .policy-service-composition-content--rich ul,\n"
+            ".inline-table-rich-wrap .ql-editor ol,\n"
+            ".inline-table-rich-wrap .ql-editor ul {\n  margin: 0;\n  padding-left: 1.5em;\n}",
+            css,
+        )
+        self.assertIn(
+            "#typical-service-compositions-table .policy-service-composition-content--rich li.ql-indent-1:not(.ql-direction-rtl),\n"
+            ".inline-table-rich-wrap .ql-editor li.ql-indent-1:not(.ql-direction-rtl) { padding-left: 4.5em; }",
+            css,
+        )
+        self.assertIn(
+            "#typical-service-compositions-table .policy-service-composition-content--rich p,\n"
+            ".inline-table-rich-wrap .ql-editor p {\n  margin: 0;\n  padding: 0;\n  min-height: 1.25em;\n}",
+            css,
+        )
+        self.assertIn("editState.baselineCaptured", editor_js)
+        self.assertIn("function richContentsChanged", editor_js)
+        self.assertIn("displayContent.innerHTML", editor_js)
+        self.assertIn("function restoreEmptyParagraphs", editor_mod)
+        self.assertIn("function applyListFormat", editor_mod)
+        self.assertIn("function closeListMenu", editor_mod)
+        self.assertIn("function openListMenu", editor_mod)
+        self.assertIn("document.body.appendChild(listMenu)", editor_mod)
+        self.assertIn("function openColorPopover", editor_mod)
+        self.assertIn("document.body.appendChild(popover)", editor_mod)
+        self.assertIn("composition-color-popover-", editor_mod)
+        self.assertIn("#policy-modal .proposal-service-text-toolbar__color input[type=\"color\"]", css)
+        self.assertNotIn(
+            "#policy-modal .proposal-service-text-toolbar__color,\n#policy-pane .proposal-service-text-toolbar__color input[type=\"color\"]",
+            css,
+        )
+        self.assertNotIn(
+            "#policy-modal .proposal-service-text-toolbar__color-popover,\n#policy-pane .proposal-service-text-toolbar__color-popover input[type=\"color\"]",
+            css,
+        )
+        self.assertIn('data-bs-popper="static"', (root / "policy_app" / "templates" / "policy_app" / "_service_composition_toolbar.html").read_text())
+        self.assertIn("source === 'user'", editor_mod)
+        self.assertIn(".inline-table-rich-wrap .ql-container {\n  height: auto;\n  font-size: inherit !important;\n}", css)
+        self.assertNotIn(".policy-service-composition-header__main", css)
+        self.assertNotIn(
+            "activeQuill.setContents(delta, 'silent');\n      }\n      activeQuill.format('font', 'calibri', 'silent');",
+            editor_mod,
+        )
+        self.assertIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #policy-typical-service-terms-section td.typical-service-term-value-col {\n  width: 1%;\n  white-space: nowrap;\n  text-align: left;\n  min-width: calc(4ch + 1.15em + 8px);",
+            css,
+        )
+        self.assertIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #policy-typical-service-terms-section td.typical-service-term-unit-col {\n  text-align: left;",
+            css,
+        )
+        self.assertNotIn(
+            "#policy-pane[data-policy-workspace=\"1\"] #policy-typical-service-terms-section td.typical-service-term-value-col {\n  text-align: right;",
+            css,
+        )
+        self.assertIn('td[data-inline-type="number"]', css)
+
+    def test_workspace_table_requests_return_all_rows_without_pagination(self):
+        for index in range(1, 32):
+            TypicalSection.objects.create(
+                product=self.product,
+                code=f"WS-{index:02d}",
+                short_name=f"ws-{index:02d}",
+                short_name_ru=f"вс-{index:02d}",
+                name_en=f"Workspace section {index}",
+                name_ru=f"Раздел workspace {index}",
+                accounting_type="Раздел",
+                position=index,
+            )
+
+        catalog = self.client.get(reverse("policy_typical_sections_table"), {"product": self.product.pk})
+        workspace = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+
+        self.assertTrue(catalog.context["policy_pagination_enabled"])
+        self.assertEqual(len(catalog.context["sections"]), 25)
+        self.assertContains(catalog, "policy-table-pagination")
+
+        self.assertFalse(workspace.context["policy_pagination_enabled"])
+        self.assertEqual(len(workspace.context["sections"]), 31)
+        self.assertNotContains(workspace, "policy-table-pagination")
+        self.assertNotContains(workspace, 'aria-label="Страницы таблицы"')
+
+        products = self.client.get(
+            reverse("policy_products_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        self.assertFalse(products.context["policy_pagination_enabled"])
+        self.assertEqual(len(products.context["products"]), 1)
+        self.assertNotContains(products, "policy-table-pagination")
+        self.assertTrue(products.context["policy_inline_edit"])
+        self.assertContains(products, 'data-policy-inline="1"', html=False)
+        self.assertContains(products, 'data-inline-type="text"', html=False)
+        self.assertContains(products, 'data-inline-type="select"', html=False)
+        self.assertContains(products, 'data-inline-type="owners"', html=False)
+        self.assertContains(products, "policy-workspace-catalog-only", html=False)
+        self.assertContains(products, "product-workspace-checkbox-cell", html=False)
+        self.assertContains(products, "product-workspace-short-name-cell", html=False)
+
+        goals = self.client.get(
+            reverse("policy_service_goal_reports_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        self.assertTrue(goals.context["policy_inline_edit"])
+        self.assertContains(goals, 'data-policy-inline="1"', html=False)
+        self.assertContains(goals, 'data-inline-field="service_goal"', html=False)
+        self.assertContains(goals, 'data-inline-field="service_goal_genitive"', html=False)
+        self.assertContains(goals, 'data-inline-field="report_title"', html=False)
+        self.assertContains(goals, 'data-inline-field="product_name"', html=False)
+        self.assertContains(goals, "policy-workspace-checkbox-cell", html=False)
+        self.assertContains(goals, "policy-workspace-product-cell", html=False)
+        self.assertContains(goals, "policy-workspace-catalog-only", html=False)
+        goals_html = goals.content.decode()
+        goals_add_idx = goals_html.find("Добавить строку")
+        self.assertGreater(goals_add_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", goals_html[goals_add_idx - 500:goals_add_idx])
+        self.assertNotContains(goals, "Пока нет данных.")
+
+        catalog_goals = self.client.get(reverse("policy_service_goal_reports_table"))
+        self.assertNotContains(catalog_goals, 'data-policy-inline="1"')
+        self.assertNotContains(catalog_goals, 'data-inline-type="text"')
+        self.assertContains(catalog_goals, "Добавить строку")
+
+        sections = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        sections_html = sections.content.decode()
+        self.assertTrue(sections.context["policy_inline_edit"])
+        self.assertContains(sections, 'data-policy-inline="1"', html=False)
+        self.assertContains(sections, 'data-inline-field="code"', html=False)
+        self.assertContains(sections, 'data-inline-field="short_name"', html=False)
+        self.assertContains(sections, 'data-inline-field="name_ru"', html=False)
+        self.assertContains(sections, 'data-inline-field="accounting_type"', html=False)
+        self.assertContains(sections, 'data-inline-field="expertise_dir"', html=False)
+        self.assertContains(sections, 'data-inline-field="expertise_direction"', html=False)
+        self.assertContains(sections, 'data-inline-field="exclude_from_tkp_autofill"', html=False)
+        self.assertContains(sections, 'data-inline-type="checkbox"', html=False)
+        self.assertContains(sections, 'data-inline-type="select"', html=False)
+        self.assertContains(sections, 'data-inline-field="specialty_ids"', html=False)
+        self.assertContains(sections, 'data-inline-type="specialties"', html=False)
+        self.assertContains(sections, "inline-specialty-row", html=False)
+        self.assertIn('"specialties"', sections.context["policy_inline_options_json"])
+        self.assertContains(sections, "policy-workspace-product-cell", html=False)
+        self.assertContains(sections, "policy-row-check-cell", html=False)
+        self.assertContains(sections, 'data-policy-row-insert="1"', html=False)
+        self.assertContains(sections, "Добавить строку")
+        add_idx = sections_html.find("Добавить строку")
+        self.assertGreater(add_idx, 0)
+        self.assertNotIn("policy-workspace-catalog-only", sections_html[add_idx - 500:add_idx])
+        csv_idx = sections_html.find("Скачать CSV")
+        self.assertGreater(csv_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", sections_html[csv_idx - 400:csv_idx])
+        self.assertContains(sections, 'id="sections-actions"', html=False)
+
+        catalog_sections = self.client.get(reverse("policy_typical_sections_table"))
+        self.assertNotContains(catalog_sections, 'data-policy-inline="1"')
+        self.assertNotContains(catalog_sections, 'data-inline-type="text"')
+        self.assertNotContains(catalog_sections, 'data-inline-type="checkbox"')
+        self.assertNotContains(catalog_sections, 'data-inline-type="specialties"')
+        self.assertContains(catalog_sections, "Добавить строку")
+        self.assertContains(catalog_sections, "Скачать CSV")
+        self.assertContains(catalog_sections, "Загрузить CSV")
+
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="STR-WS",
+            short_name="str-ws",
+            short_name_ru="стр-ws",
+            name_en="Structure section EN",
+            name_ru="Раздел структуры",
+            accounting_type="Раздел",
+            position=100,
+        )
+        structure = SectionStructure.objects.create(
+            product=self.product,
+            section=section,
+            subsections="Старые подразделы",
+            position=1,
+        )
+        structures = self.client.get(
+            reverse("policy_section_structures_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        structures_html = structures.content.decode()
+        self.assertTrue(structures.context["policy_inline_edit"])
+        self.assertContains(structures, 'data-policy-inline="1"', html=False)
+        self.assertContains(structures, f'data-inline-row-id="{structure.pk}"', html=False)
+        self.assertContains(structures, 'data-inline-field="section"', html=False)
+        self.assertContains(structures, 'data-inline-type="select"', html=False)
+        self.assertContains(structures, 'data-inline-field="subsections"', html=False)
+        self.assertContains(structures, 'data-inline-type="text"', html=False)
+        self.assertContains(structures, "typical-section-dsc-code", html=False)
+        self.assertContains(structures, "policy-workspace-product-cell", html=False)
+        self.assertContains(structures, "policy-row-check-cell", html=False)
+        self.assertContains(structures, 'data-policy-row-insert="1"', html=False)
+        self.assertIn('"sections"', structures.context["policy_inline_options_json"])
+        self.assertIn(f'"id": {section.pk}', structures.context["policy_inline_options_json"])
+        self.assertIn('"label": "STR-WS Раздел структуры"', structures.context["policy_inline_options_json"])
+        self.assertIn('"displayLabel": "Раздел структуры"', structures.context["policy_inline_options_json"])
+        self.assertContains(structures, "typical-section-code-col", html=False)
+        self.assertContains(structures, "Добавить строку")
+        add_idx = structures_html.find("Добавить строку")
+        self.assertGreater(add_idx, 0)
+        self.assertNotIn("policy-workspace-catalog-only", structures_html[add_idx - 500:add_idx])
+        csv_idx = structures_html.find("Скачать CSV")
+        self.assertGreater(csv_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", structures_html[csv_idx - 400:csv_idx])
+        self.assertContains(structures, 'id="structures-actions"', html=False)
+
+        catalog_structures = self.client.get(reverse("policy_section_structures_table"))
+        self.assertNotContains(catalog_structures, 'data-policy-inline="1"')
+        self.assertNotContains(catalog_structures, 'data-inline-type="text"')
+        self.assertNotContains(catalog_structures, 'data-inline-type="select"')
+        self.assertContains(catalog_structures, "typical-section-dsc-code")
+        self.assertContains(catalog_structures, "Добавить строку")
+        self.assertContains(catalog_structures, "Скачать CSV")
+        self.assertContains(catalog_structures, "Загрузить CSV")
+
+        report_structure = ReportStructure.objects.create(
+            product=self.product,
+            level=1,
+            code="RS-WS",
+            name="Старое наименование отчета",
+            position=1,
+        )
+        reports = self.client.get(
+            reverse("policy_report_structures_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        self.assertTrue(reports.context["policy_inline_edit"])
+        self.assertContains(reports, 'data-policy-inline="1"', html=False)
+        self.assertContains(reports, 'id="report-structures-table"', html=False)
+        self.assertContains(reports, f'data-inline-row-id="{report_structure.pk}"', html=False)
+        self.assertContains(reports, 'data-inline-field="name"', html=False)
+        self.assertContains(reports, 'data-inline-type="text"', html=False)
+        self.assertContains(reports, "policy-workspace-product-cell", html=False)
+        self.assertContains(reports, "report-structure-compact-col", html=False)
+        reports_html = reports.content.decode()
+        self.assertContains(reports, "Добавить строку")
+        add_idx = reports_html.find("Добавить строку")
+        self.assertGreater(add_idx, 0)
+        self.assertNotIn("policy-workspace-catalog-only", reports_html[add_idx - 500:add_idx])
+        csv_idx = reports_html.find("Скачать CSV")
+        self.assertGreater(csv_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", reports_html[csv_idx - 400:csv_idx])
+        upload_idx = reports_html.find("Загрузить CSV")
+        self.assertGreater(upload_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", reports_html[upload_idx - 400:upload_idx])
+
+        catalog_reports = self.client.get(reverse("policy_report_structures_table"))
+        self.assertNotContains(catalog_reports, 'data-policy-inline="1"')
+        self.assertNotContains(catalog_reports, 'data-inline-type="text"')
+        self.assertContains(catalog_reports, "policy-workspace-product-cell")
+        self.assertContains(catalog_reports, "Добавить строку")
+        self.assertContains(catalog_reports, "Скачать CSV")
+        self.assertContains(catalog_reports, "Загрузить CSV")
+
+        tariff = Tariff.objects.create(
+            product=self.product,
+            section=section,
+            base_rate_vpm="10.50",
+            service_hours=8,
+            service_days_tkp=5,
+            created_by=self.user,
+            position=1,
+        )
+        tariffs = self.client.get(
+            reverse("policy_tariffs_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        tariffs_html = tariffs.content.decode()
+        self.assertTrue(tariffs.context["policy_inline_edit"])
+        self.assertContains(tariffs, 'data-policy-inline="1"', html=False)
+        self.assertContains(tariffs, f'data-inline-row-id="{tariff.pk}"', html=False)
+        self.assertContains(tariffs, 'data-inline-field="section"', html=False)
+        self.assertContains(tariffs, 'data-inline-type="select"', html=False)
+        self.assertContains(tariffs, 'data-inline-field="base_rate_vpm"', html=False)
+        self.assertContains(tariffs, 'data-inline-type="number"', html=False)
+        self.assertContains(tariffs, 'data-inline-field="service_hours"', html=False)
+        self.assertContains(tariffs, 'data-inline-field="service_days_tkp"', html=False)
+        self.assertNotContains(tariffs, 'data-inline-field="owner"')
+        self.assertContains(tariffs, "typical-section-dsc-code", html=False)
+        self.assertContains(tariffs, "typical-section-code-col", html=False)
+        self.assertContains(tariffs, "policy-workspace-product-cell", html=False)
+        self.assertContains(tariffs, "policy-row-check-cell", html=False)
+        self.assertContains(tariffs, 'data-policy-row-insert="1"', html=False)
+        self.assertIn('"sections"', tariffs.context["policy_inline_options_json"])
+        self.assertIn('"owners"', tariffs.context["policy_inline_options_json"])
+        self.assertIn(f'"id": {section.pk}', tariffs.context["policy_inline_options_json"])
+        self.assertIn('"label": "STR-WS Раздел структуры"', tariffs.context["policy_inline_options_json"])
+        self.assertContains(tariffs, "Добавить строку")
+        add_idx = tariffs_html.find("Добавить строку")
+        self.assertGreater(add_idx, 0)
+        self.assertNotIn("policy-workspace-catalog-only", tariffs_html[add_idx - 500:add_idx])
+        csv_idx = tariffs_html.find("Скачать CSV")
+        self.assertGreater(csv_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", tariffs_html[csv_idx - 400:csv_idx])
+        upload_idx = tariffs_html.find("Загрузить CSV")
+        self.assertGreater(upload_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", tariffs_html[upload_idx - 400:upload_idx])
+        self.assertContains(tariffs, 'id="tariffs-actions"', html=False)
+
+        catalog_tariffs = self.client.get(reverse("policy_tariffs_table"))
+        self.assertNotContains(catalog_tariffs, 'data-policy-inline="1"')
+        self.assertNotContains(catalog_tariffs, 'data-inline-type="number"')
+        self.assertNotContains(catalog_tariffs, 'data-inline-type="select"')
+        self.assertContains(catalog_tariffs, "typical-section-dsc-code")
+        self.assertContains(catalog_tariffs, "Добавить строку")
+        self.assertContains(catalog_tariffs, "Скачать CSV")
+        self.assertContains(catalog_tariffs, "Загрузить CSV")
+
+        term = TypicalServiceTerm.objects.create(
+            product=self.product,
+            source_data_weeks="2.0",
+            source_data_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
+            preliminary_report_months="1.5",
+            preliminary_report_term_unit=TypicalServiceTerm.TermUnit.MONTHS,
+            final_report_weeks="3.0",
+            final_report_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
+            position=1,
+        )
+        terms = self.client.get(
+            reverse("policy_typical_service_terms_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        terms_html = terms.content.decode()
+        self.assertTrue(terms.context["policy_inline_edit"])
+        self.assertContains(terms, 'data-policy-inline="1"', html=False)
+        self.assertContains(terms, f'data-inline-row-id="{term.pk}"', html=False)
+        self.assertContains(terms, 'data-inline-field="source_data_weeks"', html=False)
+        self.assertContains(terms, 'data-inline-field="source_data_term_unit"', html=False)
+        self.assertContains(terms, 'data-inline-field="preliminary_report_months"', html=False)
+        self.assertContains(terms, 'data-inline-field="preliminary_report_term_unit"', html=False)
+        self.assertContains(terms, 'data-inline-field="final_report_weeks"', html=False)
+        self.assertContains(terms, 'data-inline-field="final_report_term_unit"', html=False)
+        self.assertContains(terms, 'data-inline-type="number"', html=False)
+        self.assertContains(terms, 'data-inline-type="select"', html=False)
+        self.assertContains(terms, "policy-workspace-checkbox-cell", html=False)
+        self.assertContains(terms, "policy-workspace-product-cell", html=False)
+        self.assertContains(terms, "typical-service-term-value-col", html=False)
+        self.assertContains(terms, "typical-service-term-unit-col", html=False)
+        self.assertContains(terms, 'id="typical-service-terms-gantt-edit-btn"', html=False)
+        self.assertNotContains(terms, ">2,0 нед.<")
+        self.assertContains(terms, ">2,0<", html=False)
+        self.assertContains(terms, ">нед.<", html=False)
+        self.assertContains(terms, ">1,5<", html=False)
+        self.assertContains(terms, ">мес.<", html=False)
+        self.assertIn('"units"', terms.context["policy_inline_options_json"])
+        self.assertIn('"value": "days"', terms.context["policy_inline_options_json"])
+        self.assertIn('"label": "дн."', terms.context["policy_inline_options_json"])
+        self.assertContains(terms, "Добавить строку")
+        add_idx = terms_html.find("Добавить строку")
+        self.assertGreater(add_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", terms_html[add_idx - 500:add_idx])
+        gantt_idx = terms_html.find("Редактировать")
+        self.assertGreater(gantt_idx, 0)
+        self.assertNotIn("policy-workspace-catalog-only", terms_html[gantt_idx - 400:gantt_idx])
+        csv_idx = terms_html.find("Скачать CSV")
+        self.assertGreater(csv_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", terms_html[csv_idx - 400:csv_idx])
+        upload_idx = terms_html.find("Загрузить CSV")
+        self.assertGreater(upload_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", terms_html[upload_idx - 400:upload_idx])
+        self.assertContains(terms, 'id="typical-service-terms-actions"', html=False)
+
+        catalog_terms = self.client.get(reverse("policy_typical_service_terms_table"))
+        self.assertNotContains(catalog_terms, 'data-policy-inline="1"')
+        self.assertNotContains(catalog_terms, 'data-inline-type="number"')
+        self.assertNotContains(catalog_terms, 'data-inline-type="select"')
+        self.assertNotContains(catalog_terms, 'data-inline-field="source_data_weeks"')
+        self.assertContains(catalog_terms, ">2,0 нед.<", html=False)
+        self.assertContains(catalog_terms, ">1,5 мес.<", html=False)
+        self.assertContains(catalog_terms, ">3,0 нед.<", html=False)
+        self.assertContains(catalog_terms, "Добавить строку")
+        self.assertContains(catalog_terms, "Скачать CSV")
+        self.assertContains(catalog_terms, "Загрузить CSV")
+        self.assertContains(catalog_terms, 'id="typical-service-terms-gantt-edit-btn"', html=False)
+
+        composition = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=section,
+            service_composition="Старый состав",
+            service_composition_editor_state={
+                "html": "<p>Старый состав</p>",
+                "plain_text": "Старый состав",
+            },
+            position=1,
+        )
+        compositions = self.client.get(
+            reverse("policy_typical_service_compositions_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        compositions_html = compositions.content.decode()
+        self.assertTrue(compositions.context["policy_inline_edit"])
+        self.assertContains(compositions, 'data-policy-inline="1"', html=False)
+        self.assertContains(compositions, f'data-inline-row-id="{composition.pk}"', html=False)
+        self.assertContains(compositions, 'data-inline-field="section"', html=False)
+        self.assertContains(compositions, 'data-inline-type="select"', html=False)
+        self.assertContains(compositions, 'data-inline-field="service_composition_editor_state"', html=False)
+        self.assertContains(compositions, 'data-inline-type="rich"', html=False)
+        self.assertContains(compositions, "typical-section-dsc-code", html=False)
+        self.assertContains(compositions, "typical-section-code-col", html=False)
+        self.assertContains(compositions, "policy-workspace-product-cell", html=False)
+        self.assertContains(compositions, "policy-row-check-cell", html=False)
+        self.assertContains(compositions, 'data-policy-row-insert="1"', html=False)
+        self.assertContains(compositions, "policy-workspace-catalog-only", html=False)
+        self.assertContains(compositions, 'id="typical-service-composition-inline-toolbar"', html=False)
+        self.assertContains(compositions, "policy-service-composition-section-col", html=False)
+        self.assertContains(compositions, '<col class="typical-section-code-col">', html=False)
+        self.assertNotContains(compositions, 'style="width: 8%;"', html=False)
+        self.assertContains(compositions, 'data-rich-edit-action="commit"', html=False)
+        self.assertContains(compositions, 'data-rich-edit-action="cancel"', html=False)
+        self.assertIn('"sections"', compositions.context["policy_inline_options_json"])
+        self.assertIn(f'"id": {section.pk}', compositions.context["policy_inline_options_json"])
+        self.assertContains(compositions, "Добавить строку")
+        add_idx = compositions_html.find("Добавить строку")
+        self.assertGreater(add_idx, 0)
+        self.assertNotIn("policy-workspace-catalog-only", compositions_html[add_idx - 500:add_idx])
+        csv_idx = compositions_html.find("Скачать CSV")
+        self.assertGreater(csv_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", compositions_html[csv_idx - 400:csv_idx])
+        docx_idx = compositions_html.find("Скачать DOCX")
+        self.assertGreater(docx_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", compositions_html[docx_idx - 400:docx_idx])
+        self.assertContains(compositions, 'id="typical-service-compositions-actions"', html=False)
+        self.assertNotIn(
+            'id="typical-service-compositions-actions" class="d-none d-flex policy-workspace-catalog-only"',
+            compositions_html,
+        )
+
+        catalog_compositions = self.client.get(reverse("policy_typical_service_compositions_table"))
+        self.assertNotContains(catalog_compositions, 'data-policy-inline="1"')
+        self.assertNotContains(catalog_compositions, 'data-inline-type="rich"')
+        self.assertNotContains(catalog_compositions, 'data-inline-type="select"')
+        self.assertNotContains(catalog_compositions, 'id="typical-service-composition-inline-toolbar"')
+        self.assertNotContains(catalog_compositions, 'data-rich-edit-action="commit"')
+        self.assertContains(catalog_compositions, "policy-service-composition-section-col")
+        self.assertContains(catalog_compositions, "typical-section-dsc-code")
+        self.assertContains(catalog_compositions, "Добавить строку")
+        self.assertContains(catalog_compositions, "Скачать CSV")
+        self.assertContains(catalog_compositions, "Загрузить CSV")
+        self.assertContains(catalog_compositions, "Скачать DOCX")
+        self.assertContains(catalog_compositions, "Загрузить DOCX")
+
+        catalog = self.client.get(reverse("policy_products_table"))
+        self.assertNotContains(catalog, 'data-policy-inline="1"')
+        self.assertNotContains(catalog, 'data-inline-type="text"')
+        self.assertContains(catalog, "Добавить строку")
+
+    def test_workspace_service_goal_add_button_shown_only_when_empty(self):
+        empty = self.client.get(
+            reverse("policy_service_goal_reports_table"),
+            {"product": self.other_product.pk, "workspace": "1"},
+        )
+        empty_html = empty.content.decode()
+        self.assertTrue(empty.context["policy_inline_edit"])
+        self.assertContains(empty, "Пока нет данных.")
+        self.assertContains(empty, "Добавить строку")
+        add_idx = empty_html.find("Добавить строку")
+        self.assertGreater(add_idx, 0)
+        self.assertNotIn("policy-workspace-catalog-only", empty_html[add_idx - 500:add_idx])
+        csv_idx = empty_html.find("Скачать CSV")
+        self.assertGreater(csv_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", empty_html[csv_idx - 400:csv_idx])
+
+        filled = self.client.get(
+            reverse("policy_service_goal_reports_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        filled_html = filled.content.decode()
+        filled_add_idx = filled_html.find("Добавить строку")
+        self.assertGreater(filled_add_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", filled_html[filled_add_idx - 500:filled_add_idx])
+
+    def test_workspace_create_service_goal_report_uses_locked_product(self):
+        response = self.client.post(
+            reverse("service_goal_report_form_create")
+            + f"?workspace=1&product={self.other_product.pk}",
+            {
+                "product": self.product.pk,
+                "service_goal": "Цель empty WS",
+                "service_goal_genitive": "Цели empty WS",
+                "report_title": "Титул empty WS",
+                "product_name": "Имя empty WS",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        created = ServiceGoalReport.objects.get(product=self.other_product)
+        self.assertEqual(created.service_goal, "Цель empty WS")
+        self.assertEqual(created.product_id, self.other_product.pk)
+
+    def test_workspace_typical_service_term_add_button_shown_only_when_empty(self):
+        empty = self.client.get(
+            reverse("policy_typical_service_terms_table"),
+            {"product": self.other_product.pk, "workspace": "1"},
+        )
+        empty_html = empty.content.decode()
+        self.assertTrue(empty.context["policy_inline_edit"])
+        self.assertContains(empty, "Пока нет данных.")
+        self.assertContains(empty, "Добавить строку")
+        add_idx = empty_html.find("Добавить строку")
+        self.assertGreater(add_idx, 0)
+        self.assertNotIn("policy-workspace-catalog-only", empty_html[add_idx - 500:add_idx])
+        csv_idx = empty_html.find("Скачать CSV")
+        self.assertGreater(csv_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", empty_html[csv_idx - 400:csv_idx])
+
+        TypicalServiceTerm.objects.create(
+            product=self.other_product,
+            source_data_weeks="1.0",
+            source_data_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
+            preliminary_report_months="1.0",
+            preliminary_report_term_unit=TypicalServiceTerm.TermUnit.MONTHS,
+            final_report_weeks="2.0",
+            final_report_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
+            position=1,
+        )
+        filled = self.client.get(
+            reverse("policy_typical_service_terms_table"),
+            {"product": self.other_product.pk, "workspace": "1"},
+        )
+        filled_html = filled.content.decode()
+        filled_add_idx = filled_html.find("Добавить строку")
+        self.assertGreater(filled_add_idx, 0)
+        self.assertIn("policy-workspace-catalog-only", filled_html[filled_add_idx - 500:filled_add_idx])
+
+    def test_workspace_create_typical_service_term_uses_locked_product(self):
+        response = self.client.post(
+            reverse("typical_service_term_form_create")
+            + f"?workspace=1&product={self.other_product.pk}",
+            {
+                "product": self.product.pk,
+                "source_data_weeks": "1.0",
+                "source_data_term_unit": TypicalServiceTerm.TermUnit.WEEKS,
+                "preliminary_report_months": "2.0",
+                "preliminary_report_term_unit": TypicalServiceTerm.TermUnit.MONTHS,
+                "final_report_weeks": "3.0",
+                "final_report_term_unit": TypicalServiceTerm.TermUnit.WEEKS,
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        created = TypicalServiceTerm.objects.get(product=self.other_product)
+        self.assertEqual(created.preliminary_report_months, Decimal("2.0"))
+        self.assertEqual(created.product_id, self.other_product.pk)
+
+    def test_workspace_create_modals_lock_product_field(self):
+        params = {"product": self.product.pk, "workspace": "1"}
+        create_names = [
+            "section_form_create",
+            "structure_form_create",
+            "report_structure_form_create",
+            "service_goal_report_form_create",
+            "typical_service_composition_form_create",
+            "typical_service_term_form_create",
+            "tariff_form_create",
+        ]
+        for name in create_names:
+            with self.subTest(name=name):
+                response = self.client.get(reverse(name), params)
+                self.assertEqual(response.status_code, 200, response.content)
+                form = response.context["form"]
+                self.assertTrue(form.fields["product"].disabled)
+                self.assertEqual(form.initial.get("product"), self.product.pk)
+                widget = form["product"].as_widget()
+                self.assertIn("disabled", widget)
+                self.assertIn("readonly-field", widget)
+                self.assertIn(
+                    f"?workspace=1&amp;product={self.product.pk}",
+                    response.content.decode(),
+                )
+                self.assertNotIn(f'value="{self.other_product.pk}"', widget)
+
+    def test_catalog_create_modal_keeps_product_editable(self):
+        response = self.client.get(
+            reverse("section_form_create"),
+            {"product": self.product.pk},
+        )
+        form = response.context["form"]
+        self.assertFalse(form.fields["product"].disabled)
+        self.assertNotIn("disabled", form["product"].as_widget())
+        self.assertNotIn("readonly-field", form["product"].as_widget())
+
+    def test_workspace_create_ignores_tampered_product(self):
+        response = self.client.post(
+            reverse("section_form_create") + f"?workspace=1&product={self.product.pk}",
+            {
+                "product": self.other_product.pk,
+                "code": "SEC-LOCK-WS",
+                "short_name": "lock-en",
+                "short_name_ru": "lock-ru",
+                "name_en": "Locked EN",
+                "name_ru": "Locked RU",
+                "accounting_type": "Раздел",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        created = TypicalSection.objects.get(code="SEC-LOCK-WS")
+        self.assertEqual(created.product_id, self.product.pk)
+
+
+class PolicyProductWorkspaceSaveTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="policy-workspace-save-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        direction = ConsultingDirection.objects.create(position=1)
+        self.consulting_type = ConsultingDirectionType.objects.create(
+            direction=direction,
+            name="Горный WS",
+            position=1,
+        )
+        self.other_type = ConsultingDirectionType.objects.create(
+            direction=direction,
+            name="Экология WS",
+            position=2,
+        )
+        self.service_type = ConsultingServiceType.objects.create(
+            direction=direction,
+            consulting_type=self.consulting_type,
+            name="Аудит WS",
+            code="AWS",
+            position=1,
+        )
+        self.other_service_type = ConsultingServiceType.objects.create(
+            direction=direction,
+            consulting_type=self.other_type,
+            name="ОВОС WS",
+            code="EWS",
+            position=1,
+        )
+        self.service_subtype = ConsultingServiceSubtype.objects.create(
+            direction=direction,
+            service_type=self.service_type,
+            name="Аудит проектных решений WS",
+            position=1,
+        )
+        self.other_subtype = ConsultingServiceSubtype.objects.create(
+            direction=direction,
+            service_type=self.other_service_type,
+            name="Оценка воздействия WS",
+            position=1,
+        )
+        self.owner = GroupMember.objects.create(
+            short_name="IMC WS",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="SAVE-WS",
+            name_en="Save workspace product",
+            display_name="Save display",
+            name_ru="Продукт сохранения",
+            consulting_type_ref=self.consulting_type,
+            service_category_ref=self.service_type,
+            service_subtype_ref=self.service_subtype,
+            position=1,
+        )
+        self.product.owners.set([self.owner])
+        self.goal_report = ServiceGoalReport.objects.create(
+            product=self.product,
+            service_goal="Старая цель",
+            service_goal_genitive="Старой цели",
+            report_title="Старый титул",
+            product_name="Старое имя",
+            position=1,
+        )
+        self.other_product = Product.objects.create(
+            short_name="OTHER-SAVE",
+            name_en="Other save product",
+            display_name="Other save",
+            name_ru="Другой продукт сохранения",
+            consulting_type_ref=self.consulting_type,
+            service_category_ref=self.service_type,
+            service_subtype_ref=self.service_subtype,
+            position=2,
+        )
+
+    def _save(self, payload, product=None):
+        product = product or self.product
+        return self.client.post(
+            reverse("product_workspace_save", args=[product.pk]),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def test_workspace_save_updates_text_fields_and_label(self):
+        response = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {
+                                "short_name": "SAVE-NEW",
+                                "name_en": "Updated EN",
+                                "name_ru": "Обновлённый RU",
+                                "display_name": "New display",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["label"], "SAVE-NEW New display")
+        self.assertEqual(payload["tables"], ["products"])
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.short_name, "SAVE-NEW")
+        self.assertEqual(self.product.name_en, "Updated EN")
+        self.assertEqual(self.product.name_ru, "Обновлённый RU")
+        self.assertEqual(self.product.display_name, "New display")
+
+    def test_workspace_save_rejects_duplicate_short_name(self):
+        response = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {"short_name": self.other_product.short_name},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["field"] == "short_name" for item in payload["errors"]))
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.short_name, "SAVE-WS")
+
+    def test_workspace_save_validates_catalog_cascade(self):
+        response = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {
+                                "consulting_type_ref": self.other_type.pk,
+                                "service_category_ref": self.service_type.pk,
+                                "service_subtype_ref": self.service_subtype.pk,
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        fields = {item["field"] for item in payload["errors"]}
+        self.assertTrue(fields & {"service_category_ref", "service_subtype_ref"})
+
+        success = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {
+                                "consulting_type_ref": self.other_type.pk,
+                                "service_category_ref": self.other_service_type.pk,
+                                "service_subtype_ref": self.other_subtype.pk,
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(success.status_code, 200)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.consulting_type_ref_id, self.other_type.pk)
+        self.assertEqual(self.product.service_category_ref_id, self.other_service_type.pk)
+        self.assertEqual(self.product.service_subtype_ref_id, self.other_subtype.pk)
+        self.assertEqual(self.product.service_code, "EWS")
+
+    def test_workspace_save_sets_group_owner(self):
+        response = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {"owner_ids": ["__group__"]},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        self.product.refresh_from_db()
+        self.assertTrue(self.product.is_group_owner)
+        self.assertEqual(list(self.product.owners.all()), [])
+
+    def test_workspace_save_rejects_foreign_product_row(self):
+        response = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.other_product.pk,
+                            "fields": {"short_name": "HACK"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["field"] == "id" for item in payload["errors"]))
+        self.other_product.refresh_from_db()
+        self.assertEqual(self.other_product.short_name, "OTHER-SAVE")
+
+    def test_workspace_save_updates_service_goal_report_text_fields(self):
+        response = self._save(
+            {
+                "tables": {
+                    "service-goal-reports": [
+                        {
+                            "id": self.goal_report.pk,
+                            "fields": {
+                                "service_goal": "Новая цель",
+                                "service_goal_genitive": "Новой цели",
+                                "report_title": "Новый титул",
+                                "product_name": "Новое имя",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("service-goal-reports", payload["tables"])
+        self.goal_report.refresh_from_db()
+        self.assertEqual(self.goal_report.service_goal, "Новая цель")
+        self.assertEqual(self.goal_report.service_goal_genitive, "Новой цели")
+        self.assertEqual(self.goal_report.report_title, "Новый титул")
+        self.assertEqual(self.goal_report.product_name, "Новое имя")
+        self.assertEqual(self.goal_report.product_id, self.product.pk)
+
+    def test_workspace_save_rejects_foreign_service_goal_report_row(self):
+        foreign = ServiceGoalReport.objects.create(
+            product=self.other_product,
+            service_goal="Чужая цель",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "service-goal-reports": [
+                        {
+                            "id": foreign.pk,
+                            "fields": {"service_goal": "HACK"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["table"] == "service-goal-reports" for item in payload["errors"]))
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.service_goal, "Чужая цель")
+
+    def test_workspace_save_updates_typical_section_fields(self):
+        expertise = ExpertiseDirection.objects.create(
+            name="Налоги WS",
+            short_name="TAX",
+            position=1,
+        )
+        other_expertise = ExpertiseDirection.objects.create(
+            name="Экология WS",
+            short_name="ECO",
+            position=2,
+        )
+        department = OrgUnit.objects.create(
+            company=self.owner,
+            level=1,
+            department_name="Налоговый департамент",
+            short_name="TAX-DEPT",
+            unit_type="expertise",
+            position=1,
+        )
+        other_department = OrgUnit.objects.create(
+            company=self.owner,
+            level=1,
+            department_name="Экологический департамент",
+            short_name="ECO-DEPT",
+            unit_type="expertise",
+            position=2,
+        )
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-WS",
+            short_name="sec-ws",
+            short_name_ru="разд-ws",
+            name_en="Section EN",
+            name_ru="Раздел RU",
+            accounting_type="Раздел",
+            expertise_dir=expertise,
+            expertise_direction=department,
+            exclude_from_tkp_autofill=True,
+            position=1,
+        )
+        specialty = ExpertSpecialty.objects.create(
+            expertise_direction=department,
+            expertise_dir=expertise,
+            specialty="Налоги workspace",
+            position=1,
+        )
+        TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=1)
+
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": section.pk,
+                            "fields": {
+                                "code": "SEC-NEW",
+                                "short_name": "sec-new",
+                                "short_name_ru": "разд-new",
+                                "name_en": "New EN",
+                                "name_ru": "Новый RU",
+                                "accounting_type": "Услуги",
+                                "expertise_dir": other_expertise.pk,
+                                "expertise_direction": other_department.pk,
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("typical-sections", payload["tables"])
+        section.refresh_from_db()
+        self.assertEqual(section.code, "SEC-NEW")
+        self.assertEqual(section.short_name, "sec-new")
+        self.assertEqual(section.short_name_ru, "разд-new")
+        self.assertEqual(section.name_en, "New EN")
+        self.assertEqual(section.name_ru, "Новый RU")
+        self.assertEqual(section.accounting_type, "Услуги")
+        self.assertEqual(section.expertise_dir_id, other_expertise.pk)
+        self.assertEqual(section.expertise_direction_id, other_department.pk)
+        self.assertEqual(section.product_id, self.product.pk)
+        self.assertTrue(section.exclude_from_tkp_autofill)
+        self.assertEqual(
+            list(section.ranked_specialties.values_list("specialty_id", flat=True)),
+            [specialty.pk],
+        )
+
+    def test_workspace_save_rejects_foreign_typical_section_row(self):
+        foreign = TypicalSection.objects.create(
+            product=self.other_product,
+            code="SEC-FOR",
+            short_name="sec-for",
+            name_en="Foreign EN",
+            name_ru="Чужой RU",
+            accounting_type="Раздел",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": foreign.pk,
+                            "fields": {"code": "HACK"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["table"] == "typical-sections" for item in payload["errors"]))
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.code, "SEC-FOR")
+
+    def test_workspace_save_rejects_system_dsc_typical_section(self):
+        dsc = ensure_system_dsc_section(self.product)
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": dsc.pk,
+                            "fields": {"name_ru": "HACK"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["table"] == "typical-sections" for item in payload["errors"]))
+        dsc.refresh_from_db()
+        self.assertEqual(dsc.name_ru, "Описание продукта")
+
+    def test_workspace_save_typical_section_tkp_checkbox(self):
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-TKP",
+            short_name="sec-tkp",
+            short_name_ru="разд-tkp",
+            name_en="TKP EN",
+            name_ru="ТКП RU",
+            accounting_type="Раздел",
+            exclude_from_tkp_autofill=True,
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": section.pk,
+                            "fields": {"exclude_from_tkp_autofill": False},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        section.refresh_from_db()
+        self.assertFalse(section.exclude_from_tkp_autofill)
+
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": section.pk,
+                            "fields": {"exclude_from_tkp_autofill": "true"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        section.refresh_from_db()
+        self.assertTrue(section.exclude_from_tkp_autofill)
+
+    def test_workspace_save_deletes_typical_section(self):
+        ensure_system_dsc_section(self.product)
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-DEL",
+            short_name="sec-del",
+            short_name_ru="разд-del",
+            name_en="Delete EN",
+            name_ru="Удаляемый RU",
+            accounting_type="Раздел",
+            position=2,
+        )
+        structure = SectionStructure.objects.create(
+            product=self.product,
+            section=section,
+            subsections="Подразделы удаления",
+            position=1,
+        )
+        composition = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=section,
+            service_composition="Состав удаления",
+            position=1,
+        )
+        tariff = Tariff.objects.create(
+            product=self.product,
+            section=section,
+            base_rate_vpm="10.00",
+            service_hours=4,
+            service_days_tkp=2,
+            created_by=self.user,
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {"id": section.pk, "deleted": True},
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("typical-sections", payload["tables"])
+        self.assertIn("section-structures", payload["tables"])
+        self.assertIn("typical-service-compositions", payload["tables"])
+        self.assertIn("tariffs", payload["tables"])
+        self.assertFalse(TypicalSection.objects.filter(pk=section.pk).exists())
+        self.assertFalse(SectionStructure.objects.filter(pk=structure.pk).exists())
+        self.assertFalse(TypicalServiceComposition.objects.filter(pk=composition.pk).exists())
+        self.assertFalse(Tariff.objects.filter(pk=tariff.pk).exists())
+        dsc = TypicalSection.objects.get(product=self.product, code="DSC")
+        self.assertTrue(dsc.is_system_dsc)
+
+    def test_workspace_save_rejects_system_dsc_typical_section_delete(self):
+        dsc = ensure_system_dsc_section(self.product)
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {"id": dsc.pk, "deleted": True},
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["table"] == "typical-sections" for item in payload["errors"]))
+        self.assertTrue(TypicalSection.objects.filter(pk=dsc.pk).exists())
+
+    def test_workspace_save_creates_typical_section_after_existing(self):
+        ensure_system_dsc_section(self.product)
+        current = TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-CUR",
+            short_name="sec-cur",
+            short_name_ru="разд-тек",
+            name_en="Current section EN",
+            name_ru="Текущий раздел",
+            accounting_type="Раздел",
+            position=2,
+        )
+        ensure_system_dsc_section(self.product)
+        current.refresh_from_db()
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": "new-1",
+                            "new": True,
+                            "after_id": current.pk,
+                            "fields": {
+                                "code": "SEC-INS",
+                                "short_name": "sec-ins",
+                                "short_name_ru": "разд-вст",
+                                "name_en": "Inserted EN",
+                                "name_ru": "Вставленный RU",
+                                "accounting_type": "Раздел",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("typical-sections", payload["tables"])
+        self.assertIn("section-structures", payload["tables"])
+        self.assertIn("typical-service-compositions", payload["tables"])
+        self.assertIn("tariffs", payload["tables"])
+        created = TypicalSection.objects.get(product=self.product, code="SEC-INS")
+        current.refresh_from_db()
+        self.assertEqual(created.name_ru, "Вставленный RU")
+        self.assertEqual(created.product_id, self.product.pk)
+        self.assertGreater(created.position, current.position)
+
+    def test_workspace_save_typical_section_specialty_ids(self):
+        geology = ExpertSpecialty.objects.create(specialty="Геология WS", position=1)
+        mining = ExpertSpecialty.objects.create(specialty="Горное дело WS", position=2)
+        ecology = ExpertSpecialty.objects.create(specialty="Экология WS", position=3)
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="SEC-SPEC",
+            short_name="sec-spec",
+            name_en="Spec EN",
+            name_ru="Спец RU",
+            accounting_type="Раздел",
+            position=1,
+        )
+        TypicalSectionSpecialty.objects.create(section=section, specialty=geology, rank=1)
+        TypicalSectionSpecialty.objects.create(section=section, specialty=mining, rank=2)
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": section.pk,
+                            "fields": {
+                                "specialty_ids": [mining.pk, ecology.pk, geology.pk],
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertEqual(
+            list(section.ranked_specialties.values_list("specialty_id", "rank")),
+            [(mining.pk, 1), (ecology.pk, 2), (geology.pk, 3)],
+        )
+
+        cleared = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": section.pk,
+                            "fields": {"specialty_ids": []},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(cleared.status_code, 200)
+        self.assertFalse(section.ranked_specialties.exists())
+
+    def test_workspace_save_updates_section_structure_fields(self):
+        current = TypicalSection.objects.create(
+            product=self.product,
+            code="STR-CUR",
+            short_name="str-cur",
+            short_name_ru="стр-тек",
+            name_en="Current structure section",
+            name_ru="Текущий раздел структуры",
+            accounting_type="Раздел",
+            position=1,
+        )
+        target = TypicalSection.objects.create(
+            product=self.product,
+            code="STR-NEW",
+            short_name="str-new",
+            short_name_ru="стр-нов",
+            name_en="New structure section",
+            name_ru="Новый раздел структуры",
+            accounting_type="Раздел",
+            position=2,
+        )
+        structure = SectionStructure.objects.create(
+            product=self.product,
+            section=current,
+            subsections="Старые подразделы",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "section-structures": [
+                        {
+                            "id": structure.pk,
+                            "fields": {
+                                "section": target.pk,
+                                "subsections": "Новые подразделы",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("section-structures", payload["tables"])
+        structure.refresh_from_db()
+        self.assertEqual(structure.section_id, target.pk)
+        self.assertEqual(structure.subsections, "Новые подразделы")
+        self.assertEqual(structure.product_id, self.product.pk)
+
+    def test_workspace_save_creates_section_structure_after_existing(self):
+        current_section = TypicalSection.objects.create(
+            product=self.product,
+            code="STR-CUR",
+            short_name="str-cur",
+            name_en="Current structure section",
+            name_ru="Текущий раздел структуры",
+            accounting_type="Раздел",
+            position=1,
+        )
+        current = SectionStructure.objects.create(
+            product=self.product,
+            section=current_section,
+            subsections="Текущие подразделы",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "section-structures": [
+                        {
+                            "id": "new-1",
+                            "new": True,
+                            "after_id": current.pk,
+                            "fields": {
+                                "section": current_section.pk,
+                                "subsections": "Вставленные подразделы",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("section-structures", payload["tables"])
+        created = SectionStructure.objects.get(product=self.product, subsections="Вставленные подразделы")
+        current.refresh_from_db()
+        self.assertEqual(created.section_id, current_section.pk)
+        self.assertGreater(created.position, current.position)
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="STR-FOR",
+            short_name="str-for",
+            name_en="Foreign structure section",
+            name_ru="Чужой раздел структуры",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign = SectionStructure.objects.create(
+            product=self.other_product,
+            section=foreign_section,
+            subsections="Чужие подразделы",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "section-structures": [
+                        {
+                            "id": foreign.pk,
+                            "fields": {"subsections": "HACK"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["table"] == "section-structures" for item in payload["errors"]))
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.subsections, "Чужие подразделы")
+
+    def test_workspace_save_rejects_section_from_another_product(self):
+        current = TypicalSection.objects.create(
+            product=self.product,
+            code="STR-OWN",
+            short_name="str-own",
+            name_en="Own structure section",
+            name_ru="Свой раздел структуры",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="STR-OTH",
+            short_name="str-oth",
+            name_en="Other product section",
+            name_ru="Раздел другого продукта",
+            accounting_type="Раздел",
+            position=1,
+        )
+        structure = SectionStructure.objects.create(
+            product=self.product,
+            section=current,
+            subsections="Свои подразделы",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "section-structures": [
+                        {
+                            "id": structure.pk,
+                            "fields": {"section": foreign_section.pk},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["field"] == "section" for item in payload["errors"]))
+        structure.refresh_from_db()
+        self.assertEqual(structure.section_id, current.pk)
+
+    def test_workspace_save_updates_report_structure_name(self):
+        report = ReportStructure.objects.create(
+            product=self.product,
+            level=2,
+            code="RS-CUR",
+            name="Старое наименование отчета",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "report-structures": [
+                        {
+                            "id": report.pk,
+                            "fields": {"name": "Новое наименование отчета"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("report-structures", payload["tables"])
+        report.refresh_from_db()
+        self.assertEqual(report.name, "Новое наименование отчета")
+        self.assertEqual(report.code, "RS-CUR")
+        self.assertEqual(report.level, 2)
+        self.assertEqual(report.product_id, self.product.pk)
+
+    def test_workspace_save_rejects_foreign_report_structure_row(self):
+        foreign = ReportStructure.objects.create(
+            product=self.other_product,
+            level=1,
+            code="RS-FOR",
+            name="Чужое наименование",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "report-structures": [
+                        {
+                            "id": foreign.pk,
+                            "fields": {"name": "HACK"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["table"] == "report-structures" for item in payload["errors"]))
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.name, "Чужое наименование")
+
+    def test_workspace_save_updates_tariff_fields(self):
+        current = TypicalSection.objects.create(
+            product=self.product,
+            code="TAR-CUR",
+            short_name="tar-cur",
+            name_en="Current tariff section",
+            name_ru="Текущий раздел тарифа",
+            accounting_type="Раздел",
+            position=1,
+        )
+        target = TypicalSection.objects.create(
+            product=self.product,
+            code="TAR-NEW",
+            short_name="tar-new",
+            name_en="New tariff section",
+            name_ru="Новый раздел тарифа",
+            accounting_type="Раздел",
+            position=2,
+        )
+        tariff = Tariff.objects.create(
+            product=self.product,
+            section=current,
+            base_rate_vpm="10.50",
+            service_hours=8,
+            service_days_tkp=5,
+            created_by=self.user,
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "tariffs": [
+                        {
+                            "id": tariff.pk,
+                            "fields": {
+                                "section": target.pk,
+                                "base_rate_vpm": "12.75",
+                                "service_hours": "16",
+                                "service_days_tkp": "9",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("tariffs", payload["tables"])
+        tariff.refresh_from_db()
+        self.assertEqual(tariff.section_id, target.pk)
+        self.assertEqual(tariff.base_rate_vpm, Decimal("12.75"))
+        self.assertEqual(tariff.service_hours, 16)
+        self.assertEqual(tariff.service_days_tkp, 9)
+        self.assertEqual(tariff.product_id, self.product.pk)
+        self.assertEqual(tariff.created_by_id, self.user.pk)
+
+    def test_workspace_save_creates_tariff_after_existing(self):
+        current_section = TypicalSection.objects.create(
+            product=self.product,
+            code="TAR-CUR",
+            short_name="tar-cur",
+            name_en="Current tariff section",
+            name_ru="Текущий раздел тарифа",
+            accounting_type="Раздел",
+            position=1,
+        )
+        current = Tariff.objects.create(
+            product=self.product,
+            section=current_section,
+            base_rate_vpm="10.50",
+            service_hours=8,
+            service_days_tkp=5,
+            created_by=self.user,
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "tariffs": [
+                        {
+                            "id": "new-1",
+                            "new": True,
+                            "after_id": current.pk,
+                            "fields": {
+                                "section": current_section.pk,
+                                "base_rate_vpm": "1.00",
+                                "service_hours": "0",
+                                "service_days_tkp": "0",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("tariffs", payload["tables"])
+        created = Tariff.objects.exclude(pk=current.pk).get(product=self.product, section=current_section)
+        current.refresh_from_db()
+        self.assertEqual(created.created_by_id, self.user.pk)
+        self.assertEqual(created.base_rate_vpm, Decimal("1.00"))
+        self.assertGreater(created.position, current.position)
+        self.user.is_superuser = True
+        self.user.save(update_fields=["is_superuser"])
+        manager_group, _ = Group.objects.get_or_create(name=DEPARTMENT_HEAD_GROUP)
+        self.user.groups.add(manager_group)
+        other = get_user_model().objects.create_user(
+            username="policy-tariff-owner",
+            password="secret123",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Петров",
+        )
+        other.groups.add(manager_group)
+        Employee.objects.create(user=other, job_title="Руководитель направления ТДД")
+        section = TypicalSection.objects.create(
+            product=self.product,
+            code="TAR-OWN",
+            short_name="tar-own",
+            name_en="Owner tariff section",
+            name_ru="Раздел тарифа владельца",
+            accounting_type="Раздел",
+            position=1,
+        )
+        tariff = Tariff.objects.create(
+            product=self.product,
+            section=section,
+            base_rate_vpm="4.00",
+            service_hours=3,
+            service_days_tkp=2,
+            created_by=self.user,
+            position=1,
+        )
+        table = self.client.get(
+            reverse("policy_tariffs_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        self.assertContains(table, 'data-inline-field="owner"', html=False)
+        self.assertContains(table, 'data-inline-type="select"', html=False)
+        self.assertIn('"owners"', table.context["policy_inline_options_json"])
+        self.assertIn(f'"id": {other.pk}', table.context["policy_inline_options_json"])
+        self.assertIn("Руководитель направления ТДД", table.context["policy_inline_options_json"])
+
+        response = self._save(
+            {
+                "tables": {
+                    "tariffs": [
+                        {
+                            "id": tariff.pk,
+                            "fields": {"owner": other.pk},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        tariff.refresh_from_db()
+        self.assertEqual(tariff.created_by_id, other.pk)
+
+    def test_workspace_save_rejects_foreign_tariff_row(self):
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="TAR-FOR",
+            short_name="tar-for",
+            name_en="Foreign tariff section",
+            name_ru="Чужой раздел тарифа",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign = Tariff.objects.create(
+            product=self.other_product,
+            section=foreign_section,
+            base_rate_vpm="3.00",
+            service_hours=2,
+            service_days_tkp=1,
+            created_by=self.user,
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "tariffs": [
+                        {
+                            "id": foreign.pk,
+                            "fields": {"service_hours": "99"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["table"] == "tariffs" for item in payload["errors"]))
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.service_hours, 2)
+
+    def test_workspace_save_rejects_tariff_section_from_another_product(self):
+        current = TypicalSection.objects.create(
+            product=self.product,
+            code="TAR-OWN",
+            short_name="tar-own",
+            name_en="Own tariff section",
+            name_ru="Свой раздел тарифа",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="TAR-OTH",
+            short_name="tar-oth",
+            name_en="Other product tariff section",
+            name_ru="Раздел тарифа другого продукта",
+            accounting_type="Раздел",
+            position=1,
+        )
+        tariff = Tariff.objects.create(
+            product=self.product,
+            section=current,
+            base_rate_vpm="4.00",
+            service_hours=3,
+            service_days_tkp=2,
+            created_by=self.user,
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "tariffs": [
+                        {
+                            "id": tariff.pk,
+                            "fields": {"section": foreign_section.pk},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["field"] == "section" for item in payload["errors"]))
+        tariff.refresh_from_db()
+        self.assertEqual(tariff.section_id, current.pk)
+
+    def test_workspace_save_updates_typical_service_term_fields(self):
+        term = TypicalServiceTerm.objects.create(
+            product=self.product,
+            source_data_weeks="2.0",
+            source_data_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
+            preliminary_report_months="1.5",
+            preliminary_report_term_unit=TypicalServiceTerm.TermUnit.MONTHS,
+            final_report_weeks="3.0",
+            final_report_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-service-terms": [
+                        {
+                            "id": term.pk,
+                            "fields": {
+                                "source_data_weeks": "4.0",
+                                "source_data_term_unit": TypicalServiceTerm.TermUnit.DAYS,
+                                "preliminary_report_months": "2.5",
+                                "preliminary_report_term_unit": TypicalServiceTerm.TermUnit.WEEKS,
+                                "final_report_weeks": "6",
+                                "final_report_term_unit": TypicalServiceTerm.TermUnit.MONTHS,
+                                "product": self.other_product.pk,
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("typical-service-terms", payload["tables"])
+        term.refresh_from_db()
+        self.assertEqual(term.source_data_weeks, Decimal("4.0"))
+        self.assertEqual(term.source_data_term_unit, TypicalServiceTerm.TermUnit.DAYS)
+        self.assertEqual(term.preliminary_report_months, Decimal("2.5"))
+        self.assertEqual(term.preliminary_report_term_unit, TypicalServiceTerm.TermUnit.WEEKS)
+        self.assertEqual(term.final_report_weeks, Decimal("6"))
+        self.assertEqual(term.final_report_term_unit, TypicalServiceTerm.TermUnit.MONTHS)
+        self.assertEqual(term.product_id, self.product.pk)
+
+    def test_workspace_save_rejects_typical_service_term_fractional_days(self):
+        term = TypicalServiceTerm.objects.create(
+            product=self.product,
+            source_data_weeks="2.0",
+            source_data_term_unit=TypicalServiceTerm.TermUnit.WEEKS,
+            preliminary_report_months="1.5",
+            preliminary_report_term_unit=TypicalServiceTerm.TermUnit.MONTHS,
+            final_report_weeks="3.0",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-service-terms": [
+                        {
+                            "id": term.pk,
+                            "fields": {
+                                "source_data_weeks": "2.5",
+                                "source_data_term_unit": TypicalServiceTerm.TermUnit.DAYS,
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any(
+                item["table"] == "typical-service-terms" and item["field"] == "source_data_weeks"
+                for item in payload["errors"]
+            )
+        )
+        term.refresh_from_db()
+        self.assertEqual(term.source_data_weeks, Decimal("2.0"))
+        self.assertEqual(term.source_data_term_unit, TypicalServiceTerm.TermUnit.WEEKS)
+
+    def test_workspace_save_rejects_foreign_typical_service_term_row(self):
+        foreign = TypicalServiceTerm.objects.create(
+            product=self.other_product,
+            source_data_weeks="1.0",
+            preliminary_report_months="1.0",
+            final_report_weeks="1.0",
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-service-terms": [
+                        {
+                            "id": foreign.pk,
+                            "fields": {"final_report_weeks": "99"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any(item["table"] == "typical-service-terms" for item in payload["errors"]))
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.final_report_weeks, Decimal("1.0"))
+
+    def test_workspace_save_updates_typical_service_composition_fields(self):
+        current = TypicalSection.objects.create(
+            product=self.product,
+            code="CMP-CUR",
+            short_name="cmp-cur",
+            name_en="Current composition section",
+            name_ru="Текущий раздел состава",
+            accounting_type="Раздел",
+            position=1,
+        )
+        target = TypicalSection.objects.create(
+            product=self.product,
+            code="CMP-NEW",
+            short_name="cmp-new",
+            name_en="New composition section",
+            name_ru="Новый раздел состава",
+            accounting_type="Раздел",
+            position=2,
+        )
+        item = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=current,
+            service_composition="Старый состав",
+            service_composition_editor_state={
+                "html": "<p>Старый состав</p>",
+                "plain_text": "Старый состав",
+            },
+            position=1,
+        )
+        editor_state = {
+            "html": "<p><strong>Новый состав</strong></p>",
+            "plain_text": "Новый состав",
+        }
+        response = self._save(
+            {
+                "tables": {
+                    "typical-service-compositions": [
+                        {
+                            "id": item.pk,
+                            "fields": {
+                                "section": target.pk,
+                                "service_composition_editor_state": editor_state,
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("typical-service-compositions", payload["tables"])
+        item.refresh_from_db()
+        self.assertEqual(item.section_id, target.pk)
+        self.assertEqual(item.service_composition, "Новый состав")
+        self.assertEqual(item.service_composition_editor_state, editor_state)
+        self.assertEqual(item.product_id, self.product.pk)
+
+    def test_workspace_save_creates_typical_service_composition_after_existing(self):
+        current_section = TypicalSection.objects.create(
+            product=self.product,
+            code="CMP-CUR",
+            short_name="cmp-cur",
+            name_en="Current composition section",
+            name_ru="Текущий раздел состава",
+            accounting_type="Раздел",
+            position=1,
+        )
+        current = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=current_section,
+            service_composition="Текущий состав",
+            position=1,
+        )
+        editor_state = {"html": "<p>Вставленный состав</p>", "plain_text": "Вставленный состав"}
+        response = self._save(
+            {
+                "tables": {
+                    "typical-service-compositions": [
+                        {
+                            "id": "new-1",
+                            "new": True,
+                            "after_id": current.pk,
+                            "fields": {
+                                "section": current_section.pk,
+                                "service_composition_editor_state": editor_state,
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("typical-service-compositions", payload["tables"])
+        created = TypicalServiceComposition.objects.get(
+            product=self.product,
+            service_composition="Вставленный состав",
+        )
+        current.refresh_from_db()
+        self.assertEqual(created.section_id, current_section.pk)
+        self.assertEqual(created.service_composition_editor_state, editor_state)
+        self.assertGreater(created.position, current.position)
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="CMP-FOR",
+            short_name="cmp-for",
+            name_en="Foreign composition section",
+            name_ru="Чужой раздел состава",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign = TypicalServiceComposition.objects.create(
+            product=self.other_product,
+            section=foreign_section,
+            service_composition="Чужой состав",
+            service_composition_editor_state={
+                "html": "<p>Чужой состав</p>",
+                "plain_text": "Чужой состав",
+            },
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-service-compositions": [
+                        {
+                            "id": foreign.pk,
+                            "fields": {
+                                "service_composition_editor_state": {
+                                    "html": "<p>Взлом</p>",
+                                    "plain_text": "Взлом",
+                                },
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any(item["table"] == "typical-service-compositions" for item in payload["errors"])
+        )
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.service_composition, "Чужой состав")
+
+    def test_workspace_save_rejects_other_product_section_for_composition(self):
+        current = TypicalSection.objects.create(
+            product=self.product,
+            code="CMP-OWN",
+            short_name="cmp-own",
+            name_en="Own composition section",
+            name_ru="Свой раздел состава",
+            accounting_type="Раздел",
+            position=1,
+        )
+        foreign_section = TypicalSection.objects.create(
+            product=self.other_product,
+            code="CMP-X",
+            short_name="cmp-x",
+            name_en="Other product section",
+            name_ru="Раздел другого продукта",
+            accounting_type="Раздел",
+            position=1,
+        )
+        item = TypicalServiceComposition.objects.create(
+            product=self.product,
+            section=current,
+            service_composition="Состав",
+            service_composition_editor_state={"html": "<p>Состав</p>", "plain_text": "Состав"},
+            position=1,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-service-compositions": [
+                        {
+                            "id": item.pk,
+                            "fields": {"section": foreign_section.pk},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any(
+                item["table"] == "typical-service-compositions" and item["field"] == "section"
+                for item in payload["errors"]
+            )
+        )
+        item.refresh_from_db()
+        self.assertEqual(item.section_id, current.pk)
+
+    def test_workspace_save_requires_staff(self):
+        anonymous = Client()
+        response = anonymous.post(
+            reverse("product_workspace_save", args=[self.product.pk]),
+            data=json.dumps({"tables": {"products": []}}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 302)
+
+        nonstaff = get_user_model().objects.create_user(
+            username="policy-workspace-save-nonstaff",
+            password="secret123",
+            is_staff=False,
+        )
+        self.client.force_login(nonstaff)
+        forbidden = self._save({"tables": {"products": []}})
+        self.assertEqual(forbidden.status_code, 302)
+
+
+class PolicyFragmentMutationContractTests(TestCase):
+    product_dependencies = [
+        "consulting-directions",
+        "products",
+        "service-goal-reports",
+        "typical-sections",
+        "section-structures",
+        "report-structures",
+        "typical-service-compositions",
+        "typical-service-terms",
+        "tariffs",
+    ]
+    dependencies = {
+        "consulting-direction": product_dependencies,
+        "product": product_dependencies,
+        "typical-section": [
+            "typical-sections",
+            "section-structures",
+            "typical-service-compositions",
+            "tariffs",
+        ],
+        "section-structure": ["section-structures"],
+        "report-structure": ["report-structures"],
+        "service-goal-report": ["service-goal-reports"],
+        "typical-service-composition": ["typical-service-compositions"],
+        "typical-service-term": ["typical-service-terms"],
+        "expertise-direction": [
+            "expertise-directions",
+            "typical-sections",
+            "specialty-tariffs",
+        ],
+        "grade": ["grades"],
+        "expert-specialty": [
+            "expert-specialties",
+            "specialty-tariffs",
+            "typical-sections",
+        ],
+        "specialty-tariff": ["specialty-tariffs"],
+        "tariff": ["tariffs"],
+    }
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="policy-fragment-contract",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="FC1",
+            name_en="Fragment contract",
+            display_name="Fragment contract",
+            name_ru="Фрагментный контракт",
+            position=1,
+        )
+        self.section = TypicalSection.objects.create(
+            product=self.product,
+            code="FC-1",
+            short_name="fc-section",
+            short_name_ru="фрагмент",
+            name_en="Fragment section",
+            name_ru="Фрагментный раздел",
+            accounting_type="Раздел",
+            position=1,
+        )
+
+    def _assert_small_response(self, response, expected):
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"")
+        self.assertEqual(response["HX-Reswap"], "none")
+        self.assertEqual(json.loads(response["HX-Trigger"]), {"policy-updated": expected})
+        self.assertNotContains(response, 'id="policy-pane"', html=False)
+
+    def test_central_url_entity_map_has_exact_dependencies(self):
+        for url_name, entity in policy_views.POLICY_MUTATION_URL_ENTITY.items():
+            with self.subTest(url_name=url_name, entity=entity):
+                request = SimpleNamespace(
+                    resolver_match=SimpleNamespace(url_name=url_name)
+                )
+                detail = policy_views._policy_mutation_detail(request)
+                self.assertEqual(detail["tables"], self.dependencies[entity])
+                self.assertEqual(
+                    detail["refreshFilters"],
+                    entity in {"product", "consulting-direction"},
+                )
+                self.assertEqual(
+                    detail.get("productsReordered", False),
+                    url_name in {"product_move_up", "product_move_down"},
+                )
+                if url_name.endswith(("_move_up", "_move_down")):
+                    self.assertEqual(
+                        detail["reorderedTable"],
+                        policy_views.POLICY_ENTITY_TABLE_KEY[entity],
+                    )
+                else:
+                    self.assertNotIn("reorderedTable", detail)
+
+    def test_product_reorder_and_section_cascade_use_exact_contracts(self):
+        second = Product.objects.create(
+            short_name="FC2",
+            name_en="Second fragment contract",
+            display_name="Second fragment contract",
+            name_ru="Второй фрагментный контракт",
+            position=2,
+        )
+        product_response = self.client.post(
+            reverse("product_move_up", args=[second.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_small_response(
+            product_response,
+            {
+                "tables": self.product_dependencies,
+                "refreshFilters": True,
+                "reorderedTable": "products",
+                "productsReordered": True,
+            },
+        )
+        caches["policy"].clear()
+        catalog = self.client.get(reverse("policy_filter_catalog")).json()["products"]
+        self.assertEqual([item["id"] for item in catalog[:2]], [second.pk, self.product.pk])
+
+        section_response = self.client.post(
+            reverse("section_delete", args=[self.section.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_small_response(
+            section_response,
+            {
+                "tables": self.dependencies["typical-section"],
+                "refreshFilters": False,
+            },
+        )
+
+    def test_invalid_htmx_form_and_non_htmx_fallback_stay_compatible(self):
+        invalid = self.client.post(
+            reverse("product_form_create"),
+            {},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(invalid.status_code, 200)
+        self.assertEqual(invalid["HX-Retarget"], "#policy-modal .modal-content")
+        self.assertEqual(invalid["HX-Reswap"], "innerHTML")
+        self.assertContains(invalid, 'hx-target="#policy-modal .modal-content"', html=False)
+        self.assertNotContains(invalid, 'id="policy-pane"', html=False)
+
+        fallback = self.client.post(
+            reverse("product_move_down", args=[self.product.pk]),
+        )
+        self.assertEqual(fallback.status_code, 200)
+        self.assertEqual(fallback["HX-Trigger"], "policy-updated")
+        self.assertContains(fallback, 'id="policy-pane"', html=False)
+
+    def test_tariff_fragment_remains_user_scoped_after_mutation(self):
+        manager_group, _ = Group.objects.get_or_create(name=DEPARTMENT_HEAD_GROUP)
+        self.user.groups.add(manager_group)
+        other = get_user_model().objects.create_user(
+            username="policy-fragment-other",
+            password="secret123",
+        )
+        own_tariff = Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            created_by=self.user,
+            position=1,
+        )
+        Tariff.objects.create(
+            product=self.product,
+            section=self.section,
+            created_by=other,
+            position=1,
+        )
+
+        fragment = self.client.get(reverse("policy_tariffs_table"))
+        self.assertEqual(fragment.context["paginator"].count, 1)
+        self.assertEqual(fragment.context["tariffs"][0], own_tariff)
+
+        response = self.client.post(
+            reverse("tariff_delete", args=[own_tariff.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_small_response(
+            response,
+            {"tables": ["tariffs"], "refreshFilters": False},
+        )
+
+    def test_forms_uploads_sidebars_and_gantt_are_fragment_scoped(self):
+        templates_dir = Path(__file__).resolve().parent / "templates" / "policy_app"
+        for form_name in (
+            "product_form.html",
+            "section_form.html",
+            "structure_form.html",
+            "report_structure_form.html",
+            "service_goal_report_form.html",
+            "typical_service_composition_form.html",
+            "typical_service_term_form.html",
+            "consulting_direction_form.html",
+            "expertise_direction_form.html",
+            "grade_form.html",
+            "specialty_tariff_form.html",
+            "tariff_form.html",
+        ):
+            with self.subTest(form=form_name):
+                source = (templates_dir / form_name).read_text()
+                self.assertIn('hx-target="#policy-modal .modal-content"', source)
+                self.assertIn('hx-swap="innerHTML"', source)
+                self.assertNotIn('hx-target="#policy-pane"', source)
+
+        specialty_form = (
+            Path(__file__).resolve().parent.parent
+            / "experts_app"
+            / "templates"
+            / "experts_app"
+            / "specialty_form.html"
+        ).read_text()
+        self.assertIn('hx-target="#policy-modal .modal-content"', specialty_form)
+        self.assertIn('data-policy-modal-size="xl"', specialty_form)
+        self.assertNotIn('hx-target="#policy-pane"', specialty_form)
+        self.assertNotIn('hx-target="#experts-pane"', specialty_form)
+
+        root = Path(__file__).resolve().parents[1]
+        policy_js = (
+            root / "core" / "static" / "core" / "js" / "policy-panels.js"
+        ).read_text()
+        index_html = (root / "templates" / "index.html").read_text()
+        self.assertIn("handlePolicyUpdated(data.policyUpdate)", policy_js)
+        self.assertNotIn("htmx.ajax('GET', '/policy/policy/partial/'", policy_js)
+        self.assertIn("root.id === 'policy-pane' && data.policyUpdate", policy_js)
+        self.assertIn("e.target.id === 'projects-pane'", policy_js)
+        self.assertIn("POLICY_MANAGED_REFRESH_CONCURRENCY = 2", policy_js)
+        self.assertNotIn("#policy-pane tbody tr[data-product-id]", index_html)
+        self.assertEqual(index_html.count("event?.detail?.catalog || window.__policyProductCatalog"), 2)
+
+
+class TypicalSectionPaginationTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="typical-sections-pagination-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def _create_product(
+        self,
+        short_name,
+        *,
+        position=1,
+        consulting="Пилот Горный",
+        category="Пилот Аудит",
+        subtype="Пилот Проверка",
+    ):
+        return Product.objects.create(
+            short_name=short_name,
+            name_en=f"{short_name} product",
+            display_name=f"{short_name} display",
+            name_ru=f"Продукт {short_name}",
+            consulting_type=consulting,
+            service_category=category,
+            service_subtype=subtype,
+            position=position,
+        )
+
+    def _create_sections(self, product, count, *, prefix="SEC", start_position=1):
+        return [
+            TypicalSection.objects.create(
+                product=product,
+                code=f"{prefix}-{index:03d}",
+                short_name=f"{prefix.lower()}-{index:03d}",
+                short_name_ru=f"{prefix.lower()}-ru-{index:03d}",
+                name_en=f"{prefix} section {index}",
+                name_ru=f"Раздел {prefix} {index}",
+                accounting_type="Раздел",
+                position=start_position + index - 1,
+            )
+            for index in range(1, count + 1)
+        ]
+
+    def test_zero_one_twenty_five_and_twenty_six_rows(self):
+        endpoint = reverse("policy_typical_sections_table")
+
+        response = self.client.get(endpoint)
+        self.assertEqual(response.context["paginator"].count, 0)
+        self.assertContains(response, "0–0 из 0")
+        self.assertNotContains(response, "Показаны")
+        self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
+
+        product = self._create_product("COUNT")
+        self._create_sections(product, 1)
+        response = self.client.get(endpoint)
+        self.assertEqual(response.context["paginator"].count, 1)
+        self.assertContains(response, "1–1 из 1")
+        self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
+
+        self._create_sections(product, 24, prefix="MORE", start_position=2)
+        response = self.client.get(endpoint)
+        self.assertEqual(response.context["paginator"].count, 25)
+        self.assertContains(response, "1–25 из 25")
+        self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
+
+        self._create_sections(product, 1, prefix="LAST", start_position=26)
+        response = self.client.get(endpoint)
+        self.assertEqual(response.context["paginator"].count, 26)
+        self.assertEqual(len(response.context["sections"]), 25)
+        self.assertContains(response, "1–25 из 26")
+        self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
+        self.assertContains(
+            response,
+            'class="pagination pagination-sm mb-0 classifiers-pagination"',
+            html=False,
+        )
+
+    def test_third_page_range_and_invalid_pages_are_clamped(self):
+        product = self._create_product("PAGES")
+        sections = self._create_sections(product, 68)
+        endpoint = reverse("policy_typical_sections_table")
+
+        third_page = self.client.get(endpoint, {"page": "3"})
+        self.assertEqual(third_page.context["page_obj"].number, 3)
+        self.assertEqual(list(third_page.context["sections"]), sections[50:])
+        self.assertContains(third_page, "51–68 из 68")
+        self.assertNotContains(third_page, "Показаны")
+
+        invalid_page = self.client.get(endpoint, {"page": "invalid"})
+        self.assertEqual(invalid_page.context["page_obj"].number, 1)
+
+        empty_page = self.client.get(endpoint, {"page": ""})
+        self.assertEqual(empty_page.context["page_obj"].number, 1)
+
+        oversized_page = self.client.get(endpoint, {"page": "999"})
+        self.assertEqual(oversized_page.context["page_obj"].number, 3)
+
+    def test_page_size_control_normalizes_values_and_targets_current_wrapper(self):
+        product = self._create_product("PAGE-SIZE")
+        self._create_sections(product, 68)
+        endpoint = reverse("policy_typical_sections_table")
+
+        default = self.client.get(endpoint, {"product": product.pk})
+        self.assertEqual(default.context["policy_page_size"], 25)
+        self.assertEqual(default.context["policy_page_size_options"], (25, 50, 100))
+        self.assertEqual(len(default.context["sections"]), 25)
+        self.assertContains(default, 'data-policy-table-page-size="25"', html=False)
+        self.assertContains(default, 'name="page_size"', html=False)
+        self.assertContains(default, '<option value="25" selected>', html=False)
+        self.assertContains(default, '<option value="50">', html=False)
+        self.assertContains(default, '<option value="100">', html=False)
+        self.assertContains(default, 'hx-trigger="change"', html=False)
+        self.assertContains(default, 'hx-target="#policy-typical-sections-section"', html=False)
+        self.assertContains(default, 'hx-swap="outerHTML"', html=False)
+        page_size_query = parse_qs(
+            urlparse(unescape(default.context["policy_page_size_url"])).query
+        )
+        self.assertEqual(page_size_query["product"], [str(product.pk)])
+        self.assertEqual(page_size_query["page"], ["1"])
+        self.assertNotIn("page_size", page_size_query)
+
+        invalid = self.client.get(endpoint, {"product": product.pk, "page_size": "27"})
+        self.assertEqual(invalid.context["policy_page_size"], 25)
+        self.assertEqual(len(invalid.context["sections"]), 25)
+
+        fifty = self.client.get(
+            endpoint,
+            {"product": product.pk, "page_size": 50, "page": 2},
+        )
+        self.assertEqual(fifty.context["policy_page_size"], 50)
+        self.assertEqual(len(fifty.context["sections"]), 18)
+        self.assertContains(fifty, "51–68 из 68")
+
+        hundred = self.client.get(endpoint, {"product": product.pk, "page_size": 100})
+        self.assertEqual(hundred.context["policy_page_size"], 100)
+        self.assertEqual(len(hundred.context["sections"]), 68)
+        self.assertContains(hundred, "1–68 из 68")
+
+    def test_combined_filters_and_repeated_products(self):
+        first = self._create_product(
+            "FILTER-A",
+            consulting="Пилот Горный",
+            category="Пилот Аудит",
+            subtype="Пилот Проверка",
+        )
+        second = self._create_product(
+            "FILTER-B",
+            position=2,
+            consulting="Пилот Горный",
+            category="Пилот Инжиниринг",
+            subtype="Пилот Проектирование",
+        )
+        third = self._create_product(
+            "FILTER-C",
+            position=3,
+            consulting="Пилот Финансовый",
+            category="Пилот Аудит",
+            subtype="Пилот Проверка",
+        )
+        self._create_sections(first, 1, prefix="FIRST")
+        self._create_sections(second, 1, prefix="SECOND")
+        self._create_sections(third, 1, prefix="THIRD")
+        endpoint = reverse("policy_typical_sections_table")
+
+        combined = self.client.get(
+            endpoint,
+            {
+                "consulting": "Пилот Горный",
+                "category": "Пилот Аудит",
+                "subtype": "Пилот Проверка",
+                "product": [first.pk, third.pk],
+            },
+        )
+        self.assertEqual(combined.context["paginator"].count, 1)
+        self.assertEqual(combined.context["sections"][0].product_id, first.pk)
+
+        repeated_products = self.client.get(
+            endpoint,
+            {"product": [first.pk, second.pk]},
+        )
+        self.assertEqual(repeated_products.context["paginator"].count, 2)
+        self.assertEqual(
+            {section.product_id for section in repeated_products.context["sections"]},
+            {first.pk, second.pk},
+        )
+
+    def test_filters_are_applied_before_pagination(self):
+        matching = self._create_product("MATCH", consulting="Пилот Горный")
+        other = self._create_product("OTHER", position=2, consulting="Пилот Финансовый")
+        self._create_sections(matching, 2, prefix="MATCH")
+        self._create_sections(other, 55, prefix="OTHER")
+
+        response = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"consulting": "Пилот Горный"},
+        )
+
+        self.assertEqual(response.context["paginator"].count, 2)
+        self.assertEqual(len(response.context["sections"]), 2)
+        self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
+
+    def test_pagination_links_preserve_all_filters(self):
+        first = self._create_product(
+            "LINK-A",
+            consulting="Пилот Горный",
+            category="Пилот Аудит",
+            subtype="Пилот Проверка",
+        )
+        second = self._create_product(
+            "LINK-B",
+            position=2,
+            consulting="Пилот Горный",
+            category="Пилот Аудит",
+            subtype="Пилот Проверка",
+        )
+        self._create_sections(first, 30, prefix="LINKA")
+        self._create_sections(second, 30, prefix="LINKB")
+
+        response = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {
+                "consulting": "Пилот Горный",
+                "category": "Пилот Аудит",
+                "subtype": "Пилот Проверка",
+                "product": [first.pk, second.pk],
+                "page_size": 25,
+            },
+        )
+
+        html = unescape(response.content.decode())
+        match = re.search(r'hx-get="([^"]*[?&]page=2)"', html)
+        self.assertIsNotNone(match)
+        query = parse_qs(urlparse(match.group(1)).query)
+        self.assertEqual(query["consulting"], ["Пилот Горный"])
+        self.assertEqual(query["category"], ["Пилот Аудит"])
+        self.assertEqual(query["subtype"], ["Пилот Проверка"])
+        self.assertEqual(query["product"], [str(first.pk), str(second.pk)])
+        self.assertEqual(query["page_size"], ["25"])
+        self.assertEqual(query["page"], ["2"])
+        self.assertContains(response, 'hx-target="#policy-typical-sections-section"', html=False)
+        self.assertContains(response, 'hx-swap="outerHTML"', html=False)
+        download_match = re.search(
+            r'<a href="([^"]+)"\s+id="sections-csv-download-btn"',
+            html,
+        )
+        self.assertIsNotNone(download_match)
+        download_query = parse_qs(urlparse(download_match.group(1)).query)
+        self.assertNotIn("page", download_query)
+        self.assertNotIn("page_size", download_query)
+        self.assertEqual(download_query["product"], [str(first.pk), str(second.pk)])
+
+    def test_system_dsc_section_is_rendered(self):
+        product = self._create_product("DSC-PAGE")
+        dsc = ensure_system_dsc_section(product)
+
+        response = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"product": product.pk},
+        )
+
+        self.assertContains(response, f'id="section-sel-{dsc.pk}"', html=False)
+        self.assertContains(response, 'data-system-section="1"', html=False)
+        self.assertContains(response, "typical-section-dsc-code")
+        self.assertContains(response, "typical-section-system-row")
+
+    def test_csv_exports_full_filtered_set_without_pagination(self):
+        matching = self._create_product("CSV-PAGE", consulting="Пилот Горный")
+        other = self._create_product("CSV-OTHER", position=2, consulting="Пилот Финансовый")
+        self._create_sections(matching, 55, prefix="CSV")
+        self._create_sections(other, 2, prefix="OTHER")
+
+        fragment = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"consulting": "Пилот Горный", "product": matching.pk},
+        )
+        self.assertEqual(len(fragment.context["sections"]), 25)
+        self.assertEqual(fragment.context["paginator"].count, 55)
+
+        response = self.client.get(
+            reverse("section_csv_download"),
+            {
+                "consulting": "Пилот Горный",
+                "product": matching.pk,
+                "page": 2,
+                "page_size": 25,
+            },
+        )
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(rows), 56)
+        self.assertEqual({row[0] for row in rows[1:]}, {"CSV-PAGE"})
+
+    def test_typical_sections_use_stable_product_name_position_id_order(self):
+        product_b = self._create_product("B-PRODUCT", position=1)
+        product_a = self._create_product("A-PRODUCT", position=2)
+        b_section = self._create_sections(product_b, 1, prefix="B", start_position=1)[0]
+        a_second = self._create_sections(product_a, 1, prefix="A2", start_position=2)[0]
+        a_first_older = self._create_sections(product_a, 1, prefix="A1", start_position=1)[0]
+        a_first_newer = self._create_sections(product_a, 1, prefix="A1B", start_position=1)[0]
+
+        response = self.client.get(reverse("policy_typical_sections_table"))
+
+        self.assertEqual(
+            [section.pk for section in response.context["sections"]],
+            [a_first_older.pk, a_first_newer.pk, a_second.pk, b_section.pk],
+        )
+
+    def test_legacy_policy_partial_remains_unpaginated(self):
+        product = self._create_product("LEGACY")
+        sections = self._create_sections(product, 51)
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(list(response.context["sections"]), sections)
+        self.assertNotContains(response, "1–25 из 51")
+        self.assertContains(response, sections[-1].code)
+
+    def test_filter_catalog_is_complete_and_globally_ordered(self):
+        later = self._create_product(
+            "CAT-LATER",
+            position=2,
+            consulting="Пилот Финансовый",
+            category="Пилот Оценка",
+            subtype="Пилот Активы",
+        )
+        first = self._create_product(
+            "CAT-FIRST",
+            position=1,
+            consulting="Пилот Горный",
+            category="Пилот Аудит",
+            subtype="Пилот Проверка",
+        )
+
+        caches["policy"].clear()
+        response = self.client.get(reverse("policy_filter_catalog"))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([item["id"] for item in payload["products"]], [first.pk, later.pk])
+        self.assertEqual(payload["products"][0]["label"], "CAT-FIRST CAT-FIRST display")
+        self.assertEqual(payload["products"][0]["consulting"], "Пилот Горный")
+        self.assertIn("consulting_ref_id", payload["products"][0])
+        self.assertIn("category_ref_id", payload["products"][0])
+        self.assertIn("subtype_ref_id", payload["products"][0])
+        self.assertEqual(payload["options"]["consulting"], ["Пилот Горный", "Пилот Финансовый"])
+        self.assertEqual(payload["options"]["category"], ["Пилот Аудит", "Пилот Оценка"])
+        self.assertEqual(payload["options"]["subtype"], ["Пилот Проверка", "Пилот Активы"])
+        self.assertEqual(
+            payload["options"]["product"],
+            [
+                {"id": first.pk, "label": "CAT-FIRST CAT-FIRST display"},
+                {"id": later.pk, "label": "CAT-LATER CAT-LATER display"},
+            ],
+        )
+
+    def test_fragment_and_catalog_require_login(self):
+        anonymous = Client()
+
+        for endpoint_name in ("policy_typical_sections_table", "policy_filter_catalog"):
+            with self.subTest(endpoint=endpoint_name):
+                response = anonymous.get(reverse(endpoint_name))
+                self.assertEqual(response.status_code, 302)
+
+
+class PolicyManagedTablePaginationTests(TestCase):
+    managed_endpoints = (
+        ("policy_products_table", "products"),
+        ("policy_service_goal_reports_table", "service_goal_reports"),
+        ("policy_section_structures_table", "structures"),
+        ("policy_report_structures_table", "report_structures"),
+        ("policy_typical_service_compositions_table", "typical_service_compositions"),
+        ("policy_typical_service_terms_table", "typical_service_terms"),
+        ("policy_tariffs_table", "tariffs"),
+    )
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="managed-policy-tables-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def _product(
+        self,
+        short_name,
+        *,
+        position=1,
+        consulting="Managed Consulting",
+        category="Managed Category",
+        subtype="Managed Subtype",
+    ):
+        return Product.objects.create(
+            short_name=short_name,
+            name_en=f"{short_name} product",
+            display_name=f"{short_name} display",
+            name_ru=f"Продукт {short_name}",
+            consulting_type=consulting,
+            service_category=category,
+            service_subtype=subtype,
+            position=position,
+        )
+
+    def _section(self, product, code):
+        return TypicalSection.objects.create(
+            product=product,
+            code=code,
+            short_name=code.lower(),
+            short_name_ru=f"{code.lower()}-ru",
+            name_en=f"{code} section",
+            name_ru=f"Раздел {code}",
+            accounting_type="Раздел",
+            position=1,
+        )
+
+    def test_all_paginated_tables_use_unified_footer_and_page_size_data(self):
+        endpoint_names = (
+            "policy_products_table",
+            "policy_service_goal_reports_table",
+            "policy_typical_sections_table",
+            "policy_section_structures_table",
+            "policy_report_structures_table",
+            "policy_typical_service_compositions_table",
+            "policy_typical_service_terms_table",
+            "policy_tariffs_table",
+            "policy_expert_specialties_table",
+        )
+        for endpoint_name in endpoint_names:
+            with self.subTest(endpoint=endpoint_name):
+                response = self.client.get(reverse(endpoint_name))
+                self.assertContains(response, 'class="policy-table-editor"', html=False)
+                self.assertContains(response, 'class="policy-table-footer"', html=False)
+                self.assertContains(response, 'class="policy-table-footer-actions', html=False)
+                self.assertContains(response, 'class="policy-table-pagination"', html=False)
+                self.assertContains(response, 'data-policy-table-page-size="25"', html=False)
+                self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
+                self.assertContains(response, "Показано строк")
+                self.assertContains(response, 'bi-chevron-left', html=False)
+                self.assertContains(response, 'bi-chevron-right', html=False)
+                self.assertNotContains(response, "&laquo;")
+                self.assertNotContains(response, "&raquo;")
+                self.assertNotContains(response, "Строк на странице")
+                self.assertRegex(
+                    response.content.decode(),
+                    r"</table>\s*</div>\s*<div class=\"policy-table-footer\">",
+                )
+
+        nonstaff = get_user_model().objects.create_user(
+            username="managed-policy-tables-nonstaff",
+            password="secret123",
+            is_staff=False,
+        )
+        self.client.force_login(nonstaff)
+        response = self.client.get(reverse("policy_products_table"))
+        self.assertContains(response, 'class="policy-table-footer"', html=False)
+        self.assertContains(response, 'class="policy-table-footer-actions"></div>', html=False)
+        self.assertContains(response, 'class="policy-table-pagination"', html=False)
+        self.assertNotContains(response, "Добавить строку")
+
+    def test_policy_table_footer_sticky_css_and_js_helpers(self):
+        root = Path(__file__).resolve().parents[1]
+        css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
+        js = (root / "core" / "static" / "core" / "js" / "policy-panels.js").read_text()
+        self.assertIn("#policy-pane .policy-table-editor {", css)
+        self.assertIn("#policy-pane .policy-table-footer {\n  position: sticky;", css)
+        self.assertIn("#policy-pane .policy-table-footer.is-stuck", css)
+        self.assertIn(".policy-sticky-actions-marker", css)
+        self.assertIn("function attachPolicyTableFooterStickyState(footer)", js)
+        self.assertIn("initPolicyTableFooterStickyState(fragment)", js)
+
+    def test_reusable_paginator_boundaries_links_order_and_page_clamp(self):
+        endpoint = reverse("policy_products_table")
+        response = self.client.get(endpoint)
+        self.assertEqual(response.context["paginator"].count, 0)
+        self.assertContains(response, "0–0 из 0")
+        self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
+
+        products = Product.objects.bulk_create(
+            [
+                Product(
+                    short_name=f"PAGE-{index:03d}",
+                    name_en=f"Product {index}",
+                    display_name=f"Product {index}",
+                    name_ru=f"Продукт {index}",
+                    consulting_type="Managed Consulting",
+                    service_category="Managed Category",
+                    service_subtype="Managed Subtype",
+                    position=69 - index,
+                )
+                for index in range(1, 69)
+            ]
+        )
+
+        one = self.client.get(endpoint, {"product": products[0].pk})
+        self.assertEqual(one.context["paginator"].count, 1)
+        self.assertContains(one, 'aria-label="Страницы таблицы"', html=False)
+
+        fifty = self.client.get(
+            endpoint,
+            {"product": [product.pk for product in products[:50]]},
+        )
+        self.assertEqual(fifty.context["paginator"].count, 50)
+        self.assertContains(fifty, 'aria-label="Страницы таблицы"', html=False)
+
+        first_page = self.client.get(
+            endpoint,
+            {
+                "consulting": "Managed Consulting",
+                "category": "Managed Category",
+                "subtype": "Managed Subtype",
+                "product": [product.pk for product in products],
+            },
+        )
+        self.assertEqual(first_page.context["paginator"].count, 68)
+        self.assertEqual(len(first_page.context["products"]), 25)
+        self.assertEqual(
+            [product.position for product in first_page.context["products"]],
+            list(range(1, 26)),
+        )
+        self.assertContains(first_page, "1–25 из 68")
+        self.assertNotContains(first_page, "Показаны")
+        self.assertContains(first_page, 'hx-target="#policy-products-section"', html=False)
+
+        third_page = self.client.get(endpoint, {"page": 3})
+        self.assertEqual(third_page.context["page_obj"].number, 3)
+        self.assertEqual(third_page.context["products"][0].position, 51)
+        self.assertEqual(len(third_page.context["products"]), 18)
+        self.assertContains(third_page, "51–68 из 68")
+
+        invalid_page = self.client.get(endpoint, {"page": "invalid"})
+        self.assertEqual(invalid_page.context["page_obj"].number, 1)
+        empty_page = self.client.get(endpoint, {"page": ""})
+        self.assertEqual(empty_page.context["page_obj"].number, 1)
+        oversized_page = self.client.get(endpoint, {"page": "999"})
+        self.assertEqual(oversized_page.context["page_obj"].number, 3)
+
+        html = unescape(first_page.content.decode())
+        page_two_link = re.search(r'hx-get="([^"]*[?&]page=2)"', html)
+        self.assertIsNotNone(page_two_link)
+        query = parse_qs(urlparse(page_two_link.group(1)).query)
+        self.assertEqual(query["consulting"], ["Managed Consulting"])
+        self.assertEqual(query["category"], ["Managed Category"])
+        self.assertEqual(query["subtype"], ["Managed Subtype"])
+        self.assertEqual(query["product"], [str(product.pk) for product in products])
+        self.assertEqual(query["page_size"], ["25"])
+
+    def test_combined_filters_apply_to_each_managed_model_and_csv_export(self):
+        matching = self._product("MANAGED-MATCH")
+        other = self._product(
+            "MANAGED-OTHER",
+            position=2,
+            consulting="Other Consulting",
+            category="Other Category",
+            subtype="Other Subtype",
+        )
+        matching_section = self._section(matching, "MATCH")
+        other_section = self._section(other, "OTHER")
+
+        ServiceGoalReport.objects.create(product=matching, service_goal="Match", position=1)
+        ServiceGoalReport.objects.create(product=other, service_goal="Other", position=2)
+        SectionStructure.objects.create(product=matching, section=matching_section, subsections="Match", position=1)
+        SectionStructure.objects.create(product=other, section=other_section, subsections="Other", position=2)
+        ReportStructure.objects.create(product=matching, level=1, code="MATCH", position=1)
+        ReportStructure.objects.create(product=other, level=1, code="OTHER", position=1)
+        TypicalServiceComposition.objects.create(
+            product=matching,
+            section=matching_section,
+            service_composition="Match",
+            position=1,
+        )
+        TypicalServiceComposition.objects.create(
+            product=other,
+            section=other_section,
+            service_composition="Other",
+            position=2,
+        )
+        TypicalServiceTerm.objects.create(product=matching, position=1)
+        TypicalServiceTerm.objects.create(product=other, position=2)
+        Tariff.objects.create(
+            product=matching,
+            section=matching_section,
+            created_by=self.user,
+            position=1,
+        )
+        Tariff.objects.create(
+            product=other,
+            section=other_section,
+            created_by=self.user,
+            position=2,
+        )
+
+        filters = {
+            "consulting": "Managed Consulting",
+            "category": "Managed Category",
+            "subtype": "Managed Subtype",
+            "product": [matching.pk, other.pk],
+        }
+        for endpoint_name, context_key in self.managed_endpoints:
+            with self.subTest(endpoint=endpoint_name):
+                response = self.client.get(reverse(endpoint_name), filters)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context["paginator"].count, 1)
+                item = response.context[context_key][0]
+                if context_key == "products":
+                    self.assertEqual(item.pk, matching.pk)
+                else:
+                    self.assertEqual(item.product_id, matching.pk)
+
+        csv_endpoints = (
+            "product_csv_download",
+            "service_goal_report_csv_download",
+            "structure_csv_download",
+            "report_structure_csv_download",
+            "typical_service_composition_csv_download",
+            "typical_service_term_csv_download",
+            "tariff_csv_download",
+        )
+        for endpoint_name in csv_endpoints:
+            with self.subTest(download=endpoint_name):
+                response = self.client.get(reverse(endpoint_name), filters)
+                self.assertEqual(response.status_code, 200)
+                rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+                self.assertEqual(len(rows), 2)
+                self.assertEqual(rows[1][0], matching.short_name)
+
+    def test_report_numbering_continues_across_page_boundary(self):
+        product = self._product("REPORT-PAGE")
+        ReportStructure.objects.bulk_create(
+            [
+                ReportStructure(
+                    product=product,
+                    level=1,
+                    code=f"R-{index:03d}",
+                    name=f"Раздел {index}",
+                    position=index,
+                )
+                for index in range(1, 52)
+            ]
+        )
+
+        response = self.client.get(
+            reverse("policy_report_structures_table"),
+            {"product": product.pk, "page": 3},
+        )
+
+        self.assertEqual(response.context["page_obj"].number, 3)
+        self.assertEqual(len(response.context["report_structures"]), 1)
+        self.assertEqual(response.context["report_structures"][0].display_number, "51")
+        self.assertContains(response, ">51<", html=False)
+
+    def test_composition_exports_include_full_filtered_set(self):
+        product = self._product("COMPOSITION-EXPORT")
+        section = self._section(product, "EXPORT")
+        TypicalServiceComposition.objects.bulk_create(
+            [
+                TypicalServiceComposition(
+                    product=product,
+                    section=section,
+                    service_composition=f"Composition {index}",
+                    position=index,
+                )
+                for index in range(1, 52)
+            ]
+        )
+        filters = {"product": product.pk}
+
+        fragment = self.client.get(reverse("policy_typical_service_compositions_table"), filters)
+        self.assertEqual(fragment.context["paginator"].count, 51)
+        self.assertEqual(len(fragment.context["typical_service_compositions"]), 25)
+
+        csv_response = self.client.get(reverse("typical_service_composition_csv_download"), filters)
+        csv_rows = list(csv.reader(io.StringIO(csv_response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(len(csv_rows), 52)
+
+        docx_response = self.client.get(reverse("typical_service_composition_docx_download"), filters)
+        document = Document(io.BytesIO(docx_response.content))
+        self.assertEqual(len(document.tables[0].rows), 52)
+
+        xlsx_response = self.client.get(reverse("typical_service_composition_xlsx_download"), filters)
+        workbook = load_workbook(io.BytesIO(xlsx_response.content))
+        self.assertEqual(workbook.active.max_row, 52)
+
+    def test_tariff_fragment_preserves_role_scope(self):
+        department_head = get_user_model().objects.create_user(
+            username="managed-tariff-head",
+            password="secret123",
+            is_staff=True,
+        )
+        other_head = get_user_model().objects.create_user(
+            username="managed-tariff-other",
+            password="secret123",
+            is_staff=True,
+        )
+        manager_group, _ = Group.objects.get_or_create(name=DEPARTMENT_HEAD_GROUP)
+        department_head.groups.add(manager_group)
+        other_head.groups.add(manager_group)
+        product = self._product("ROLE-TARIFF")
+        section = self._section(product, "ROLE")
+        own_tariff = Tariff.objects.create(
+            product=product,
+            section=section,
+            created_by=department_head,
+            position=1,
+        )
+        Tariff.objects.create(
+            product=product,
+            section=section,
+            created_by=other_head,
+            position=1,
+        )
+        self.client.force_login(department_head)
+
+        response = self.client.get(reverse("policy_tariffs_table"))
+
+        self.assertEqual(response.context["paginator"].count, 1)
+        self.assertEqual(list(response.context["tariffs"]), [own_tariff])
+
+    def test_legacy_policy_partial_keeps_all_managed_rows_unpaginated(self):
+        Product.objects.bulk_create(
+            [
+                Product(
+                    short_name=f"LEGACY-MANAGED-{index:03d}",
+                    name_en=f"Legacy {index}",
+                    display_name=f"Legacy {index}",
+                    name_ru=f"Legacy {index}",
+                    position=index,
+                )
+                for index in range(1, 52)
+            ]
+        )
+
+        response = self.client.get(reverse("policy_partial"))
+
+        self.assertEqual(len(response.context["products"]), 51)
+        self.assertNotContains(response, "policy-table-pagination")
+        self.assertContains(response, "LEGACY-MANAGED-051")
 
 
 class ProductCsvUploadTests(TestCase):
@@ -691,9 +4814,21 @@ class ConsultingDirectionViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Направления консалтинга")
         self.assertContains(response, 'id="consulting-dir-actions"', html=False)
+        self.assertContains(response, 'data-policy-actions-always-visible="1"', html=False)
         self.assertContains(response, 'id="consulting-dir-master"', html=False)
 
-    def test_create_consulting_direction_saves_nested_catalog(self):
+    def test_consulting_directions_edit_button_uses_sticky_footer(self):
+        response = self.client.get(reverse("policy_consulting_directions_table"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'class="policy-table-editor"', html=False)
+        self.assertContains(response, 'class="policy-table-footer"', html=False)
+        self.assertContains(response, 'id="consulting-dir-actions"', html=False)
+        self.assertContains(response, "Редактировать")
+        self.assertRegex(
+            response.content.decode(),
+            r"</table>\s*</div>\s*<div class=\"policy-table-footer\">",
+        )
         response = self.client.post(
             reverse("consulting_dir_form_create"),
             {
@@ -1362,6 +5497,10 @@ class SectionStructureViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
+        self.assertEqual(
+            response.json()["policyUpdate"],
+            {"tables": ["section-structures"], "refreshFilters": False},
+        )
         item = SectionStructure.objects.get()
         self.assertEqual(item.product, self.product)
         self.assertEqual(item.section, self.section)
@@ -1384,6 +5523,216 @@ class SectionStructureViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
         self.assertEqual(SectionStructure.objects.get().section, self.section)
+
+    def _assert_structure_fragment_trigger(self, response, extra=None):
+        expected = {
+            "tables": ["section-structures"],
+            "refreshFilters": False,
+        }
+        if extra:
+            expected.update(extra)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"")
+        self.assertEqual(response["HX-Reswap"], "none")
+        self.assertEqual(
+            json.loads(response["HX-Trigger"]),
+            {"policy-updated": expected},
+        )
+        self.assertNotContains(response, 'id="policy-pane"', html=False)
+        self.assertNotContains(response, "Типовая структура отчета")
+
+    def test_htmx_create_and_edit_return_small_fragment_event(self):
+        create_response = self.client.post(
+            reverse("structure_form_create"),
+            {
+                "product": self.product.pk,
+                "section": self.section.pk,
+                "subsections": "Первый подраздел",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self._assert_structure_fragment_trigger(create_response)
+        structure = SectionStructure.objects.get()
+        self.assertEqual(structure.subsections, "Первый подраздел")
+
+        edit_response = self.client.post(
+            reverse("structure_form_edit", args=[structure.pk]),
+            {
+                "product": self.product.pk,
+                "section": self.section.pk,
+                "subsections": "Измененный подраздел",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self._assert_structure_fragment_trigger(edit_response)
+        structure.refresh_from_db()
+        self.assertEqual(structure.subsections, "Измененный подраздел")
+
+    def test_htmx_delete_and_move_return_small_fragment_event(self):
+        first = SectionStructure.objects.create(
+            product=self.product,
+            section=self.section,
+            subsections="Первый",
+            position=1,
+        )
+        second = SectionStructure.objects.create(
+            product=self.product,
+            section=self.section,
+            subsections="Второй",
+            position=2,
+        )
+        third = SectionStructure.objects.create(
+            product=self.product,
+            section=self.section,
+            subsections="Третий",
+            position=3,
+        )
+
+        move_up_response = self.client.post(
+            reverse("structure_move_up", args=[second.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_structure_fragment_trigger(
+            move_up_response,
+            {"reorderedTable": "section-structures"},
+        )
+        second.refresh_from_db()
+        self.assertEqual(second.position, 1)
+
+        move_down_response = self.client.post(
+            reverse("structure_move_down", args=[second.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_structure_fragment_trigger(
+            move_down_response,
+            {"reorderedTable": "section-structures"},
+        )
+        second.refresh_from_db()
+        self.assertEqual(second.position, 2)
+
+        delete_response = self.client.post(
+            reverse("structure_delete", args=[third.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_structure_fragment_trigger(delete_response)
+        self.assertFalse(SectionStructure.objects.filter(pk=third.pk).exists())
+        self.assertTrue(SectionStructure.objects.filter(pk=first.pk).exists())
+
+    def test_invalid_htmx_form_stays_in_modal_with_errors(self):
+        response = self.client.post(
+            reverse("structure_form_create"),
+            {
+                "product": self.product.pk,
+                "section": "",
+                "subsections": "Подраздел",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'hx-target="#policy-modal .modal-content"', html=False)
+        self.assertContains(response, 'hx-swap="innerHTML"', html=False)
+        self.assertContains(response, "Проверьте введённые данные")
+        self.assertContains(response, 'class="invalid-feedback d-block"', html=False)
+        self.assertContains(response, "This field is required.")
+        self.assertNotIn("HX-Trigger", response)
+        self.assertFalse(SectionStructure.objects.exists())
+
+    def test_non_htmx_create_keeps_legacy_full_partial_response(self):
+        response = self.client.post(
+            reverse("structure_form_create"),
+            {
+                "product": self.product.pk,
+                "section": self.section.pk,
+                "subsections": "Legacy подраздел",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["HX-Trigger"], "policy-updated")
+        self.assertContains(response, 'id="policy-pane"', html=False)
+        self.assertContains(response, "Типовая структура отчета")
+
+    def test_delete_last_item_clamps_fragment_page(self):
+        structures = SectionStructure.objects.bulk_create(
+            [
+                SectionStructure(
+                    product=self.product,
+                    section=self.section,
+                    subsections=f"Подраздел {index}",
+                    position=index,
+                )
+                for index in range(1, 52)
+            ]
+        )
+        endpoint = reverse("policy_section_structures_table")
+        page_three = self.client.get(endpoint, {"page": 3})
+        self.assertEqual(page_three.context["page_obj"].number, 3)
+        self.assertEqual(list(page_three.context["structures"]), [structures[-1]])
+
+        delete_response = self.client.post(
+            reverse("structure_delete", args=[structures[-1].pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_structure_fragment_trigger(delete_response)
+
+        clamped = self.client.get(endpoint, {"page": 3})
+        self.assertEqual(clamped.context["paginator"].count, 50)
+        self.assertEqual(clamped.context["page_obj"].number, 2)
+        self.assertContains(clamped, "26–50 из 50")
+
+    def test_structure_csv_upload_response_never_contains_full_policy(self):
+        csv_file = SimpleUploadedFile(
+            "section_structures.csv",
+            (
+                "Продукт;Код;Раздел (услуга);Подразделы\n"
+                "STR;STR-1;Раздел RU;Импортированный подраздел\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("structure_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertNotContains(response, 'id="policy-pane"', html=False)
+        self.assertNotIn("HX-Trigger", response)
+
+    def test_structure_batch_js_uses_fragment_scoped_hx_requests(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "policy-panels.js"
+        ).read_text()
+
+        self.assertEqual(
+            source.count("document.body.addEventListener('policy-updated'"),
+            1,
+        )
+        self.assertIn("headers['HX-Request'] = 'true'", source)
+        self.assertIn("fragmentScopedPolicy ? '#' + managedWrapper.id", source)
+        self.assertIn("handlePolicyUpdated(data.policyUpdate)", source)
+        self.assertIn(
+            "row.dataset.moveUpUrl || row.dataset.moveDownUrl || isPolicyInlineNewRow(row)",
+            source,
+        )
+        self.assertIn("enqueuePolicyReorderPersist", source)
+        self.assertIn("skipSourceRefresh", source)
+        self.assertIn("skipTables", source)
+        self.assertIn(
+            "'input.form-check-input[name=\"' + CSS.escape(name) + '\"]:checked:not(:disabled)'",
+            source,
+        )
+        self.assertNotIn(
+            "return !!row.querySelector('input.form-check-input:checked:not(:disabled)');",
+            source,
+        )
+        self.assertNotIn("htmx.ajax('GET', '/policy/policy/partial/'", source)
 
 
 class ReportStructureViewsTests(TestCase):
@@ -1947,7 +6296,7 @@ class TypicalServiceCompositionViewsTests(TestCase):
         response = self.client.get(reverse("policy_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Типовой состав услуг")
+        self.assertContains(response, "Типовой состав услуг в ТКП")
         self.assertContains(response, ">Код<", html=False)
         self.assertContains(response, "S1")
         self.assertContains(response, "Раздел RU")
@@ -3095,6 +7444,10 @@ class TypicalServiceTermViewsTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["policyUpdate"],
+            {"tables": ["typical-service-terms"], "refreshFilters": False},
+        )
         item.refresh_from_db()
         self.assertEqual(item.gantt_data["data"][0]["specialty"], "Горное дело")
         self.assertEqual(item.gantt_data["data"][0]["executor"], f"expert-profile:{profile.pk}")
@@ -4692,3 +9045,330 @@ class TariffAdminTests(TestCase):
         self.second_profile.refresh_from_db()
         self.assertEqual(self.first_profile.position, 1)
         self.assertEqual(self.second_profile.position, 2)
+
+
+POLICY_TEST_CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "policy-stage-six-default",
+    },
+    "policy": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "policy-stage-six",
+        "KEY_PREFIX": "tests:policy",
+        "TIMEOUT": 300,
+    },
+}
+
+
+@override_settings(CACHES=POLICY_TEST_CACHES)
+class PolicyStageSixCacheTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="policy-cache-user",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        caches["default"].clear()
+        caches["policy"].clear()
+
+    def _create_product(self, suffix="1", position=1):
+        return Product.objects.create(
+            short_name=f"CACHE-{suffix}",
+            name_en=f"Cache product {suffix}",
+            display_name=f"Cache product {suffix}",
+            name_ru=f"Кэш-продукт {suffix}",
+            consulting_type="Consulting",
+            service_category="Category",
+            service_subtype="Subtype",
+            position=position,
+        )
+
+    def _catalog(self, params=None):
+        return self.client.get(reverse("policy_filter_catalog"), params or {})
+
+    def _warm_catalog(self):
+        first = self._catalog()
+        self.assertIn(
+            first.headers["X-Policy-Cache"],
+            {policy_cache.POLICY_CACHE_MISS, policy_cache.POLICY_CACHE_HIT},
+        )
+        second = self._catalog()
+        self.assertEqual(
+            second.headers["X-Policy-Cache"],
+            policy_cache.POLICY_CACHE_HIT,
+        )
+        return second
+
+    @staticmethod
+    def _product_select_count(queries):
+        return sum(
+            '"policy_app_product"' in query["sql"]
+            and query["sql"].lstrip().upper().startswith("SELECT")
+            for query in queries
+        )
+
+    def test_catalog_cold_and_warm_query_behavior(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self._create_product()
+        caches["policy"].clear()
+
+        with CaptureQueriesContext(connection) as cold_queries:
+            cold = self._catalog()
+        with CaptureQueriesContext(connection) as warm_queries:
+            warm = self._catalog()
+
+        self.assertEqual(cold.status_code, 200)
+        self.assertEqual(cold.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
+        self.assertEqual(warm.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_HIT)
+        self.assertEqual(self._product_select_count(cold_queries), 1)
+        self.assertEqual(self._product_select_count(warm_queries), 0)
+        self.assertEqual(cold.json(), warm.json())
+        self.assertIn(
+            'policy-cache;desc="hit"',
+            warm.headers["Server-Timing"],
+        )
+        self.assertIn("app;dur=", warm.headers["Server-Timing"])
+
+    def test_create_edit_delete_invalidate_after_commit(self):
+        self._warm_catalog()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            product = self._create_product()
+        created = self._catalog()
+        self.assertEqual(created.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
+        self.assertEqual(created.json()["products"][0]["id"], product.pk)
+        self._warm_catalog()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            product.display_name = "Changed cache product"
+            product.save(update_fields=["display_name"])
+        edited = self._catalog()
+        self.assertEqual(edited.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
+        self.assertEqual(edited.json()["products"][0]["label"], "CACHE-1 Changed cache product")
+        self._warm_catalog()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            product.delete()
+        deleted = self._catalog()
+        self.assertEqual(deleted.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
+        self.assertEqual(deleted.json()["products"], [])
+
+    def test_m2m_and_external_display_dependency_invalidate(self):
+        self.assertSetEqual(
+            policy_signals.POLICY_M2M_THROUGH_MODELS,
+            {
+                Product.owners.through,
+                ExpertiseDirection.owners.through,
+                SpecialtyTariff.specialties.through,
+                TypicalSection.specialties.through,
+            },
+        )
+        self.assertSetEqual(
+            policy_signals.EXTERNAL_POLICY_DISPLAY_MODELS,
+            {GroupMember, OrgUnit, ExpertSpecialty, OKVCurrency},
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            product = self._create_product()
+            owner = GroupMember.objects.create(
+                short_name="Owner",
+                country_name="Russia",
+                position=1,
+            )
+        self._warm_catalog()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            product.owners.add(owner)
+        after_m2m = self._catalog()
+        self.assertEqual(after_m2m.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
+        self._warm_catalog()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            owner.short_name = "Changed owner"
+            owner.save(update_fields=["short_name"])
+        after_external_edit = self._catalog()
+        self.assertEqual(
+            after_external_edit.headers["X-Policy-Cache"],
+            policy_cache.POLICY_CACHE_MISS,
+        )
+
+    def test_rollback_does_not_change_generation(self):
+        self._warm_catalog()
+        generation_before = caches["policy"].get(policy_cache.POLICY_GENERATION_KEY)
+
+        with self.assertRaises(RuntimeError):
+            with transaction.atomic():
+                self._create_product()
+                raise RuntimeError("rollback")
+
+        generation_after = caches["policy"].get(policy_cache.POLICY_GENERATION_KEY)
+        response = self._catalog()
+        self.assertEqual(generation_after, generation_before)
+        self.assertEqual(response.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_HIT)
+        self.assertEqual(response.json()["products"], [])
+
+    def test_reorder_and_import_helpers_invalidate_bulk_mutations(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            first = self._create_product("1", 1)
+            second = self._create_product("2", 2)
+        self._warm_catalog()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(reverse("product_move_up", args=[second.pk]))
+        self.assertEqual(response.status_code, 200)
+        after_reorder = self._catalog()
+        self.assertEqual(
+            after_reorder.headers["X-Policy-Cache"],
+            policy_cache.POLICY_CACHE_MISS,
+        )
+        self._warm_catalog()
+
+        csv_file = SimpleUploadedFile(
+            "service_goal_reports.csv",
+            (
+                "Продукт;Цели оказания услуг;Цели оказания услуг в родительном падеже;"
+                "Титул отчета/ТКП;Название продукта\n"
+                f"{first.short_name};Цель;Цели;Отчет;Продукт\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            imported = self.client.post(
+                reverse("service_goal_report_csv_upload"),
+                {"csv_file": csv_file},
+            )
+        self.assertEqual(imported.status_code, 200)
+        self.assertEqual(imported.json()["created"], 1)
+        after_import = self._catalog()
+        self.assertEqual(
+            after_import.headers["X-Policy-Cache"],
+            policy_cache.POLICY_CACHE_MISS,
+        )
+
+    def test_redis_get_and_set_failures_return_fresh_payload(self):
+        backend = caches["policy"]
+
+        with mock.patch.object(
+            backend,
+            "get",
+            side_effect=RedisError("get unavailable"),
+        ) as failed_get:
+            get_response = self._catalog()
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(
+            get_response.headers["X-Policy-Cache"],
+            policy_cache.POLICY_CACHE_ERROR,
+        )
+        self.assertEqual(failed_get.call_count, 1)
+
+        backend.clear()
+        backend.set(policy_cache.POLICY_GENERATION_KEY, "stable-generation", timeout=None)
+        with mock.patch.object(
+            backend,
+            "set",
+            side_effect=RedisError("set unavailable"),
+        ) as failed_set:
+            set_response = self._catalog()
+        self.assertEqual(set_response.status_code, 200)
+        self.assertEqual(
+            set_response.headers["X-Policy-Cache"],
+            policy_cache.POLICY_CACHE_ERROR,
+        )
+        self.assertEqual(failed_set.call_count, 1)
+
+    def test_renderer_exception_is_not_hidden_by_fail_open(self):
+        request = RequestFactory().get(reverse("policy_filter_catalog"))
+        caches["policy"].clear()
+
+        with self.assertRaisesMessage(ValueError, "catalog renderer failed"):
+            policy_cache.get_or_build_policy_catalog(
+                request,
+                lambda: (_ for _ in ()).throw(
+                    ValueError("catalog renderer failed")
+                ),
+            )
+
+    def test_catalog_is_shared_non_personal_and_ignores_page(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self._create_product()
+        caches["policy"].clear()
+
+        first = self._catalog({"page": "1"})
+        first_payload = first.json()
+        second_user = get_user_model().objects.create_user(
+            username="policy-cache-user-two",
+            password="secret123",
+        )
+        self.client.force_login(second_user)
+        second = self._catalog({"page": "999"})
+
+        self.assertEqual(first.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
+        self.assertEqual(second.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_HIT)
+        self.assertEqual(first_payload, second.json())
+        self.assertEqual(
+            policy_cache.normalized_policy_catalog_key("generation"),
+            "filter-catalog:v1:generation",
+        )
+
+    def test_personalized_tables_do_not_use_catalog_cache(self):
+        with mock.patch(
+            "policy_app.views.get_or_build_policy_catalog"
+        ) as catalog_cache:
+            for url_name in (
+                "policy_grades_table",
+                "policy_specialty_tariffs_table",
+                "policy_tariffs_table",
+            ):
+                response = self.client.get(reverse(url_name))
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn("X-Policy-Cache", response.headers)
+        catalog_cache.assert_not_called()
+
+    def test_policy_alias_is_separate_from_default(self):
+        self.assertIsNot(caches["default"], caches["policy"])
+        caches["default"].set("shared-key", "default")
+        self.assertIsNone(caches["policy"].get("shared-key"))
+        self.assertEqual(
+            settings.CACHES["policy"]["KEY_PREFIX"],
+            "tests:policy",
+        )
+
+    def test_performance_command_reports_repeat_summary(self):
+        output = io.StringIO()
+        caches["policy"].clear()
+
+        call_command(
+            "policy_performance",
+            username=self.user.username,
+            endpoints=["policy_filter_catalog"],
+            repeat=3,
+            stdout=output,
+        )
+
+        payload = json.loads(output.getvalue())
+        summary = payload["summary"]["policy_filter_catalog"]
+        self.assertEqual(payload["repeat"], 3)
+        self.assertEqual(summary["runs"], 3)
+        self.assertEqual(summary["cache_statuses"], {"MISS": 1, "HIT": 2})
+        self.assertEqual(len(payload["results"]), 3)
+        self.assertIn("p50", summary["milliseconds"])
+        self.assertIn("p95", summary["milliseconds"])
+
+    @override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            },
+            "policy": {
+                "BACKEND": "django.core.cache.backends.dummy.DummyCache",
+            },
+        }
+    )
+    def test_dummy_backend_reports_bypass(self):
+        response = self._catalog()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["X-Policy-Cache"],
+            policy_cache.POLICY_CACHE_BYPASS,
+        )
