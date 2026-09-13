@@ -1,0 +1,250 @@
+{% load classifiers_filters %}
+<section id="policy-typical-service-terms-section"
+         data-policy-table-key="typical-service-terms"
+         data-policy-table-url="{% url 'policy_typical_service_terms_table' %}"
+         data-policy-master-managed="1"
+         data-policy-table-page="{{ page_obj.number|default:'1' }}"
+         data-policy-table-page-size="{{ policy_page_size|default:'25' }}"
+         {% if policy_inline_edit %}data-policy-inline="1"{% endif %}>
+{% if policy_inline_edit %}
+<script type="application/json" data-policy-inline-options>{{ policy_inline_options_json|safe }}</script>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Типовые сроки оказания услуг
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive">
+    <table class="table table-sm align-top specialty-tariffs-table">
+        <thead>
+        <tr>
+            <th class="policy-workspace-checkbox-cell" style="width:1%">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="typical-service-terms-master"
+                               data-target-name="typical-service-term-select"
+                               data-actions-id="typical-service-terms-actions"
+                               aria-label="Выделить все строки типовых сроков оказания услуг">
+                    </div>
+                {% endif %}
+            </th>
+            <th class="policy-workspace-product-cell">Продукт</th>
+            {% if policy_inline_edit %}
+            <th colspan="2">Сроки предоставления исходных данных</th>
+            <th colspan="2">Срок подготовки Предварительного отчёта</th>
+            <th colspan="2">Срок подготовки Итогового отчёта</th>
+            {% else %}
+            <th>Сроки предоставления исходных данных</th>
+            <th>Срок подготовки Предварительного отчёта</th>
+            <th>Срок подготовки Итогового отчёта</th>
+            {% endif %}
+        </tr>
+        </thead>
+        <tbody>
+        {% for item in typical_service_terms %}
+            <tr data-policy-filter-row="1"
+                {% if policy_inline_edit %}data-inline-row-id="{{ item.id }}"{% endif %}
+                data-product-id="{{ item.product_id }}"
+                data-product-label="{{ item.product.short_name }}{% if item.product.display_name %} {{ item.product.display_name }}{% endif %}"
+                data-consulting-type="{{ item.product.consulting_type_display }}"
+                data-service-category="{{ item.product.service_category_display }}"
+                data-service-subtype="{{ item.product.service_subtype_display }}"
+                data-edit-url="{% url 'typical_service_term_form_edit' item.pk %}"
+                data-gantt-url="{% url 'typical_service_term_gantt' item.pk %}"
+                data-delete-url="{% url 'typical_service_term_delete' item.pk %}"
+                data-move-up-url="{% url 'typical_service_term_move_up' item.pk %}"
+                data-move-down-url="{% url 'typical_service_term_move_down' item.pk %}">
+                <td class="text-nowrap policy-workspace-checkbox-cell">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="typical-service-term-sel-{{ item.id }}"
+                                   name="typical-service-term-select"
+                                   value="{{ item.id }}"
+                                   aria-label="Выделить строку типовых сроков оказания услуг">
+                        </div>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap policy-workspace-product-cell">{{ item.product.short_name }}</td>
+                {% if policy_inline_edit %}
+                <td class="text-nowrap typical-service-term-value-col" data-inline-field="source_data_weeks" data-inline-type="number" data-inline-step="{% if item.source_data_term_unit == 'days' %}1{% else %}0.1{% endif %}" data-inline-min="0" data-inline-value="{{ item.source_data_weeks }}">{{ item.source_data_value_display }}</td>
+                <td class="text-nowrap typical-service-term-unit-col" data-inline-field="source_data_term_unit" data-inline-type="select" data-inline-value="{{ item.source_data_term_unit }}">{{ item.get_source_data_term_unit_display }}</td>
+                <td class="text-nowrap typical-service-term-value-col" data-inline-field="preliminary_report_months" data-inline-type="number" data-inline-step="{% if item.preliminary_report_term_unit == 'days' %}1{% else %}0.1{% endif %}" data-inline-min="0" data-inline-value="{{ item.preliminary_report_months }}">{{ item.preliminary_report_value_display }}</td>
+                <td class="text-nowrap typical-service-term-unit-col" data-inline-field="preliminary_report_term_unit" data-inline-type="select" data-inline-value="{{ item.preliminary_report_term_unit }}">{{ item.get_preliminary_report_term_unit_display }}</td>
+                <td class="text-nowrap typical-service-term-value-col" data-inline-field="final_report_weeks" data-inline-type="number" data-inline-step="{% if item.final_report_term_unit == 'days' %}1{% else %}0.1{% endif %}" data-inline-min="0" data-inline-value="{{ item.final_report_weeks }}">{{ item.final_report_value_display }}</td>
+                <td class="text-nowrap typical-service-term-unit-col" data-inline-field="final_report_term_unit" data-inline-type="select" data-inline-value="{{ item.final_report_term_unit }}">{{ item.get_final_report_term_unit_display }}</td>
+                {% else %}
+                <td class="text-nowrap">{{ item.source_data_display }}</td>
+                <td class="text-nowrap">{{ item.preliminary_report_display }}</td>
+                <td class="text-nowrap">{{ item.final_report_display }}</td>
+                {% endif %}
+            </tr>
+        {% empty %}
+            <tr><td colspan="{% if policy_inline_edit %}8{% else %}5{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    <div class="policy-table-footer">
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="policy-table-footer-actions products-actions-row">
+      <button
+              class="btn btn-primary btn-sm d-flex align-items-center{% if not policy_inline_edit or typical_service_terms %} policy-workspace-catalog-only{% endif %}"
+              hx-get="{% url 'typical_service_term_form_create' %}"
+              hx-target="#policy-modal .modal-content"
+              hx-swap="innerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="typical-service-terms-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" id="typical-service-terms-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" id="typical-service-terms-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" id="typical-service-terms-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" id="typical-service-terms-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+      <button type="button"
+              id="typical-service-terms-gantt-edit-btn"
+              class="btn btn-outline-primary btn-sm d-none align-items-center"
+              data-typical-service-term-gantt-edit
+              disabled>
+        <i class="bi bi-diagram-3 me-2"></i>Редактировать
+      </button>
+      <a href="{% url 'typical_service_term_csv_download' %}{% if policy_filter_query %}?{{ policy_filter_query }}{% endif %}"
+         id="typical-service-terms-csv-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+         title="Скачать CSV"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </a>
+      <button type="button"
+              id="typical-service-terms-csv-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+              title="Загрузить CSV">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file" id="typical-service-terms-csv-file-input" accept=".csv" class="d-none">
+    </div>
+    {% else %}
+    <div class="policy-table-footer-actions"></div>
+    {% endif %}
+    {% if policy_pagination_enabled %}
+        {% include "policy_app/_policy_pagination.html" with pagination_target="#policy-typical-service-terms-section" page_size_id="typical-service-terms" %}
+    {% endif %}
+    </div>
+</div>
+
+{% if request.user.is_authenticated and request.user.is_staff %}
+<div id="typical-service-term-gantt-editor" class="typical-service-term-gantt-editor d-none" data-current-term-id="">
+  <div class="typical-service-term-gantt-toolbar d-flex align-items-center justify-content-between gap-3 flex-wrap">
+    <div>
+      <div class="fw-semibold">Диаграмма Ганта</div>
+      <div class="small text-muted" id="typical-service-term-gantt-subtitle">Выберите строку и нажмите «Редактировать».</div>
+    </div>
+    <div class="typical-service-term-gantt-toolbar-controls d-flex align-items-center gap-2 flex-wrap">
+      <button type="button"
+              class="btn btn-outline-secondary btn-sm typical-service-term-gantt-hide-non-working-toggle"
+              id="typical-service-term-gantt-hide-non-working-btn"
+              aria-label="Свернуть нерабочие дни на таймлайне"
+              aria-pressed="false"
+              title="Свернуть нерабочие дни: выходные и праздники не показываются на таймлайне">
+        <i class="bi bi-arrows-collapse-vertical" aria-hidden="true"></i>
+      </button>
+      <button type="button"
+              class="btn btn-outline-secondary btn-sm typical-service-term-gantt-calendar-days-toggle"
+              id="typical-service-term-gantt-calendar-days-btn"
+              aria-label="Включить режим календарных дней"
+              aria-pressed="false"
+              title="Режим календарных дней: длительность считается без учёта производственного календаря">
+        <i class="bi bi-calendar3" aria-hidden="true"></i>
+      </button>
+      <button type="button"
+              class="btn btn-outline-secondary btn-sm typical-service-term-gantt-timebox-toggle"
+              id="typical-service-term-gantt-timebox-btn"
+              aria-label="Включить режим таймбокса"
+              aria-pressed="false"
+              title="Режим таймбокса: подгонять цепочку к фиксированной вехе">
+        <i class="bi bi-calendar3-range" aria-hidden="true"></i>
+      </button>
+      <button type="button"
+              class="btn btn-outline-secondary btn-sm typical-service-term-gantt-free-dates-toggle"
+              id="typical-service-term-gantt-free-dates-btn"
+              aria-label="Включить привязку сроков к сетке"
+              aria-pressed="false"
+              title="Свободное изменение сроков без привязки к сетке">
+        <i class="bi bi-align-end" aria-hidden="true"></i>
+      </button>
+      <label class="typical-service-term-gantt-project-bound small text-muted text-nowrap">
+        Начало проекта
+        <input type="text" class="form-control form-control-sm typical-service-term-gantt-project-start" inputmode="numeric" aria-label="Начало проекта">
+      </label>
+      <label class="typical-service-term-gantt-project-bound small text-muted text-nowrap">
+        Конец проекта
+        <input type="text" class="form-control form-control-sm typical-service-term-gantt-project-end" inputmode="numeric" aria-label="Конец проекта">
+      </label>
+      <span class="small text-muted text-nowrap">Масштаб:</span>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Масштаб диаграммы Гантта типовых сроков">
+        <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="day">День</button>
+        <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="week">Неделя</button>
+        <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="month">Месяц</button>
+        <button type="button" class="btn btn-outline-secondary js-typical-service-term-gantt-scale" data-scale="quarter">Квартал</button>
+      </div>
+      <button type="button"
+              class="btn btn-outline-secondary btn-sm typical-service-term-gantt-fullscreen-toggle"
+              id="typical-service-term-gantt-fullscreen-btn"
+              aria-label="Развернуть диаграмму на весь экран"
+              title="Развернуть диаграмму на весь экран">
+        <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
+      </button>
+    </div>
+  </div>
+  <div id="typical-service-term-gantt-message" class="typical-service-term-gantt-message text-muted d-none"></div>
+  <div id="typical-service-term-gantt" class="typical-service-term-gantt"></div>
+  <div class="typical-service-term-gantt-footer d-flex justify-content-between align-items-center gap-2">
+    <div class="d-flex align-items-center gap-2">
+      <button type="button"
+              class="btn btn-outline-secondary btn-sm typical-service-term-gantt-settings-btn"
+              id="typical-service-term-gantt-settings-btn"
+              aria-label="Настройки диаграммы Ганта"
+              title="Настройки">
+        <i class="bi bi-gear-wide-connected me-2" aria-hidden="true"></i>Настройки
+      </button>
+      <button type="button"
+              class="btn btn-outline-secondary btn-sm typical-service-term-gantt-resources-btn"
+              id="typical-service-term-gantt-resources-btn"
+              aria-label="Показать ресурсы проекта"
+              aria-expanded="false"
+              aria-pressed="false"
+              title="Ресурсы проекта">
+        <i class="bi bi-person-vcard" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <button type="button" class="btn btn-outline-secondary btn-sm" id="typical-service-term-gantt-cancel-btn">
+        Отмена
+      </button>
+      <button type="button" class="btn btn-primary btn-sm" id="typical-service-term-gantt-save-btn">
+        <i class="bi bi-check2-circle me-2"></i>Сохранить
+      </button>
+    </div>
+  </div>
+  <div id="typical-service-term-gantt-resources"
+       class="gantt-resources-panel typical-service-term-gantt-resources d-none"></div>
+</div>
+{% endif %}
+</section>

@@ -2,7 +2,7 @@
 <div id="proposals-pane"
      class="proposal-form-page"
      data-header-root-label="ТКП"
-     data-header-root-url="{% url 'proposals_partial' %}"
+     data-header-root-url="{% url 'proposals_partial' %}?tables=1"
      data-header-current-label="{% if action == "create" %}Новое ТКП{% else %}{{ proposal.short_uid }}{% endif %}"
      data-header-current-url="{% if action == "create" %}{% url 'proposal_form_create' %}{% else %}{% url 'proposal_form_edit' proposal.pk %}{% endif %}">
   {{ typical_sections_json|json_script:"proposal-typical-sections-data" }}
@@ -10,7 +10,9 @@
   {{ typical_service_compositions_json|json_script:"proposal-typical-service-compositions-data" }}
   {{ typical_service_terms_json|json_script:"proposal-typical-service-terms-data" }}
   <form method="post"
+        id="proposal-registration-form"
         data-proposal-form="1"
+        data-proposal-form-has-errors="{% if form.errors %}1{% else %}0{% endif %}"
         data-country-identifier-url="{% url 'identifier_for_country' %}"
         data-country-region-url="{% url 'ler_regions_for_country' %}"
         data-region-autofill-url="{% url 'ler_region_autofill' %}"
@@ -651,17 +653,5 @@
         </ul>
       </div>
     {% endif %}
-
-    <div class="d-flex justify-content-start align-items-center gap-2 pt-4">
-      <button type="button"
-              class="btn btn-outline-secondary"
-              data-proposal-form-cancel-btn="1"
-              hx-get="{% url 'proposals_partial' %}"
-              hx-target="#proposals-pane"
-              hx-swap="outerHTML">
-        Отмена
-      </button>
-      <button type="submit" class="btn btn-primary" data-proposal-form-save-btn="1">Сохранить</button>
-    </div>
   </form>
 </div>

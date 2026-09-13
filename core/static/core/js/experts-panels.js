@@ -11,7 +11,7 @@
   function updateExpertsTableScrollGaps() {
     const root = pane();
     if (!root) return;
-    qa('.experts-specialties-table-wrap, .experts-profiles-table-wrap', root).forEach((wrap) => {
+    qa('.experts-profiles-table-wrap', root).forEach((wrap) => {
       wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
     });
   }
@@ -27,12 +27,6 @@
   const csrftoken = getCookie('csrftoken');
 
   const PANELS = {
-    'esp-actions': {
-      name: 'esp-select',
-      modal: '#experts-modal .modal-content',
-      modalId: 'experts-modal',
-      deleteLabel: 'строк(у/и)',
-    },
     'epr-actions': {
       name: 'epr-select',
       modal: '#experts-profile-modal .modal-content',
@@ -252,7 +246,7 @@
   document.addEventListener('change', (e) => {
     const root = pane();
     if (!root) return;
-    const colpickerInput = e.target.closest('#esp-colpicker-menu input.form-check-input, #epr-colpicker-menu input.form-check-input');
+    const colpickerInput = e.target.closest('#epr-colpicker-menu input.form-check-input');
     if (colpickerInput && root.contains(colpickerInput)) {
       scheduleExpertsTableScrollGapsUpdate();
       return;
@@ -378,7 +372,6 @@
 
   document.addEventListener('click', function (event) {
     var uploadMapping = {
-      'esp-csv-upload-btn': 'esp-csv-file-input',
       'epr-csv-upload-btn': 'epr-csv-file-input',
     };
     for (var btnId in uploadMapping) {
@@ -391,7 +384,6 @@
 
   document.addEventListener('change', async function (event) {
     var uploadMapping = {
-      'esp-csv-file-input': '/experts/specialty/csv-upload/',
       'epr-csv-file-input': '/experts/profile/csv-upload/',
     };
     var uploadUrl = uploadMapping[event.target.id];

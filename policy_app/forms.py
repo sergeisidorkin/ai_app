@@ -1232,7 +1232,7 @@ class SpecialtyTariffForm(forms.ModelForm):
             specialties = [specialty_map[raw_id] for raw_id in raw_ids if raw_id in specialty_map]
         elif self.instance and self.instance.pk:
             specialties = list(
-                self.instance.specialties.select_related("expertise_direction").order_by("position", "id")
+                self.instance.specialties.select_related("expertise_dir").order_by("position", "id")
             )
 
         labels = []

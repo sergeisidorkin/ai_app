@@ -3,18 +3,47 @@ Requires=
 After=network.target
 
 [Service]
-WorkingDirectory=/home/sergei/ai_appdir/ai_app
-
-ExecStartPre=/bin/mkdir -p /home/sergei/ai_appdir/run
-ExecStartPre=/bin/chown sergei:www-data /home/sergei/ai_appdir/run
-
-# Полностью переопределяем команду запуска
-ExecStart=
-ExecStart=/home/sergei/ai_appdir/ai_appenv/bin/gunicorn wsgi:application --workers 3 --bind unix:/run/ai_app/ai_app.sock
-
-# права на сокет для nginx
+User=sergei
 Group=www-data
+WorkingDirectory=/home/sergei/ai_appdir/ai_app
+RuntimeDirectory=ai_app
+RuntimeDirectoryMode=0750
 UMask=007
 
-# если используете .env
-EnvironmentFile=/home/sergei/ai_appdir/env/.env
+# Conservative example defaults. Override these in EnvironmentFile only after
+# checking CPU, RAM and the database connection budget; do not derive workers
+# from CPU count without a production measurement.
+Environment=GUNICORN_WORKERS=3
+Environment=GUNICORN_THREADS=4
+Environment=GUNICORN_TIMEOUT=120
+Environment=GUNICORN_GRACEFUL_TIMEOUT=30
+Environment=GUNICORN_KEEPALIVE=5
+Environment=GUNICORN_MAX_REQUESTS=1000
+Environment=GUNICORN_MAX_REQUESTS_JITTER=100
+
+# Optional deployment-specific overrides.
+EnvironmentFile=-/home/sergei/ai_appdir/env/.env
+
+ExecStart=
+ExecStart=/home/sergei/ai_appdir/ai_appenv/bin/gunicorn wsgi:application \
+    --bind unix:/run/ai_app/ai_app.sock \
+    --worker-class gthread \
+    --workers ${GUNICORN_WORKERS} \
+    --threads ${GUNICORN_THREADS} \
+    --timeout ${GUNICORN_TIMEOUT} \
+    --graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT} \
+    --keep-alive ${GUNICORN_KEEPALIVE} \
+    --max-requests ${GUNICORN_MAX_REQUESTS} \
+    --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER} \
+    --access-logfile - \
+    --error-logfile - \
+    --capture-output
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+
+# WSGI Gunicorn cannot serve Channels WebSockets. If /ws/ is used in
+# production, create a separate ASGI (Daphne/Uvicorn) systemd unit bound to a
+# different socket such as /run/ai_app/ai_app-asgi.sock and route /ws/ to it in
+# nginx. Do not replace this WSGI socket with the ASGI process implicitly.

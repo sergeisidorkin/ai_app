@@ -27,15 +27,26 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
 SECURE_REFERRER_POLICY = "same-origin"
 
-# статика (опционально)
-try:
-    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
-    STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
-except Exception:
-    pass
+# A missing dedicated policy cache must not silently reuse Channels Redis or
+# create process-local, cross-worker inconsistent production entries.
+if not POLICY_CACHE_URL:
+    CACHES["policy"] = {
+        "BACKEND": "django.core.cache.backends.dummy.DummyCache",
+    }
 
+# Keep one WhiteNoise middleware entry from base.py. Nginx should serve
+# /static/ in production; manifest storage still creates hashed/compressed
+# artifacts and WhiteNoise remains a safe application-level fallback.
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-
-
+if DATABASES["default"]["ENGINE"].startswith("django.db.backends.postgresql"):
+    DATABASES["default"]["CONN_MAX_AGE"] = env.int(
+        "DB_CONN_MAX_AGE",
+        default=60,
+    )
+    DATABASES["default"]["CONN_HEALTH_CHECKS"] = env.bool(
+        "DB_CONN_HEALTH_CHECKS",
+        default=True,
+    )
 
 

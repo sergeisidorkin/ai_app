@@ -12,8 +12,8 @@
     {% else %}
       hx-post="{% url 'grade_form_edit' grade.pk %}"
     {% endif %}
-    hx-target="#policy-pane"
-    hx-swap="outerHTML">
+    hx-target="#policy-modal .modal-content"
+    hx-swap="innerHTML">
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
 

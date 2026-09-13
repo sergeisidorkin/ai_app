@@ -3,6 +3,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from policy_app.models import EXPERT_GROUP, Product, TypicalSection
 from projects_app.models import LegalEntity, Performer, ProjectRegistration, WorkVolume
@@ -15,8 +16,9 @@ from checklists_app.models import (
     ChecklistItemAuditLog,
     ChecklistStatus,
     SharedChecklistLink,
+    SourceDataItemFolder,
 )
-from checklists_app.views import _project_options
+from checklists_app.views import SOURCE_DATA_SELECT_ASSET_HINT, _project_options
 
 
 class ChecklistFilterTests(TestCase):
@@ -474,4 +476,157 @@ class ChecklistStatusPermissionTests(TestCase):
                 status=ChecklistCustomerStatus.Status.TRANSFERRED,
             ).exists()
         )
+
+
+class ChecklistSourceDataFilesScopeTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="files-scope-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=7001,
+            type=self.product,
+            name="Несколько активов",
+            year=2026,
+        )
+        self.section = TypicalSection.objects.create(
+            product=self.product,
+            code="FIN",
+            short_name="Finance",
+            short_name_ru="Финансы",
+            name_en="Finance",
+            name_ru="Финансы",
+            accounting_type="Раздел",
+        )
+        self.work_a = WorkVolume.objects.create(
+            project=self.project,
+            name="Asset A",
+            asset_name="Asset A",
+        )
+        self.work_b = WorkVolume.objects.create(
+            project=self.project,
+            name="Asset B",
+            asset_name="Asset B",
+        )
+        Performer.objects.create(
+            registration=self.project,
+            work_item=self.work_a,
+            asset_name="Asset A",
+            typical_section=self.section,
+        )
+        Performer.objects.create(
+            registration=self.project,
+            work_item=self.work_b,
+            asset_name="Asset B",
+            typical_section=self.section,
+        )
+        self.item = ChecklistItem.objects.create(
+            project=self.project,
+            section=self.section,
+            code="REQ",
+            number=1,
+            short_name="ОСВ",
+            name="Оборотно-сальдовая ведомость",
+        )
+        SourceDataItemFolder.objects.create(
+            project=self.project,
+            checklist_item=self.item,
+            asset_name="Asset A",
+            disk_path="/a/REQ-01 ОСВ",
+            public_url="https://cloud.example.com/s/asset-a",
+            file_count=3,
+            last_upload_at=timezone.now(),
+        )
+        SourceDataItemFolder.objects.create(
+            project=self.project,
+            checklist_item=self.item,
+            asset_name="Asset B",
+            disk_path="/b/REQ-01 ОСВ",
+            public_url="https://cloud.example.com/s/asset-b",
+            file_count=7,
+            last_upload_at=timezone.now(),
+        )
+
+    def _item_row(self, asset):
+        response = self.client.get(reverse("checklists_app:grid_data"), {
+            "project_uid": self.project.short_uid,
+            "asset": asset,
+            "section": "all",
+        })
+        self.assertEqual(response.status_code, 200)
+        rows = [row for row in response.json()["rows"] if row.get("kind") == "item"]
+        return next(row for row in rows if row["id"] == self.item.id)
+
+    def test_all_assets_hides_file_stats_and_source_data_link(self):
+        row = self._item_row("all")
+
+        self.assertIsNone(row["fileCount"])
+        self.assertIsNone(row["lastUploadAt"])
+        self.assertEqual(row["sourceDataUrl"], "")
+        self.assertEqual(row["filesHint"], SOURCE_DATA_SELECT_ASSET_HINT)
+
+    def test_selected_asset_shows_that_asset_file_stats(self):
+        row = self._item_row("asset:Asset A")
+
+        self.assertEqual(row["fileCount"], 3)
+        self.assertEqual(row["sourceDataUrl"], "https://cloud.example.com/s/asset-a")
+        self.assertEqual(row["filesHint"], "")
+
+    def test_single_asset_project_still_shows_files_for_all_filter(self):
+        single_project = ProjectRegistration.objects.create(
+            number=7002,
+            type=self.product,
+            name="Один актив",
+            year=2026,
+        )
+        work = WorkVolume.objects.create(
+            project=single_project,
+            name="Only Asset",
+            asset_name="Only Asset",
+        )
+        Performer.objects.create(
+            registration=single_project,
+            work_item=work,
+            asset_name="Only Asset",
+            typical_section=self.section,
+        )
+        item = ChecklistItem.objects.create(
+            project=single_project,
+            section=self.section,
+            code="REQ",
+            number=1,
+            short_name="ОСВ",
+            name="Оборотно-сальдовая ведомость",
+        )
+        SourceDataItemFolder.objects.create(
+            project=single_project,
+            checklist_item=item,
+            asset_name="Only Asset",
+            disk_path="/only/REQ-01 ОСВ",
+            public_url="https://cloud.example.com/s/only",
+            file_count=4,
+            last_upload_at=timezone.now(),
+        )
+
+        response = self.client.get(reverse("checklists_app:grid_data"), {
+            "project_uid": single_project.short_uid,
+            "asset": "all",
+            "section": "all",
+        })
+        self.assertEqual(response.status_code, 200)
+        row = next(row for row in response.json()["rows"] if row.get("kind") == "item" and row["id"] == item.id)
+        self.assertEqual(row["fileCount"], 4)
+        self.assertEqual(row["sourceDataUrl"], "https://cloud.example.com/s/only")
+        self.assertEqual(row["filesHint"], "")
 

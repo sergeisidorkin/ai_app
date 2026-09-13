@@ -1,0 +1,127 @@
+{% load classifiers_filters %}
+<section id="policy-service-goal-reports-section"
+         data-policy-table-key="service-goal-reports"
+         data-policy-table-url="{% url 'policy_service_goal_reports_table' %}"
+         data-policy-master-managed="1"
+         data-policy-table-page="{{ page_obj.number|default:'1' }}"
+         data-policy-table-page-size="{{ policy_page_size|default:'25' }}"
+         {% if policy_inline_edit %}data-policy-inline="1"{% endif %}>
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Цели услуг и названия отчетов
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive">
+    <table class="table table-sm align-top">
+        <thead>
+        <tr>
+            <th class="policy-workspace-checkbox-cell" style="width:1%">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="service-goal-reports-master"
+                               data-target-name="service-goal-report-select"
+                               data-actions-id="service-goal-reports-actions"
+                               aria-label="Выделить все строки целей услуг и названий отчетов">
+                    </div>
+                {% endif %}
+            </th>
+            <th class="policy-workspace-product-cell">Продукт</th>
+            <th>Цели оказания услуг</th>
+            <th>Цели оказания услуг в родительном падеже</th>
+            <th>Титул отчета/ТКП</th>
+            <th>Название продукта</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for item in service_goal_reports %}
+            <tr data-policy-filter-row="1"
+                data-product-id="{{ item.product_id }}"
+                data-inline-row-id="{{ item.id }}"
+                data-product-label="{{ item.product.short_name }}{% if item.product.display_name %} {{ item.product.display_name }}{% endif %}"
+                data-consulting-type="{{ item.product.consulting_type_display }}"
+                data-service-category="{{ item.product.service_category_display }}"
+                data-service-subtype="{{ item.product.service_subtype_display }}"
+                data-edit-url="{% url 'service_goal_report_form_edit' item.pk %}"
+                data-delete-url="{% url 'service_goal_report_delete' item.pk %}"
+                data-move-up-url="{% url 'service_goal_report_move_up' item.pk %}"
+                data-move-down-url="{% url 'service_goal_report_move_down' item.pk %}">
+                <td class="text-nowrap policy-workspace-checkbox-cell">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="service-goal-report-sel-{{ item.id }}"
+                                   name="service-goal-report-select"
+                                   value="{{ item.id }}"
+                                   aria-label="Выделить строку целей услуг и названия отчета">
+                        </div>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap policy-workspace-product-cell">{{ item.product.short_name }}</td>
+                <td{% if policy_inline_edit %} data-inline-field="service_goal" data-inline-type="text" data-inline-value="{{ item.service_goal }}"{% endif %}>{{ item.service_goal }}</td>
+                <td{% if policy_inline_edit %} data-inline-field="service_goal_genitive" data-inline-type="text" data-inline-value="{{ item.service_goal_genitive }}"{% endif %}>{{ item.service_goal_genitive }}</td>
+                <td{% if policy_inline_edit %} data-inline-field="report_title" data-inline-type="text" data-inline-value="{{ item.report_title }}"{% endif %}>{{ item.report_title }}</td>
+                <td{% if policy_inline_edit %} data-inline-field="product_name" data-inline-type="text" data-inline-value="{{ item.product_name }}"{% endif %}>{{ item.product_name }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="6" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    <div class="policy-table-footer">
+    {% if request.user.is_authenticated and request.user.is_staff %}
+    <div class="policy-table-footer-actions products-actions-row">
+      <button
+              class="btn btn-primary btn-sm d-flex align-items-center{% if not policy_inline_edit or service_goal_reports %} policy-workspace-catalog-only{% endif %}"
+              hx-get="{% url 'service_goal_report_form_create' %}"
+              hx-target="#policy-modal .modal-content"
+              hx-swap="innerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="service-goal-reports-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" id="service-goal-reports-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0 policy-workspace-catalog-only" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" id="service-goal-reports-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0 policy-workspace-catalog-only" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" id="service-goal-reports-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0 policy-workspace-catalog-only" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" id="service-goal-reports-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+      <a href="{% url 'service_goal_report_csv_download' %}{% if policy_filter_query %}?{{ policy_filter_query }}{% endif %}"
+         id="service-goal-reports-csv-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+         title="Скачать CSV"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </a>
+      <button type="button"
+              id="service-goal-reports-csv-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+              title="Загрузить CSV">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file" id="service-goal-reports-csv-file-input" accept=".csv" class="d-none">
+    </div>
+    {% else %}
+    <div class="policy-table-footer-actions"></div>
+    {% endif %}
+    {% if policy_pagination_enabled %}
+        {% include "policy_app/_policy_pagination.html" with pagination_target="#policy-service-goal-reports-section" page_size_id="service-goal-reports" %}
+    {% endif %}
+    </div>
+</div>
+</section>

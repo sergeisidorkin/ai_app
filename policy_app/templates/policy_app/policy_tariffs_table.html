@@ -1,0 +1,137 @@
+{% load classifiers_filters %}
+<section id="policy-tariffs-section"
+         data-policy-table-key="tariffs"
+         data-policy-table-url="{% url 'policy_tariffs_table' %}"
+         data-policy-master-managed="1"
+         data-policy-table-page="{{ page_obj.number|default:'1' }}"
+         data-policy-table-page-size="{{ policy_page_size|default:'25' }}"
+         {% if policy_inline_edit %}data-policy-inline="1" data-policy-row-insert="1"{% endif %}>
+{% if policy_inline_edit %}
+<script type="application/json" data-policy-inline-options>{{ policy_inline_options_json|safe }}</script>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Тарифы разделов (услуг)
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive">
+    <table class="table table-sm align-middle tariffs-table">
+        <thead>
+        <tr>
+            <th style="width:1%">
+                <div class="form-check m-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="tariffs-master"
+                           data-target-name="tariff-select"
+                           data-actions-id="tariffs-actions"
+                           aria-label="Выделить все строки тарифов">
+                </div>
+            </th>
+            <th class="policy-workspace-product-cell">Продукт</th>
+            <th class="typical-section-code-col">Код</th>
+            <th>Раздел (услуга)</th>
+            <th>Базовая ставка в ВПМ</th>
+            <th>Объем услуг в часах</th>
+            <th>Объем услуг в днях для ТКП</th>
+            {% if is_admin %}
+            <th>Руководитель направления</th>
+            {% endif %}
+        </tr>
+        </thead>
+        <tbody>
+        {% for t in tariffs %}
+            <tr data-policy-filter-row="1"
+                {% if policy_inline_edit %}data-inline-row-id="{{ t.id }}"{% endif %}
+                data-product-id="{{ t.product_id }}"
+                data-product-label="{{ t.product.short_name }}{% if t.product.display_name %} {{ t.product.display_name }}{% endif %}"
+                data-consulting-type="{{ t.product.consulting_type_display }}"
+                data-service-category="{{ t.product.service_category_display }}"
+                data-service-subtype="{{ t.product.service_subtype_display }}"
+                data-edit-url="{% url 'tariff_form_edit' t.pk %}"
+                data-delete-url="{% url 'tariff_delete' t.pk %}"
+                data-move-up-url="{% url 'tariff_move_up' t.pk %}"
+                data-move-down-url="{% url 'tariff_move_down' t.pk %}">
+
+                <td class="text-nowrap policy-row-check-cell">
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="tariff-sel-{{ t.id }}"
+                               name="tariff-select"
+                               value="{{ t.id }}"
+                               aria-label="Выделить строку тарифа">
+                    </div>
+                </td>
+                <td class="text-nowrap policy-workspace-product-cell">{{ t.product.short_name }}</td>
+                <td class="text-nowrap typical-section-code-col"><span class="typical-section-dsc-code">{{ t.section.code }}</span></td>
+                <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="section" data-inline-type="select" data-inline-value="{{ t.section_id }}"{% endif %}>{{ t.section.name_ru|default:t.section.name_en }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="base_rate_vpm" data-inline-type="number" data-inline-step="0.01" data-inline-min="0" data-inline-value="{{ t.base_rate_vpm }}"{% endif %}>{{ t.base_rate_vpm|format_money }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="service_hours" data-inline-type="number" data-inline-step="1" data-inline-min="0" data-inline-value="{{ t.service_hours }}"{% endif %}>{{ t.service_hours }}</td>
+                <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="service_days_tkp" data-inline-type="number" data-inline-step="1" data-inline-min="0" data-inline-value="{{ t.service_days_tkp }}"{% endif %}>{{ t.service_days_tkp }}</td>
+                {% if is_admin %}
+                <td class="text-nowrap text-muted"{% if policy_inline_edit %} data-inline-field="owner" data-inline-type="select" data-inline-value="{{ t.created_by_id }}"{% endif %}>
+                    {% if t.created_by.employee_profile %}
+                        {{ t.created_by.employee_profile.job_title }}
+                    {% else %}
+                        {{ t.created_by.get_full_name|default:t.created_by.username }}
+                    {% endif %}
+                </td>
+                {% endif %}
+            </tr>
+        {% empty %}
+            <tr><td colspan="{% if is_admin %}8{% else %}7{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    <div class="policy-table-footer">
+    <div class="policy-table-footer-actions products-actions-row">
+      <button
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              hx-get="{% url 'tariff_form_create' %}"
+              hx-target="#policy-modal .modal-content"
+              hx-swap="innerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="tariffs-actions" class="d-none d-flex">
+        <div class="btn-group">
+          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
+      </div>
+      <a href="{% url 'tariff_csv_download' %}{% if policy_filter_query %}?{{ policy_filter_query }}{% endif %}"
+         id="tariffs-csv-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+         title="Скачать CSV"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </a>
+      <button type="button"
+              id="tariffs-csv-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center policy-workspace-catalog-only"
+              title="Загрузить CSV">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file" id="tariffs-csv-file-input" accept=".csv" class="d-none">
+    </div>
+    {% if policy_pagination_enabled %}
+        {% include "policy_app/_policy_pagination.html" with pagination_target="#policy-tariffs-section" page_size_id="tariffs" %}
+    {% endif %}
+    </div>
+</div>
+</section>

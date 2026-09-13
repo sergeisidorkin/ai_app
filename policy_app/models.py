@@ -81,45 +81,57 @@ class ConsultingDirection(models.Model):
     def __str__(self):
         return self.consulting_types_display or f"Направление консалтинга #{self.pk}"
 
+    def _ordered_consulting_types(self):
+        prefetched = getattr(self, "_policy_consulting_types", None)
+        if prefetched is not None:
+            return prefetched
+        return self.consulting_types.order_by("position", "id")
+
+    def _ordered_service_types(self):
+        prefetched = getattr(self, "_policy_service_types", None)
+        if prefetched is not None:
+            return prefetched
+        return self.service_types.select_related("consulting_type").order_by(
+            "consulting_type__position",
+            "position",
+            "id",
+        )
+
+    def _ordered_service_subtypes(self):
+        prefetched = getattr(self, "_policy_service_subtypes", None)
+        if prefetched is not None:
+            return prefetched
+        return self.service_subtypes.select_related(
+            "service_type",
+            "service_type__consulting_type",
+        ).order_by(
+            "service_type__consulting_type__position",
+            "service_type__position",
+            "position",
+            "id",
+        )
+
     @property
     def consulting_types_display(self):
-        return _join_catalog_values(self.consulting_types.order_by("position", "id").values_list("name", flat=True))
+        return _join_catalog_values(item.name for item in self._ordered_consulting_types())
 
     @property
     def service_types_display(self):
-        return _join_catalog_values(self.service_types.order_by("position", "id").values_list("name", flat=True))
+        return _join_catalog_values(item.name for item in self._ordered_service_types())
 
     @property
     def service_codes_display(self):
-        return _join_catalog_values(self.service_types.order_by("position", "id").values_list("code", flat=True))
+        return _join_catalog_values(item.code for item in self._ordered_service_types())
 
     @property
     def service_subtypes_display(self):
-        return _join_catalog_values(self.service_subtypes.order_by("position", "id").values_list("name", flat=True))
+        return _join_catalog_values(item.name for item in self._ordered_service_subtypes())
 
     @property
     def table_rows(self):
-        consulting_types = sorted(
-            list(self.consulting_types.all()),
-            key=lambda item: (item.position, item.id),
-        )
-        service_types = sorted(
-            list(self.service_types.select_related("consulting_type").all()),
-            key=lambda item: (
-                item.consulting_type.position if item.consulting_type_id else 0,
-                item.position,
-                item.id,
-            ),
-        )
-        service_subtypes = sorted(
-            list(self.service_subtypes.select_related("service_type", "service_type__consulting_type").all()),
-            key=lambda item: (
-                item.service_type.consulting_type.position if item.service_type_id and item.service_type.consulting_type_id else 0,
-                item.service_type.position if item.service_type_id else 0,
-                item.position,
-                item.id,
-            ),
-        )
+        consulting_types = self._ordered_consulting_types()
+        service_types = self._ordered_service_types()
+        service_subtypes = self._ordered_service_subtypes()
 
         rows = [
             {
@@ -436,7 +448,10 @@ class Product(models.Model):
     def owner_display(self):
         if self.is_group_owner:
             return "Группа"
-        names = list(self.owners.order_by("position").values_list("short_name", flat=True))
+        owners = getattr(self, "_policy_owner_display_items", None)
+        if owners is None:
+            owners = self.owners.only("id", "short_name", "position").order_by("position", "id")
+        names = [owner.short_name for owner in owners]
         return ", ".join(names) if names else ""
 
 class TypicalSection(models.Model):
@@ -555,9 +570,18 @@ def ensure_system_dsc_section(product):
         TypicalSectionSpecialty.objects.filter(section=section).delete()
 
         ordered = [section] + [item for item in sections if item.pk != section.pk]
+        changed_positions = []
         for index, item in enumerate(ordered, start=1):
             if item.position != index:
-                TypicalSection.objects.filter(pk=item.pk).update(position=index)
+                item.position = index
+                changed_positions.append(item)
+        if changed_positions:
+            TypicalSection.objects.bulk_update(changed_positions, ["position"])
+            from .cache import schedule_policy_cache_invalidation
+
+            schedule_policy_cache_invalidation(
+                using=product._state.db or "default",
+            )
 
     section.refresh_from_db()
     return section
@@ -760,6 +784,10 @@ class TypicalServiceTerm(models.Model):
         return self._format_term_display(self.source_data_weeks, self.source_data_term_unit)
 
     @property
+    def source_data_value_display(self):
+        return self.format_term_value(self.source_data_weeks, self.source_data_term_unit)
+
+    @property
     def preliminary_report_months_display(self):
         return format(self.preliminary_report_months, ".1f").replace(".", ",")
 
@@ -768,16 +796,28 @@ class TypicalServiceTerm(models.Model):
         return self._format_term_display(self.preliminary_report_months, self.preliminary_report_term_unit)
 
     @property
+    def preliminary_report_value_display(self):
+        return self.format_term_value(self.preliminary_report_months, self.preliminary_report_term_unit)
+
+    @property
     def final_report_display(self):
         return self._format_term_display(self.final_report_weeks, self.final_report_term_unit)
+
+    @property
+    def final_report_value_display(self):
+        return self.format_term_value(self.final_report_weeks, self.final_report_term_unit)
+
+    @classmethod
+    def format_term_value(cls, value, unit):
+        unit = unit if unit in cls.TermUnit.values else cls.TermUnit.WEEKS
+        if unit == cls.TermUnit.DAYS:
+            return str(int(value or 0))
+        return format(value or 0, ".1f").replace(".", ",")
 
     @classmethod
     def _format_term_display(cls, value, unit):
         unit = unit if unit in cls.TermUnit.values else cls.TermUnit.WEEKS
-        if unit == cls.TermUnit.DAYS:
-            display_value = str(int(value or 0))
-        else:
-            display_value = format(value or 0, ".1f").replace(".", ",")
+        display_value = cls.format_term_value(value, unit)
         return f"{display_value} {dict(cls.TermUnit.choices).get(unit, '')}".strip()
 
 
@@ -823,7 +863,10 @@ class ExpertiseDirection(models.Model):
     def owner_display(self):
         if self.is_group_owner:
             return "Группа"
-        names = list(self.owners.order_by("position").values_list("short_name", flat=True))
+        owners = getattr(self, "_policy_owner_display_items", None)
+        if owners is None:
+            owners = self.owners.only("id", "short_name", "position").order_by("position", "id")
+        names = [owner.short_name for owner in owners]
         return ", ".join(names) if names else ""
 
 
@@ -925,10 +968,17 @@ class SpecialtyTariff(models.Model):
         return self.specialty_group or f"Тариф специальностей #{self.pk}"
 
     @property
+    def display_specialties(self):
+        prefetched = getattr(self, "_policy_display_specialties", None)
+        if prefetched is not None:
+            return prefetched
+        return self.specialties.select_related("expertise_dir").order_by("position", "id")
+
+    @property
     def expertise_direction_display(self):
         labels = []
         seen = set()
-        for specialty in self.specialties.select_related("expertise_dir").order_by("position", "id"):
+        for specialty in self.display_specialties:
             label = (getattr(specialty.expertise_dir, "short_name", "") or "").strip()
             if label == "—":
                 label = ""

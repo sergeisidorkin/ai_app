@@ -7,13 +7,14 @@
 
 <form
     method="post"
+    data-policy-modal-size="xl"
     {% if action == "create" %}
       hx-post="{% url 'esp_form_create' %}"
     {% else %}
       hx-post="{% url 'esp_form_edit' specialty.pk %}"
     {% endif %}
-    hx-target="#experts-pane"
-    hx-swap="outerHTML">
+    hx-target="#policy-modal .modal-content"
+    hx-swap="innerHTML">
   <div class="modal-body">
     {% csrf_token %}
     <div class="row g-3">

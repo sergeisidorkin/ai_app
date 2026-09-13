@@ -26,6 +26,11 @@ from .models import (
     TypicalServiceTerm,
 )
 from users_app.models import Employee
+from .querysets import (
+    ordered_owner_display_prefetch,
+    ordered_specialties_display_prefetch,
+    with_policy_consulting_catalog,
+)
 
 
 class TimestampedAdmin(admin.ModelAdmin):
@@ -74,6 +79,9 @@ class ConsultingDirectionAdmin(TimestampedAdmin):
     list_display_links = ("consulting_types_display",)
     ordering = ("position", "id")
     inlines = (ConsultingDirectionTypeInline, ConsultingServiceTypeInline, ConsultingServiceSubtypeInline)
+
+    def get_queryset(self, request):
+        return with_policy_consulting_catalog(super().get_queryset(request))
 
 
 @admin.register(Product)
@@ -127,6 +135,11 @@ class ProductAdmin(TimestampedAdmin):
             "fields": ("created_at", "updated_at"),
         }),
     )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related(
+            ordered_owner_display_prefetch()
+        )
 
 
 @admin.register(TypicalSection)
@@ -355,6 +368,11 @@ class ExpertiseDirectionAdmin(TimestampedAdmin):
         }),
     )
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related(
+            ordered_owner_display_prefetch()
+        )
+
 
 @admin.register(Grade)
 class GradeAdmin(TimestampedAdmin):
@@ -428,6 +446,11 @@ class SpecialtyTariffAdmin(TimestampedAdmin):
             "fields": ("created_at", "updated_at"),
         }),
     )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related(
+            ordered_specialties_display_prefetch()
+        )
 
 
 @admin.register(Tariff)

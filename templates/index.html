@@ -277,9 +277,9 @@
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
               <div class="d-flex align-items-center gap-3">
-                <h5 class="mb-0 ps-3 fs-4 pt-2">Продукты</h5>
+                <h5 id="policy-section-heading" class="mb-0 ps-3 fs-4 pt-2">Продукты</h5>
                 <div class="dropdown pt-1" id="master-policy-consulting-filter-dropdown" style="transform: translateY(3px);">
-                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
                           id="policy-consulting-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                     Вид консалтинга: <span class="js-policy-consulting-filter-label">Все</span>
                   </button>
@@ -295,7 +295,7 @@
                   </div>
                 </div>
                 <div class="dropdown pt-1" id="master-policy-category-filter-dropdown" style="transform: translateY(3px);">
-                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
                           id="policy-category-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                     Тип услуги: <span class="js-policy-category-filter-label">Все</span>
                   </button>
@@ -311,7 +311,7 @@
                   </div>
                 </div>
                 <div class="dropdown pt-1" id="master-policy-subtype-filter-dropdown" style="transform: translateY(3px);">
-                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
                           id="policy-subtype-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                     Подтип услуги: <span class="js-policy-subtype-filter-label">Все</span>
                   </button>
@@ -327,7 +327,7 @@
                   </div>
                 </div>
                 <div class="dropdown pt-1" id="master-policy-product-filter-dropdown" style="transform: translateY(3px);">
-                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
                           id="policy-product-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                     Продукт: <span class="js-policy-product-filter-label">Все</span>
                   </button>
@@ -343,14 +343,25 @@
                   </div>
                 </div>
               </div>
-              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
-                 href="#notifications"
-                 data-bs-toggle="tab"
-                 aria-label="Открыть уведомления">
-                <i class="bi bi-bell fs-5"></i>
-                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
-                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
-              </a>
+              <div class="d-flex align-items-center gap-2">
+                <div id="policy-workspace-actions" class="d-none align-items-center gap-2">
+                  <button type="button"
+                          class="btn btn-outline-secondary btn-sm"
+                          data-policy-workspace-cancel-btn="1">Отмена</button>
+                  <button type="button"
+                          class="btn btn-primary btn-sm"
+                          data-policy-workspace-save-btn="1"
+                          disabled>Сохранить</button>
+                </div>
+                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                   href="#notifications"
+                   data-bs-toggle="tab"
+                   aria-label="Открыть уведомления">
+                  <i class="bi bi-bell fs-5"></i>
+                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                </a>
+              </div>
             </div>
           </div>
           <div class="ps-3">
@@ -548,7 +559,7 @@
               <div class="d-flex align-items-center gap-3">
                 <h5 id="proposals-section-heading" class="mb-0 ps-3 fs-4 pt-2">ТКП</h5>
                 <div class="dropdown pt-1" id="master-proposal-kind-filter-dropdown" style="transform: translateY(3px);">
-                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
                           id="proposal-kind-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                     Вид: <span class="js-proposal-kind-filter-label">Все</span>
                   </button>
@@ -563,7 +574,7 @@
                   </div>
                 </div>
                 <div class="dropdown pt-1" id="master-proposal-status-filter-dropdown" style="transform: translateY(3px);">
-                  <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
                           id="proposal-status-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                     Статус: <span class="js-proposal-status-filter-label">Все</span>
                   </button>
@@ -578,14 +589,25 @@
                   </div>
                 </div>
               </div>
-              <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
-                 href="#notifications"
-                 data-bs-toggle="tab"
-                 aria-label="Открыть уведомления">
-                <i class="bi bi-bell fs-5"></i>
-                <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
-                      data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
-              </a>
+              <div class="d-flex align-items-center gap-2">
+                <div id="proposal-form-actions" class="d-none align-items-center gap-2">
+                  <button type="button"
+                          class="btn btn-outline-secondary btn-sm"
+                          data-proposal-form-cancel-btn="1">Отмена</button>
+                  <button type="button"
+                          class="btn btn-primary btn-sm"
+                          data-proposal-form-save-btn="1"
+                          disabled>Сохранить</button>
+                </div>
+                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                   href="#notifications"
+                   data-bs-toggle="tab"
+                   aria-label="Открыть уведомления">
+                  <i class="bi bi-bell fs-5"></i>
+                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                </a>
+              </div>
             </div>
           </div>
           <div class="ps-3">
@@ -3077,13 +3099,19 @@
             reloadBlocks();
           }
 
-          function readProductOrderFromPolicy() {
-            const rows = document.querySelectorAll('#policy-pane tbody tr[data-product-id]');
-            return Array.from(rows).map(tr => tr.getAttribute('data-product-id')).filter(Boolean);
+          const templatesServerProductOrder = Array.from(
+            sidebarList?.querySelectorAll('a.list-group-item[data-product-id]') || []
+          ).map(a => a.getAttribute('data-product-id')).filter(Boolean);
+          function readProductOrder(event) {
+            const catalog = event?.detail?.catalog || window.__policyProductCatalog;
+            if (Array.isArray(catalog) && catalog.length) {
+              return catalog.map(item => String(item.id || '')).filter(Boolean);
+            }
+            return templatesServerProductOrder;
           }
-          function reorderSecondSidebar() {
+          function reorderSecondSidebar(event) {
             if (!sidebarList) return;
-            const order = readProductOrderFromPolicy();
+            const order = readProductOrder(event);
             if (!order.length) return;
 
             const map = new Map();
@@ -3302,12 +3330,18 @@
           }
 
           // порядок продуктов синхронизируем с таблицей «Продукты» (как в «Шаблоны»)
-          function readProductOrderFromPolicy() {
-            const rows = document.querySelectorAll('#policy-pane tbody tr[data-product-id]');
-            return Array.from(rows).map(tr => tr.getAttribute('data-product-id')).filter(Boolean);
+          const requestsServerProductOrder = Array.from(
+            sidebar?.querySelectorAll('a.list-group-item[data-product-id]') || []
+          ).map(a => a.getAttribute('data-product-id')).filter(Boolean);
+          function readProductOrder(event) {
+            const catalog = event?.detail?.catalog || window.__policyProductCatalog;
+            if (Array.isArray(catalog) && catalog.length) {
+              return catalog.map(item => String(item.id || '')).filter(Boolean);
+            }
+            return requestsServerProductOrder;
           }
-          function reorderSecondSidebar() {
-            const order = readProductOrderFromPolicy();
+          function reorderSecondSidebar(event) {
+            const order = readProductOrder(event);
             if (!order.length || !sidebar) return;
 
             const map = new Map();

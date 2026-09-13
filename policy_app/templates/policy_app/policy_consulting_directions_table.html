@@ -1,0 +1,109 @@
+{% load classifiers_filters %}
+<section id="policy-consulting-directions-section"
+         data-policy-table-key="consulting-directions"
+         data-policy-table-url="{% url 'policy_consulting_directions_table' %}"
+         data-policy-table-page="1">
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Направления консалтинга
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive">
+    <table class="table table-sm align-top consulting-directions-table">
+        <thead>
+        <tr>
+            <th style="width:1%; vertical-align: top;">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="consulting-dir-master"
+                               disabled
+                               aria-label="Выделить все строки направлений консалтинга">
+                    </div>
+                {% endif %}
+            </th>
+            <th style="width:15%">Вид консалтинга</th>
+            <th style="width:4%">Код</th>
+            <th style="width:15%">Тип услуг</th>
+            <th style="width:66%">Подтип услуги</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for item in consulting_directions %}
+            {% for row in item.table_rows %}
+                <tr data-policy-filter-row="1"
+                    data-consulting-type="{{ row.consulting_type|default_if_none:'' }}"
+                    data-service-category="{{ row.service_type|default_if_none:'' }}"
+                    data-service-subtype="{{ row.service_subtype|default_if_none:'' }}">
+                    <td class="text-nowrap">
+                        {% if request.user.is_authenticated and request.user.is_staff %}
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="consulting-dir-sel-{{ item.id }}-{{ forloop.counter }}"
+                                       disabled
+                                       aria-label="Строка направления консалтинга">
+                            </div>
+                        {% endif %}
+                    </td>
+                    <td>{{ row.consulting_type|default:"—" }}</td>
+                    <td class="text-nowrap">{{ row.code|default:"—" }}</td>
+                    <td>{{ row.service_type|default:"—" }}</td>
+                    <td>{{ row.service_subtype|default:"—" }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td class="text-nowrap">
+                        {% if request.user.is_authenticated and request.user.is_staff %}
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="consulting-dir-sel-{{ item.id }}"
+                                       disabled
+                                       aria-label="Строка направления консалтинга">
+                            </div>
+                        {% endif %}
+                    </td>
+                    <td>—</td>
+                    <td class="text-nowrap">—</td>
+                    <td>—</td>
+                    <td>—</td>
+                </tr>
+            {% endfor %}
+        {% empty %}
+            <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="policy-table-footer">
+        <div class="policy-table-footer-actions products-actions-row">
+            <div id="consulting-dir-actions"
+                 class="d-flex"
+                 data-policy-actions-always-visible="1">
+                {% with consulting_directions|first as first_direction %}
+                    <button
+                            type="button"
+                            class="btn btn-primary btn-sm d-flex align-items-center"
+                            {% if first_direction %}
+                            hx-get="{% url 'consulting_dir_form_edit' first_direction.pk %}"
+                            {% else %}
+                            hx-get="{% url 'consulting_dir_form_create' %}"
+                            {% endif %}
+                            hx-target="#policy-modal .modal-content"
+                            hx-swap="innerHTML">
+                        <i class="bi bi-pencil-square me-2"></i>Редактировать
+                    </button>
+                {% endwith %}
+            </div>
+        </div>
+        </div>
+    {% endif %}
+</div>
+</section>

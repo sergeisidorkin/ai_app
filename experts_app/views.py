@@ -81,6 +81,19 @@ def _render_form_with_errors(request, template, context):
     return response
 
 
+def _render_specialty_form_with_errors(request, template, context):
+    response = render(request, template, context)
+    response["HX-Retarget"] = "#policy-modal .modal-content"
+    response["HX-Reswap"] = "innerHTML"
+    return response
+
+
+def _render_specialty_updated(request):
+    from policy_app.views import _render_policy_mutation_updated
+
+    return _render_policy_mutation_updated(request, entity="expert-specialty")
+
+
 def staff_required(u):
     return u.is_active and u.is_staff
 
@@ -379,10 +392,6 @@ def _experts_context():
         )
     )
     return {
-        "specialties": ExpertSpecialty.objects.select_related(
-            "expertise_direction", "expertise_dir",
-            "head_of_direction", "head_of_direction__user",
-        ).prefetch_related("owners").all(),
         "profiles": profiles,
         "contract_details": contract_details,
     }
@@ -514,10 +523,12 @@ def specialty_form_create(request):
         return render(request, FORM_TEMPLATE, {"form": form, "action": "create"})
     form = ExpertSpecialtyForm(request.POST)
     if not form.is_valid():
-        return _render_form_with_errors(request, FORM_TEMPLATE, {"form": form, "action": "create"})
+        return _render_specialty_form_with_errors(
+            request, FORM_TEMPLATE, {"form": form, "action": "create"}
+        )
     form.instance.position = _next_position()
     form.save()
-    return _render_updated(request)
+    return _render_specialty_updated(request)
 
 
 @login_required
@@ -530,9 +541,13 @@ def specialty_form_edit(request, pk: int):
         return render(request, FORM_TEMPLATE, {"form": form, "action": "edit", "specialty": specialty})
     form = ExpertSpecialtyForm(request.POST, instance=specialty)
     if not form.is_valid():
-        return _render_form_with_errors(request, FORM_TEMPLATE, {"form": form, "action": "edit", "specialty": specialty})
+        return _render_specialty_form_with_errors(
+            request,
+            FORM_TEMPLATE,
+            {"form": form, "action": "edit", "specialty": specialty},
+        )
     form.save()
-    return _render_updated(request)
+    return _render_specialty_updated(request)
 
 
 @login_required
@@ -541,7 +556,7 @@ def specialty_form_edit(request, pk: int):
 def specialty_delete(request, pk: int):
     get_object_or_404(ExpertSpecialty, pk=pk).delete()
     _normalize_positions()
-    return _render_updated(request)
+    return _render_specialty_updated(request)
 
 
 @login_required
@@ -554,7 +569,7 @@ def specialty_move_up(request, pk: int):
         obj.position, prev.position = prev.position, obj.position
         ExpertSpecialty.objects.filter(pk=obj.pk).update(position=obj.position)
         ExpertSpecialty.objects.filter(pk=prev.pk).update(position=prev.position)
-    return _render_updated(request)
+    return _render_specialty_updated(request)
 
 
 @login_required
@@ -567,7 +582,7 @@ def specialty_move_down(request, pk: int):
         obj.position, nxt.position = nxt.position, obj.position
         ExpertSpecialty.objects.filter(pk=obj.pk).update(position=obj.position)
         ExpertSpecialty.objects.filter(pk=nxt.pk).update(position=nxt.position)
-    return _render_updated(request)
+    return _render_specialty_updated(request)
 
 
 ESP_CSV_HEADERS = [
@@ -780,7 +795,14 @@ def esp_csv_upload(request):
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
 
-    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+    from policy_app.views import _policy_import_success_response
+
+    return _policy_import_success_response(
+        request,
+        ok=True,
+        created=created,
+        warnings=warnings,
+    )
 
 
 EPR_CSV_HEADERS = [

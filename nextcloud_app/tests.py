@@ -59,6 +59,20 @@ class NextcloudDeploymentConfigTests(SimpleTestCase):
         self.assertIs(nextcloud["init"], True)
         self.assertEqual(nextcloud["pids_limit"], 256)
 
+    def test_all_container_logs_are_bounded(self):
+        deploy_dir = (
+            Path(__file__).resolve().parents[1]
+            / "deploy"
+            / "nextcloud"
+        )
+        config = yaml.safe_load((deploy_dir / "docker-compose.yml").read_text())
+
+        for service_name, service in config["services"].items():
+            with self.subTest(service=service_name):
+                self.assertEqual(service["logging"]["driver"], "json-file")
+                self.assertEqual(service["logging"]["options"]["max-size"], "10m")
+                self.assertEqual(service["logging"]["options"]["max-file"], "3")
+
     def test_redis_session_locks_are_bounded(self):
         deploy_dir = (
             Path(__file__).resolve().parents[1]

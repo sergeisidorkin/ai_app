@@ -1,9 +1,11 @@
 import csv
 import io
+import json
 import os
 import shutil
 import tempfile
 from datetime import date
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
@@ -823,8 +825,18 @@ class ExpertSpecialtyCsvTests(TestCase):
             role=DEPARTMENT_HEAD_GROUP,
         )
 
-    def test_experts_partial_renders_esp_csv_buttons(self):
+    def test_experts_partial_no_longer_renders_specialties_table(self):
         response = self.client.get(reverse("experts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "База физлиц-исполнителей")
+        self.assertNotContains(response, "Специальности исполнителей")
+        self.assertNotContains(response, 'id="esp-table"', html=False)
+        self.assertNotContains(response, 'id="esp-csv-download-btn"', html=False)
+        self.assertNotContains(response, 'id="esp-colpicker-wrap"', html=False)
+
+    def test_policy_expert_specialties_table_renders_csv_and_colpicker(self):
+        response = self.client.get(reverse("policy_expert_specialties_table"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Специальности исполнителей")
@@ -838,15 +850,96 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertContains(response, "Область специализации")
         self.assertContains(response, 'id="esp-csv-download-btn"', html=False)
         self.assertContains(response, 'id="esp-csv-upload-btn"', html=False)
+        self.assertContains(response, 'hx-target="#policy-modal .modal-content"', html=False)
+        self.assertContains(response, 'id="policy-expert-specialties-section"', html=False)
+        self.assertContains(response, 'class="policy-table-editor"', html=False)
+        self.assertContains(response, 'class="policy-table-footer"', html=False)
+        self.assertContains(response, 'class="policy-table-footer-actions products-actions-row"', html=False)
+        self.assertContains(response, 'class="policy-table-pagination"', html=False)
+        self.assertContains(response, 'data-policy-table-page-size="25"', html=False)
+        self.assertContains(response, "Показано строк")
+        self.assertNotContains(response, 'id="policy-pane"', html=False)
+        policy_js = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "policy-panels.js"
+        ).read_text()
+        policy_css = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "css"
+            / "site.css"
+        ).read_text()
+        self.assertIn("function bindExpertSpecialtiesColumnPicker()", policy_js)
+        self.assertIn("function applyExpertSpecialtiesColumnVisibility()", policy_js)
+        self.assertIn("experts:espHiddenCols", policy_js)
+        self.assertIn("esp-colpicker-open", policy_js)
+        self.assertIn("esp-colpicker-open", policy_css)
+        self.assertIn("#policy-pane .table-section-header:has(.epr-colpicker-menu.show)", policy_css)
+        self.assertIn("width: max-content; min-width: 100%; max-width: none;", policy_css)
+        self.assertIn("overflow-x: hidden; overflow-y: auto;", policy_css)
+        self.assertIn("#policy-pane .epr-colpicker .form-check {\n  padding-left: 1.5em !important;", policy_css)
+        self.assertIn("#policy-pane .epr-colpicker .form-check-input {\n  margin-left: -1.5em !important;", policy_css)
 
-    def test_experts_panel_uses_wide_specialty_modal(self):
+    def test_policy_expert_specialties_table_paginates_like_other_product_tables(self):
+        ExpertSpecialty.objects.bulk_create(
+            [
+                ExpertSpecialty(
+                    specialty=f"Paged specialty {index:02d}",
+                    specialty_en=f"Paged specialty {index:02d}",
+                    position=index,
+                )
+                for index in range(1, 27)
+            ]
+        )
+
+        first_page = self.client.get(reverse("policy_expert_specialties_table"))
+        self.assertEqual(first_page.status_code, 200)
+        self.assertTrue(first_page.context["policy_pagination_enabled"])
+        self.assertEqual(first_page.context["paginator"].count, 26)
+        self.assertEqual(len(first_page.context["specialties"]), 25)
+        self.assertContains(first_page, "1–25 из 26")
+        self.assertContains(first_page, "Paged specialty 01")
+        self.assertNotContains(first_page, "Paged specialty 26")
+
+        second_page = self.client.get(
+            reverse("policy_expert_specialties_table"),
+            {"page": 2},
+        )
+        self.assertEqual(len(second_page.context["specialties"]), 1)
+        self.assertContains(second_page, "26–26 из 26")
+        self.assertContains(second_page, "Paged specialty 26")
+        self.assertNotContains(second_page, "Paged specialty 01")
+
+    def test_specialty_form_targets_policy_xl_modal(self):
+        response = self.client.get(reverse("esp_form_create"))
+        policy_js = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "policy-panels.js"
+        ).read_text()
+        policy_panel = render_to_string("policy_app/panel.html")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-policy-modal-size="xl"', html=False)
+        self.assertContains(response, 'hx-target="#policy-modal .modal-content"', html=False)
+        self.assertNotContains(response, 'hx-target="#experts-pane"', html=False)
+        self.assertIn('id="policy-modal"', policy_panel)
+        self.assertIn("modal-dialog modal-lg modal-dialog-scrollable", policy_panel)
+        self.assertIn("syncPolicyModalSize", policy_js)
+        self.assertIn('data-policy-modal-size="xl"', policy_js)
+
+    def test_experts_panel_keeps_profile_modal_backdrop_guards(self):
         html = render_to_string("experts_app/panel.html")
-        specialty_modal_html = html[
-            html.index('id="experts-modal"'):html.index('id="experts-csv-result-modal"')
-        ]
 
-        self.assertIn("modal-dialog modal-xl", specialty_modal_html)
-        self.assertNotIn("modal-dialog modal-xl modal-dialog-scrollable", specialty_modal_html)
         self.assertIn("restoreExpertsBackdropIfMissing", html)
         self.assertIn("scheduleExpertsBackdropCheck", html)
         self.assertIn("cleanupExpertsFallbackBackdrop", html)
@@ -876,12 +969,23 @@ class ExpertSpecialtyCsvTests(TestCase):
                 "head_of_direction": "",
                 "specialization_area_suffix": "подземным водам",
             },
+            HTTP_HX_REQUEST="true",
         )
 
         self.assertEqual(response.status_code, 200)
         specialty = ExpertSpecialty.objects.get(specialty="Геолог")
         self.assertEqual(specialty.specialization_area, "Специалист по подземным водам")
-        self.assertContains(response, "Специалист по подземным водам")
+        self.assertEqual(response.content, b"")
+        self.assertEqual(response["HX-Reswap"], "none")
+        self.assertEqual(
+            json.loads(response["HX-Trigger"]),
+            {
+                "policy-updated": {
+                    "tables": ["expert-specialties", "specialty-tariffs", "typical-sections"],
+                    "refreshFilters": False,
+                }
+            },
+        )
 
     def test_specialty_form_leaves_blank_specialization_area_empty(self):
         response = self.client.post(
@@ -895,11 +999,13 @@ class ExpertSpecialtyCsvTests(TestCase):
                 "head_of_direction": "",
                 "specialization_area_suffix": "",
             },
+            HTTP_HX_REQUEST="true",
         )
 
         self.assertEqual(response.status_code, 200)
         specialty = ExpertSpecialty.objects.get(specialty="Геолог")
         self.assertEqual(specialty.specialization_area, "")
+        self.assertEqual(response.content, b"")
 
     def test_specialty_edit_form_prefills_specialization_area_suffix(self):
         specialty = ExpertSpecialty.objects.create(
@@ -971,7 +1077,13 @@ class ExpertSpecialtyCsvTests(TestCase):
         response = self.client.post(reverse("esp_csv_upload"), {"csv_file": csv_file})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 1)
+        self.assertEqual(
+            payload["policyUpdate"]["tables"],
+            ["expert-specialties", "specialty-tariffs", "typical-sections"],
+        )
         specialty = ExpertSpecialty.objects.get(specialty="Геолог")
         self.assertEqual(specialty.specialty_en, "Geologist")
         self.assertEqual(specialty.expertise_dir_id, self.expertise_dir.pk)

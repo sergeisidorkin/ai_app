@@ -1,0 +1,48 @@
+<div id="policy-pane" data-policy-lazy-shell="1">
+  <div class="card shadow-sm policy-group-card">
+    <div class="card-header policy-group-card-header">
+      <h5 class="policy-group-card-title">
+        <i class="bi bi-box-seam me-2"></i>
+        Спецификации продуктов
+      </h5>
+    </div>
+    <div class="card-body">
+      {% url 'policy_products_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="products" table_id="policy-products-section" table_label="Типовые продукты" table_url=table_url load_priority="immediate" master_managed="1" %}
+      {% url 'policy_service_goal_reports_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="service-goal-reports" table_id="policy-service-goal-reports-section" table_label="Цели услуг и названия отчетов" table_url=table_url load_priority="deferred" master_managed="1" %}
+      {% url 'policy_typical_sections_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="typical-sections" table_id="policy-typical-sections-section" table_label="Типовые разделы (услуги)" table_url=table_url load_priority="deferred" master_managed="1" %}
+      {% url 'policy_section_structures_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="section-structures" table_id="policy-section-structures-section" table_label="Типовая структура раздела (состава услуг)" table_url=table_url load_priority="deferred" master_managed="1" %}
+      {% url 'policy_report_structures_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="report-structures" table_id="policy-report-structures-section" table_label="Типовая структура отчета" table_url=table_url load_priority="deferred" master_managed="1" %}
+      {% url 'policy_typical_service_compositions_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="typical-service-compositions" table_id="policy-typical-service-compositions-section" table_label="Типовой состав услуг в ТКП" table_url=table_url load_priority="deferred" master_managed="1" %}
+      {% url 'policy_typical_service_terms_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="typical-service-terms" table_id="policy-typical-service-terms-section" table_label="Типовые сроки оказания услуг" table_url=table_url load_priority="deferred" master_managed="1" %}
+      {% url 'policy_tariffs_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="tariffs" table_id="policy-tariffs-section" table_label="Тарифы разделов (услуг)" table_url=table_url load_priority="deferred" master_managed="1" %}
+    </div>
+  </div>
+  <div class="card shadow-sm policy-group-card">
+    <div class="card-header policy-group-card-header">
+      <h5 class="policy-group-card-title">
+        <i class="bi bi-sliders me-2"></i>
+        Общие настройки продуктов
+      </h5>
+    </div>
+    <div class="card-body">
+      {% url 'policy_consulting_directions_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="consulting-directions" table_id="policy-consulting-directions-section" table_label="Направления консалтинга" table_url=table_url load_priority="deferred" %}
+      {% url 'policy_expertise_directions_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="expertise-directions" table_id="policy-expertise-directions-section" table_label="Направления экспертизы" table_url=table_url load_priority="deferred" %}
+      {% url 'policy_expert_specialties_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="expert-specialties" table_id="policy-expert-specialties-section" table_label="Специальности исполнителей" table_url=table_url load_priority="deferred" %}
+      {% url 'policy_specialty_tariffs_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="specialty-tariffs" table_id="policy-specialty-tariffs-section" table_label="Тарифы специальностей" table_url=table_url load_priority="deferred" %}
+      {% url 'policy_grades_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="grades" table_id="policy-grades-section" table_label="Грейды" table_url=table_url load_priority="deferred" %}
+    </div>
+  </div>
+</div>
