@@ -1604,12 +1604,42 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual([cell["text"] for cell in data_row[3:8]], ["1", "2", "3", "4", "10"])
         self.assertEqual(data_row[8]["text"], "1\u00a0000,00")
 
-    def test_resolve_service_cost_uses_commercial_contract_total_when_saved_value_is_empty(self):
+    def test_resolve_service_cost_uses_saved_field_even_when_contract_total_differs(self):
         proposal = ProposalRegistration.objects.create(
             number=4447,
             group_member=self.group_member,
             type=self.product,
-            name="Стоимость из коммерческих итогов",
+            name="Стоимость из поля формы",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            customer='ООО "Приморское"',
+            service_cost=Decimal("50900000"),
+            commercial_totals_json={
+                "contract_total": "149600000",
+                "contract_total_auto": "149600000",
+            },
+        )
+
+        replacements, _, _ = resolve_variables(
+            proposal,
+            [
+                ProposalVariable(
+                    key="{{total_price}}",
+                    source_section="proposals",
+                    source_table="registry",
+                    source_column="service_cost",
+                )
+            ],
+        )
+
+        self.assertEqual(replacements["{{total_price}}"], "50\u00a0900\u00a0000,00")
+
+    def test_resolve_service_cost_uses_commercial_contract_total_when_saved_value_is_empty(self):
+        proposal = ProposalRegistration.objects.create(
+            number=4449,
+            group_member=self.group_member,
+            type=self.product,
+            name="Пустая стоимость услуг",
             year=2026,
             status=ProposalRegistration.ProposalStatus.PRELIMINARY,
             customer='ООО "Приморское"',
@@ -1634,6 +1664,12 @@ class ProposalDocumentGenerationTests(TestCase):
 
         self.assertEqual(replacements["{{total_price}}"], "1\u00a0234\u00a0567,89")
 
+        replacements, _, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="{{total_price}}", is_computed=True)],
+        )
+        self.assertEqual(replacements["{{total_price}}"], "1\u00a0234\u00a0567,89")
+
     def test_resolve_total_price_is_available_as_service_cost_alias(self):
         proposal = ProposalRegistration.objects.create(
             number=4448,
@@ -1643,8 +1679,8 @@ class ProposalDocumentGenerationTests(TestCase):
             year=2026,
             status=ProposalRegistration.ProposalStatus.PRELIMINARY,
             customer='ООО "Приморское"',
-            service_cost=None,
-            commercial_totals_json={"contract_total": "7654321"},
+            service_cost=Decimal("7654321"),
+            commercial_totals_json={"contract_total": "100"},
         )
 
         replacements, _, _ = resolve_variables(
@@ -5599,6 +5635,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
                 "status": ProposalRegistration.ProposalStatus.FINAL,
                 "year": "2026",
+                "service_cost": "2500",
             }
         )
         payload.setlist("type", [str(first_product.pk), str(second_product.pk)])
@@ -5701,7 +5738,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(proposal.commercial_offers.first().specialist, "Эксперт")
         self.assertEqual(proposal.commercial_offers.first().service_name, "")
         self.assertEqual(proposal.commercial_totals_json["contract_total"], "1000")
-        self.assertEqual(str(proposal.service_cost), "1000.00")
+        self.assertEqual(str(proposal.service_cost), "2500.00")
 
     def test_form_saves_multistage_proposal_with_repeated_product(self):
         group_member = GroupMember.objects.create(
@@ -7723,6 +7760,10 @@ class ProposalFormContextTests(TestCase):
         self.assertNotIn("data-proposal-form-save-btn", form_html)
         self.assertIn("#proposal-form-actions", css)
         self.assertIn("#proposal-form-actions [data-proposal-form-save-btn]:disabled", css)
+        self.assertIn("syncServiceCostValue", source)
+        self.assertIn("shouldSyncServiceCostFromTotalsUpdate", source)
+        self.assertIn("commercialTableHydrating", source)
+        self.assertIn("form-submit-flush", source)
 
 
 class ProposalCatalogLazyShellTests(TestCase):
