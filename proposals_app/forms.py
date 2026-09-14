@@ -2156,15 +2156,6 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
         return summary_rows, travel_mode
 
-    def _parse_summary_service_cost(self, totals):
-        contract_total = str((totals or {}).get("contract_total") or "").strip()
-        if not contract_total:
-            return None
-        return self._parse_payload_decimal(
-            contract_total,
-            "Сводный блок: поле «Стоимость услуг» заполнено некорректно.",
-        )
-
     def _collect_stage_payloads(self):
         stage_payloads = []
         cleaned_product_ids = []
@@ -2415,8 +2406,6 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             if not str(self.cleaned_commercial_totals.get("travel_expenses_mode") or "").strip():
                 _, inferred_travel_mode = self._build_summary_commercial_fallback(self.cleaned_stage_payloads)
                 self.cleaned_commercial_totals["travel_expenses_mode"] = inferred_travel_mode
-            summary_service_cost = self._parse_summary_service_cost(self.cleaned_commercial_totals)
-            cleaned["service_cost"] = summary_service_cost
 
         if getattr(self, "cleaned_stage_payloads", None):
             last_stage = self.cleaned_stage_payloads[-1]

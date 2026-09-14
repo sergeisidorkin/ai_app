@@ -5306,6 +5306,7 @@
     let commercialSpinnerPointerInput = null;
     let bulkCommercialRateSourceInput = null;
     let syncingCommercialCellValues = false;
+    let commercialTableHydrating = true;
 
     function isSelectableCommercialCell(input) {
       if (isSummaryCommercialBlock || !(input instanceof HTMLInputElement)) return false;
@@ -5485,6 +5486,15 @@
 
     function shouldSyncServiceCost() {
       return isSummaryCommercialBlock ? hasVisibleSummaryCommercialBlock() : !hasVisibleSummaryCommercialBlock();
+    }
+
+    function shouldSyncServiceCostFromTotalsUpdate(meta) {
+      if (commercialTableHydrating) return false;
+      const reason = String((meta && meta.reason) || '');
+      if (reason === 'form-submit-flush' || reason === 'xlsx-export' || reason === 'initial-render') {
+        return false;
+      }
+      return shouldSyncServiceCost();
     }
 
     function readCommercialTotalsState(block) {
@@ -6450,12 +6460,11 @@
     }
 
     function syncServiceCostValue(valueRaw) {
-      if (!shouldSyncServiceCost()) return;
       if (!serviceCostInput || document.activeElement === serviceCostInput) return;
       serviceCostInput.value = valueRaw ? fmtMoney(valueRaw) : '';
     }
 
-    function syncCommercialFinancialRows() {
+    function syncCommercialFinancialRows(meta) {
       const totals = computeCommercialFinancialTotals();
       const rubTotalRow = findFixedRow('tr[data-rub-total-row="1"]');
       const discountedRow = findFixedRow('tr[data-discounted-total-row="1"]');
@@ -6495,7 +6504,9 @@
         contractRow.dataset.manualContractOverride = manualOverride && contractValueRaw && contractValueRaw !== nextAutoRaw ? '1' : '0';
       }
 
-      syncServiceCostValue(contractValueRaw);
+      if (shouldSyncServiceCostFromTotalsUpdate(meta)) {
+        syncServiceCostValue(contractValueRaw);
+      }
 
       setTotalsPayload({
         exchange_rate: totals.exchange_rate,
@@ -6566,7 +6577,7 @@
       const rows = getRows().map(serializeRow).filter(Boolean);
       syncSummaryRowValues();
       syncSummaryWithTravelRowValues();
-      syncCommercialFinancialRows();
+      syncCommercialFinancialRows(meta);
       syncActions();
       if (servicesStore) {
         servicesStore.commitCommercialRows(rows, { ...(meta || {}), source: 'commercial-view' });
@@ -7551,6 +7562,7 @@
 
     renderHeader(getAssetRows());
     renderRows(parsePayload());
+    commercialTableHydrating = false;
     window.addEventListener('resize', syncAllFinancialServiceCellExpansions);
 
     const api = {
