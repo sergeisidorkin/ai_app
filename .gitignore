@@ -21,6 +21,10 @@ media/
 deploy/mailu/mailu.env
 deploy/mailu/certs/
 deploy/mailu/*.pem
+deploy/dsh/dsh.env
+deploy/dsh/data/
+deploy/ollama/ollama.env
+deploy/ollama/data/
 office_addin_server/
 
 TPGR_Module_CP1251.bas

@@ -39,6 +39,28 @@ if not POLICY_CACHE_URL:
 # artifacts and WhiteNoise remains a safe application-level fallback.
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
+# Headless DSH runs inside the compose stack, not on the gunicorn PATH.
+# Local inbox paths on the laptop must stay off in production.
+DSH_SORT_ALLOW_LOCAL_INBOX = env.bool("DSH_SORT_ALLOW_LOCAL_INBOX", default=False)
+if not (DSH_COMPOSE_DIR or "").strip():
+    DSH_COMPOSE_DIR = "/opt/dsh"
+_dsh_compose_dir = Path(DSH_COMPOSE_DIR)
+_dsh_compose_file = _dsh_compose_dir / "docker-compose.yml"
+_dsh_env_file = _dsh_compose_dir / "dsh.env"
+if not (DSH_HEADLESS_CMD or "").strip() and _dsh_compose_file.exists():
+    _dsh_env_flag = f"--env-file {_dsh_env_file} " if _dsh_env_file.exists() else ""
+    DSH_HEADLESS_CMD = (
+        f"docker compose --project-directory {_dsh_compose_dir} {_dsh_env_flag}"
+        "exec -T -w {cwd} dsh dsh --profile headless"
+    )
+if not (DSH_SORT_WORKSPACE or "").strip() and (_dsh_compose_dir / "workspace").is_dir():
+    DSH_SORT_WORKSPACE = str(_dsh_compose_dir / "workspace" / "sort-runs")
+if (
+    not (DSH_HEADLESS_CONTAINER_CWD or "").strip()
+    and "{cwd}" in (DSH_HEADLESS_CMD or "")
+):
+    DSH_HEADLESS_CONTAINER_CWD = "/workspace/sort-runs"
+
 if DATABASES["default"]["ENGINE"].startswith("django.db.backends.postgresql"):
     DATABASES["default"]["CONN_MAX_AGE"] = env.int(
         "DB_CONN_MAX_AGE",

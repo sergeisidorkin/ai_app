@@ -1,8 +1,11 @@
 from datetime import date
 
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
+from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import render, redirect
 
+from core.dsh import build_dsh_overview
 from group_app.models import GroupMember
 from core.section_labels import APP_SECTION_LABELS
 from learning_app.services import build_learning_overview
@@ -54,6 +57,10 @@ def home_entry(request):
     is_department_head = employee_role == DEPARTMENT_HEAD_GROUP
     is_director_role = employee_role in DIRECTOR_GROUPS
     can_access_worktime = is_worktime_eligible_employee(employee)
+    can_access_checklist_sort = (
+        request.user.groups.filter(name=ADMIN_GROUP).exists()
+        or employee_role == ADMIN_GROUP
+    )
     can_access_connections = (not is_expert) or (
         employee_role in {PROJECTS_HEAD_GROUP, DEPARTMENT_HEAD_GROUP}
     )
@@ -68,6 +75,7 @@ def home_entry(request):
             request.user.is_staff and (is_contract_admin or is_lawyer or not is_expert)
         ),
         "can_access_worktime": can_access_worktime,
+        "can_access_checklist_sort": can_access_checklist_sort,
         "can_access_connections": can_access_connections,
         "smtp_only_connections": smtp_only_connections,
         "ler_date_filter": date.today().isoformat(),
@@ -79,4 +87,32 @@ def home_entry(request):
     }
     context.update(build_learning_overview(request.user))
     context.update(build_nextcloud_overview(request.user))
+    context.update(build_dsh_overview(request))
     return render(request, "index.html", context)
+
+
+def _user_can_open_dsh(user):
+    if not user.is_authenticated or not user.is_staff:
+        return False
+    employee = Employee.objects.filter(user=user).first()
+    employee_role = getattr(employee, "role", "") or ""
+    if employee_role in {EXPERT_GROUP, DEPARTMENT_HEAD_GROUP}:
+        return False
+    if user.groups.filter(name=EXPERT_GROUP).exists():
+        return False
+    return True
+
+
+@login_required
+def dsh_open(request):
+    if not _user_can_open_dsh(request.user):
+        return HttpResponseForbidden("Недостаточно прав.")
+    launch_url = build_dsh_overview(request).get("dsh_launch_url") or ""
+    if "token=" not in launch_url:
+        return HttpResponse(
+            "Консоль ИИ не готова. Запустите локальный DSH "
+            "(./scripts/dev_dsh.sh или ./scripts/dev_up.sh) и обновите страницу.",
+            status=503,
+            content_type="text/plain; charset=utf-8",
+        )
+    return redirect(launch_url)

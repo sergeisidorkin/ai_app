@@ -1,0 +1,978 @@
+<div id="checklists-sort-root"
+     data-meta-url-base="{{ project_meta_url_base }}"
+     data-start-url="{{ sort_start_url }}"
+     data-status-url="{{ sort_status_url }}"
+     data-verify-url="{{ sort_verify_url }}">{% csrf_token %}
+    <div class="card shadow-sm chooser-card w-100 mb-3">
+        <div class="card-body">
+            <h6 class="card-title mb-3">Выбор рабочей области</h6>
+            <div class="d-flex align-items-center gap-3 chk-filters-row">
+                <div class="chk-filter-group">
+                    <span class="small text-muted">Проект:</span>
+                    <select id="chk-sort-project" class="form-select form-select-sm">
+                        {% for opt in project_options %}
+                            <option value="{{ opt.short_uid }}"
+                                    {% if opt.short_uid == selected_project_uid %}selected{% endif %}>
+                                {{ opt.label }}
+                            </option>
+                        {% empty %}
+                            <option value="">Нет проектов</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="chk-filter-group">
+                    <span class="small text-muted">Актив:</span>
+                    <select id="chk-sort-asset" class="form-select form-select-sm" {% if not asset_items %}disabled{% endif %}>
+                        {% if asset_items %}
+                            {% for item in asset_items %}
+                                {% if item.type == "asset" and item.entityCount > 1 %}
+                                {% else %}
+                                <option value="{{ item.value }}" {% if item.value == selected_asset %}selected{% endif %}>
+                                    {{ item.label }}{% if item.type == "asset" %} • актив{% endif %}
+                                </option>
+                                {% endif %}
+                            {% endfor %}
+                        {% else %}
+                            <option value="">Нет данных</option>
+                        {% endif %}
+                    </select>
+                </div>
+                <div class="chk-filter-group">
+                    <span class="small text-muted">Раздел:</span>
+                    <select id="chk-sort-section" class="form-select form-select-sm">
+                        {% if section_options %}
+                            <option value="all" selected>Все разделы</option>
+                            {% for s in section_options %}
+                                <option value="{{ s.id }}">{{ s.name }}</option>
+                            {% endfor %}
+                        {% else %}
+                            <option value="">Нет данных</option>
+                        {% endif %}
+                    </select>
+                </div>
+                {% if allow_local_inbox %}
+                <div class="chk-filter-group">
+                    <span class="small text-muted">Inbox:</span>
+                    <select id="chk-sort-source" class="form-select form-select-sm">
+                        <option value="cloud">Облако проекта</option>
+                        <option value="local">Локальная папка</option>
+                    </select>
+                </div>
+                {% endif %}
+            </div>
+            {% if allow_local_inbox %}
+            <div id="chk-sort-local-wrap" class="mt-3 d-none">
+                <label class="small text-muted mb-1" for="chk-sort-local-path">Локальная папка inbox</label>
+                <input type="text" id="chk-sort-local-path" class="form-control form-control-sm"
+                       placeholder="{{ local_inbox_placeholder }}"
+                       spellcheck="false"
+                       autocomplete="off">
+                <div class="form-text">
+                    Абсолютный путь к корню выгрузки (inbox). Имена папок внутри не фильтр:
+                    выбранный раздел задаёт dest и запросы, поиск идёт по всем каталогам первого уровня.
+                    Системный диалог выбора папки браузер серверу не отдаёт — путь вставьте вручную.
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 chk-status-heading">
+        <h5 class="mb-0 fs-4">Предлагаемые перемещения</h5>
+        <span id="chk-sort-status" class="small text-muted"></span>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body position-relative">
+            <div id="chk-sort-table-wrap" class="table-responsive">
+                {% if section_options %}
+                <table class="table table-sm table-bordered mb-0" id="chk-sort-table">
+                    <thead>
+                        <tr>
+                            <th>Предлагаемый dest</th>
+                            <th>Краткое наименование</th>
+                            <th>Наименование запроса</th>
+                            <th>Путь inbox</th>
+                            <th>Файлов</th>
+                            <th>Уверенность</th>
+                            <th class="chk-sort-action-col">Действие</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in section_options %}
+                        <tr class="section-header-row" data-section-id="{{ s.id }}">
+                            <td colspan="6" class="section-header-cell">
+                                <span class="chk-section-header-content">
+                                    <span class="chk-section-header-left">{{ s.name }}</span>
+                                </span>
+                            </td>
+                            <td class="chk-sort-action-cell">
+                                <button type="button" class="btn btn-primary btn-sm chk-sort-run-btn"
+                                        data-section-id="{{ s.id }}">
+                                    Распределить
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="text-muted small">Выберите проект и раздел.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    #checklists-sort-root .chooser-card { container-type: inline-size; }
+    #checklists-sort-root .chk-filters-row { flex-wrap: wrap; }
+    #checklists-sort-root .chk-filter-group {
+        display: inline-flex;
+        align-items: center;
+        gap: .5rem;
+        flex: 0 1 auto;
+        min-width: 0;
+        white-space: nowrap;
+    }
+    #checklists-sort-root .chk-filter-group select,
+    #checklists-sort-root #chk-sort-local-path { min-width: 16rem; }
+
+    #chk-sort-table-wrap table th,
+    #chk-sort-table-wrap table td {
+        padding-left: 7px !important;
+        padding-right: 7px !important;
+        vertical-align: top;
+        text-align: left;
+        font-size: 0.9rem;
+        color: #212529;
+        font-weight: 400;
+    }
+    #chk-sort-table-wrap table td {
+        padding-top: 11px !important;
+        padding-bottom: 11px !important;
+    }
+    #chk-sort-table-wrap table th {
+        white-space: nowrap;
+    }
+    #chk-sort-table-wrap table thead {
+        background-color: #ffffff;
+    }
+    #chk-sort-table-wrap table thead th {
+        padding-top: 11px !important;
+        padding-bottom: 11px !important;
+        font-weight: 600;
+        vertical-align: middle;
+        background-color: #fff;
+    }
+    #chk-sort-table-wrap table tbody tr.section-header-row td {
+        background-color: #e8eef6 !important;
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+    }
+    #chk-sort-table-wrap table tbody tr.section-header-row td.section-header-cell {
+        font-weight: 600;
+        color: #212529;
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+    #chk-sort-table-wrap table tbody tr.section-header-row:hover td {
+        background-color: #dce5f0 !important;
+    }
+    #chk-sort-table-wrap .chk-section-header-content {
+        display: flex;
+        align-items: center;
+        width: 100%;
+    }
+    #chk-sort-table-wrap .chk-section-header-left {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    #chk-sort-table-wrap table th.chk-sort-action-col,
+    #chk-sort-table-wrap table td.chk-sort-action-cell {
+        width: 1%;
+        white-space: nowrap;
+        vertical-align: top;
+    }
+    #chk-sort-table-wrap table tbody tr.section-header-row td.chk-sort-action-cell {
+        padding-top: 5px !important;
+        padding-bottom: 5px !important;
+        vertical-align: middle;
+    }
+    #chk-sort-table-wrap table td.chk-sort-action-cell {
+        position: relative;
+        z-index: 2;
+    }
+    #chk-sort-table-wrap table tbody tr.chk-sort-proposal-row td,
+    #chk-sort-table-wrap table tbody tr.chk-sort-proposal-row td.chk-sort-action-cell {
+        vertical-align: top;
+        padding-top: 11px !important;
+        padding-bottom: 11px !important;
+    }
+    #chk-sort-table-wrap table tbody td.chk-sort-dest-cell {
+        white-space: nowrap;
+    }
+    #chk-sort-table-wrap .chk-sort-run-btn,
+    #chk-sort-table-wrap .chk-sort-proposal-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: .4rem;
+        white-space: nowrap;
+        min-width: 8.75rem;
+        justify-content: center;
+    }
+    #chk-sort-table-wrap .chk-sort-proposal-btn {
+        --bs-btn-bg: #cfe2ff;
+        --bs-btn-border-color: #9ec5fe;
+        --bs-btn-color: #084298;
+        --bs-btn-hover-bg: #b6d4fe;
+        --bs-btn-hover-border-color: #9ec5fe;
+        --bs-btn-hover-color: #084298;
+        --bs-btn-active-bg: #b6d4fe;
+        --bs-btn-active-border-color: #9ec5fe;
+        --bs-btn-active-color: #084298;
+        --bs-btn-disabled-bg: #cfe2ff;
+        --bs-btn-disabled-border-color: #9ec5fe;
+        --bs-btn-disabled-color: #084298;
+    }
+    #chk-sort-table-wrap .chk-sort-proposal-btn[data-sort-proposal-action="review"] {
+        --bs-btn-bg: #fff;
+        --bs-btn-border-color: var(--bs-primary, #075D94);
+        --bs-btn-color: var(--bs-primary, #075D94);
+        --bs-btn-hover-bg: #fff;
+        --bs-btn-hover-border-color: var(--bs-primary, #075D94);
+        --bs-btn-hover-color: var(--bs-primary, #075D94);
+        --bs-btn-active-bg: #fff;
+        --bs-btn-active-border-color: var(--bs-primary, #075D94);
+        --bs-btn-active-color: var(--bs-primary, #075D94);
+        --bs-btn-disabled-bg: #fff;
+        --bs-btn-disabled-border-color: var(--bs-primary, #075D94);
+        --bs-btn-disabled-color: var(--bs-primary, #075D94);
+    }
+    #chk-sort-table-wrap .chk-sort-proposal-btn[data-sort-proposal-action="confirm"] {
+        --bs-btn-bg: #f8d7da;
+        --bs-btn-border-color: #f1aeb5;
+        --bs-btn-color: #842029;
+        --bs-btn-hover-bg: #f5c2c7;
+        --bs-btn-hover-border-color: #f1aeb5;
+        --bs-btn-hover-color: #842029;
+        --bs-btn-active-bg: #f5c2c7;
+        --bs-btn-active-border-color: #f1aeb5;
+        --bs-btn-active-color: #842029;
+        --bs-btn-disabled-bg: #f8d7da;
+        --bs-btn-disabled-border-color: #f1aeb5;
+        --bs-btn-disabled-color: #842029;
+    }
+    #chk-sort-table-wrap .chk-sort-proposal-btn:empty,
+    #chk-sort-table-wrap .chk-sort-proposal-btn[data-sort-proposal-action=""] {
+        display: none !important;
+    }
+    #chk-sort-table-wrap .chk-sort-run-btn .spinner-border {
+        width: .75rem;
+        height: .75rem;
+        border-width: .12em;
+        flex-shrink: 0;
+    }
+</style>
+
+<script>
+(function () {
+    function boot() {
+        const root = document.getElementById('checklists-sort-root');
+        if (!root || root.dataset.chkSortReady === '1') return;
+        root.dataset.chkSortReady = '1';
+        initSortPanel(root);
+    }
+    function initSortPanel(root) {
+
+    const HEADER_COLS = 6;
+    const projectSel = root.querySelector('#chk-sort-project');
+    const assetSel = root.querySelector('#chk-sort-asset');
+    const sectionSel = root.querySelector('#chk-sort-section');
+    const sourceSel = root.querySelector('#chk-sort-source');
+    const localWrap = root.querySelector('#chk-sort-local-wrap');
+    const localPath = root.querySelector('#chk-sort-local-path');
+    const metaUrlBase = root.dataset.metaUrlBase || '';
+    const startUrl = root.dataset.startUrl || '';
+    const statusUrl = root.dataset.statusUrl || '';
+    const verifyUrl = (root.getAttribute('data-verify-url') || root.dataset.verifyUrl || '/checklists/sort/verify/').trim();
+    let pollTimer = null;
+    let groups = [];
+
+    function liveRoot() {
+        return document.getElementById('checklists-sort-root');
+    }
+    function liveTableWrap() {
+        const el = liveRoot();
+        return el ? el.querySelector('#chk-sort-table-wrap') : null;
+    }
+    function liveStatusEl() {
+        const el = liveRoot();
+        return el ? el.querySelector('#chk-sort-status') : null;
+    }
+    function setTableHtml(html) {
+        const wrap = liveTableWrap();
+        if (wrap) wrap.innerHTML = html;
+    }
+
+    function getCsrf() {
+        const current = liveRoot();
+        const input = (current && current.querySelector('input[name="csrfmiddlewaretoken"]'))
+            || document.querySelector('#checklists-sort-root input[name="csrfmiddlewaretoken"]')
+            || document.querySelector('input[name="csrfmiddlewaretoken"]');
+        if (input && input.value) return input.value;
+        const m = document.cookie.match('(^|;)\\s*csrftoken\\s*=\\s*([^;]+)');
+        return m ? m.pop() : '';
+    }
+
+    function setStatus(text, isError) {
+        const el = liveStatusEl();
+        if (!el) return;
+        el.textContent = text || '';
+        el.classList.toggle('text-danger', Boolean(isError && text));
+        el.classList.toggle('fw-semibold', Boolean(isError && text));
+        el.classList.toggle('text-muted', !(isError && text));
+    }
+
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function isBusy(run) {
+        return run && (run.status === 'queued' || run.status === 'running');
+    }
+
+    function anyVerifying(run) {
+        return Boolean(run && (run.proposals || []).some((row) => row && row.verifying));
+    }
+
+    function anyBusy(currentGroups) {
+        return (currentGroups || groups).some((group) => isBusy(group.run) || anyVerifying(group.run));
+    }
+
+    function proposalActionLabel(action) {
+        if (action === 'move') return 'Переместить';
+        if (action === 'review') return 'Проверить';
+        if (action === 'confirm') return 'Подтвердить';
+        return action || '';
+    }
+
+    function destLeafName(path) {
+        const text = String(path || '').replace(/\\/g, '/').replace(/\/+$/, '').trim();
+        if (!text) return '';
+        const parts = text.split('/').filter(Boolean);
+        const leaf = parts.length ? parts[parts.length - 1].trim() : '';
+        if (!leaf || leaf.toLowerCase() === 'dest') return '';
+        return leaf;
+    }
+
+    function destFolderLabel(row) {
+        const named = String(row && row.dest_folder || '').trim();
+        if (named) return named;
+        return destLeafName(row && row.dest_path);
+    }
+
+    function groupProposalRows(rows) {
+        const groups = [];
+        (rows || []).forEach((row) => {
+            const folder = destFolderLabel(row);
+            const key = folder.toLowerCase();
+            const last = groups[groups.length - 1];
+            if (last && last.key === key && key) {
+                last.rows.push(row);
+                return;
+            }
+            groups.push({ key, folder, rows: [row] });
+        });
+        return groups;
+    }
+
+    function labelsMatch(rows) {
+        if (!rows.length) return false;
+        const name = String(rows[0].request_name || '');
+        const quote = String(rows[0].quote || '');
+        return rows.every((row) => String(row.request_name || '') === name && String(row.quote || '') === quote);
+    }
+
+    function renderProposalRow(row, options) {
+        const action = String(row.action || '').trim().toLowerCase();
+        const destCell = options.destCell || '';
+        const labelCells = options.labelCells || '';
+        const hasKit = Boolean(String(row.kit_path || '').trim());
+        const files = hasKit ? escapeHtml(row.file_count) : '';
+        const proposalId = row && (row.proposal_id || row.id) ? String(row.proposal_id || row.id) : '';
+        const verifying = Boolean(row && row.verifying);
+        const showAction = hasKit && !row.placeholder && (action === 'move' || action === 'review' || action === 'confirm');
+        let actionCell = '';
+        if (showAction && verifying) {
+            actionCell = `<button type="button" class="btn btn-primary btn-sm chk-sort-proposal-btn"
+                        data-sort-proposal-action="${escapeHtml(action)}"
+                        data-sort-proposal-id="${escapeHtml(proposalId)}"
+                        onclick="return window.__chkSortOnVerifyButton && window.__chkSortOnVerifyButton(event, this);"
+                        disabled aria-busy="true">
+                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                    Проверяется
+                </button>`;
+        } else if (showAction) {
+            actionCell = `<button type="button" class="btn btn-primary btn-sm chk-sort-proposal-btn"
+                        data-sort-proposal-action="${escapeHtml(action)}"
+                        data-sort-proposal-id="${escapeHtml(proposalId)}"
+                        onclick="return window.__chkSortOnVerifyButton && window.__chkSortOnVerifyButton(event, this);">
+                    ${escapeHtml(proposalActionLabel(action))}
+                </button>`;
+        }
+        return `<tr class="chk-sort-proposal-row">
+            ${destCell}
+            ${labelCells}
+            <td>${escapeHtml(row.kit_path)}</td>
+            <td class="text-nowrap">${files}</td>
+            <td class="text-nowrap">${escapeHtml(row.confidence)}</td>
+            <td class="chk-sort-action-cell">${actionCell}</td>
+        </tr>`;
+    }
+
+    function renderProposalGroup(group) {
+        const rows = group.rows || [];
+        const span = rows.length;
+        const share = labelsMatch(rows);
+        return rows.map((row, index) => {
+            const destCell = index === 0
+                ? `<td class="chk-sort-dest-cell"${span > 1 ? ` rowspan="${span}"` : ''}>${escapeHtml(group.folder)}</td>`
+                : '';
+            let labelCells;
+            if (share) {
+                labelCells = index === 0
+                    ? `<td${span > 1 ? ` rowspan="${span}"` : ''}>${escapeHtml(row.request_name)}</td>
+                       <td${span > 1 ? ` rowspan="${span}"` : ''}>${escapeHtml(row.quote)}</td>`
+                    : '';
+            } else {
+                labelCells = `<td>${escapeHtml(row.request_name)}</td>
+                    <td>${escapeHtml(row.quote)}</td>`;
+            }
+            return renderProposalRow(row, { destCell, labelCells });
+        }).join('');
+    }
+
+    function buttonLabel(run) {
+        if (isBusy(run)) return 'Выполняется';
+        return 'Распределить';
+    }
+
+    function renderRunButton(group) {
+        const run = group.run;
+        const busy = isBusy(run);
+        const spinner = busy
+            ? '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
+            : '';
+        return `<button type="button" class="btn btn-primary btn-sm chk-sort-run-btn"
+                        data-section-id="${escapeHtml(group.section_id)}"
+                        ${busy ? 'disabled aria-busy="true"' : ''}>
+            ${spinner}${escapeHtml(buttonLabel(run))}
+        </button>`;
+    }
+
+    function renderSectionHeader(group) {
+        return `<tr class="section-header-row" data-section-id="${escapeHtml(group.section_id)}">
+            <td colspan="${HEADER_COLS}" class="section-header-cell">
+                <span class="chk-section-header-content">
+                    <span class="chk-section-header-left">${escapeHtml(group.section_name)}</span>
+                </span>
+            </td>
+            <td class="chk-sort-action-cell">${renderRunButton(group)}</td>
+        </tr>`;
+    }
+
+    function renderMessageRow(html) {
+        return `<tr>
+            <td colspan="${HEADER_COLS}">${html}</td>
+            <td class="chk-sort-action-cell"></td>
+        </tr>`;
+    }
+
+    function renderGroupBody(group) {
+        const run = group.run;
+        if (!run) return '';
+        if (run.status === 'error') {
+            return renderMessageRow(`<div class="alert alert-warning mb-0">${escapeHtml(run.error_message || 'Ошибка сортировки.')}</div>`);
+        }
+        const rows = run.proposals || [];
+        if (!rows.length) {
+            if (run.status === 'done') {
+                return renderMessageRow('<span class="text-muted">Комплекты не найдены.</span>');
+            }
+            if (isBusy(run)) {
+                return renderMessageRow('<span class="text-muted">Ожидание результата…</span>');
+            }
+            return '';
+        }
+        return groupProposalRows(rows).map(renderProposalGroup).join('');
+    }
+
+    function renderGroups(nextGroups) {
+        groups = nextGroups || [];
+        const verifyingRows = groups
+            .flatMap((group) => (group.run && group.run.proposals) || [])
+            .filter((row) => row && row.verifying);
+        const verifyError = groups
+            .flatMap((group) => (group.run && group.run.proposals) || [])
+            .map((row) => row && row.verify_error)
+            .find((text) => text);
+        if (verifyError) setStatus(verifyError, true);
+        else if (verifyingRows.length) setStatus('Проверка файлов… обычно занимает 1–2 минуты.');
+        else setStatus('');
+        if (!groups.length) {
+            setTableHtml('<div class="text-muted small">Выберите проект и раздел.</div>');
+            return;
+        }
+        const body = groups.map((group) => renderSectionHeader(group) + renderGroupBody(group)).join('');
+        setTableHtml(`<table class="table table-sm table-bordered mb-0" id="chk-sort-table">
+            <thead>
+                <tr>
+                    <th>Предлагаемый dest</th>
+                    <th>Краткое наименование</th>
+                    <th>Наименование запроса</th>
+                    <th>Путь inbox</th>
+                    <th>Файлов</th>
+                    <th>Уверенность</th>
+                    <th class="chk-sort-action-col">Действие</th>
+                </tr>
+            </thead>
+            <tbody>${body}</tbody>
+        </table>`);
+    }
+
+    function mergeRun(run) {
+        if (!run) return;
+        const sid = String(run.section_id);
+        let found = false;
+        groups = groups.map((group) => {
+            if (String(group.section_id) === sid) {
+                found = true;
+                return { ...group, run };
+            }
+            return group;
+        });
+        if (!found) {
+            groups.push({
+                section_id: run.section_id,
+                section_name: run.section_name,
+                run,
+            });
+        }
+        renderGroups(groups);
+    }
+
+    async function startVerify(proposalId) {
+        const id = String(proposalId || '').trim();
+        if (!id) {
+            setStatus('Нет идентификатора комплекта для проверки.', true);
+            return;
+        }
+        const endpoint = verifyUrl || '/checklists/sort/verify/';
+        groups = groups.map((group) => {
+            const run = group.run;
+            if (!run || !(run.proposals || []).some((row) => String(row.proposal_id || row.id) === id)) return group;
+            return {
+                ...group,
+                run: {
+                    ...run,
+                    proposals: (run.proposals || []).map((row) => (
+                        String(row.proposal_id || row.id) === id
+                            ? { ...row, verifying: true, verify_error: '' }
+                            : row
+                    )),
+                },
+            };
+        });
+        renderGroups(groups);
+        startPolling();
+        const csrf = getCsrf();
+        if (!csrf) {
+            setStatus('Нет CSRF-токена. Обновите страницу и нажмите «Проверить» ещё раз.', true);
+            return;
+        }
+        const body = new URLSearchParams({ proposal_id: id });
+        const controller = new AbortController();
+        const abortTimer = window.setTimeout(() => controller.abort(), 20000);
+        try {
+            const resp = await fetch(endpoint, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-CSRFToken': csrf,
+                    'Accept': 'application/json',
+                },
+                body,
+                signal: controller.signal,
+            });
+            const data = await readJson(resp);
+            if (resp.status === 409 && data.run) {
+                mergeRun(data.run);
+                if (anyBusy()) startPolling();
+                return;
+            }
+            if (!resp.ok) {
+                throw new Error(data.error || ('Не удалось проверить комплект (HTTP ' + resp.status + ').'));
+            }
+            mergeRun(data.run);
+            if (data.origin_run) mergeRun(data.origin_run);
+            if (anyBusy()) startPolling();
+            else await loadLatest();
+        } catch (err) {
+            if (err && err.name === 'AbortError') {
+                setStatus('Запуск проверки задерживается. Ждём результат…');
+                startPolling();
+                return;
+            }
+            groups = groups.map((group) => {
+                const run = group.run;
+                if (!run || !(run.proposals || []).some((row) => String(row.proposal_id || row.id) === id)) return group;
+                return {
+                    ...group,
+                    run: {
+                        ...run,
+                        error_message: err.message || String(err),
+                        proposals: (run.proposals || []).map((row) => (
+                            String(row.proposal_id || row.id) === id
+                                ? { ...row, verifying: false, verify_error: err.message || String(err) }
+                                : row
+                        )),
+                    },
+                };
+            });
+            renderGroups(groups);
+            setStatus(err.message || String(err), true);
+        } finally {
+            window.clearTimeout(abortTimer);
+        }
+    }
+
+    function stopPolling() {
+        if (pollTimer) {
+            window.clearInterval(pollTimer);
+            pollTimer = null;
+        }
+    }
+
+    async function readJson(resp) {
+        const text = await resp.text();
+        try {
+            return JSON.parse(text);
+        } catch (err) {
+            const snippet = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+            if (/ProgrammingError/i.test(snippet)) {
+                throw new Error('База не обновлена: примените миграции checklists_app (python manage.py migrate).');
+            }
+            throw new Error(snippet || ('Ответ сервера не JSON (HTTP ' + resp.status + ').'));
+        }
+    }
+
+    async function fetchGroups() {
+        const live = liveRoot();
+        const projectLive = (live && live.querySelector('#chk-sort-project')) || projectSel;
+        const assetLive = (live && live.querySelector('#chk-sort-asset')) || assetSel;
+        const sectionLive = (live && live.querySelector('#chk-sort-section')) || sectionSel;
+        const url = new URL(statusUrl, window.location.origin);
+        url.searchParams.set('project_uid', (projectLive && projectLive.value) || '');
+        url.searchParams.set('asset', (assetLive && assetLive.value) || '');
+        url.searchParams.set('section', (sectionLive && sectionLive.value) || 'all');
+        const resp = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+        if (resp.status === 403) throw new Error('Недостаточно прав.');
+        const data = await readJson(resp);
+        if (!resp.ok) throw new Error(data.error || 'Не удалось загрузить сортировку.');
+        if (Array.isArray(data.groups)) return data.groups;
+        if (data.run) {
+            return [{
+                section_id: data.run.section_id,
+                section_name: data.run.section_name,
+                run: data.run,
+            }];
+        }
+        return [];
+    }
+
+    function startPolling() {
+        stopPolling();
+        let pollInFlight = false;
+        const tick = async () => {
+            if (pollInFlight) return;
+            pollInFlight = true;
+            try {
+                const next = await fetchGroups();
+                renderGroups(next);
+                if (!anyBusy(next)) stopPolling();
+            } catch (err) {
+                stopPolling();
+                setTableHtml(`<div class="alert alert-warning mb-0">${escapeHtml(err.message || err)}</div>`);
+            } finally {
+                pollInFlight = false;
+            }
+        };
+        tick();
+        pollTimer = window.setInterval(tick, 2000);
+    }
+
+    function fillSelect(select, items, valueKey, labelKey, selected) {
+        if (!select) return;
+        const current = selected || select.value;
+        select.innerHTML = '';
+        if (!items.length) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = 'Нет данных';
+            select.appendChild(opt);
+            select.disabled = true;
+            return;
+        }
+        select.disabled = false;
+        items.forEach((item) => {
+            const opt = document.createElement('option');
+            opt.value = String(item[valueKey]);
+            opt.textContent = item[labelKey];
+            if (String(item[valueKey]) === String(current)) opt.selected = true;
+            select.appendChild(opt);
+        });
+    }
+
+    function fillSectionSelect(items, selected) {
+        if (!sectionSel) return;
+        const current = selected || sectionSel.value || 'all';
+        sectionSel.innerHTML = '';
+        if (!items.length) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = 'Нет данных';
+            sectionSel.appendChild(opt);
+            sectionSel.disabled = true;
+            return;
+        }
+        sectionSel.disabled = false;
+        const allOpt = document.createElement('option');
+        allOpt.value = 'all';
+        allOpt.textContent = 'Все разделы';
+        sectionSel.appendChild(allOpt);
+        items.forEach((item) => {
+            const opt = document.createElement('option');
+            opt.value = String(item.id);
+            opt.textContent = item.name;
+            sectionSel.appendChild(opt);
+        });
+        if (sectionSel.querySelector(`option[value="${CSS.escape(String(current))}"]`)) {
+            sectionSel.value = current;
+        } else {
+            sectionSel.value = 'all';
+        }
+    }
+
+    async function refreshMeta() {
+        const uid = projectSel && projectSel.value;
+        if (!uid || !metaUrlBase) return;
+        const url = metaUrlBase.replace('__uid__', encodeURIComponent(uid)) + '?asset=' + encodeURIComponent((assetSel && assetSel.value) || '');
+        try {
+            const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            const meta = await readJson(resp);
+            if (!resp.ok) throw new Error(meta.error || 'Не удалось загрузить проект.');
+            const assets = (meta.asset_items || []).filter((item) => !(item.type === 'asset' && item.entityCount === 1));
+            fillSelect(assetSel, assets, 'value', 'label', meta.asset);
+            if (assetSel) {
+                assetSel.querySelectorAll('option').forEach((opt) => {
+                    const item = assets.find((row) => String(row.value) === opt.value);
+                    if (item && item.type === 'asset') opt.textContent = item.label + ' • актив';
+                });
+            }
+            fillSectionSelect(meta.sections || [], sectionSel && sectionSel.value);
+            await loadLatest();
+        } catch (err) {
+            setTableHtml(`<div class="alert alert-warning mb-0">${escapeHtml(err.message || err)}</div>`);
+        }
+    }
+
+    async function loadLatest() {
+        if (!projectSel || !projectSel.value) {
+            renderGroups([]);
+            return;
+        }
+        try {
+            const next = await fetchGroups();
+            renderGroups(next);
+            if (anyBusy(next)) startPolling();
+            else stopPolling();
+        } catch (err) {
+            setTableHtml(`<div class="alert alert-warning mb-0">${escapeHtml(err.message || err)}</div>`);
+        }
+    }
+
+    async function startRun(sectionId) {
+        const live = liveRoot();
+        const projectLive = (live && live.querySelector('#chk-sort-project')) || projectSel;
+        const assetLive = (live && live.querySelector('#chk-sort-asset')) || assetSel;
+        const sourceLive = (live && live.querySelector('#chk-sort-source')) || sourceSel;
+        const pathLive = (live && live.querySelector('#chk-sort-local-path')) || localPath;
+        if (!projectLive || !projectLive.value || !sectionId || sectionId === 'all') return;
+        if (!groups.length) {
+            const wrap = liveTableWrap();
+            groups = Array.from((wrap && wrap.querySelectorAll('.section-header-row')) || []).map((row) => ({
+                section_id: row.getAttribute('data-section-id'),
+                section_name: (row.querySelector('.chk-section-header-left') || {}).textContent || '',
+                run: null,
+            }));
+        }
+        const current = groups.find((group) => String(group.section_id) === String(sectionId));
+        if (current && isBusy(current.run)) return;
+        stopPolling();
+        groups = groups.map((group) => {
+            if (String(group.section_id) !== String(sectionId)) return group;
+            return {
+                ...group,
+                run: {
+                    ...(group.run || {}),
+                    section_id: group.section_id,
+                    section_name: group.section_name,
+                    status: 'running',
+                    error_message: '',
+                    proposals: (group.run && group.run.proposals) || [],
+                },
+            };
+        });
+        renderGroups(groups);
+        const body = new URLSearchParams({
+            project_uid: projectLive.value,
+            asset: assetLive ? assetLive.value : '',
+            section: sectionId,
+            source_kind: sourceLive ? sourceLive.value : 'cloud',
+            local_inbox_path: pathLive ? pathLive.value.trim() : '',
+        });
+        try {
+            const resp = await fetch(startUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-CSRFToken': getCsrf(),
+                    'Accept': 'application/json',
+                },
+                body,
+            });
+            const data = await readJson(resp);
+            if (!resp.ok) {
+                throw new Error(data.error || 'Не удалось запустить сортировку.');
+            }
+            mergeRun(data.run);
+            if (anyBusy()) startPolling();
+        } catch (err) {
+            const sid = String(sectionId);
+            groups = groups.map((group) => {
+                if (String(group.section_id) !== sid) return group;
+                return {
+                    ...group,
+                    run: {
+                        ...(group.run || {}),
+                        section_id: group.section_id,
+                        section_name: group.section_name,
+                        status: 'error',
+                        error_message: err.message || String(err),
+                        proposals: (group.run && group.run.proposals) || [],
+                    },
+                };
+            });
+            renderGroups(groups);
+        }
+    }
+
+    window.__chkSortStartVerify = startVerify;
+    window.__chkSortStartRun = startRun;
+    window.__chkSortReload = loadLatest;
+    window.__chkSortSyncLocalSource = syncLocalSourceUi;
+    window.__chkSortOnVerifyButton = window.__chkSortLiveVerify || function (event, btn) {
+        if (event) {
+            event.preventDefault();
+            if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+            event.stopPropagation();
+        }
+        if (!btn || btn.disabled) return false;
+        const action = (btn.getAttribute('data-sort-proposal-action') || '').trim().toLowerCase();
+        const label = (btn.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const isVerify = !action || action === 'review' || action === 'проверить' || label.indexOf('проверить') !== -1;
+        if (!isVerify) return false;
+        const proposalId = (btn.getAttribute('data-sort-proposal-id') || '').trim();
+        btn.disabled = true;
+        btn.setAttribute('aria-busy', 'true');
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Проверяется';
+        startVerify(proposalId);
+        return false;
+    };
+    if (!window.__chkSortVerifyClickBound) {
+        window.__chkSortVerifyClickBound = true;
+        document.addEventListener('click', function (event) {
+            const el = event.target && event.target.nodeType === 1
+                ? event.target
+                : (event.target && event.target.parentElement);
+            if (!el || !el.closest) return;
+            const btn = el.closest('.chk-sort-proposal-btn');
+            if (!btn || !btn.closest('#checklists-sort-root')) return;
+            window.__chkSortOnVerifyButton(event, btn);
+        }, true);
+    }
+    if (projectSel) projectSel.addEventListener('change', refreshMeta);
+    if (assetSel) assetSel.addEventListener('change', refreshMeta);
+    if (sectionSel) sectionSel.addEventListener('change', loadLatest);
+    if (!window.__chkSortRunClickBound) {
+        window.__chkSortRunClickBound = true;
+        document.addEventListener('click', function (event) {
+            const target = event.target && event.target.closest ? event.target : (event.target && event.target.parentElement);
+            if (!target || !target.closest) return;
+            const runBtn = target.closest('.chk-sort-run-btn');
+            if (!runBtn || runBtn.disabled || !runBtn.closest('#checklists-sort-root')) return;
+            if (typeof window.__chkSortStartRun === 'function') {
+                window.__chkSortStartRun(runBtn.getAttribute('data-section-id'));
+            }
+        });
+    }
+
+    function syncLocalSourceUi() {
+        const current = liveRoot();
+        const sourceLive = (current && current.querySelector('#chk-sort-source')) || sourceSel;
+        const wrapLive = (current && current.querySelector('#chk-sort-local-wrap')) || localWrap;
+        const pathLive = (current && current.querySelector('#chk-sort-local-path')) || localPath;
+        const isLocal = Boolean(sourceLive && sourceLive.value === 'local');
+        if (wrapLive) wrapLive.classList.toggle('d-none', !isLocal);
+        if (isLocal && pathLive && !pathLive.value && window.UIPref) {
+            const saved = UIPref.get('checklists:sortLocalInbox', '');
+            if (saved) pathLive.value = saved;
+        }
+    }
+    if (!window.__chkSortSourceChangeBound) {
+        window.__chkSortSourceChangeBound = true;
+        document.addEventListener('change', function (event) {
+            const target = event.target;
+            if (!target || !target.closest || !target.closest('#checklists-sort-root')) return;
+            if (target.id === 'chk-sort-source') {
+                if (window.UIPref) UIPref.set('checklists:sortSource', target.value);
+                if (typeof window.__chkSortSyncLocalSource === 'function') window.__chkSortSyncLocalSource();
+                else syncLocalSourceUi();
+            }
+            if (target.id === 'chk-sort-local-path' && window.UIPref) {
+                UIPref.set('checklists:sortLocalInbox', target.value.trim());
+            }
+        });
+    }
+    const sourceLive = (liveRoot() && liveRoot().querySelector('#chk-sort-source')) || sourceSel;
+    if (sourceLive) {
+        const savedSource = window.UIPref ? UIPref.get('checklists:sortSource', 'cloud') : 'cloud';
+        if (savedSource === 'local') sourceLive.value = 'local';
+        syncLocalSourceUi();
+    }
+    loadLatest();
+    }
+    boot();
+    setTimeout(boot, 0);
+    document.body.addEventListener('htmx:afterSwap', function (event) {
+        const target = event.detail && event.detail.target;
+        if (target && target.id === 'checklists-sort-pane') boot();
+    });
+})();
+</script>

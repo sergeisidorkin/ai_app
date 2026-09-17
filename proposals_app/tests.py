@@ -7763,6 +7763,9 @@ class ProposalFormContextTests(TestCase):
         self.assertIn("syncServiceCostValue", source)
         self.assertIn("shouldSyncServiceCostFromTotalsUpdate", source)
         self.assertIn("commercialTableHydrating", source)
+        self.assertIn("proposalCommercialHydrating", source)
+        self.assertIn("finishProposalCommercialHydration", source)
+        self.assertIn("endHydration", source)
         self.assertIn("form-submit-flush", source)
 
 

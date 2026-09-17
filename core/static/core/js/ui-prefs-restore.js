@@ -94,8 +94,25 @@
     window.history.replaceState(null, '', nextUrl);
   }
 
+  function activateMainTab(link) {
+    if (!link) return;
+    if (window.bootstrap && window.bootstrap.Tab) {
+      window.bootstrap.Tab.getOrCreateInstance(link).show();
+      return;
+    }
+    var href = link.getAttribute('href') || '';
+    var pane = href.charAt(0) === '#' ? document.getElementById(href.slice(1)) : null;
+    getMainTabLinks().forEach(function (item) {
+      item.classList.remove('active');
+    });
+    document.querySelectorAll('main .tab-content > .tab-pane').forEach(function (item) {
+      item.classList.remove('show', 'active');
+    });
+    link.classList.add('active');
+    if (pane) pane.classList.add('show', 'active');
+  }
+
   function restoreMainTab() {
-    if (!window.bootstrap) return;
     var savedTab = P.get('main:tab', null);
     var targetTab = window.location.hash || savedTab;
     var link = targetTab
@@ -106,9 +123,7 @@
       link = getMainTabLinks()[0] || null;
     }
 
-    if (link) {
-      window.bootstrap.Tab.getOrCreateInstance(link).show();
-    }
+    activateMainTab(link);
   }
 
   function bindMainTabs() {

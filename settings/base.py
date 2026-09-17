@@ -462,6 +462,26 @@ ONLYOFFICE_DOCX_SOURCE_TOKEN_TTL = env.int("ONLYOFFICE_DOCX_SOURCE_TOKEN_TTL", d
 NEXTCLOUD_DEFAULT_GROUP = env("NEXTCLOUD_DEFAULT_GROUP", default="staff")
 NEXTCLOUD_DEFAULT_QUOTA = env("NEXTCLOUD_DEFAULT_QUOTA", default="")
 
+# === DeepSeek Harness admin console ===
+DSH_BASE_URL = env("DSH_BASE_URL", default="")
+DSH_LAUNCH_URL_FILE = env("DSH_LAUNCH_URL_FILE", default="")
+DSH_HOME = env("DSH_HOME", default="")
+DSH_HEADLESS_CMD = env("DSH_HEADLESS_CMD", default="")
+DSH_HEADLESS_TIMEOUT = env.int("DSH_HEADLESS_TIMEOUT", default=900)
+DSH_VERIFY_TIMEOUT = env.int("DSH_VERIFY_TIMEOUT", default=180)
+DSH_NODE_BIN = env("DSH_NODE_BIN", default="")
+DSH_NPM_CACHE = env("DSH_NPM_CACHE", default="")
+DSH_COMPOSE_DIR = env("DSH_COMPOSE_DIR", default="")
+DSH_HEADLESS_CONTAINER_CWD = env("DSH_HEADLESS_CONTAINER_CWD", default="")
+DSH_SORT_WORKSPACE = env("DSH_SORT_WORKSPACE", default="")
+DSH_SORT_INLINE = env.bool("DSH_SORT_INLINE", default=False)
+DSH_SORT_ALLOW_LOCAL_INBOX = env.bool("DSH_SORT_ALLOW_LOCAL_INBOX", default=False)
+DSH_SORT_LOCAL_ROOTS = tuple(
+    root
+    for root in env.list("DSH_SORT_LOCAL_ROOTS", default=[])
+    if str(root).strip()
+)
+
 # === OIDC Provider ===
 OIDC_RSA_PRIVATE_KEY = _read_text_setting_from_env_or_file("OIDC_RSA_PRIVATE_KEY", default="").strip()
 OIDC_ISSUER_URL = env("OIDC_ISSUER_URL", default=f"{BASE_URL.rstrip('/')}/o").rstrip("/")

@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from . import views, sort_views
 
 app_name = "checklists_app"
 
@@ -46,4 +46,8 @@ urlpatterns = [
     path("shared/<str:token>/comment/add/", views.shared_add_comment, name="shared_add_comment"),
     path("shared/<str:token>/comment/modal/", views.shared_comment_modal, name="shared_comment_modal"),
     path("shared/<str:token>/export/xlsx/", views.shared_export_xlsx, name="shared_export_xlsx"),
+    path("partial/sort-panel/", sort_views.sort_panel, name="sort_panel_partial"),
+    path("sort/start/", sort_views.sort_start, name="sort_start"),
+    path("sort/status/", sort_views.sort_status, name="sort_status"),
+    path("sort/verify/", sort_views.sort_verify, name="sort_verify"),
 ]
