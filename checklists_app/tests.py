@@ -2341,4 +2341,3 @@ class ChecklistSortWorkerUnitTests(SimpleTestCase):
         self.assertIn("TimeoutStartSec=300", text)
 
 
-
