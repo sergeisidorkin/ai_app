@@ -707,6 +707,13 @@ class ChecklistSortProposal(models.Model):
     verify_status = models.CharField("Статус проверки", max_length=16, blank=True, default="")
     verify_error = models.TextField("Ошибка проверки", blank=True, default="")
     verify_started_at = models.DateTimeField("Начало проверки", blank=True, null=True)
+    verify_started_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="checklist_sort_verifications",
+    )
     position = models.PositiveIntegerField(default=1)
 
     class Meta:

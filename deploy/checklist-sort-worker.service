@@ -1,0 +1,22 @@
+[Unit]
+Description=AI App checklist sorting worker
+After=network.target
+
+[Service]
+Type=simple
+User=sergei
+Group=www-data
+WorkingDirectory=/home/sergei/ai_appdir/ai_app
+Environment=DJANGO_SETTINGS_MODULE=settings
+Environment=DJANGO_ENV=prod
+Environment=READ_DOTENV=False
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/sergei/ai_appdir/env/prod.env
+ExecStart=/home/sergei/ai_appdir/ai_appenv/bin/python manage.py checklist_sort_worker
+Restart=always
+RestartSec=5s
+KillMode=control-group
+TimeoutStopSec=45s
+
+[Install]
+WantedBy=multi-user.target

@@ -3,11 +3,11 @@ import json
 import logging
 import os
 import shutil
-import threading
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections
 from django.db.models import Max
 from django.utils import timezone
 
@@ -25,14 +25,13 @@ from .sort_parse import (
 )
 from .sort_workspace import (
     _safe_relpath,
+    load_cloud_file_sizes,
     resolve_inbox_folder,
     workspace_root_for,
 )
 
 logger = logging.getLogger(__name__)
 
-_active_verify_ids = set()
-_active_verify_lock = threading.Lock()
 STALE_RUNNING_MESSAGE = "Проверка не завершилась. Нажмите «Проверить» ещё раз."
 
 MAX_PEEK_FILES = 3
@@ -98,7 +97,14 @@ def resolve_kit_path(run, kit_path):
     raise VerifyError(f"Комплект не найден в workspace: {kit_path}")
 
 
-def _file_size(path: Path):
+def _file_size(path: Path, cloud_root=None, cloud_sizes=None):
+    if cloud_root is not None and cloud_sizes is not None:
+        try:
+            key = path.relative_to(cloud_root).as_posix()
+        except ValueError:
+            key = ""
+        if key in cloud_sizes:
+            return cloud_sizes[key]
     try:
         return int(path.stat().st_size)
     except OSError:
@@ -121,11 +127,12 @@ def iter_kit_files(kit_path: Path):
 
 def build_kit_manifest(kit_path: Path):
     rows = []
+    cloud_root, cloud_sizes = load_cloud_file_sizes(kit_path)
     for rel, full in iter_kit_files(kit_path):
         name = Path(rel).name
         if _is_junk_name(name):
             continue
-        size = _file_size(full)
+        size = _file_size(full, cloud_root=cloud_root, cloud_sizes=cloud_sizes)
         skipped = size > MAX_FILE_BYTES
         rows.append({
             "path": rel.replace("\\", "/"),
@@ -256,6 +263,10 @@ def _read_local_bytes(path: Path):
 
 def _download_selected_file(run, user, kit_path: Path, rel, dest: Path):
     source = kit_path / rel if kit_path.is_dir() else kit_path
+    cloud_root, cloud_sizes = load_cloud_file_sizes(source)
+    size = _file_size(source, cloud_root=cloud_root, cloud_sizes=cloud_sizes)
+    if size > MAX_FILE_BYTES:
+        raise VerifyError(f"Файл превышает лимит 50 МБ: {rel}")
     if (run.source_kind or "cloud") == "local":
         if source.is_file():
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -492,22 +503,7 @@ def _verify_timeout_seconds():
 
 
 def _verify_stale_seconds():
-    return (_verify_timeout_seconds() * 2) + 60
-
-
-def _mark_verify_live(proposal_id):
-    with _active_verify_lock:
-        _active_verify_ids.add(int(proposal_id))
-
-
-def _mark_verify_done(proposal_id):
-    with _active_verify_lock:
-        _active_verify_ids.discard(int(proposal_id))
-
-
-def _verify_is_live(proposal_id):
-    with _active_verify_lock:
-        return int(proposal_id) in _active_verify_ids
+    return max((_verify_timeout_seconds() * 3) + 300, 900)
 
 
 def _fail_verify(proposal, message):
@@ -525,11 +521,9 @@ def reclaim_stale_verifies(run_id=None):
     if not rows:
         return 0
     now = timezone.now()
-    stale_limit = timezone.timedelta(seconds=_verify_stale_seconds())
+    stale_limit = timedelta(seconds=_verify_stale_seconds())
     stale_ids = []
     for row in rows:
-        if _verify_is_live(row.id):
-            continue
         started = row.verify_started_at
         if started is None or (now - started) > stale_limit:
             stale_ids.append(row.id)
@@ -545,20 +539,34 @@ def reclaim_stale_verifies(run_id=None):
 def execute_verify_proposal(proposal_id, user=None, *, close_connections=False):
     if close_connections:
         close_old_connections()
-    _mark_verify_live(proposal_id)
     proposal = None
     run = None
     try:
+        claimed = ChecklistSortProposal.objects.filter(
+            pk=proposal_id,
+            verify_status="queued",
+        ).update(
+            verify_status="running",
+            verify_started_at=timezone.now(),
+        )
+        if not claimed:
+            return False
         proposal = (
-            ChecklistSortProposal.objects.select_related("run", "run__project", "run__section", "run__started_by")
+            ChecklistSortProposal.objects.select_related(
+                "run",
+                "run__project",
+                "run__section",
+                "run__started_by",
+                "verify_started_by",
+            )
             .filter(pk=proposal_id)
             .first()
         )
         if proposal is None:
-            return
+            return False
         run = proposal.run
         if user is None:
-            user = run.started_by
+            user = proposal.verify_started_by or run.started_by
         logger.info("Checklist sort verify %s started kit=%s", proposal_id, proposal.kit_path)
         work = verify_dir_for(run, proposal.id)
         if not (run.workspace_path or "").strip() or not Path(run.workspace_path).exists():
@@ -612,6 +620,7 @@ def execute_verify_proposal(proposal_id, user=None, *, close_connections=False):
         apply_classify_row(proposal, row, user=user)
         proposal.refresh_from_db()
         logger.info("Checklist sort verify %s finished action=%s", proposal_id, proposal.action)
+        return True
     except (VerifyError, DshRunError) as exc:
         if proposal is not None:
             _fail_verify(proposal, exc)
@@ -621,7 +630,6 @@ def execute_verify_proposal(proposal_id, user=None, *, close_connections=False):
         if proposal is not None:
             _fail_verify(proposal, exc)
     finally:
-        _mark_verify_done(proposal_id)
         if run is not None:
             remove_verify_dir(run, proposal_id)
         if close_connections:
@@ -640,7 +648,7 @@ def start_verify_proposal(*, proposal, user):
         raise VerifyError("Проверка доступна только для строк «Проверить».")
     reclaim_stale_verifies(run_id=run.pk)
     proposal.refresh_from_db()
-    if proposal.verify_status == "running":
+    if proposal.verify_status in {"queued", "running"}:
         raise VerifyConflict("Эта строка уже проверяется.")
     from .sort_service import active_run_for
 
@@ -653,10 +661,16 @@ def start_verify_proposal(*, proposal, user):
             "на проде задайте DSH_HEADLESS_CMD из deploy/dsh/prod.env.dsh.example."
         )
 
-    proposal.verify_status = "running"
+    proposal.verify_status = "queued"
     proposal.verify_error = ""
-    proposal.verify_started_at = timezone.now()
-    proposal.save(update_fields=["verify_status", "verify_error", "verify_started_at"])
+    proposal.verify_started_at = None
+    proposal.verify_started_by = user
+    proposal.save(update_fields=[
+        "verify_status",
+        "verify_error",
+        "verify_started_at",
+        "verify_started_by",
+    ])
 
     inline = bool(getattr(settings, "DSH_SORT_INLINE", False))
     if inline:
@@ -664,14 +678,4 @@ def start_verify_proposal(*, proposal, user):
         proposal.refresh_from_db()
         return proposal
 
-    user_id = getattr(user, "pk", None)
-
-    def _worker():
-        worker_user = user
-        if user_id:
-            from django.contrib.auth import get_user_model
-            worker_user = get_user_model().objects.filter(pk=user_id).first() or user
-        execute_verify_proposal(proposal.id, user=worker_user, close_connections=True)
-
-    transaction.on_commit(lambda: threading.Thread(target=_worker, daemon=True).start())
     return proposal

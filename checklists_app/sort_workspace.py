@@ -1,6 +1,7 @@
-from pathlib import Path
+import json
 import os
 import shutil
+from pathlib import Path
 
 from django.conf import settings
 
@@ -17,6 +18,9 @@ class LocalInboxError(ValueError):
 
 class SortWorkspaceError(ValueError):
     pass
+
+
+CLOUD_FILE_SIZES_NAME = ".cloud-file-sizes.json"
 
 
 def project_sections(project):
@@ -54,9 +58,7 @@ def section_folder_name(project, section):
 
 
 def request_folder_key(project, item):
-    nn = section_nn_map(project).get(item.section_id) or 1
-    section = item.section
-    parent = f"{nn:02d} {section.code}".strip()
+    parent = section_folder_name(project, item.section)
     return f"{parent}/{_build_item_folder_name(item)}"
 
 
@@ -248,10 +250,13 @@ def materialize_inbox_tree(inbox_root: Path, user, source_folder, section_label)
     section_rel = _safe_relpath(section_label) or Path("section")
     section_dir = inbox_root / section_rel
     section_dir.mkdir(parents=True, exist_ok=True)
+    sizes_path = inbox_root / CLOUD_FILE_SIZES_NAME
     if source_folder is None or not source_folder.disk_path:
+        sizes_path.write_text("{}", encoding="utf-8")
         return 0
     entries = list_cloud_tree(user, source_folder.disk_path)
     count = 0
+    file_sizes = {}
     for entry in entries:
         rel = _safe_relpath(entry["rel"])
         if rel is None:
@@ -262,8 +267,39 @@ def materialize_inbox_tree(inbox_root: Path, user, source_folder, section_label)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.touch()
+            try:
+                size = max(0, int(entry.get("size") or 0))
+            except (TypeError, ValueError):
+                size = 0
+            file_sizes[target.relative_to(inbox_root).as_posix()] = size
             count += 1
+    sizes_path.write_text(
+        json.dumps(file_sizes, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
     return count
+
+
+def load_cloud_file_sizes(path: Path):
+    current = path if path.is_dir() else path.parent
+    for parent in (current, *current.parents):
+        manifest_path = parent / CLOUD_FILE_SIZES_NAME
+        if not manifest_path.is_file():
+            continue
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None, {}
+        if not isinstance(payload, dict):
+            return None, {}
+        sizes = {}
+        for key, value in payload.items():
+            try:
+                sizes[str(key).replace("\\", "/")] = max(0, int(value))
+            except (TypeError, ValueError):
+                continue
+        return parent, sizes
+    return None, {}
 
 
 def workspace_root_for(run_id):
@@ -331,3 +367,8 @@ def cleanup_stale_sort_workspaces(run):
             remove_run_workspace(old)
         except OSError:
             continue
+
+
+def reset_sort_workspace(path: Path):
+    _remove_existing(path)
+    path.mkdir(parents=True, exist_ok=True)

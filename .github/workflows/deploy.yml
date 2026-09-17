@@ -144,8 +144,17 @@ jobs:
               echo "DSH sidecar is not installed at $DSH_ROOT — skip"
             fi
 
-            echo "== Restart gunicorn =="
+            echo "== Install checklist sort worker =="
+            sudo install -m 0644 \
+              "$REPO_DIR/deploy/checklist-sort-worker.service" \
+              /etc/systemd/system/ai_app-checklist-sort-worker.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable ai_app-checklist-sort-worker.service
+
+            echo "== Restart Django services =="
             sudo systemctl restart ai_app
+            sudo systemctl restart ai_app-checklist-sort-worker.service
+            sudo systemctl is-active --quiet ai_app-checklist-sort-worker.service
 
             echo "== Healthcheck (gunicorn socket) =="
             ok=0

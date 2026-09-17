@@ -1,9 +1,9 @@
 import logging
-import threading
+from datetime import timedelta
 
 from django.conf import settings
-from django.db import close_old_connections, transaction
-from django.db.models import Max
+from django.db import close_old_connections
+from django.db.models import Max, Q
 from django.utils import timezone
 
 from core.cloud_storage import CloudStorageNotReadyError
@@ -22,6 +22,7 @@ from .sort_workspace import (
     materialize_inbox_tree,
     materialize_local_inbox,
     project_sections,
+    reset_sort_workspace,
     resolve_inbox_folder,
     resolve_local_inbox_dir,
     workspace_root_for,
@@ -36,6 +37,30 @@ class SortRunConflict(Exception):
 
 class SortConfigError(Exception):
     pass
+
+
+STALE_SORT_MESSAGE = "Сортировка не завершилась. Запустите её ещё раз."
+
+
+def _sort_stale_seconds():
+    timeout = int(getattr(settings, "DSH_HEADLESS_TIMEOUT", 900) or 900)
+    return max((timeout * 2) + 300, 1200)
+
+
+def reclaim_stale_sort_runs(*, project=None, section=None, asset_name=None):
+    qs = ChecklistSortRun.objects.filter(status=ChecklistSortRun.Status.RUNNING)
+    if project is not None:
+        qs = qs.filter(project=project)
+    if section is not None:
+        qs = qs.filter(section=section)
+    if asset_name is not None:
+        qs = qs.filter(asset_name=(asset_name or "").strip())
+    cutoff = timezone.now() - timedelta(seconds=_sort_stale_seconds())
+    return qs.filter(Q(started_at__isnull=True) | Q(started_at__lt=cutoff)).update(
+        status=ChecklistSortRun.Status.ERROR,
+        error_message=STALE_SORT_MESSAGE,
+        finished_at=timezone.now(),
+    )
 
 
 def _dest_section_label(section):
@@ -79,7 +104,9 @@ def _sort_prompt(section, *, scan_all_inbox=False, inbox_folder=""):
         "Читай актуальный requests.md. Класть можно только в папки dest, для которых есть строка в списке.\n"
         "После таблицы выведи блок ```json: по одному объекту на каждый комплект "
         "из таблицы, включая review. Число объектов JSON = число строк таблицы. "
-        "Поля: kit, files, dest, name, quote, confidence, action. "
+        "Поля: kit — путь комплекта относительно inbox, не K1/K2; "
+        "files — целое число файлов, не список имён и не размер в байтах; "
+        "dest, name, quote, confidence, action. "
         "У review с пунктом dest заполни dest/name/quote. "
         "У review без пункта dest пиши dest = папка раздела, name/quote пустые, "
         "action всё равно review. Нельзя оставлять в JSON только move.\n"
@@ -93,6 +120,11 @@ def _sort_prompt(section, *, scan_all_inbox=False, inbox_folder=""):
 
 
 def active_run_for(project, section, asset_name):
+    reclaim_stale_sort_runs(
+        project=project,
+        section=section,
+        asset_name=asset_name,
+    )
     return (
         ChecklistSortRun.objects.filter(
             project=project,
@@ -184,7 +216,7 @@ def serialize_run(run):
             "quote": row.quote,
             "confidence": row.confidence,
             "action": (row.action or "").strip().lower(),
-            "verifying": row.verify_status == "running",
+            "verifying": row.verify_status in {"queued", "running"},
             "verify_error": row.verify_error if row.verify_status == "error" else "",
         }
         for row in run.proposals.all()
@@ -223,7 +255,7 @@ def _prepare_workspace(run, user):
     inbox_dir = root / "inbox"
     dest_dir = root / "dest"
     cleanup_stale_sort_workspaces(run)
-    root.mkdir(parents=True, exist_ok=True)
+    reset_sort_workspace(root)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     (root / "requests.md").write_text(build_requests_markdown(project), encoding="utf-8")
@@ -252,14 +284,26 @@ def _prepare_workspace(run, user):
 def execute_sort_run(run_id, user=None, *, close_connections=False):
     if close_connections:
         close_old_connections()
+    claimed = ChecklistSortRun.objects.filter(
+        pk=run_id,
+        status=ChecklistSortRun.Status.QUEUED,
+    ).update(
+        status=ChecklistSortRun.Status.RUNNING,
+        started_at=timezone.now(),
+        finished_at=None,
+        error_message="",
+    )
+    if not claimed:
+        if close_connections:
+            close_old_connections()
+        return False
     run = ChecklistSortRun.objects.select_related("project", "section", "started_by").filter(pk=run_id).first()
     if run is None:
-        return
+        if close_connections:
+            close_old_connections()
+        return False
     if user is None:
         user = run.started_by
-    run.status = ChecklistSortRun.Status.RUNNING
-    run.started_at = timezone.now()
-    run.save(update_fields=["status", "started_at"])
     try:
         root, prompt_scope = _prepare_workspace(run, user)
         output = run_headless(
@@ -277,7 +321,7 @@ def execute_sort_run(run_id, user=None, *, close_connections=False):
                 ChecklistSortProposal(
                     run=run,
                     kit_path=row["kit_path"],
-                    file_count=row["file_count"],
+                    file_count=min(int(row["file_count"] or 0), 2147483647),
                     dest_path=row["dest_path"],
                     request_name=row["request_name"],
                     quote=row["quote"],
@@ -293,6 +337,7 @@ def execute_sort_run(run_id, user=None, *, close_connections=False):
         run.error_message = ""
         run.finished_at = timezone.now()
         run.save(update_fields=["raw_response", "status", "error_message", "finished_at"])
+        return True
     except Exception as exc:
         logger.exception("Checklist sort run %s failed", run_id)
         run.status = ChecklistSortRun.Status.ERROR
@@ -341,8 +386,4 @@ def start_sort_run(*, project, section, asset_name, user, source_kind="cloud", l
         run.refresh_from_db()
         return run
 
-    def _worker():
-        execute_sort_run(run.id, user=user, close_connections=True)
-
-    transaction.on_commit(lambda: threading.Thread(target=_worker, daemon=True).start())
     return run

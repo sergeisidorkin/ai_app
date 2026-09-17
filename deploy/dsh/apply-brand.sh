@@ -128,6 +128,42 @@ if [[ "$need_plugin" -eq 1 ]]; then
   dsh plugin --profile web add -w "$PLUGIN_DIR"
 fi
 
+SKILL_PLUGIN_NAME="dsh-plugin-skill-manager-gui"
+SKILL_PLUGIN_VERSION="0.1.1"
+need_skill_plugin=1
+if python3 - "$PROFILE_PKG" "$SKILL_PLUGIN_NAME" "$SKILL_PLUGIN_VERSION" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+package_path, plugin_name, wanted = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+try:
+    data = json.loads(package_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    sys.exit(1)
+if plugin_name not in (data.get("dependencies") or {}):
+    sys.exit(1)
+bundles = ((data.get("dsh") or {}).get("profile") or {}).get("bundles") or []
+if plugin_name not in bundles:
+    sys.exit(1)
+manifest = package_path.parent / "node_modules" / plugin_name / "package.json"
+if not manifest.is_file():
+    sys.exit(1)
+try:
+    version = str(json.loads(manifest.read_text(encoding="utf-8")).get("version") or "")
+except (OSError, json.JSONDecodeError):
+    sys.exit(1)
+sys.exit(0 if version == wanted else 1)
+PY
+then
+  need_skill_plugin=0
+fi
+
+if [[ "$need_skill_plugin" -eq 1 ]]; then
+  log "installing ${SKILL_PLUGIN_NAME}@${SKILL_PLUGIN_VERSION}"
+  dsh plugin --profile web add "${SKILL_PLUGIN_NAME}@${SKILL_PLUGIN_VERSION}"
+fi
+
 python3 - "$PATCH_FILE" "$PRODUCT_NAME" "$DEST_LOGO" <<'PY'
 from pathlib import Path
 import json
