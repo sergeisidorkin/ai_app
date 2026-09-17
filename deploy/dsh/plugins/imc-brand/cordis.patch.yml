@@ -1,0 +1,9 @@
+# Occupy the shipped brand slots and hide the official DeepSeek wordmark.
+- insert:
+    - id: imc-dsh-brand
+      name: imc-dsh-brand
+      inject: [webServer]
+      config:
+        productName: IMC Montan AI
+- id: ui-brand-official
+  disabled: true

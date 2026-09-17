@@ -5490,6 +5490,7 @@
 
     function shouldSyncServiceCostFromTotalsUpdate(meta) {
       if (commercialTableHydrating) return false;
+      if (String(formRoot.dataset.proposalCommercialHydrating || '') === '1') return false;
       const reason = String((meta && meta.reason) || '');
       if (reason === 'form-submit-flush' || reason === 'xlsx-export' || reason === 'initial-render') {
         return false;
@@ -7174,7 +7175,7 @@
       return row;
     }
 
-    function renderRows(dataRows) {
+    function renderRows(dataRows, meta) {
       clearRowInsertMarker();
       clearCommercialCellSelection();
       tbody.innerHTML = '';
@@ -7222,7 +7223,7 @@
       }, totalsState));
       syncSummaryRowValues();
       syncSummaryWithTravelRowValues();
-      syncCommercialFinancialRows();
+      syncCommercialFinancialRows(meta);
       syncActions();
       syncCommercialCodeColumnWidth();
     }
@@ -7561,8 +7562,7 @@
     }
 
     renderHeader(getAssetRows());
-    renderRows(parsePayload());
-    commercialTableHydrating = false;
+    renderRows(parsePayload(), { reason: 'initial-render' });
     window.addEventListener('resize', syncAllFinancialServiceCellExpansions);
 
     const api = {
@@ -7573,13 +7573,16 @@
         flushScheduledUpdatePayload(meta);
         return servicesStore ? servicesStore.getCommercialRows() : getRows().map(serializeRow).filter(Boolean);
       },
+      endHydration: function () {
+        commercialTableHydrating = false;
+      },
       replaceRows: function (rowsData, meta) {
         renderHeader(getAssetRows());
         if (servicesStore) {
           servicesStore.commitCommercialRows(rowsData || [], { ...(meta || {}), source: 'commercial-view' });
           return;
         }
-        renderRows(rowsData || []);
+        renderRows(rowsData || [], meta);
         updatePayload(meta);
       },
     };
@@ -9578,6 +9581,7 @@
       if (!container || !addBtn || !metaEl || !serviceStagesContainer || !commercialStagesContainer || !paymentStagesContainer || !termsTbody) return null;
       if (form.dataset.stageProductsBound === '1') return form.__proposalStageProductsApi || null;
       form.dataset.stageProductsBound = '1';
+      form.dataset.proposalCommercialHydrating = '1';
 
       let meta = {};
       try {
@@ -10404,6 +10408,22 @@
         };
       }
 
+      function finishProposalCommercialHydration() {
+        if (form.dataset.proposalCommercialHydrating !== '1') return;
+        const scheduleFrame = window.requestAnimationFrame || function (callback) { return window.setTimeout(callback, 0); };
+        scheduleFrame(function () {
+          if (form.dataset.proposalCommercialHydrating !== '1') return;
+          form.dataset.proposalCommercialHydrating = '0';
+          getCommercialBlocks().forEach(function (block) {
+            attachProposalCommercialTable(block, assetsApi)?.endHydration?.();
+          });
+          const summaryBlock = getSummaryCommercialBlock();
+          if (summaryBlock) {
+            attachProposalCommercialTable(summaryBlock, assetsApi)?.endHydration?.();
+          }
+        });
+      }
+
       function syncSummaryCommercialBlock() {
         const summaryCommercialBlock = getSummaryCommercialBlock();
         const hasMultipleStages = getProductRows().length > 1;
@@ -10789,6 +10809,7 @@
         syncSummaryCommercialBlock();
         syncPaymentScheduleMode();
         form.dispatchEvent(new CustomEvent('proposal-stage-products-changed'));
+        finishProposalCommercialHydration();
       }
 
       termsTbody.addEventListener('click', function (event) {

@@ -2,6 +2,8 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
 
@@ -19,6 +21,7 @@ from django.urls import reverse
 
 from oauth2_provider.models import get_application_model
 
+from core.dsh import build_dsh_overview
 from core.cloud_storage import (
     CloudStorageNotReadyError,
     create_project_workspace,
@@ -35,7 +38,7 @@ from core.oidc import IMCOAuth2Validator
 from core.oidc_settings import oidc_pkce_required
 from core.middleware import PolicyObservabilityMiddleware
 from core.models import CloudStorageSettings
-from policy_app.models import DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP
+from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP
 from users_app.models import Employee
 
 User = get_user_model()
@@ -577,3 +580,331 @@ print(json.dumps({
         self.assertEqual(snapshot["engine"], "django.db.backends.sqlite3")
         self.assertIsNone(snapshot["conn_max_age"])
         self.assertIsNone(snapshot["conn_health_checks"])
+
+
+class SidebarDshLinkTests(TestCase):
+    def _staff(self, username, **kwargs):
+        return User.objects.create_user(
+            username=username,
+            email=username,
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+            **kwargs,
+        )
+
+    @override_settings(DSH_BASE_URL="http://127.0.0.1:3080", DSH_LAUNCH_URL_FILE="")
+    def test_home_sidebar_contains_dsh_link_after_logs(self):
+        client = Client()
+        client.force_login(self._staff("dsh-admin@example.com"))
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertIn('href="http://127.0.0.1:3080/"', content)
+        self.assertIn("bi-robot", content)
+        self.assertIn("Консоль ИИ", content)
+        self.assertLess(content.find("Логи"), content.find("Консоль ИИ"))
+
+    @override_settings(DSH_BASE_URL="", DSH_LAUNCH_URL_FILE="")
+    def test_home_sidebar_hides_dsh_link_when_url_is_empty(self):
+        client = Client()
+        client.force_login(self._staff("dsh-hidden@example.com"))
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Консоль ИИ")
+
+    @override_settings(DSH_BASE_URL="http://127.0.0.1:3080", DSH_LAUNCH_URL_FILE="")
+    def test_home_sidebar_hides_dsh_link_for_expert(self):
+        user = self._staff("dsh-expert@example.com")
+        Group.objects.get_or_create(name=EXPERT_GROUP)
+        user.groups.add(Group.objects.get(name=EXPERT_GROUP))
+        Employee.objects.create(user=user, role=EXPERT_GROUP)
+        client = Client()
+        client.force_login(user)
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Консоль ИИ")
+
+    def test_build_dsh_overview_strips_trailing_slash(self):
+        with override_settings(DSH_BASE_URL="http://127.0.0.1:3080/", DSH_LAUNCH_URL_FILE=""):
+            overview = build_dsh_overview()
+        self.assertEqual(overview["dsh_launch_url"], "http://127.0.0.1:3080/")
+        self.assertEqual(overview["dsh_open_url"], "/dsh/")
+        self.assertTrue(overview["dsh_enabled"])
+
+    def test_build_dsh_overview_prefers_launch_file(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            handle.write("http://127.0.0.1:3080/?token=test-token\n")
+            path = handle.name
+        try:
+            with override_settings(
+                DSH_BASE_URL="http://127.0.0.1:3080",
+                DSH_LAUNCH_URL_FILE=path,
+            ):
+                overview = build_dsh_overview()
+        finally:
+            os.unlink(path)
+        self.assertEqual(
+            overview["dsh_launch_url"],
+            "http://127.0.0.1:3080/?token=test-token",
+        )
+        self.assertTrue(overview["dsh_enabled"])
+
+    def test_build_dsh_overview_rewrites_loopback_host_to_match_request(self):
+        factory = RequestFactory()
+        request = factory.get("/", HTTP_HOST="localhost:8000")
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            handle.write("http://127.0.0.1:3080/?token=test-token\n")
+            path = handle.name
+        try:
+            with override_settings(
+                DSH_BASE_URL="http://127.0.0.1:3080",
+                DSH_LAUNCH_URL_FILE=path,
+            ):
+                overview = build_dsh_overview(request)
+        finally:
+            os.unlink(path)
+        self.assertEqual(
+            overview["dsh_launch_url"],
+            "http://localhost:3080/?token=test-token",
+        )
+
+    def test_dsh_open_redirects_staff_to_token_url(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            handle.write("http://127.0.0.1:3080/?token=test-token\n")
+            path = handle.name
+        client = Client()
+        client.force_login(self._staff("dsh-open@example.com"))
+        try:
+            with override_settings(DSH_LAUNCH_URL_FILE=path, ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"]):
+                response = client.get("/dsh/", HTTP_HOST="localhost:8000")
+        finally:
+            os.unlink(path)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "http://localhost:3080/?token=test-token")
+
+    @override_settings(DSH_BASE_URL="http://127.0.0.1:3080", DSH_LAUNCH_URL_FILE="")
+    def test_dsh_open_rejects_expert(self):
+        user = self._staff("dsh-open-expert@example.com")
+        Group.objects.get_or_create(name=EXPERT_GROUP)
+        user.groups.add(Group.objects.get(name=EXPERT_GROUP))
+        Employee.objects.create(user=user, role=EXPERT_GROUP)
+        client = Client()
+        client.force_login(user)
+
+        response = client.get("/dsh/")
+
+        self.assertEqual(response.status_code, 403)
+
+
+class ChecklistSortSidebarTests(TestCase):
+    def test_admin_sees_checklists_subsections(self):
+        user = get_user_model().objects.create_user(
+            username="chk-admin@example.com",
+            email="chk-admin@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        Group.objects.get_or_create(name=ADMIN_GROUP)
+        user.groups.add(Group.objects.get(name=ADMIN_GROUP))
+        Employee.objects.create(user=user, role=ADMIN_GROUP)
+        client = Client()
+        client.force_login(user)
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Чек-листы: Сортировка")
+        self.assertContains(response, 'id="checklists-second-sidebar-list"')
+
+    def test_staff_without_admin_role_sees_single_checklists_page(self):
+        user = get_user_model().objects.create_user(
+            username="chk-staff@example.com",
+            email="chk-staff@example.com",
+            password="Secret123!",
+            is_staff=True,
+            is_active=True,
+        )
+        client = Client()
+        client.force_login(user)
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'id="checklists-second-sidebar-list"')
+        self.assertContains(response, 'href="#checklists"')
+
+
+class DshHeadlessRunTests(SimpleTestCase):
+    def test_explicit_command_is_used_as_is(self):
+        from core.dsh_run import command_parts
+
+        with override_settings(
+            DSH_HEADLESS_CMD="/usr/local/bin/dsh --profile headless",
+            DSH_HEADLESS_CONTAINER_CWD="",
+            DSH_SORT_WORKSPACE="/tmp/sort-runs",
+        ):
+            self.assertEqual(
+                command_parts("/tmp/sort-runs/1"),
+                ["/usr/local/bin/dsh", "--profile", "headless"],
+            )
+
+    def test_npx_is_not_rewritten(self):
+        from core.dsh_run import command_parts
+
+        with override_settings(
+            DSH_HEADLESS_CMD="npx --yes @deepseek-ai/dsh@0.1.5-rc.1 --profile headless",
+            DSH_HEADLESS_CONTAINER_CWD="",
+        ):
+            self.assertEqual(
+                command_parts("/tmp/run"),
+                ["npx", "--yes", "@deepseek-ai/dsh@0.1.5-rc.1", "--profile", "headless"],
+            )
+
+    def test_docker_command_maps_host_cwd_into_container(self):
+        from core.dsh_run import command_parts, headless_env
+
+        host_root = "/opt/dsh/workspace/sort-runs"
+        host_cwd = "/opt/dsh/workspace/sort-runs/42"
+        with override_settings(
+            DSH_HEADLESS_CMD=(
+                "docker compose --project-directory /opt/dsh exec -T "
+                "-w {cwd} dsh dsh --profile headless"
+            ),
+            DSH_SORT_WORKSPACE=host_root,
+            DSH_HEADLESS_CONTAINER_CWD="/workspace/sort-runs",
+            DSH_HOME="/opt/dsh/home",
+            DSH_NODE_BIN="/home/deploy/.nvm/versions/node/v22.20.0/bin",
+            DSH_NPM_CACHE="/tmp/should-not-be-used",
+        ):
+            parts = command_parts(host_cwd)
+            self.assertEqual(parts[0], "docker")
+            self.assertIn("-w", parts)
+            self.assertEqual(parts[parts.index("-w") + 1], "/workspace/sort-runs/42")
+            self.assertNotIn(str(host_cwd), parts)
+            env = headless_env(parts)
+            self.assertNotEqual(env.get("DSH_HOME"), "/opt/dsh/home")
+            self.assertFalse(
+                env["PATH"].startswith("/home/deploy/.nvm/versions/node/v22.20.0/bin")
+            )
+            self.assertNotEqual(env.get("npm_config_cache"), "/tmp/should-not-be-used")
+
+    def test_native_env_uses_configured_node_and_home(self):
+        from core.dsh_run import headless_env
+
+        with override_settings(
+            DSH_HOME="/tmp/dsh-home",
+            DSH_NODE_BIN="/tmp/nvm/bin",
+            DSH_NPM_CACHE="",
+        ):
+            env = headless_env(["/tmp/dsh", "--profile", "headless"])
+            self.assertEqual(env["DSH_HOME"], "/tmp/dsh-home")
+            self.assertTrue(env["PATH"].startswith("/tmp/nvm/bin"))
+
+    def test_empty_command_mentions_both_environments(self):
+        from core.dsh_run import DshRunError, command_parts
+
+        with override_settings(DSH_HEADLESS_CMD="", DSH_HEADLESS_CONTAINER_CWD=""):
+            with self.assertRaises(DshRunError) as raised:
+                command_parts("/tmp/run")
+        message = str(raised.exception)
+        self.assertIn("./scripts/dev_dsh.sh", message)
+        self.assertIn("/opt/dsh", message)
+
+    def test_summarize_failure_hides_npm_engine_wall(self):
+        from core.dsh_run import _summarize_failure
+
+        stderr = (
+            "npm warn EBADENGINE Unsupported engine { package: 'sharp@0.35.4', "
+            "required: { node: '>=20.9.0' }, current: { node: 'v18.20.8' } }\n"
+            * 20
+            + "npm error EACCES: permission denied, rename '/Users/sergei/.npm/_cacache/tmp/x'\n"
+        )
+        text = _summarize_failure("", stderr, 1)
+        self.assertIn("EACCES", text)
+        self.assertNotIn("EBADENGINE", text)
+        self.assertIn("Node >= 20", text)
+
+
+class DshBrandingTests(SimpleTestCase):
+    repo_root = Path(__file__).resolve().parents[1]
+    branding_dir = repo_root / "deploy" / "dsh" / "branding"
+
+    def test_branding_files_use_imc_montan_ai_and_app_favicon(self):
+        brand = (self.branding_dir / "brand.yaml").read_text(encoding="utf-8")
+        logo = self.branding_dir / "logo.svg"
+        favicon = self.repo_root / "core" / "static" / "core" / "icons" / "favicon.svg"
+        self.assertIn("productName: IMC Montan AI", brand)
+        self.assertIn("plugin: imc-dsh-brand", brand)
+        self.assertTrue(logo.is_file())
+        plugin = self.repo_root / "deploy" / "dsh" / "plugins" / "imc-brand" / "package.json"
+        self.assertTrue(plugin.is_file())
+        self.assertEqual(json.loads(plugin.read_text(encoding="utf-8"))["name"], "imc-dsh-brand")
+        self.assertTrue(favicon.is_file())
+        self.assertEqual(logo.read_bytes(), favicon.read_bytes())
+
+    def test_apply_and_sync_scripts_are_valid_bash(self):
+        for rel in ("deploy/dsh/apply-brand.sh", "deploy/dsh/sync-sidecar.sh"):
+            script = self.repo_root / rel
+            result = subprocess.run(
+                ["bash", "-n", str(script)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_django_deploy_syncs_dsh_sidecar_when_it_changes(self):
+        workflow = (self.repo_root / ".github" / "workflows" / "deploy.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("sync-sidecar.sh", workflow)
+        self.assertIn("SIDECAR_CHANGED=1", workflow)
+        self.assertIn("dsh-healthcheck.sh", workflow)
+
+    def test_sync_sidecar_copies_branding_into_an_existing_root(self):
+        with tempfile.TemporaryDirectory() as raw:
+            dest = Path(raw)
+            (dest / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(self.repo_root / "deploy" / "dsh" / "sync-sidecar.sh"),
+                    str(self.repo_root),
+                    str(dest),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("SIDECAR_CHANGED=1", result.stdout)
+            copied = dest / "branding" / "logo.svg"
+            self.assertTrue((dest / "apply-brand.sh").is_file())
+            self.assertTrue((dest / "plugins" / "imc-brand" / "index.js").is_file())
+            self.assertTrue(copied.is_file())
+            self.assertEqual(
+                copied.read_bytes(),
+                (self.repo_root / "core" / "static" / "core" / "icons" / "favicon.svg").read_bytes(),
+            )
+            again = subprocess.run(
+                [
+                    "bash",
+                    str(self.repo_root / "deploy" / "dsh" / "sync-sidecar.sh"),
+                    str(self.repo_root),
+                    str(dest),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("SIDECAR_CHANGED=0", again.stdout)
+

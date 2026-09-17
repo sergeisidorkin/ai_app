@@ -1,0 +1,20 @@
+[Unit]
+Description=Ollama Docker Compose Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/ollama
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStartPre=/bin/sh -c '/usr/bin/docker network inspect imc-ai >/dev/null 2>&1 || /usr/bin/docker network create imc-ai'
+ExecStart=/usr/bin/docker compose --env-file /opt/ollama/ollama.env up -d
+ExecStartPost=/opt/ollama/ollama-healthcheck.sh
+ExecStop=/usr/bin/docker compose --env-file /opt/ollama/ollama.env stop
+ExecReload=/usr/bin/docker compose --env-file /opt/ollama/ollama.env up -d
+TimeoutStartSec=240
+
+[Install]
+WantedBy=multi-user.target

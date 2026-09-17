@@ -1,0 +1,32 @@
+services:
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.34.0}
+    container_name: ollama
+    hostname: ollama
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:${OLLAMA_LOCAL_PORT:-11434}:11434"
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-10m}
+    volumes:
+      # Model blobs and manifests. This directory is the bulk of a server move.
+      - "${ROOT:-./data}/models:/root/.ollama"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 20s
+    networks:
+      - ai
+
+networks:
+  ai:
+    name: ${AI_DOCKER_NETWORK:-imc-ai}
+    external: true

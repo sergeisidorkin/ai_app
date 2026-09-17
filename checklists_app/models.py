@@ -629,3 +629,90 @@ class InfoRequestSectionApproval(models.Model):
 
     def __str__(self):
         return f"SectionApproval:{self.project_id}:{self.section_id}:{self.approved_by_id}"
+
+
+class ChecklistSortRun(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "queued", "В очереди"
+        RUNNING = "running", "Выполняется"
+        DONE = "done", "Готово"
+        ERROR = "error", "Ошибка"
+
+    project = models.ForeignKey(
+        "projects_app.ProjectRegistration",
+        on_delete=models.CASCADE,
+        related_name="checklist_sort_runs",
+    )
+    section = models.ForeignKey(
+        "policy_app.TypicalSection",
+        on_delete=models.CASCADE,
+        related_name="checklist_sort_runs",
+    )
+    asset_name = models.CharField("Актив", max_length=255, blank=True, default="")
+    inbox_section_name = models.CharField("Каталог inbox", max_length=255, blank=True, default="")
+    source_kind = models.CharField(
+        "Источник inbox",
+        max_length=16,
+        choices=(("cloud", "Облако"), ("local", "Локальная папка")),
+        default="cloud",
+    )
+    local_inbox_path = models.CharField("Локальный inbox", max_length=2048, blank=True, default="")
+    status = models.CharField(
+        "Статус",
+        max_length=16,
+        choices=Status.choices,
+        default=Status.QUEUED,
+        db_index=True,
+    )
+    started_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="checklist_sort_runs",
+    )
+    workspace_path = models.CharField("Workspace", max_length=2048, blank=True, default="")
+    raw_response = models.TextField("Ответ DSH", blank=True, default="")
+    error_message = models.TextField("Ошибка", blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-id"]
+        verbose_name = "Прогон сортировки чек-листа"
+        verbose_name_plural = "Прогоны сортировки чек-листа"
+        indexes = [
+            models.Index(fields=["project", "section", "asset_name", "-id"]),
+            models.Index(fields=["status"]),
+        ]
+
+    def __str__(self):
+        return f"SortRun:{self.project_id}:{self.section_id}:{self.status}"
+
+
+class ChecklistSortProposal(models.Model):
+    run = models.ForeignKey(
+        ChecklistSortRun,
+        on_delete=models.CASCADE,
+        related_name="proposals",
+    )
+    kit_path = models.CharField("Путь inbox", max_length=2048)
+    file_count = models.PositiveIntegerField("Файлов", default=0)
+    dest_path = models.CharField("Путь dest", max_length=2048, blank=True, default="")
+    request_name = models.CharField("Наименование запроса", max_length=255, blank=True, default="")
+    quote = models.TextField("Цитата", blank=True, default="")
+    confidence = models.CharField("Уверенность", max_length=32, blank=True, default="")
+    action = models.CharField("Действие", max_length=32, blank=True, default="review")
+    verify_status = models.CharField("Статус проверки", max_length=16, blank=True, default="")
+    verify_error = models.TextField("Ошибка проверки", blank=True, default="")
+    verify_started_at = models.DateTimeField("Начало проверки", blank=True, null=True)
+    position = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Предложение сортировки"
+        verbose_name_plural = "Предложения сортировки"
+
+    def __str__(self):
+        return f"SortProposal:{self.run_id}:{self.kit_path[:60]}"

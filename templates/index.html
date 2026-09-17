@@ -22,7 +22,7 @@
     <ul class="nav nav-pills flex-column gap-2 px-2 py-3">
       {% if request.user.is_staff %}
         <li class="nav-item">
-          <a class="nav-link d-flex align-items-center" href="#notifications" data-bs-toggle="tab">
+          <a class="nav-link d-flex align-items-center active" href="#notifications" data-bs-toggle="tab">
             <i class="bi bi-bell me-2"></i>
             <span class="link-text">Уведомления</span>
           </a>
@@ -166,6 +166,14 @@
             <span class="link-text">Логи</span>
           </a>
         </li>
+        {% if dsh_enabled %}
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="{{ dsh_launch_url }}" target="_blank" rel="noopener noreferrer">
+            <i class="bi bi-robot me-2"></i>
+            <span class="link-text">Консоль ИИ</span>
+          </a>
+        </li>
+        {% endif %}
         {% endif %}
         {% if not is_expert %}
         <li class="nav-item">
@@ -207,7 +215,7 @@
   <main class="flex-grow-1 py-4 px-3" style="min-width:0; overflow-x:clip;">
     <div class="tab-content">
       <!-- Уведомления -->
-      <section id="notifications" class="tab-pane fade">
+      <section id="notifications" class="tab-pane fade show active">
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 30px;">
@@ -618,6 +626,59 @@
       {% endif %}
       <!-- Чек-листы -->
       <section id="checklists" class="tab-pane fade">
+        {% if can_access_checklist_sort %}
+        <div class="d-flex templates-bleed">
+          <aside class="second-sidebar bg-body-tertiary border-end">
+            <div class="second-sidebar-header-spacer"></div>
+            <hr class="my-0">
+            <div class="list-group list-group-flush p-3 m-0" id="checklists-second-sidebar-list">
+              <a href="#" class="list-group-item list-group-item-action active"
+                 data-checklists-section="statuses">
+                Чек-листы: Статусы
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
+                 data-checklists-section="sort">
+                Чек-листы: Сортировка
+              </a>
+            </div>
+          </aside>
+          <div class="flex-grow-1 ps-3 pe-0" style="min-width:0;">
+            <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
+              <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
+                <h5 class="mb-0 ps-3 fs-4 pt-2" id="checklists-section-title">Чек-листы: Статусы</h5>
+                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                   href="#notifications"
+                   data-bs-toggle="tab"
+                   aria-label="Открыть уведомления">
+                  <i class="bi bi-bell fs-5"></i>
+                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                </a>
+              </div>
+            </div>
+            <div class="ps-3">
+              <div id="checklists-content-statuses" class="checklists-section-content">
+                <div id="checklists-pane"
+                     hx-get="{% url 'checklists_app:panel_partial' %}"
+                     hx-trigger="intersect once, shown.bs.tab from:#sidebar a[href='#checklists'] once, checklists-statuses-load from:body once"
+                     hx-target="#checklists-pane"
+                     hx-swap="innerHTML">
+                  <div class="text-muted htmx-indicator">Загрузка чек-листов…</div>
+                </div>
+              </div>
+              <div id="checklists-content-sort" class="checklists-section-content d-none">
+                <div id="checklists-sort-pane"
+                     hx-get="{% url 'checklists_app:sort_panel_partial' %}"
+                     hx-trigger="intersect once, checklists-sort-load from:body once"
+                     hx-target="#checklists-sort-pane"
+                     hx-swap="innerHTML">
+                  <div class="text-muted htmx-indicator">Загрузка сортировки…</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% else %}
         <div class="templates-bleed">
           <div class="bg-white border-bottom content-bleed-x section-header d-flex flex-column">
             <div class="px-3 d-flex justify-content-between align-items-center flex-grow-1" style="min-height: 36px;">
@@ -635,13 +696,14 @@
           <div class="ps-3">
             <div id="checklists-pane"
                  hx-get="{% url 'checklists_app:panel_partial' %}"
-                 hx-trigger="load"
+                 hx-trigger="intersect once, shown.bs.tab from:#sidebar a[href='#checklists'] once"
                  hx-target="#checklists-pane"
                  hx-swap="innerHTML">
               <div class="text-muted htmx-indicator">Загрузка чек-листов…</div>
             </div>
           </div>
         </div>
+        {% endif %}
       </section>
       <!-- Договоры -->
       <section id="contracts" class="tab-pane fade">
@@ -1029,7 +1091,7 @@
           <div class="ps-3">
             <div id="connections-pane"
                  hx-get="{% url 'onedrive_connections_partial' %}"
-                 hx-trigger="load"
+                 hx-trigger="intersect once, shown.bs.tab from:#sidebar a[href='#connections'] once"
                  hx-target="#connections-pane"
                  hx-swap="innerHTML"
                  hx-indicator="#connections-loading">
@@ -1062,7 +1124,7 @@
 
                 <div id="debugger-pane"
                      hx-get="{% url 'debugger_app:panel_partial' %}"
-                     hx-trigger="load"
+                     hx-trigger="intersect once, shown.bs.tab from:#sidebar a[href='#debugger'] once"
                      hx-target="#debugger-pane"
                      hx-swap="innerHTML">
                   <div class="text-muted htmx-indicator">Загрузка…</div>
@@ -2649,6 +2711,243 @@
         })();
         </script>
 
+        {% if can_access_checklist_sort %}
+        <script>
+        (function () {
+          var CHECKLISTS_TITLES = {
+            'statuses': 'Чек-листы: Статусы',
+            'sort': 'Чек-листы: Сортировка',
+          };
+          var CHECKLISTS_LOAD_EVENTS = {
+            'statuses': 'checklists-statuses-load',
+            'sort': 'checklists-sort-load',
+          };
+          var sidebar = document.getElementById('checklists-second-sidebar-list');
+          var titleEl = document.getElementById('checklists-section-title');
+
+          function activateSidebarLink(key) {
+            if (!sidebar) return;
+            sidebar.querySelectorAll('.list-group-item').forEach(function (a) { a.classList.remove('active'); });
+            var link = sidebar.querySelector('[data-checklists-section="' + key + '"]');
+            if (link) link.classList.add('active');
+          }
+
+          function requestSectionLoad(key) {
+            var eventName = CHECKLISTS_LOAD_EVENTS[key];
+            if (eventName) document.body.dispatchEvent(new Event(eventName));
+            if (key === 'statuses') {
+              var pane = document.getElementById('checklists-panel-root');
+              if (pane) pane.dispatchEvent(new CustomEvent('checklists:tab-shown'));
+            }
+          }
+
+          function switchChecklistsSection(key) {
+            document.querySelectorAll('.checklists-section-content').forEach(function (el) {
+              el.classList.add('d-none');
+            });
+            var target = document.getElementById('checklists-content-' + key);
+            if (target) target.classList.remove('d-none');
+            if (titleEl) titleEl.textContent = CHECKLISTS_TITLES[key] || '';
+            requestSectionLoad(key);
+          }
+
+          if (sidebar) {
+            sidebar.addEventListener('click', function (e) {
+              var link = e.target.closest('.list-group-item');
+              if (!link) return;
+              e.preventDefault();
+              var nextSection = link.dataset.checklistsSection;
+              activateSidebarLink(nextSection);
+              switchChecklistsSection(nextSection);
+              if (window.UIPref) UIPref.set('checklists:section', nextSection);
+            });
+          }
+
+          document.addEventListener('DOMContentLoaded', function () {
+            var saved = window.UIPref ? UIPref.get('checklists:section', null) : null;
+            var initial = (saved && CHECKLISTS_TITLES[saved]) ? saved : 'statuses';
+            activateSidebarLink(initial);
+            switchChecklistsSection(initial);
+            document.querySelectorAll('[href="#checklists"][data-bs-toggle="tab"]').forEach(function (link) {
+              link.addEventListener('shown.bs.tab', function () {
+                var activeLink = sidebar && sidebar.querySelector('.list-group-item.active');
+                var activeKey = activeLink ? activeLink.dataset.checklistsSection : 'statuses';
+                requestSectionLoad(activeKey);
+              });
+            });
+          });
+
+          window.__chkSortLiveVerify = function (event, btn) {
+            if (event) {
+              event.preventDefault();
+              if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+              event.stopPropagation();
+            }
+            if (!btn || btn.disabled) return false;
+            var action = (btn.getAttribute('data-sort-proposal-action') || '').trim().toLowerCase();
+            var label = (btn.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            var isVerify = !action || action === 'review' || action === 'проверить' || label.indexOf('проверить') !== -1;
+            if (!isVerify) return false;
+            var proposalId = (btn.getAttribute('data-sort-proposal-id') || '').trim();
+            var root = document.getElementById('checklists-sort-root');
+            var statusEl = root ? root.querySelector('#chk-sort-status') : null;
+            var csrfInput = root ? root.querySelector('input[name="csrfmiddlewaretoken"]') : null;
+            var csrf = (csrfInput && csrfInput.value) || '';
+            if (!csrf) {
+              var m = document.cookie.match('(^|;)\\s*csrftoken\\s*=\\s*([^;]+)');
+              csrf = m ? m.pop() : '';
+            }
+            var verifyUrl = (root && (root.getAttribute('data-verify-url') || root.dataset.verifyUrl)) || '/checklists/sort/verify/';
+            var statusUrl = (root && (root.getAttribute('data-status-url') || root.dataset.statusUrl)) || '/checklists/sort/status/';
+            function setStatus(text, isError) {
+              if (!statusEl) statusEl = document.querySelector('#checklists-sort-root #chk-sort-status');
+              if (!statusEl) return;
+              statusEl.textContent = text || '';
+              statusEl.classList.toggle('text-danger', Boolean(isError && text));
+              statusEl.classList.toggle('fw-semibold', Boolean(isError && text));
+              statusEl.classList.toggle('text-muted', !(isError && text));
+            }
+            function rowById(groups, id) {
+              var found = null;
+              (groups || []).forEach(function (group) {
+                ((group.run && group.run.proposals) || []).forEach(function (row) {
+                  if (String(row.proposal_id || row.id) === String(id)) found = row;
+                });
+              });
+              return found;
+            }
+            function applyRow(row) {
+              if (!row) return false;
+              var liveBtn = document.querySelector('#checklists-sort-root .chk-sort-proposal-btn[data-sort-proposal-id="' + proposalId + '"]') || btn;
+              if (!liveBtn) return;
+              if (row && row.verifying) {
+                liveBtn.disabled = true;
+                liveBtn.setAttribute('aria-busy', 'true');
+                liveBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Проверяется';
+                setStatus('Проверка файлов… обычно занимает 1–2 минуты.');
+                return false;
+              }
+              liveBtn.disabled = false;
+              liveBtn.removeAttribute('aria-busy');
+              var nextAction = String((row && row.action) || 'review').toLowerCase();
+              liveBtn.setAttribute('data-sort-proposal-action', nextAction);
+              liveBtn.textContent = nextAction === 'move'
+                ? 'Переместить'
+                : (nextAction === 'confirm' ? 'Подтвердить' : 'Проверить');
+              if (row && row.verify_error) setStatus(row.verify_error, true);
+              else setStatus('');
+              if (typeof window.__chkSortReload === 'function') window.__chkSortReload();
+              return true;
+            }
+            async function pollUntilDone() {
+              var projectSel = document.getElementById('chk-sort-project');
+              var assetSel = document.getElementById('chk-sort-asset');
+              var sectionSel = document.getElementById('chk-sort-section');
+              var url = new URL(statusUrl, window.location.origin);
+              url.searchParams.set('project_uid', (projectSel && projectSel.value) || '');
+              url.searchParams.set('asset', (assetSel && assetSel.value) || '');
+              url.searchParams.set('section', (sectionSel && sectionSel.value) || 'all');
+              for (var i = 0; i < 90; i += 1) {
+                var resp = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+                var data = await resp.json();
+                var groups = data.groups || [];
+                var row = rowById(groups, proposalId);
+                if (applyRow(row)) return;
+                if (groups.length && !row) {
+                  if (typeof window.__chkSortReload === 'function') window.__chkSortReload();
+                  setStatus('');
+                  return;
+                }
+                await new Promise(function (resolve) { window.setTimeout(resolve, 2000); });
+              }
+              setStatus('Проверка занимает слишком долго. Обновите страницу.', true);
+            }
+            if (!proposalId) {
+              setStatus('Нет идентификатора комплекта для проверки.', true);
+              return false;
+            }
+            btn.disabled = true;
+            btn.setAttribute('aria-busy', 'true');
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Проверяется';
+            setStatus('Запуск проверки…');
+            fetch(verifyUrl, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                'X-CSRFToken': csrf,
+                Accept: 'application/json',
+              },
+              body: new URLSearchParams({ proposal_id: proposalId }),
+            }).then(function (resp) {
+              return resp.text().then(function (text) {
+                var data = {};
+                try { data = JSON.parse(text); } catch (err) { throw new Error(text.slice(0, 180) || ('HTTP ' + resp.status)); }
+                if (!resp.ok && resp.status !== 409) throw new Error(data.error || ('HTTP ' + resp.status));
+                setStatus('Проверка файлов… обычно занимает 1–2 минуты.');
+                return pollUntilDone();
+              });
+            }).catch(function (err) {
+              btn.disabled = false;
+              btn.removeAttribute('aria-busy');
+              btn.textContent = 'Проверить';
+              setStatus(err.message || String(err), true);
+            });
+            return false;
+          };
+          window.__chkSortOnVerifyButton = window.__chkSortLiveVerify;
+          window.__chkSortSyncLocalInbox = function (sourceSel) {
+            var root = document.getElementById('checklists-sort-root');
+            if (!root) return;
+            var sel = sourceSel || root.querySelector('#chk-sort-source');
+            var wrap = root.querySelector('#chk-sort-local-wrap');
+            var path = root.querySelector('#chk-sort-local-path');
+            if (!sel || !wrap) return;
+            var isLocal = sel.value === 'local';
+            wrap.classList.toggle('d-none', !isLocal);
+            if (isLocal && path && !path.value && window.UIPref) {
+              var saved = UIPref.get('checklists:sortLocalInbox', '');
+              if (saved) path.value = saved;
+            }
+          };
+          document.body.addEventListener('htmx:afterSwap', function (event) {
+            var target = event.detail && event.detail.target;
+            if (!target || target.id !== 'checklists-sort-pane') return;
+            window.setTimeout(function () {
+              var root = document.getElementById('checklists-sort-root');
+              var sourceSel = root ? root.querySelector('#chk-sort-source') : null;
+              if (sourceSel && window.UIPref && UIPref.get('checklists:sortSource', 'cloud') === 'local') {
+                sourceSel.value = 'local';
+              }
+              window.__chkSortSyncLocalInbox(sourceSel);
+              if (typeof window.__chkSortReload === 'function') window.__chkSortReload();
+            }, 0);
+          });
+          if (!window.__chkSortVerifyClickBound) {
+            window.__chkSortVerifyClickBound = true;
+          }
+          document.addEventListener('change', function (event) {
+            var target = event.target;
+            if (!target || !target.closest || !target.closest('#checklists-sort-root')) return;
+            if (target.id === 'chk-sort-source') {
+              if (window.UIPref) UIPref.set('checklists:sortSource', target.value);
+              window.__chkSortSyncLocalInbox(target);
+            }
+            if (target.id === 'chk-sort-local-path' && window.UIPref) {
+              UIPref.set('checklists:sortLocalInbox', target.value.trim());
+            }
+          });
+          document.addEventListener('click', function (event) {
+            var el = event.target && event.target.closest ? event.target : (event.target && event.target.parentElement);
+            if (!el || !el.closest) return;
+            var btn = el.closest('.chk-sort-proposal-btn');
+            if (!btn || !btn.closest('#checklists-sort-root')) return;
+            window.__chkSortLiveVerify(event, btn);
+          }, true);
+        })();
+        </script>
+        {% endif %}
+
         {% if can_access_worktime %}
         <script>
         (function () {
@@ -3451,6 +3750,7 @@
               window.bootstrap.Tab.getOrCreateInstance(link).show();
             }
           }
+          showTabFromHash();
           window.addEventListener('hashchange', showTabFromHash);
         });
         </script>

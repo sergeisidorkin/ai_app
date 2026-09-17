@@ -127,6 +127,23 @@ jobs:
             python -m django migrate --noinput
             python -m django collectstatic --noinput
 
+            echo "== DSH sidecar (branding / image) =="
+            DSH_ROOT="/opt/dsh"
+            if [ -f "$DSH_ROOT/docker-compose.yml" ] && [ -f "$REPO_DIR/deploy/dsh/sync-sidecar.sh" ]; then
+              sidecar_out="$(sudo bash "$REPO_DIR/deploy/dsh/sync-sidecar.sh" "$REPO_DIR" "$DSH_ROOT")"
+              echo "$sidecar_out"
+              if echo "$sidecar_out" | grep -q 'SIDECAR_CHANGED=1'; then
+                echo "DSH sidecar files changed — rebuild and recreate"
+                cd "$DSH_ROOT"
+                sudo docker compose --env-file dsh.env up -d --build
+                sudo ./dsh-healthcheck.sh
+              else
+                echo "DSH sidecar unchanged — leave running sessions alone"
+              fi
+            else
+              echo "DSH sidecar is not installed at $DSH_ROOT — skip"
+            fi
+
             echo "== Restart gunicorn =="
             sudo systemctl restart ai_app
 

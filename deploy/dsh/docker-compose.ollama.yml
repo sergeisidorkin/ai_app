@@ -1,0 +1,15 @@
+# Optional overlay when a local Ollama stack joins the same host.
+#   docker compose --env-file dsh.env -f docker-compose.yml -f docker-compose.ollama.yml up -d
+# Create the network first: docker network create imc-ai
+# Set DSH_LLM_BASE_URL=http://ollama:11434/v1 in dsh.env.
+
+services:
+  dsh:
+    networks:
+      - default
+      - ai
+
+networks:
+  ai:
+    name: ${AI_DOCKER_NETWORK:-imc-ai}
+    external: true

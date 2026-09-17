@@ -11,3 +11,5 @@ addin:  bash -lc 'exec ./scripts/dev_addin.sh'
 
 # cloudpub: держим процесс, пока включен флаг
 cloudpub: bash -lc 'if [[ "${CLOUDPUB_ENABLED:-1}" = "1" ]]; then ./scripts/dev_cloudpub.sh; else echo "[cloudpub] disabled"; sleep infinity; fi'
+
+dsh: bash -lc 'exec ./scripts/dev_dsh.sh'

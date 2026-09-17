@@ -12,7 +12,7 @@ fi
 export PATH="$VENV_BIN:$PATH"
 
 echo "[dev_up] preflight: shutting down leftovers"
-for p in 6380 8001 8000 3000; do
+for p in 6380 8001 8000 3000 3080; do
   lsof -nP -iTCP:$p -sTCP:LISTEN -t | xargs -r kill || true
 done
 

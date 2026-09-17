@@ -1,0 +1,5 @@
+# Web UI identity for DeepSeek Harness. apply-brand.sh copies this into the
+# web profile; changing productName or the app favicon and redeploying is enough.
+productName: IMC Montan AI
+logoFile: logo.svg
+plugin: imc-dsh-brand

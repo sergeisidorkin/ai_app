@@ -7,7 +7,7 @@ from django.http import HttpResponse
 from django.templatetags.static import static as static_url
 
 from django.contrib.auth.views import LogoutView
-from core.views import home_entry, RememberMeLoginView
+from core.views import home_entry, RememberMeLoginView, dsh_open
 from users_app.views import register_view, verify_view, resend_code_view
 
 from openai_app import views as openai_views
@@ -17,7 +17,8 @@ from logs_app.views import logs_config
 
 urlpatterns = [
     path("taskpane.html", TemplateView.as_view(template_name="taskpane.html"), name="taskpane"),
-path("", home_entry, name="home"),
+    path("", home_entry, name="home"),
+    path("dsh/", dsh_open, name="dsh_open"),
 #   path("", TemplateView.as_view(template_name="index.html"), name="home"),
     path("policy/",    include("policy_app.urls")),
     path("blocks/",    include(("blocks_app.urls", "blocks_app"),   namespace="blocks_app")),

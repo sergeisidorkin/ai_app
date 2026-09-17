@@ -1,0 +1,23 @@
+# Seeded into $DSH_HOME/settings.yaml on first start when DSH_LLM_BASE_URL is set
+# (local Ollama / llama-server). Placeholders are filled by docker-entrypoint.sh.
+
+llm-pi-ai:
+  providers:
+    ollama:
+      apiKeyEnv: OLLAMA_API_KEY
+      api: openai-completions
+      baseURL: __LLM_BASE_URL__
+      compat:
+        supportsDeveloperRole: false
+        maxTokensField: max_tokens
+      models:
+        - id: __LLM_MODEL__
+          contextWindow: 32768
+          maxTokens: 8192
+          input: [text, image]
+          reasoningEfforts:
+            off:
+
+agent-default-model:
+  provider: ollama
+  model: __LLM_MODEL__

@@ -1,0 +1,3 @@
+# Git-managed skills are copied or bind-mounted here on the server:
+#   /opt/dsh/skills/<skill-name>/SKILL.md
+# DSH discovers them as user skills on startup.

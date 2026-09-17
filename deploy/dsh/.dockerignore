@@ -1,0 +1,6 @@
+.dockerignore
+home
+workspace
+*.env
+.git
+data

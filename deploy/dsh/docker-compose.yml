@@ -1,0 +1,37 @@
+services:
+  dsh:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DSH_VERSION: ${DSH_VERSION:-0.1.5-rc.1}
+        DSH_UID: ${DSH_UID:-1000}
+        DSH_GID: ${DSH_GID:-1000}
+    image: ${DSH_IMAGE:-imc-dsh}:${DSH_VERSION:-0.1.5-rc.1}
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${DSH_LOCAL_PORT:-3080}:13080"
+    environment:
+      DSH_HOME: /home/node/.dsh
+      # Empty = configure the official provider in the Web UI (current prod).
+      DSH_LLM_BASE_URL: ${DSH_LLM_BASE_URL:-}
+      DSH_LLM_MODEL: ${DSH_LLM_MODEL:-}
+      DSH_TRUSTED_HOSTS: ${DSH_TRUSTED_HOSTS:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+    volumes:
+      # Persistent harness state. Copy this directory when moving servers.
+      - "${ROOT:-./data}/home:/home/node/.dsh"
+      # Shared with Django checklist sort: host .../workspace/sort-runs <-> /workspace/sort-runs
+      - "${ROOT:-./data}/workspace:/workspace"
+      - "${ROOT:-./data}/skills:/home/node/.dsh/skills"
+    working_dir: /workspace
+    pids_limit: 256

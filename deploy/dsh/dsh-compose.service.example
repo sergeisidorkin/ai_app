@@ -1,0 +1,19 @@
+[Unit]
+Description=DeepSeek Harness Docker Compose Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/dsh
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/docker compose --env-file /opt/dsh/dsh.env up -d
+ExecStartPost=/opt/dsh/dsh-healthcheck.sh
+ExecStop=/usr/bin/docker compose --env-file /opt/dsh/dsh.env stop
+ExecReload=/usr/bin/docker compose --env-file /opt/dsh/dsh.env up -d
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
