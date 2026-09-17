@@ -1,6 +1,7 @@
 [Unit]
 Description=AI App checklist sorting worker
-After=network.target
+After=network-online.target docker.service dsh-compose.service
+Wants=network-online.target docker.service dsh-compose.service
 
 [Service]
 Type=simple
@@ -12,10 +13,12 @@ Environment=DJANGO_ENV=prod
 Environment=READ_DOTENV=False
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/home/sergei/ai_appdir/env/prod.env
+ExecStartPre=/opt/dsh/dsh-healthcheck.sh
 ExecStart=/home/sergei/ai_appdir/ai_appenv/bin/python manage.py checklist_sort_worker
 Restart=always
 RestartSec=5s
 KillMode=control-group
+TimeoutStartSec=300
 TimeoutStopSec=45s
 
 [Install]

@@ -137,6 +137,22 @@ def active_run_for(project, section, asset_name):
     )
 
 
+def active_verify_for(project, section, asset_name):
+    from .sort_verify import reclaim_stale_verifies
+
+    reclaim_stale_verifies()
+    return (
+        ChecklistSortProposal.objects.filter(
+            run__project=project,
+            run__section=section,
+            run__asset_name=(asset_name or "").strip(),
+            verify_status__in={"queued", "running"},
+        )
+        .order_by("id")
+        .first()
+    )
+
+
 def latest_run_for(project, section, asset_name):
     return (
         ChecklistSortRun.objects.filter(
@@ -370,6 +386,8 @@ def start_sort_run(*, project, section, asset_name, user, source_kind="cloud", l
     existing = active_run_for(project, section, asset)
     if existing:
         raise SortRunConflict("Сортировка этого раздела уже выполняется.")
+    if active_verify_for(project, section, asset):
+        raise SortRunConflict("Дождитесь окончания проверки файлов.")
 
     run = ChecklistSortRun.objects.create(
         project=project,

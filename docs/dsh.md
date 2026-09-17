@@ -220,8 +220,11 @@ gunicorn env. `settings/prod.py` fills the same defaults when
 Sorting and per-row verification are database-backed jobs. Production runs
 them in `ai_app-checklist-sort-worker.service`, not in Gunicorn threads.
 `deploy.yml` installs, enables, and restarts that unit on every deploy. The
-worker is intentionally singleton; after a crash or service restart it
-requeues only jobs owned by the interrupted worker process.
+unit starts after Docker / `dsh-compose.service` and waits for
+`/opt/dsh/dsh-healthcheck.sh` before consuming jobs, so a host reboot does
+not mark recovered work as failed while DSH is still coming up. The worker
+is intentionally singleton; after a crash or service restart it requeues
+only jobs owned by the interrupted worker process.
 
 ```bash
 sudo mkdir -p /opt/dsh/workspace/sort-runs
