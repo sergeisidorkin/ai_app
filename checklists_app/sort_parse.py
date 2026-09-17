@@ -5,19 +5,53 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.DOTALL | re.IGNOREC
 _FENCE_OBJECT_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
 _JSON_ARRAY_RE = re.compile(r"\[\s*\{.*?\}\s*\]", re.DOTALL)
 _CODE_NN_RE = re.compile(r"^([A-Za-z]{2,})-(\d+)\b")
+_FILE_COUNT_RE = re.compile(r"\d+")
+_KIT_ID_RE = re.compile(r"^K\d+$", re.IGNORECASE)
+_PLACEHOLDER_FILE_RE = re.compile(r"^(empty|\.\.\.|…|—|–|-)$", re.IGNORECASE)
+# PostgreSQL integer / Django PositiveIntegerField.
+_PG_INT_MAX = 2147483647
+# A kit file count above this is almost certainly bytes or concatenated digits.
+_MAX_REASONABLE_FILE_COUNT = 1_000_000
 
 
 def _clean_cell(value):
     return " ".join(str(value or "").replace("\u00a0", " ").split()).strip()
 
 
+def _clamp_file_count(value):
+    if value < 0:
+        return 0
+    if value > _MAX_REASONABLE_FILE_COUNT:
+        # Byte size from .cloud-file-sizes.json, not a file count.
+        return 1
+    return min(int(value), _PG_INT_MAX)
+
+
 def _parse_file_count(value):
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (list, tuple, set)):
+        names = [
+            str(item).strip()
+            for item in value
+            if str(item).strip() and not _PLACEHOLDER_FILE_RE.fullmatch(str(item).strip())
+        ]
+        return _clamp_file_count(len(names))
+    if isinstance(value, int):
+        return _clamp_file_count(value)
+    if isinstance(value, float):
+        if value != value:  # NaN
+            return 0
+        try:
+            return _clamp_file_count(int(value))
+        except (OverflowError, ValueError):
+            return 0
     raw = _clean_cell(value).lstrip("~")
-    digits = re.sub(r"[^\d]", "", raw)
-    if not digits:
+    match = _FILE_COUNT_RE.search(raw)
+    if not match:
         return 0
     try:
-        return int(digits)
+        return _clamp_file_count(int(match.group(0)))
     except ValueError:
         return 0
 
@@ -202,6 +236,8 @@ def _row_from_mapping(item, position):
     if not kit or kit.startswith("-"):
         return None
     dest = _clean_dest(item.get("dest") or item.get("dest_path") or item.get("папка dest") or "")
+    if _KIT_ID_RE.fullmatch(kit):
+        kit = dest_leaf_name(dest) or dest or kit
     confidence = _clean_cell(item.get("confidence") or item.get("уверенность") or "")
     action = _clean_cell(item.get("action") or item.get("действие") or "review").lower()
     return {

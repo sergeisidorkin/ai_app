@@ -217,6 +217,12 @@ Copy the Django variables from `deploy/dsh/prod.env.dsh.example` into the
 gunicorn env. `settings/prod.py` fills the same defaults when
 `/opt/dsh/docker-compose.yml` exists.
 
+Sorting and per-row verification are database-backed jobs. Production runs
+them in `ai_app-checklist-sort-worker.service`, not in Gunicorn threads.
+`deploy.yml` installs, enables, and restarts that unit on every deploy. The
+worker is intentionally singleton; after a crash or service restart it
+requeues only jobs owned by the interrupted worker process.
+
 ```bash
 sudo mkdir -p /opt/dsh/workspace/sort-runs
 # gunicorn must write here; the container user is uid/gid 1000 (`node`).

@@ -843,6 +843,71 @@ class ChecklistSortParseTests(TestCase):
         self.assertEqual(rows[0]["action"], "move")
         self.assertEqual(rows[0]["file_count"], 1)
 
+    def test_file_count_ignores_byte_sizes_and_cadastral_digits(self):
+        from checklists_app.sort_parse import parse_sort_response
+
+        text = """
+```json
+[
+  {"kit":"ЕГРН/41 09 0010115 401.zip","files":3221225472,"dest":"dest/06 LGL Право/LGL-16 ЕГРН","name":"ЕГРН","quote":"выписки","confidence":"высокая","action":"move"},
+  {"kit":"ЕГРН/второй.zip","files":"41 09 0010115 401.zip","dest":"dest/06 LGL Право/LGL-16 ЕГРН","name":"ЕГРН","quote":"выписки","confidence":"средняя","action":"review"},
+  {"kit":"Устав/BGK_Ustav.pdf","files":"12 файлов","dest":"dest/06 LGL Право/LGL-05 Устав","name":"Устав","quote":"устав","confidence":"высокая","action":"move"}
+]
+```
+"""
+        rows = parse_sort_response(text)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]["file_count"], 1)
+        self.assertEqual(rows[1]["file_count"], 41)
+        self.assertEqual(rows[2]["file_count"], 12)
+        self.assertTrue(all(row["file_count"] <= 2147483647 for row in rows))
+
+    def test_file_count_from_name_list_does_not_concatenate_license_numbers(self):
+        from checklists_app.sort_parse import parse_sort_response
+
+        text = """
+```json
+[
+  {
+    "kit": "K1",
+    "files": [
+      "ПТР 005328 ТЭ",
+      "ПТР 005329 ТЭ",
+      "ПТР 007246 БП",
+      "ПТР 007247 БП",
+      "ПТР 009464 ТР",
+      "ПТР 014702 ТП",
+      "ПТР 016057 ВЭ",
+      "ПТР 019156 ТР",
+      "ПТР 026086 ТР",
+      "ПТР 10606 БЭ"
+    ],
+    "dest": "LGL-01 Лицензии на недра",
+    "name": "Лицензии на недра",
+    "quote": "Лицензии на недропользование",
+    "confidence": "high",
+    "action": "move"
+  },
+  {
+    "kit": "K16",
+    "files": ["Empty"],
+    "dest": "LGL-03 Бизнес-планы",
+    "name": "",
+    "quote": "",
+    "confidence": "review",
+    "action": "review"
+  }
+]
+```
+"""
+        rows = parse_sort_response(text)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["kit_path"], "LGL-01 Лицензии на недра")
+        self.assertEqual(rows[0]["file_count"], 10)
+        self.assertEqual(rows[1]["kit_path"], "LGL-03 Бизнес-планы")
+        self.assertEqual(rows[1]["file_count"], 0)
+        self.assertTrue(all(row["file_count"] <= 2147483647 for row in rows))
+
     def test_dest_leaf_name_strips_workspace_prefix(self):
         from checklists_app.sort_parse import dest_leaf_name
 
@@ -1460,6 +1525,51 @@ class ChecklistSortAccessTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("раздел", response.json()["error"].lower())
 
+    def test_requests_markdown_uses_exact_dest_section_folder(self):
+        from checklists_app.sort_workspace import build_requests_markdown, section_folder_name
+
+        item = ChecklistItem.objects.get(project=self.project, section=self.section)
+        expected = f"{section_folder_name(self.project, self.section)}/TSF-05 Документы по безопасности"
+        self.assertIn(f"| {expected} |", build_requests_markdown(self.project))
+
+    @override_settings(DSH_SORT_INLINE=False, DSH_HEADLESS_CMD="dsh --profile headless")
+    def test_non_inline_sort_is_left_for_durable_worker(self):
+        from unittest.mock import patch
+
+        self.client.force_login(self.admin)
+        with patch("checklists_app.sort_service.run_headless") as headless:
+            response = self.client.post(
+                reverse("checklists_app:sort_start"),
+                {
+                    "project_uid": self.project.short_uid,
+                    "section": str(self.section.id),
+                    "asset": "Asset A",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["run"]["status"], ChecklistSortRun.Status.QUEUED)
+        headless.assert_not_called()
+
+    @override_settings(DSH_HEADLESS_TIMEOUT=10)
+    def test_stale_running_sort_no_longer_blocks_section(self):
+        from datetime import timedelta
+
+        from checklists_app.sort_service import active_run_for
+
+        run = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.RUNNING,
+            started_at=timezone.now() - timedelta(minutes=30),
+        )
+
+        self.assertIsNone(active_run_for(self.project, self.section, "Asset A"))
+        run.refresh_from_db()
+        self.assertEqual(run.status, ChecklistSortRun.Status.ERROR)
+        self.assertIn("не завершилась", run.error_message)
+
 
 class SortWorkspaceRootTests(SimpleTestCase):
     def test_prod_requires_explicit_workspace(self):
@@ -1491,6 +1601,53 @@ class SortWorkspaceRootTests(SimpleTestCase):
             materialize_local_inbox(inbox, source)
             self.assertTrue(inbox.is_symlink())
             self.assertTrue((inbox / "Геология").is_dir())
+
+    def test_cloud_placeholder_manifest_preserves_remote_size_limit(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from checklists_app.sort_verify import (
+            MAX_FILE_BYTES,
+            VerifyError,
+            _download_selected_file,
+            build_kit_manifest,
+        )
+        from checklists_app.sort_workspace import materialize_inbox_tree
+
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            source = SimpleNamespace(disk_path="/cloud/source")
+            entries = [{
+                "name": "large.pdf",
+                "path": "/cloud/source/large.pdf",
+                "rel": "large.pdf",
+                "is_dir": False,
+                "size": MAX_FILE_BYTES + 1,
+            }]
+            with patch("checklists_app.sort_workspace.list_cloud_tree", return_value=entries):
+                materialize_inbox_tree(inbox, object(), source, "01 TSF Хвостохранилище")
+
+            placeholder = inbox / "01 TSF Хвостохранилище" / "large.pdf"
+            self.assertEqual(placeholder.stat().st_size, 0)
+            self.assertEqual(
+                build_kit_manifest(placeholder),
+                [{
+                    "path": "large.pdf",
+                    "size": MAX_FILE_BYTES + 1,
+                    "ext": ".pdf",
+                    "skipped": True,
+                }],
+            )
+            with patch("checklists_app.sort_verify.download_file") as download:
+                with self.assertRaises(VerifyError):
+                    _download_selected_file(
+                        SimpleNamespace(source_kind="cloud"),
+                        object(),
+                        placeholder,
+                        "large.pdf",
+                        Path(tmp) / "download.pdf",
+                    )
+            download.assert_not_called()
 
 
 class ChecklistSortVerifyParseTests(SimpleTestCase):
@@ -2031,6 +2188,46 @@ class ChecklistSortVerifyTests(TestCase):
         self.assertIn("не завершилась", row["verify_error"])
         proposal.refresh_from_db()
         self.assertEqual(proposal.verify_status, "error")
+
+    def test_durable_worker_requeues_only_its_interrupted_jobs(self):
+        from checklists_app.sort_worker import recover_interrupted_jobs
+
+        running = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.RUNNING,
+            started_at=timezone.now(),
+        )
+        done = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset B",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.DONE,
+            started_at=timezone.now(),
+            finished_at=timezone.now(),
+        )
+        proposal = ChecklistSortProposal.objects.create(
+            run=done,
+            kit_path="Декларация.pdf",
+            action="review",
+            verify_status="running",
+            verify_started_at=timezone.now(),
+            verify_started_by=self.admin,
+        )
+
+        self.assertEqual(recover_interrupted_jobs(), (1, 1))
+
+        running.refresh_from_db()
+        done.refresh_from_db()
+        proposal.refresh_from_db()
+        self.assertEqual(running.status, ChecklistSortRun.Status.QUEUED)
+        self.assertIsNone(running.started_at)
+        self.assertEqual(done.status, ChecklistSortRun.Status.DONE)
+        self.assertEqual(proposal.verify_status, "queued")
+        self.assertIsNone(proposal.verify_started_at)
 
 
 
