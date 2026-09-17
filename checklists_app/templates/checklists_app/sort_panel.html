@@ -459,12 +459,13 @@
 
     function buttonLabel(run) {
         if (isBusy(run)) return 'Выполняется';
+        if (anyVerifying(run)) return 'Проверка…';
         return 'Распределить';
     }
 
     function renderRunButton(group) {
         const run = group.run;
-        const busy = isBusy(run);
+        const busy = isBusy(run) || anyVerifying(run);
         const spinner = busy
             ? '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
             : '';
@@ -823,7 +824,7 @@
             }));
         }
         const current = groups.find((group) => String(group.section_id) === String(sectionId));
-        if (current && isBusy(current.run)) return;
+        if (current && (isBusy(current.run) || anyVerifying(current.run))) return;
         stopPolling();
         groups = groups.map((group) => {
             if (String(group.section_id) !== String(sectionId)) return group;

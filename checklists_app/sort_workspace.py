@@ -363,6 +363,8 @@ def cleanup_stale_sort_workspaces(run):
         asset_name=run.asset_name,
     ).exclude(pk=run.pk)
     for old in old_runs:
+        if old.proposals.filter(verify_status__in=["queued", "running"]).exists():
+            continue
         try:
             remove_run_workspace(old)
         except OSError:

@@ -23,16 +23,6 @@ def recover_interrupted_jobs():
 
 
 def process_next_job():
-    run_id = (
-        ChecklistSortRun.objects.filter(status=ChecklistSortRun.Status.QUEUED)
-        .order_by("created_at", "id")
-        .values_list("id", flat=True)
-        .first()
-    )
-    if run_id is not None:
-        execute_sort_run(run_id)
-        return True
-
     proposal_id = (
         ChecklistSortProposal.objects.filter(verify_status="queued")
         .order_by("id")
@@ -41,6 +31,16 @@ def process_next_job():
     )
     if proposal_id is not None:
         execute_verify_proposal(proposal_id)
+        return True
+
+    run_id = (
+        ChecklistSortRun.objects.filter(status=ChecklistSortRun.Status.QUEUED)
+        .order_by("created_at", "id")
+        .values_list("id", flat=True)
+        .first()
+    )
+    if run_id is not None:
+        execute_sort_run(run_id)
         return True
 
     return False

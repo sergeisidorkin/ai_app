@@ -1189,6 +1189,7 @@ class ChecklistSortAccessTests(TestCase):
         self.assertContains(response, "data-verify-url")
         self.assertContains(response, "csrfmiddlewaretoken")
         self.assertContains(response, "__chkSortOnVerifyButton")
+        self.assertContains(response, "anyVerifying(run)")
         self.assertContains(response, "Предлагаемый dest")
         self.assertContains(response, "chk-sort-proposal-row")
         self.assertContains(response, "Краткое наименование")
@@ -2229,5 +2230,114 @@ class ChecklistSortVerifyTests(TestCase):
         self.assertEqual(proposal.verify_status, "queued")
         self.assertIsNone(proposal.verify_started_at)
 
+    def test_worker_runs_queued_verify_before_replacement_sort(self):
+        from unittest.mock import patch
+
+        from checklists_app.sort_worker import process_next_job
+
+        done = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.DONE,
+            workspace_path="/tmp/old-sort",
+        )
+        proposal = ChecklistSortProposal.objects.create(
+            run=done,
+            kit_path="Декларация.pdf",
+            action="review",
+            verify_status="queued",
+        )
+        queued_sort = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.QUEUED,
+        )
+        order = []
+
+        def _verify(pk):
+            order.append(("verify", pk))
+            ChecklistSortProposal.objects.filter(pk=pk).update(verify_status="")
+
+        def _sort(pk):
+            order.append(("sort", pk))
+
+        with patch("checklists_app.sort_worker.execute_verify_proposal", side_effect=_verify), patch(
+            "checklists_app.sort_worker.execute_sort_run", side_effect=_sort
+        ):
+            self.assertTrue(process_next_job())
+            self.assertTrue(process_next_job())
+        self.assertEqual(order, [("verify", proposal.id), ("sort", queued_sort.id)])
+
+    def test_sort_start_blocked_while_verify_queued(self):
+        done = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.DONE,
+        )
+        ChecklistSortProposal.objects.create(
+            run=done,
+            kit_path="Декларация.pdf",
+            action="review",
+            verify_status="queued",
+        )
+        response = self.client.post(
+            reverse("checklists_app:sort_start"),
+            {
+                "project_uid": self.project.short_uid,
+                "section": str(self.section.id),
+                "asset": "Asset A",
+            },
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("проверки", response.json()["error"].lower())
+
+    def test_cleanup_keeps_workspace_while_verify_queued(self):
+        from checklists_app.sort_workspace import cleanup_stale_sort_workspaces
+
+        old_root = Path(self._sort_workspace.name) / "old"
+        (old_root / "inbox").mkdir(parents=True)
+        done = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.DONE,
+            workspace_path=str(old_root),
+        )
+        ChecklistSortProposal.objects.create(
+            run=done,
+            kit_path="Декларация.pdf",
+            action="review",
+            verify_status="queued",
+        )
+        replacement = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.QUEUED,
+        )
+        cleanup_stale_sort_workspaces(replacement)
+        self.assertTrue(old_root.is_dir())
+        done.refresh_from_db()
+        self.assertEqual(done.workspace_path, str(old_root))
+
+
+class ChecklistSortWorkerUnitTests(SimpleTestCase):
+    def test_systemd_unit_waits_for_dsh(self):
+        from django.conf import settings
+
+        text = (Path(settings.BASE_DIR) / "deploy" / "checklist-sort-worker.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("After=network-online.target docker.service dsh-compose.service", text)
+        self.assertIn("ExecStartPre=/opt/dsh/dsh-healthcheck.sh", text)
+        self.assertIn("TimeoutStartSec=300", text)
 
 
