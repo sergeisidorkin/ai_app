@@ -13,6 +13,8 @@ fail() {
 DSH_HOME="${DSH_HOME:-/home/node/.dsh}"
 DSH_WEB_PORT="${DSH_WEB_PORT:-3080}"
 DSH_BRIDGE_PORT="${DSH_BRIDGE_PORT:-13080}"
+DSH_PUBLIC_URL="${DSH_PUBLIC_URL:-}"
+DSH_LAUNCH_URL_FILE="${DSH_LAUNCH_URL_FILE:-$DSH_HOME/web-launch.url}"
 SETTINGS_TEMPLATE="${DSH_SETTINGS_TEMPLATE:-/usr/local/share/dsh/settings.yaml.example}"
 SETTINGS_OLLAMA_TEMPLATE="${DSH_SETTINGS_OLLAMA_TEMPLATE:-/usr/local/share/dsh/settings.ollama.yaml.example}"
 
@@ -26,9 +28,9 @@ SETTINGS_OLLAMA_TEMPLATE="${DSH_SETTINGS_OLLAMA_TEMPLATE:-/usr/local/share/dsh/s
       /workspace/sort-runs
 
 if [[ ! -f "$DSH_HOME/settings.yaml" ]]; then
-  if [[ -n "${OPENROUTER_API_KEY:-}" && -f "$SETTINGS_TEMPLATE" ]]; then
+  if [[ -n "${SILICONFLOW_API_KEY:-}" && -f "$SETTINGS_TEMPLATE" ]]; then
     cp "$SETTINGS_TEMPLATE" "$DSH_HOME/settings.yaml"
-    log "seeded $DSH_HOME/settings.yaml for OpenRouter (qwen/qwen3.5-27b)"
+    log "seeded $DSH_HOME/settings.yaml for SiliconFlow (Qwen/Qwen3.5-27B)"
   elif [[ -n "${DSH_LLM_BASE_URL:-}" && -f "$SETTINGS_OLLAMA_TEMPLATE" ]]; then
     llm_base_url="$DSH_LLM_BASE_URL"
     llm_model="${DSH_LLM_MODEL:-qwen3.5:9b}"
@@ -38,7 +40,7 @@ if [[ ! -f "$DSH_HOME/settings.yaml" ]]; then
       "$SETTINGS_OLLAMA_TEMPLATE" > "$DSH_HOME/settings.yaml"
     log "seeded $DSH_HOME/settings.yaml for ${llm_model} at ${llm_base_url}"
   else
-    log "no OPENROUTER_API_KEY or DSH_LLM_BASE_URL; skip settings seed — add a provider in the Web UI"
+    log "no SILICONFLOW_API_KEY or DSH_LLM_BASE_URL; skip settings seed — add a provider in the Web UI"
   fi
 fi
 
@@ -100,7 +102,25 @@ socat \
   "TCP4:127.0.0.1:${DSH_WEB_PORT}" &
 bridge_pid=$!
 
-dsh "${dsh_args[@]}" &
+capture_dsh_output() {
+  local target_fd="$1"
+  local line query tmp
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >&"$target_fd"
+    if [[ -n "$DSH_PUBLIC_URL" && "$line" =~ dsh[[:space:]]web:[[:space:]]http://[^?[:space:]]+(\?token=[^[:space:]]+) ]]; then
+      query="${BASH_REMATCH[1]}"
+      tmp="${DSH_LAUNCH_URL_FILE}.tmp.$$"
+      printf '%s/%s\n' "${DSH_PUBLIC_URL%/}" "$query" > "$tmp"
+      chmod 0600 "$tmp"
+      mv -f "$tmp" "$DSH_LAUNCH_URL_FILE"
+      log "updated public DSH launch URL"
+    fi
+  done
+}
+
+dsh "${dsh_args[@]}" \
+  > >(capture_dsh_output 1) \
+  2> >(capture_dsh_output 2) &
 dsh_pid=$!
 
 stop_children() {

@@ -1,33 +1,24 @@
-# Seeded into $DSH_HOME/settings.yaml on first start when OPENROUTER_API_KEY is set.
+# Seeded into $DSH_HOME/settings.yaml on first start when SILICONFLOW_API_KEY is set.
 # After that, edit the live file or the Web UI (Settings → Models).
-# The API key is not stored here: set OPENROUTER_API_KEY in dsh.env or paste it in the UI.
+# The API key is not stored here: set SILICONFLOW_API_KEY in dsh.env or paste it in the UI.
 
 llm-pi-ai:
   providers:
-    openrouter:
-      displayName: OpenRouter
-      apiKeyEnv: OPENROUTER_API_KEY
+    siliconflow:
+      displayName: SiliconFlow
+      apiKeyEnv: SILICONFLOW_API_KEY
       api: openai-completions
-      baseURL: https://openrouter.ai/api/v1
+      baseURL: https://api.siliconflow.com/v1
       compat:
         supportsDeveloperRole: false
         maxTokensField: max_tokens
       models:
-        - id: qwen/qwen3.5-27b
-          name: Qwen3.5-27B
+        - id: Qwen/Qwen3.5-27B
+          name: Qwen3.5-27B (SiliconFlow)
           input: [text, image]
           contextWindow: 262144
-          maxTokens: 8192
-        - id: qwen/qwen3.5-flash
-          name: Qwen3.5-Flash
-          input: [text, image]
-          contextWindow: 262144
-          maxTokens: 8192
-        - id: deepseek/deepseek-chat
-          name: DeepSeek Chat
-          contextWindow: 128000
           maxTokens: 8192
 
 agent-default-model:
-  provider: openrouter
-  model: qwen/qwen3.5-27b
+  provider: siliconflow
+  model: Qwen/Qwen3.5-27B

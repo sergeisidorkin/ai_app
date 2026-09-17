@@ -77,6 +77,7 @@ def home_entry(request):
         "can_access_worktime": can_access_worktime,
         "can_access_checklist_sort": can_access_checklist_sort,
         "can_access_connections": can_access_connections,
+        "can_access_dsh": is_contract_admin,
         "smtp_only_connections": smtp_only_connections,
         "ler_date_filter": date.today().isoformat(),
         "bei_date_filter": date.today().isoformat(),
@@ -96,11 +97,11 @@ def _user_can_open_dsh(user):
         return False
     employee = Employee.objects.filter(user=user).first()
     employee_role = getattr(employee, "role", "") or ""
-    if employee_role in {EXPERT_GROUP, DEPARTMENT_HEAD_GROUP}:
-        return False
-    if user.groups.filter(name=EXPERT_GROUP).exists():
-        return False
-    return True
+    return (
+        user.is_superuser
+        or employee_role == ADMIN_GROUP
+        or user.groups.filter(name=ADMIN_GROUP).exists()
+    )
 
 
 @login_required

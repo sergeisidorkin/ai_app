@@ -166,9 +166,9 @@
             <span class="link-text">Логи</span>
           </a>
         </li>
-        {% if dsh_enabled %}
+        {% if can_access_dsh and dsh_enabled %}
         <li class="nav-item">
-          <a class="nav-link d-flex align-items-center" href="{{ dsh_launch_url }}" target="_blank" rel="noopener noreferrer">
+          <a class="nav-link d-flex align-items-center" href="{{ dsh_open_url }}" target="_blank" rel="noopener noreferrer">
             <i class="bi bi-robot me-2"></i>
             <span class="link-text">Консоль ИИ</span>
           </a>

@@ -593,16 +593,23 @@ class SidebarDshLinkTests(TestCase):
             **kwargs,
         )
 
+    def _admin(self, username):
+        user = self._staff(username)
+        group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
+        user.groups.add(group)
+        Employee.objects.create(user=user, role=ADMIN_GROUP)
+        return user
+
     @override_settings(DSH_BASE_URL="http://127.0.0.1:3080", DSH_LAUNCH_URL_FILE="")
     def test_home_sidebar_contains_dsh_link_after_logs(self):
         client = Client()
-        client.force_login(self._staff("dsh-admin@example.com"))
+        client.force_login(self._admin("dsh-admin@example.com"))
 
         response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
-        self.assertIn('href="http://127.0.0.1:3080/"', content)
+        self.assertIn('href="/dsh/"', content)
         self.assertIn("bi-robot", content)
         self.assertIn("Консоль ИИ", content)
         self.assertLess(content.find("Логи"), content.find("Консоль ИИ"))
@@ -610,7 +617,7 @@ class SidebarDshLinkTests(TestCase):
     @override_settings(DSH_BASE_URL="", DSH_LAUNCH_URL_FILE="")
     def test_home_sidebar_hides_dsh_link_when_url_is_empty(self):
         client = Client()
-        client.force_login(self._staff("dsh-hidden@example.com"))
+        client.force_login(self._admin("dsh-hidden@example.com"))
 
         response = client.get("/")
 
@@ -675,12 +682,12 @@ class SidebarDshLinkTests(TestCase):
             "http://localhost:3080/?token=test-token",
         )
 
-    def test_dsh_open_redirects_staff_to_token_url(self):
+    def test_dsh_open_redirects_admin_to_token_url(self):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
             handle.write("http://127.0.0.1:3080/?token=test-token\n")
             path = handle.name
         client = Client()
-        client.force_login(self._staff("dsh-open@example.com"))
+        client.force_login(self._admin("dsh-open@example.com"))
         try:
             with override_settings(DSH_LAUNCH_URL_FILE=path, ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"]):
                 response = client.get("/dsh/", HTTP_HOST="localhost:8000")
@@ -688,6 +695,15 @@ class SidebarDshLinkTests(TestCase):
             os.unlink(path)
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "http://localhost:3080/?token=test-token")
+
+    @override_settings(DSH_BASE_URL="http://127.0.0.1:3080", DSH_LAUNCH_URL_FILE="")
+    def test_dsh_open_rejects_non_admin_staff(self):
+        client = Client()
+        client.force_login(self._staff("dsh-open-staff@example.com"))
+
+        response = client.get("/dsh/")
+
+        self.assertEqual(response.status_code, 403)
 
     @override_settings(DSH_BASE_URL="http://127.0.0.1:3080", DSH_LAUNCH_URL_FILE="")
     def test_dsh_open_rejects_expert(self):
