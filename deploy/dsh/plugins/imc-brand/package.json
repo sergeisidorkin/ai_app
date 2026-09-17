@@ -1,6 +1,6 @@
 {
   "name": "imc-dsh-brand",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "IMC Montan AI product name and mark for the DeepSeek Harness web UI",
   "type": "module",

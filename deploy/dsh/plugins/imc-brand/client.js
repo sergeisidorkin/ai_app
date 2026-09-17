@@ -70,6 +70,40 @@ window.__ModuleLoader__.load({
       };
     }
 
+    function installTestingNoticeDismissal() {
+      var scheduled = false;
+      var dismiss = function () {
+        scheduled = false;
+        var dialogs = document.querySelectorAll('[role="dialog"]');
+        for (var i = 0; i < dialogs.length; i += 1) {
+          var dialog = dialogs[i];
+          var heading = dialog.querySelector("h1, h2, h3, [role=heading]");
+          if (!heading || heading.textContent.trim() !== "Internal Testing Notice") continue;
+          var buttons = dialog.querySelectorAll("button");
+          for (var j = 0; j < buttons.length; j += 1) {
+            var button = buttons[j];
+            if (button.disabled) continue;
+            var label = button.textContent.trim();
+            if (label === "Continue" || label === "Продолжить") {
+              button.click();
+              return;
+            }
+          }
+        }
+      };
+      var schedule = function () {
+        if (scheduled) return;
+        scheduled = true;
+        window.requestAnimationFrame(dismiss);
+      };
+      var observer = new MutationObserver(schedule);
+      observer.observe(document.body, { childList: true, subtree: true });
+      schedule();
+      return function () {
+        observer.disconnect();
+      };
+    }
+
     function apply(ctx) {
       var brand = readBrand();
       ctx.slots.inject("sidebar.brand.mark", function () {
@@ -84,6 +118,9 @@ window.__ModuleLoader__.load({
       ctx.effect(function () {
         return installDocumentTitle(brand.productName);
       }, "imc-dsh-brand: document title");
+      ctx.effect(function () {
+        return installTestingNoticeDismissal();
+      }, "imc-dsh-brand: dismiss internal testing notice");
     }
 
     exports.apply = apply;
