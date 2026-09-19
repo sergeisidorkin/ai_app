@@ -5379,7 +5379,7 @@ class NextcloudContractProjectFlowTests(TestCase):
         expected_docx_name = "Договор 5002010RU_Иванов ИИ.docx"
         expected_upload_path = f"{expected_folder_path}/{expected_docx_name}"
 
-        mocked_list_resources.assert_any_call("cloud-admin", expected_base_path, limit=1000)
+        mocked_list_resources.assert_any_call("cloud-admin", expected_base_path, limit=1000, offset=0)
         mocked_ensure_folder.assert_has_calls(
             [
                 call("cloud-admin", "/Corporate Root"),
@@ -5519,7 +5519,7 @@ class NextcloudContractProjectFlowTests(TestCase):
         expected_folder_name = "5002010RU 001 Иванов ИИ"
         docx_folder_calls = 0
 
-        def list_resources_side_effect(_owner_user_id, path, *, limit=100):
+        def list_resources_side_effect(_owner_user_id, path, *, limit=100, offset=0):
             nonlocal docx_folder_calls
             if path.endswith(f"/{expected_folder_name}"):
                 docx_folder_calls += 1
