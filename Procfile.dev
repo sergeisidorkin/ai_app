@@ -1,6 +1,6 @@
 api:    bash -lc 'exec python manage.py runserver 0.0.0.0:8000'
 
-sort-worker: bash -lc 'exec python manage.py checklist_sort_worker'
+sort-worker: bash -lc 'while true; do python manage.py checklist_sort_worker; rc=$?; echo "[sort-worker] exited with code ${rc}; restarting in 2s"; sleep 2; done'
 
 daphne: DJANGO_SETTINGS_MODULE=settings PYTHONPATH=. daphne -e ssl:8001:privateKey=$HOME/.office-addin-dev-certs/localhost.key:certKey=$HOME/.office-addin-dev-certs/localhost.crt asgi:application
 

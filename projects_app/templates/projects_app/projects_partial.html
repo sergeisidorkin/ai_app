@@ -449,6 +449,7 @@
                       <th class="w-checkbox"></th>
                       <th style="width:100px;">Уровень</th>
                       <th>Наименование папки</th>
+                      <th style="width:180px;">Роль</th>
                     </tr>
                   </thead>
                   <tbody id="ws-folders-tbody"></tbody>
@@ -2182,8 +2183,10 @@
 
       window.__perfProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       window.__participationProjectFilter = isAll ? [FILTER_ALL] : values.slice();
+      window.__reportSubmissionProjectFilter = isAll ? [FILTER_ALL] : values.slice();
       syncPerfFilter(values);
       if (typeof window.__syncParticipationProjectFilter === 'function') window.__syncParticipationProjectFilter(values);
+      if (typeof window.__syncReportSubmissionProjectFilter === 'function') window.__syncReportSubmissionProjectFilter(values);
     }
 
     masterChecks.forEach(function(cb) {

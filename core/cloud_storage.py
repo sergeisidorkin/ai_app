@@ -197,7 +197,7 @@ def get_selected_root_path(user) -> str:
     return (selection.resource_path or "").rstrip("/") if selection else ""
 
 
-def list_folder_resources(user, path: str, *, limit: int = 100):
+def list_folder_resources(user, path: str, *, limit: int = 100, offset: int = 0):
     if is_nextcloud_primary():
         from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
 
@@ -205,13 +205,26 @@ def list_folder_resources(user, path: str, *, limit: int = 100):
         if not client.is_configured:
             raise CloudStorageNotReadyError("Nextcloud не настроен для просмотра содержимого облачного хранилища.")
         try:
-            return client.list_resources(client.username, path, limit=limit)
-        except NextcloudApiError:
-            return []
+            return client.list_resources(client.username, path, limit=limit, offset=offset)
+        except NextcloudApiError as exc:
+            raise CloudStorageNotReadyError(
+                f"Не удалось прочитать каталог Nextcloud: {path}"
+            ) from exc
 
     from yandexdisk_app.service import list_resources
 
-    return list_resources(user, path, limit=limit)
+    try:
+        return list_resources(
+            user,
+            path,
+            limit=limit,
+            offset=offset,
+            raise_errors=True,
+        )
+    except Exception as exc:
+        raise CloudStorageNotReadyError(
+            f"Не удалось прочитать каталог Яндекс.Диска: {path}"
+        ) from exc
 
 
 def create_folder(user, path: str) -> bool:

@@ -1,6 +1,7 @@
 import os
 import shlex
 import subprocess
+import time
 from pathlib import Path
 
 from django.conf import settings
@@ -125,20 +126,38 @@ def _summarize_failure(stdout, stderr, code):
     return snippet
 
 
-def run_headless(prompt, *, cwd, timeout=None):
+def _stop_process(process):
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def run_headless(
+    prompt,
+    *,
+    cwd,
+    timeout=None,
+    heartbeat=None,
+    heartbeat_interval=30,
+):
     parts = command_parts(cwd)
     timeout_seconds = timeout
     if timeout_seconds is None:
         timeout_seconds = int(getattr(settings, "DSH_HEADLESS_TIMEOUT", 900) or 900)
 
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [*parts, str(prompt)],
             cwd=str(cwd),
             env=headless_env(parts),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_seconds,
         )
     except FileNotFoundError as exc:
         missing = parts[0] if parts else "dsh"
@@ -148,11 +167,32 @@ def run_headless(prompt, *, cwd, timeout=None):
                 "На проде должен быть запущен стек /opt/dsh."
             ) from exc
         raise DshRunError(f"Не удалось запустить DSH: {exc}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise DshRunError(f"DSH не ответил за {timeout_seconds} с.") from exc
+    started = time.monotonic()
+    interval = max(float(heartbeat_interval or 30), 1.0)
+    while True:
+        elapsed = time.monotonic() - started
+        remaining = float(timeout_seconds) - elapsed
+        if remaining <= 0:
+            _stop_process(process)
+            raise DshRunError(f"DSH не ответил за {timeout_seconds} с.")
+        try:
+            stdout, stderr = process.communicate(timeout=min(interval, remaining))
+            break
+        except subprocess.TimeoutExpired:
+            if heartbeat is not None and heartbeat() is False:
+                _stop_process(process)
+                raise DshRunError("Lease прогона потерян во время выполнения DSH.")
 
-    stdout = (completed.stdout or "").strip()
-    stderr = (completed.stderr or "").strip()
-    if completed.returncode != 0:
-        raise DshRunError(_summarize_failure(stdout, stderr, completed.returncode))
+    stdout = (stdout or "").strip()
+    stderr = (stderr or "").strip()
+    combined = f"{stdout}\n{stderr}".casefold()
+    if "stream ended without finish_reason" in combined:
+        raise DshRunError(
+            "Сессия DSH оборвалась (стрим закрылся без ответа). "
+            "Запустите сортировку ещё раз."
+        )
+    if process.returncode != 0:
+        raise DshRunError(_summarize_failure(stdout, stderr, process.returncode))
+    if not stdout:
+        raise DshRunError("DSH вернул пустой ответ. Запустите сортировку ещё раз.")
     return stdout

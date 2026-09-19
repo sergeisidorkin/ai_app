@@ -223,8 +223,57 @@ them in `ai_app-checklist-sort-worker.service`, not in Gunicorn threads.
 unit starts after Docker / `dsh-compose.service` and waits for
 `/opt/dsh/dsh-healthcheck.sh` before consuming jobs, so a host reboot does
 not mark recovered work as failed while DSH is still coming up. The worker
-is intentionally singleton; after a crash or service restart it requeues
-only jobs owned by the interrupted worker process.
+is intentionally singleton; after a crash or service restart it resumes
+only jobs whose database lease has expired.
+
+Checklist sorting is resumable. Django writes a versioned
+`inbox-inventory.json`, publishes exact canonical folder matches without an
+LLM call, expands the source folder matching the selected section, and first
+tries all remaining kits in one DSH session. `ChecklistSortChunk` is the
+durable checkpoint and fallback mechanism: a transient stream/JSON failure of
+the fast-first request is immediately split into smaller fresh sessions and
+then recursively split if necessary. Only a repeatedly failing single kit
+becomes a manual-review fallback. Proposal replacement and terminal run status
+are committed in one database transaction. Unclassified children of the
+section-matching source folder are retained as section-level review proposals.
+
+DSH may omit unrelated kits from a chunk. A proposed destination for a
+non-canonical directory larger than `DSH_SORT_MAX_PROPOSAL_FILES` is never
+published directly: the worker replaces it with first-level child kits and
+classifies those recursively up to `DSH_SORT_MAX_REFINEMENT_DEPTH`. This keeps
+links precise without recursively expanding every unrelated source folder.
+
+The worker owns database leases and renews heartbeats while cloud inventory,
+DSH sorting, and verification run. Recovery only requeues expired leases.
+`GET /checklists/sort/status/` is read-only; it reports an expired lease as a
+stalled error without mutating the database. Relevant optional settings are:
+
+```text
+DSH_SORT_CHUNK_SIZE=30
+DSH_SORT_FAST_FIRST_MAX_KITS=200
+DSH_SORT_CHUNK_RETRIES=1
+DSH_SORT_MAX_DSH_CALLS=500
+DSH_SORT_MAX_PROPOSAL_FILES=100
+DSH_SORT_MAX_REFINEMENT_DEPTH=4
+DSH_SORT_WORKER_LEASE_SECONDS=120
+DSH_SORT_WORKER_HEARTBEAT_SECONDS=30
+DSH_SORT_WORKER_VERIFY_BURST=1
+```
+
+The repository-managed skills are
+`deploy/dsh/skills/checklist-file-sort/SKILL.md` and
+`deploy/dsh/skills/checklist-file-verify/SKILL.md`. Their contents participate
+in the sidecar checksum and are copied to `/opt/dsh/skills` by CI/CD.
+
+For local DSH, `scripts/dev_dsh.sh` copies the SiliconFlow catalog from
+`deploy/dsh/settings.yaml.example`: 13 models with selector prefixes
+`Flagship`, `Balanced`, and `Efficient`. The default stays
+`Qwen/Qwen3.5-27B` so checklist sorting does not change. It becomes the
+local default automatically when `SILICONFLOW_API_KEY` exists in
+`deploy/dsh/dsh.env` or in the DSH credential store; until then the existing
+configured provider remains the default. Thinking mode is disabled for this
+classification workload to avoid spending most of the runtime on hidden
+reasoning tokens.
 
 ```bash
 sudo mkdir -p /opt/dsh/workspace/sort-runs

@@ -743,7 +743,8 @@ body .second-sidebar + .flex-grow-1 {
 #master-policy-subtype-filter-dropdown > .btn,
 #master-policy-product-filter-dropdown > .btn,
 #master-proposal-kind-filter-dropdown > .btn,
-#master-proposal-status-filter-dropdown > .btn {
+#master-proposal-status-filter-dropdown > .btn,
+#master-project-filter-dropdown > .btn {
   --bs-btn-color: #075D94;
   --bs-btn-bg: #fff;
   --bs-btn-border-width: 1.5px;
@@ -1126,6 +1127,7 @@ body .second-sidebar + .flex-grow-1 {
 
 #performers-main-section .form-check-input:disabled,
 #participation-confirmation-section .form-check-input:disabled,
+#report-submission-section .form-check-input:disabled,
 .payment-request-section .form-check-input:disabled,
 #contract-conclusion-section .form-check-input:disabled,
 #info-request-approval-section .form-check-input:disabled,
@@ -9370,13 +9372,16 @@ html.worktime-progress-cursor * {
 }
 
 #projects-content-info-request > .card,
+#projects-content-report-submission > .card,
 #projects-content-performer-payments > .card,
 #projects-content-info-request > .card > .card-body,
+#projects-content-report-submission > .card > .card-body,
 #projects-content-performer-payments > .card > .card-body,
 #contracts-content-performer-execution > .card,
 #contracts-content-performer-execution > .card > .card-body,
 #contracts-execution-pane,
 #participation-confirmation-section,
+#report-submission-section,
 #info-request-approval-section,
 .payment-request-section {
   overflow: visible;
@@ -9701,14 +9706,16 @@ html.worktime-progress-cursor * {
 
 #participation-confirmation-section .performers-table > tbody > tr > td,
 #contract-conclusion-section       .performers-table > tbody > tr > td,
-#info-request-approval-section     .performers-table > tbody > tr > td {
+#info-request-approval-section     .performers-table > tbody > tr > td,
+#report-submission-section         .performers-table > tbody > tr > td {
   border-bottom: none !important;
   border-top: 1px solid var(--bs-border-color);
 }
 
 #participation-confirmation-section .performers-table > tbody > tr.group-first > td,
 #contract-conclusion-section       .performers-table > tbody > tr.group-first > td,
-#info-request-approval-section     .performers-table > tbody > tr.group-first > td {
+#info-request-approval-section     .performers-table > tbody > tr.group-first > td,
+#report-submission-section         .performers-table > tbody > tr.group-first > td {
   border-top: 1px solid var(--bs-border-color) !important;
 }
 
@@ -9719,7 +9726,8 @@ html.worktime-progress-cursor * {
 }
 
 #participation-confirmation-section .performers-table > tbody > tr.group-cont > .cell-group-val,
-#contract-drafting-table > tbody > tr.group-cont > .cell-group-val {
+#contract-drafting-table > tbody > tr.group-cont > .cell-group-val,
+#report-submission-section         .performers-table > tbody > tr.group-cont > .cell-group-val {
   border-top-color: transparent !important;
 }
 
@@ -9742,9 +9750,39 @@ html.worktime-progress-cursor * {
   visibility: hidden;
 }
 
+#report-submission-section .performers-table > tbody > tr.group-cont > .cell-group-val.cell-group-repeated,
+#report-submission-section .performers-table > tbody > tr.asset-cont > .cell-asset-val,
+#report-submission-section .performers-table > tbody > tr > .cell-detail-val.cell-repeated {
+  border-top-color: transparent !important;
+  color: transparent !important;
+}
+
+#report-submission-section .performers-table > tbody > tr.group-cont > .cell-group-val.cell-group-repeated > *,
+#report-submission-section .performers-table > tbody > tr.asset-cont > .cell-asset-val > *,
+#report-submission-section .performers-table > tbody > tr > .cell-detail-val.cell-repeated > * {
+  visibility: hidden;
+}
+
+#report-submission-table tbody tr.group-cont > .report-select-cell,
+#report-submission-table tbody tr.report-row-history > .report-select-cell {
+  border-top-color: transparent !important;
+}
+
+#report-submission-table > tbody > tr:hover > td {
+  --bs-table-accent-bg: rgba(0, 0, 0, 0.035);
+  box-shadow: inset 0 0 0 9999px var(--bs-table-accent-bg);
+}
+
+#report-submission-table > tbody > tr.table-active > td,
+#report-submission-table > tbody > tr.table-active:hover > td {
+  --bs-table-accent-bg: var(--bs-table-active-bg);
+  box-shadow: inset 0 0 0 9999px var(--bs-table-accent-bg);
+}
+
 #participation-confirmation-section .performers-table > tbody > tr.last-visible-row > td,
 #contract-conclusion-section       .performers-table > tbody > tr.last-visible-row > td,
-#info-request-approval-section     .performers-table > tbody > tr.last-visible-row > td {
+#info-request-approval-section     .performers-table > tbody > tr.last-visible-row > td,
+#report-submission-section         .performers-table > tbody > tr.last-visible-row > td {
   border-bottom: 1px solid var(--bs-border-color) !important;
 }
 
@@ -12419,6 +12457,288 @@ body.proposal-service-text-modal-open {
   background-color: rgba(0, 0, 0, .08);
 }
 
+.report-submission-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--payment-request-table-scroll-offset-top, 0px);
+}
+
+#report-submission-section {
+  --payment-request-table-scroll-offset-top: 0px;
+  --payment-request-table-margin-to-scroll: 10px;
+  --payment-request-table-action-gap: 30px;
+  --payment-request-table-scroll-action-gap: 11.75px;
+}
+
+#report-submission-section .report-submission-table-wrap > .performers-table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#report-submission-section .performers-table col.col-checkbox {
+  width: 30px !important;
+}
+
+#report-submission-section .performers-table col.col-number {
+  width: 105px !important;
+}
+
+#report-submission-section .performers-table col:not(.col-checkbox):not(.col-number) {
+  width: auto !important;
+}
+
+#report-submission-section .performers-table thead th,
+#report-submission-section .performers-table tbody td {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#report-submission-section .performers-table thead th:nth-child(1),
+#report-submission-section .performers-table tbody td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+
+#report-submission-section .performers-table thead th:nth-child(2),
+#report-submission-section .performers-table tbody td:nth-child(2) {
+  width: 105px !important;
+  min-width: 105px !important;
+  max-width: 105px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#report-submission-section .performers-table thead th:nth-child(n+3),
+#report-submission-section .performers-table tbody td:nth-child(n+3) {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#report-submission-section .performers-table .text-truncate {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+#report-submission-section .report-submission-table-wrap.has-horizontal-scroll > .performers-table {
+  margin-bottom: var(--payment-request-table-margin-to-scroll) !important;
+}
+
+#report-submission-section .report-submission-table-wrap + .products-actions-row {
+  margin-top: var(--payment-request-table-action-gap) !important;
+}
+
+#report-submission-section .report-submission-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--payment-request-table-scroll-action-gap) !important;
+}
+
+#report-submission-table td.report-upload-cell,
+#report-submission-table td.report-check-result-cell {
+  vertical-align: middle;
+}
+#report-submission-table td.report-upload-cell > *,
+#report-submission-table td.report-check-result-cell > * {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+#report-submission-table td.report-upload-cell > * + *,
+#report-submission-table td.report-check-result-cell > * + * {
+  margin-left: .35rem;
+}
+
+#report-submission-table {
+  --report-section-toggle-size: 16px;
+  --report-section-toggle-gap: 3px;
+  --report-upload-icon-size: 28px;
+}
+#report-submission-table thead th.report-section-col,
+#report-submission-table tbody td.cell-typical-val {
+  padding-left: calc(
+    var(--bs-table-cell-padding-x, 0.25rem)
+    + var(--report-section-toggle-size)
+    + var(--report-section-toggle-gap)
+  );
+}
+#report-submission-table tbody td.cell-typical-val {
+  position: relative;
+  overflow: visible;
+}
+#report-submission-table .report-section-toggle-slot {
+  position: absolute;
+  left: var(--bs-table-cell-padding-x, 0.25rem);
+  top: 50%;
+  width: var(--report-section-toggle-size);
+  height: var(--report-section-toggle-size);
+  margin: 0;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+#report-submission-table .report-section-toggle-slot .js-report-version-toggle {
+  pointer-events: auto;
+}
+#report-submission-table .report-section-label {
+  display: inline;
+}
+#report-submission-table .col-task-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #ced4da;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+#report-submission-table .col-task-toggle:hover,
+#report-submission-table .col-task-toggle:active {
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+}
+#report-submission-table .col-task-toggle[aria-expanded="false"] .bi {
+  transform: rotate(-90deg);
+}
+#report-submission-table .col-task-toggle .bi {
+  transition: transform 0.12s ease-out;
+}
+#report-submission-table tbody tr.report-version-row-collapsed-hidden {
+  display: none !important;
+}
+#report-submission-table tbody tr.report-row-history > .cell-typical-val {
+  border-top-color: transparent !important;
+  color: transparent !important;
+}
+#report-submission-table tbody tr.report-row-history > .cell-typical-val > * {
+  visibility: hidden;
+}
+#report-submission-table .report-upload-icon-spacer {
+  display: inline-flex;
+  width: var(--report-upload-icon-size);
+  height: 1em;
+  flex: 0 0 var(--report-upload-icon-size);
+  vertical-align: middle;
+  pointer-events: none;
+}
+#report-submission-table .report-version-cell,
+#report-submission-table .report-sent-at-cell,
+#report-submission-table .report-status-date-cell,
+#report-submission-table .report-finding-count-cell,
+#report-submission-table .report-workflow-status-cell {
+  white-space: nowrap;
+}
+#report-submission-table .report-workflow-status-cell .reg-launch-icon.reg-launch-indicator {
+  display: inline-block;
+  line-height: 1;
+  margin-right: 0;
+  position: relative;
+  vertical-align: middle;
+  z-index: 0;
+}
+#report-submission-table .report-workflow-status-inner {
+  display: inline-flex;
+  align-items: center;
+  column-gap: .4rem;
+}
+#report-submission-table .report-workflow-status-cell .reg-launch-icon.reg-launch-indicator::after {
+  background: var(--reg-launch-bg, #f8f9fa);
+  border-radius: 50%;
+  content: "";
+  height: .88em;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: .88em;
+  z-index: -1;
+}
+#report-submission-table .report-workflow-status-cell .reg-launch-indicator {
+  color: var(--reg-launch-color, #6c757d) !important;
+}
+#report-submission-table .report-status--idle {
+  --reg-launch-color: #adb5bd;
+  --reg-launch-bg: #e9ecef;
+}
+#report-submission-table .report-status--uploaded {
+  --reg-launch-color: var(--bs-primary);
+  --reg-launch-bg: #b8d6ff;
+}
+#report-submission-table .report-status--sent {
+  --reg-launch-color: var(--bs-primary);
+  --reg-launch-bg: var(--bs-primary);
+}
+#report-submission-table .report-status--checked {
+  --reg-launch-color: #fd7e14;
+  --reg-launch-bg: #ffe4c2;
+}
+#report-submission-table .report-status--accepted {
+  --reg-launch-color: #198754;
+  --reg-launch-bg: #8fd8a8;
+}
+#report-submission-table .report-workflow-status-label--inset {
+  padding-left: 1px !important;
+}
+#report-submission-table .report-upload-cell,
+#report-submission-table .report-check-result-cell {
+  overflow: visible;
+  max-width: none;
+}
+#report-submission-table .report-file-name-link {
+  max-width: none;
+}
+#report-submission-table .report-file-name-text {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+#report-submission-section .report-source-group {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  white-space: nowrap;
+}
+
+#report-submission-section .report-source-group select,
+#report-submission-section #report-submission-local-path {
+  min-width: 16rem;
+}
+
+.report-file-name-link {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  color: #6c757d;
+  text-decoration: none;
+  vertical-align: middle;
+}
+
+.report-file-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-file-name-link:hover .report-file-name-text {
+  text-decoration: underline;
+}
+
 .signing-table.table-sm td {
   vertical-align: middle;
 }
@@ -12493,3 +12813,88 @@ body.proposal-service-text-modal-open {
 #proposals-pane .proposal-table-placeholder-card {
   min-height: 320px;
 }
+
+#report-check-section .report-check-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--payment-request-table-scroll-offset-top, 0px);
+}
+
+#report-check-section .report-check-table-wrap > .report-check-table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#report-check-section .report-check-table-wrap.has-horizontal-scroll > .report-check-table {
+  margin-bottom: var(--payment-request-table-margin-to-scroll) !important;
+}
+
+#report-check-section .report-check-table-wrap + .products-actions-row {
+  margin-top: var(--payment-request-table-action-gap) !important;
+}
+
+#report-check-section .report-check-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--payment-request-table-scroll-action-gap) !important;
+}
+
+.report-check-table col.col-checkbox { width: 30px !important; }
+.report-check-table th:nth-child(1),
+.report-check-table td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+.report-check-table th,
+.report-check-table td {
+  white-space: nowrap;
+}
+
+#report-macros-section .report-macros-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--payment-request-table-scroll-offset-top, 0px);
+}
+
+#report-macros-section .report-macros-table-wrap > .report-macros-table {
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+#report-macros-section .report-macros-table-wrap.has-horizontal-scroll > .report-macros-table {
+  margin-bottom: var(--payment-request-table-margin-to-scroll) !important;
+}
+
+#report-macros-section .report-macros-table-wrap + .products-actions-row {
+  margin-top: var(--payment-request-table-action-gap) !important;
+}
+
+#report-macros-section .report-macros-table-wrap.has-horizontal-scroll + .products-actions-row {
+  margin-top: var(--payment-request-table-scroll-action-gap) !important;
+}
+
+.report-macros-table col.col-checkbox { width: 30px !important; }
+.report-macros-table th:nth-child(1),
+.report-macros-table td:nth-child(1) {
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+}
+.report-macros-table th,
+.report-macros-table td {
+  white-space: nowrap;
+}
+
+#performers-modal textarea[name="code"] {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+#performers-modal select[name="model_id"] optgroup {
+  font-weight: 600;
+  font-style: normal;
+  color: #6c757d;
+}
+

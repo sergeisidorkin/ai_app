@@ -109,6 +109,16 @@
         </div>
       </div>
     </div>
+    <div id="projects-content-report-submission" class="projects-section-content d-none">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="text-muted htmx-indicator d-inline-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+            <span>Загрузка отчетов…</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Постоянная модалка «Исполнители» -->
@@ -124,7 +134,7 @@
     </div>
   </div>
 
-  <script src="{% static 'core/js/performers-panels.js' %}?v=20260703-2" defer></script>
+  <script src="{% static 'core/js/performers-panels.js' %}?v=20260918-26" defer></script>
   <script>
     function showProjectsModal() {
       const modalEl = document.getElementById('projects-modal');

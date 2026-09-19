@@ -42,6 +42,7 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 # Headless DSH runs inside the compose stack, not on the gunicorn PATH.
 # Local inbox paths on the laptop must stay off in production.
 DSH_SORT_ALLOW_LOCAL_INBOX = env.bool("DSH_SORT_ALLOW_LOCAL_INBOX", default=False)
+REPORT_CHECK_ALLOW_LOCAL_FOLDER = env.bool("REPORT_CHECK_ALLOW_LOCAL_FOLDER", default=False)
 if not (DSH_COMPOSE_DIR or "").strip():
     DSH_COMPOSE_DIR = "/opt/dsh"
 _dsh_compose_dir = Path(DSH_COMPOSE_DIR)

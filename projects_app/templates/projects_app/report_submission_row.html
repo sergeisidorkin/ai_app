@@ -1,0 +1,111 @@
+{% load projects_extras %}
+<tr class="{% if row.is_full_report %}report-row-full{% elif row.is_all_sections %}report-row-all{% else %}report-row-section{% endif %}{% if not row.is_current %} report-row-history{% endif %}"
+    data-row-id="{{ row.row_id }}"
+    data-upload-id="{% if row.upload %}{{ row.upload.pk }}{% endif %}"
+    data-check-status="{% if row.upload %}{{ row.upload.check_status }}{% endif %}"
+    data-workflow-status="{{ row.workflow_status }}"
+    data-project-id="{{ row.registration_id }}"
+    data-executor="{{ row.executor }}"
+    data-asset-name="{{ row.asset_name }}"
+    data-report-kind="{{ row.row_kind }}"
+    data-version-group="{{ row.version_group }}"
+    data-is-current="{% if row.is_current %}1{% else %}0{% endif %}"
+    {% if row.parent_row_id %}data-parent-id="{{ row.parent_row_id }}"{% endif %}
+    {% if row.has_history %}data-has-history="1"{% endif %}
+    {% if row.is_full_report %}data-full-report="1"{% elif row.is_all_sections %}data-all-sections="1"{% elif row.performer %}data-performer-id="{{ row.performer.id }}"{% endif %}>
+  <td class="text-nowrap report-select-cell">
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+      <div class="form-check m-0">
+        <input class="form-check-input"
+               type="checkbox"
+               id="report-sel-{{ row.row_id }}"
+               name="report-select"
+               value="{{ row.row_id }}"
+               {% if not row.is_current or not row.upload or row.upload.check_status == "done" %}disabled{% endif %}
+               aria-label="Выделить строку отчета">
+      </div>
+    {% endif %}
+  </td>
+  <td class="text-nowrap cell-group-val cell-project-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
+  <td class="text-nowrap cell-group-val cell-type-val">{{ row.registration.type_short_display }}</td>
+  <td class="text-truncate cell-group-val">{{ row.registration.name }}</td>
+  <td class="text-nowrap cell-group-val">{{ row.executor|short_fio }}</td>
+  <td class="text-nowrap cell-asset-val">{{ row.asset_name }}</td>
+  <td class="text-nowrap cell-typical-val">
+    <span class="report-section-toggle-slot">
+      {% if row.is_current and row.has_history %}
+        <button type="button"
+                class="col-task-toggle js-report-version-toggle"
+                aria-label="Свернуть/развернуть версии"
+                aria-expanded="true">
+          <i class="bi bi-caret-down-fill"></i>
+        </button>
+      {% endif %}
+    </span>
+    <span class="report-section-label">{{ row.section_label }}</span>
+  </td>
+  <td class="text-nowrap report-workflow-status-cell">
+    <span class="report-workflow-status-inner">
+      <i class="bi bi-circle reg-launch-icon reg-launch-indicator {{ row.workflow_status_class }}" aria-hidden="true"></i><span class="report-workflow-status-label{% if row.workflow_status == 'Сдан' or row.workflow_status == 'Загружен' %} report-workflow-status-label--inset{% endif %}">{{ row.workflow_status }}</span>
+    </span>
+  </td>
+  <td class="text-nowrap report-upload-cell">
+    {% if row.is_current and request.user.is_authenticated and request.user.is_staff and not is_expert %}
+      <label class="ct-upload-link" title="Загрузить файл">
+        <i class="bi bi-upload"></i>
+        <input type="file" class="d-none js-report-upload"
+               {% if row.is_full_report %}
+               data-full-report="1"
+               data-registration-id="{{ row.registration_id }}"
+               data-asset-name="{{ row.asset_name }}"
+               data-executor="{{ row.executor }}"
+               {% elif row.is_all_sections %}
+               data-all-sections="1"
+               data-registration-id="{{ row.registration_id }}"
+               data-executor="{{ row.executor }}"
+               data-asset-name="{{ row.asset_name }}"
+               {% else %}
+               data-performer-id="{{ row.performer.id }}"
+               {% endif %}>
+      </label>
+    {% elif row.upload and row.upload.file_name %}
+      <span class="report-upload-icon-spacer" aria-hidden="true"></span>
+    {% endif %}
+    {% if row.upload and row.upload.file_name %}
+      <a href="{% url 'report_file_download' row.upload.pk %}"
+         class="report-file-name-link"
+         download
+         title="{{ row.upload.file_name }}">
+        <span class="report-file-name-text">{{ row.upload.file_name }}</span>
+      </a>
+    {% endif %}
+  </td>
+  <td class="text-nowrap report-version-cell">{% if row.version_display %}{{ row.version_display }}{% endif %}</td>
+  <td class="text-nowrap report-status-date-cell report-sent-at-cell">{{ row.status_date_display }}</td>
+  <td class="text-nowrap report-check-result-cell">
+    {% if row.upload and row.upload.check_file_name %}
+      <a href="{% url 'report_check_file_download' row.upload.pk %}"
+         class="ct-upload-link report-check-download-icon"
+         download
+         title="Скачать результат проверки">
+        <i class="bi bi-download"></i>
+      </a>
+      <a href="{% url 'report_check_file_download' row.upload.pk %}"
+         class="report-file-name-link js-report-check-file-link"
+         download
+         title="{{ row.upload.check_file_name }}">
+        <span class="report-file-name-text">{{ row.upload.check_file_name }}</span>
+      </a>
+      {% if row.upload.check_status == "error" %}
+        <span class="text-danger small ms-1 js-report-check-badge" title="{{ row.upload.check_error }}">ошибка проверки</span>
+      {% endif %}
+    {% elif row.upload and row.upload.check_status == "error" %}
+      <span class="text-danger small js-report-check-badge" title="{{ row.upload.check_error }}">ошибка проверки</span>
+    {% elif row.upload and row.upload.check_status == "running" %}
+      <span class="text-muted small js-report-check-badge">проверка…</span>
+    {% else %}
+      —
+    {% endif %}
+  </td>
+  <td class="text-nowrap report-finding-count-cell">{{ row.finding_count_display }}</td>
+</tr>

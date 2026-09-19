@@ -1376,6 +1376,14 @@
         '</td>' +
         '<td>' +
           '<input type="text" class="form-control form-control-sm ws-folder-name" data-idx="' + idx + '" value="' + escHtml(f.name) + '">' +
+        '</td>' +
+        '<td>' +
+          '<select class="form-select form-select-sm ws-folder-role" data-idx="' + idx + '">' +
+            '<option value=""' + (!f.role ? ' selected' : '') + '></option>' +
+            '<option value="imc_id"' + (f.role === 'imc_id' ? ' selected' : '') + '>ИД IMC Montan</option>' +
+            '<option value="customer_id"' + (f.role === 'customer_id' ? ' selected' : '') + '>ИД Заказчика</option>' +
+            '<option value="reports"' + (f.role === 'reports' ? ' selected' : '') + '>Отчеты</option>' +
+          '</select>' +
         '</td>';
       tbody.appendChild(tr);
     });
@@ -1410,6 +1418,10 @@
       const idx = parseInt(inp.dataset.idx, 10);
       if (wsFolders[idx]) wsFolders[idx].name = inp.value;
     });
+    tbody.querySelectorAll('.ws-folder-role').forEach(sel => {
+      const idx = parseInt(sel.dataset.idx, 10);
+      if (wsFolders[idx]) wsFolders[idx].role = sel.value || '';
+    });
   }
 
   async function loadFolders() {
@@ -1419,7 +1431,7 @@
     try {
       const resp = await fetch(url);
       const data = await resp.json();
-      wsFolders = (data.folders || []).map(f => ({ level: f.level, name: f.name }));
+      wsFolders = (data.folders || []).map(f => ({ level: f.level, name: f.name, role: f.role || '' }));
       wsIsCustom = !!data.is_custom;
     } catch { wsFolders = []; wsIsCustom = false; }
     renderFolderRows();
@@ -1477,12 +1489,28 @@
 
   document.addEventListener('change', (e) => {
     if (e.target.closest('.ws-folder-check')) updateFolderRowActions();
+    if (e.target.classList && e.target.classList.contains('ws-folder-role')) {
+      const idx = parseInt(e.target.dataset.idx, 10);
+      const value = e.target.value || '';
+      const tbody = getTbody();
+      if (value && tbody) {
+        tbody.querySelectorAll('.ws-folder-role').forEach((sel) => {
+          if (sel === e.target) return;
+          if (sel.value === value) {
+            sel.value = '';
+            const otherIdx = parseInt(sel.dataset.idx, 10);
+            if (wsFolders[otherIdx]) wsFolders[otherIdx].role = '';
+          }
+        });
+      }
+      if (wsFolders[idx]) wsFolders[idx].role = value;
+    }
   });
 
   document.addEventListener('click', (e) => {
     if (e.target.closest('#ws-folder-add-btn')) {
       syncFromInputs();
-      wsFolders.push({ level: 1, name: '' });
+      wsFolders.push({ level: 1, name: '', role: '' });
       renderFolderRows();
       const tbody = getTbody();
       const lastInput = tbody?.querySelector('tr:last-child .ws-folder-name');
@@ -1585,7 +1613,7 @@
       const data = await resp.json();
       if (!resp.ok || !data.ok) throw new Error(data?.error || 'Ошибка сброса.');
 
-      wsFolders = (data.folders || []).map(f => ({ level: f.level, name: f.name }));
+      wsFolders = (data.folders || []).map(f => ({ level: f.level, name: f.name, role: f.role || '' }));
       wsIsCustom = !!data.is_custom;
       renderFolderRows();
       updateResetBtn();

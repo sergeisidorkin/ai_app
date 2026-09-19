@@ -67,6 +67,14 @@ for rel in sys.argv[3:]:
     elif path.is_file():
         h.update(path.read_bytes())
     h.update(b"\0")
+skills = root / "skills"
+if skills.is_dir():
+    for path in sorted(item for item in skills.rglob("*") if item.is_file()):
+        rel = path.relative_to(root).as_posix()
+        h.update(rel.encode())
+        h.update(b"\0")
+        h.update(path.read_bytes())
+        h.update(b"\0")
 print(h.hexdigest())
 PY
 )"

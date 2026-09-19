@@ -18,6 +18,7 @@ from checklists_app.models import (
     ChecklistCustomerStatus,
     ChecklistItem,
     ChecklistItemAuditLog,
+    ChecklistSortChunk,
     ChecklistSortProposal,
     ChecklistSortRun,
     ChecklistStatus,
@@ -824,6 +825,95 @@ class SourceDataFileshareRedirectTests(TestCase):
 
 
 class ChecklistSortParseTests(TestCase):
+    def test_compact_id_only_json_row_is_parsed(self):
+        from checklists_app.sort_parse import parse_json_proposals
+
+        rows = parse_json_proposals(
+            '[{"id":"k-0123456789ab","dest":"dest/01 A/CODE-01 X",'
+            '"confidence":"высокая","action":"move"}]'
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kit_id"], "k-0123456789ab")
+        self.assertEqual(rows[0]["kit_path"], "")
+
+    def test_section_children_without_match_become_review_rows(self):
+        from types import SimpleNamespace
+
+        from checklists_app.sort_service import (
+            _add_request_name_rows,
+            _add_section_review_rows,
+            _kit_matches_section_label,
+            _kit_under_section_label,
+        )
+
+        section = SimpleNamespace(code="GEO", short_name_ru="Геология", name_ru="")
+        self.assertTrue(
+            _kit_matches_section_label(
+                {"kit_path": "03 GEO Геология"},
+                section,
+            )
+        )
+        self.assertTrue(
+            _kit_under_section_label(
+                {"kit_path": "Геология/Неопределенный комплект"},
+                section,
+            )
+        )
+        rows = _add_section_review_rows(
+            [],
+            [
+                {
+                    "kit_path": "Геология/Неопределенный комплект",
+                    "file_count": 3,
+                },
+                {
+                    "kit_path": "Другой раздел/Комплект",
+                    "file_count": 2,
+                },
+            ],
+            section,
+            "03 GEO Геология",
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["dest_path"], "dest/03 GEO Геология")
+        self.assertEqual(rows[0]["action"], "review")
+        exact_rows = _add_request_name_rows(
+            [],
+            [{
+                "kit_path": "Смежная папка/1",
+                "file_count": 2,
+                "samples": ["Календарь работ.xlsx"],
+                "text_excerpts": [],
+            }],
+            [{
+                "folder": "SEC-01 Календарь лицензий",
+                "request_name": "Календарь лицензий",
+                "quote": "Актуальный календарный план",
+            }],
+            "01 SEC Раздел",
+        )
+        self.assertEqual(exact_rows[0]["confidence"], "высокая")
+        self.assertEqual(exact_rows[0]["action"], "move")
+
+    def test_kit_key_normalizes_unicode_composition(self):
+        from checklists_app.sort_parse import _kit_key
+
+        self.assertEqual(
+            _kit_key("Охрана окружающей среды"),
+            _kit_key("Охрана окружающей среды"),
+        )
+
+    def test_dedupe_rows_prefers_classified_destination(self):
+        from checklists_app.sort_validate import dedupe_rows
+
+        rows = dedupe_rows([
+            {"kit_path": "A.pdf", "action": "review", "position": 1},
+            {"kit_path": "A.pdf", "action": "move", "position": 2},
+        ])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["action"], "move")
+        self.assertEqual(rows[0]["position"], 1)
+
     def test_prefers_json_block(self):
         from checklists_app.sort_parse import parse_sort_response
 
@@ -1142,6 +1232,23 @@ class ChecklistSortAccessTests(TestCase):
         self._sort_workspace.cleanup()
         super().tearDown()
 
+    @staticmethod
+    def _cloud_materializer(*relative_paths):
+        def materialize(inbox_dir, user, source_folder, section_label, **kwargs):
+            root = Path(inbox_dir) / section_label
+            root.mkdir(parents=True, exist_ok=True)
+            for raw in relative_paths:
+                value = str(raw)
+                target = root / value.rstrip("/")
+                if value.endswith("/"):
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text("stub", encoding="utf-8")
+            return len(relative_paths)
+
+        return materialize
+
     def test_non_admin_home_keeps_single_checklists_page(self):
         self.client.force_login(self.staff)
         response = self.client.get("/")
@@ -1248,7 +1355,10 @@ class ChecklistSortAccessTests(TestCase):
             (inbox / "Геология").mkdir()
             fake_output = """
 ```json
-[{"kit":"Хвостохранилище/ПД/ИРД/Лицензия.pdf","files":1,"dest":"dest/02 LGL Право/LGL-01 Лицензии","name":"Лицензии","quote":"лицензии на недра","confidence":"высокая","action":"move"}]
+[
+  {"kit":"Хвостохранилище/ПД/ИРД/Лицензия.pdf","files":1,"dest":"dest/02 LGL Право/LGL-01 Лицензии","name":"Лицензии","quote":"лицензии на недра","confidence":"высокая","action":"move"},
+  {"kit":"Геология","files":0,"dest":"","name":"","quote":"","confidence":"","action":"ignore"}
+]
 ```
 """
             captured = {}
@@ -1278,10 +1388,12 @@ class ChecklistSortAccessTests(TestCase):
         self.assertEqual(payload["status"], "done")
         self.assertEqual(payload["source_kind"], "local")
         self.assertEqual(payload["inbox_section_name"], "LGL Право")
-        self.assertIn("Имена папок inbox не фильтр", captured["prompt"])
-        self.assertIn("ВСЕ каталоги первого уровня inbox", captured["prompt"])
         self.assertIn("Раздел dest уже выбран: LGL Право", captured["prompt"])
         self.assertIn("Не спрашивай, какой раздел обрабатывать", captured["prompt"])
+        self.assertIn("inbox-inventory.json", captured["prompt"])
+        self.assertIn("<chunk-json>", captured["prompt"])
+        self.assertIn("chunks/sort-chunk-", captured["prompt"])
+        self.assertIn("Не вызывай ls", captured["prompt"])
         self.assertNotIn("Начни с inbox/Право", captured["prompt"])
         self.assertEqual(names, {"Хвостохранилище", "Геология"})
 
@@ -1336,7 +1448,10 @@ class ChecklistSortAccessTests(TestCase):
 [{"kit":"Декларация.pdf","files":1,"dest":"dest/01 TSF Хвостохранилище/TSF-05 Документы по безопасности","name":"Документы по безопасности","quote":"Декларация безопасности ГТС хвостохранилища","confidence":"высокая","action":"move"}]
 ```
 """
-        with patch("checklists_app.sort_service.run_headless", return_value=fake_output):
+        with patch(
+            "checklists_app.sort_service.materialize_inbox_tree",
+            side_effect=self._cloud_materializer("Декларация.pdf"),
+        ), patch("checklists_app.sort_service.run_headless", return_value=fake_output):
             response = self.client.post(
                 reverse("checklists_app:sort_start"),
                 {
@@ -1409,7 +1524,14 @@ class ChecklistSortAccessTests(TestCase):
 ]
 ```
 """
-        with patch("checklists_app.sort_service.run_headless", return_value=fake_output):
+        with patch(
+            "checklists_app.sort_service.materialize_inbox_tree",
+            side_effect=self._cloud_materializer(
+                "Отчет.pdf",
+                "Хвостохранилище/ПД/ИРД/Лицензии/",
+                "Декларация.pdf",
+            ),
+        ), patch("checklists_app.sort_service.run_headless", return_value=fake_output):
             response = self.client.post(
                 reverse("checklists_app:sort_start"),
                 {
@@ -1456,7 +1578,10 @@ class ChecklistSortAccessTests(TestCase):
 [{"kit":"Декларация.pdf","files":1,"dest":"dest/01 TSF Хвостохранилище/TSF-05 Документы по безопасности","name":"Документы по безопасности","quote":"Декларация","confidence":"высокая","action":"move"}]
 ```
 """
-        with patch("checklists_app.sort_service.run_headless", return_value=fake_output):
+        with patch(
+            "checklists_app.sort_service.materialize_inbox_tree",
+            side_effect=self._cloud_materializer("Декларация.pdf"),
+        ), patch("checklists_app.sort_service.run_headless", return_value=fake_output):
             response = self.client.post(
                 reverse("checklists_app:sort_start"),
                 {
@@ -1571,8 +1696,564 @@ class ChecklistSortAccessTests(TestCase):
         self.assertEqual(run.status, ChecklistSortRun.Status.ERROR)
         self.assertIn("не завершилась", run.error_message)
 
+    def test_active_worker_keeps_expired_run_recoverable(self):
+        from datetime import timedelta
+
+        from checklists_app.models import ChecklistSortWorkerState
+        from checklists_app.sort_service import active_run_for
+
+        ChecklistSortWorkerState.objects.create(
+            key="default",
+            worker_id="worker",
+            started_at=timezone.now(),
+            heartbeat_at=timezone.now(),
+        )
+        run = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.RUNNING,
+            started_at=timezone.now() - timedelta(minutes=30),
+            lease_expires_at=timezone.now() - timedelta(seconds=1),
+            worker_id="old-worker",
+        )
+        self.assertEqual(
+            active_run_for(self.project, self.section, "Asset A").id,
+            run.id,
+        )
+        run.refresh_from_db()
+        self.assertEqual(run.status, ChecklistSortRun.Status.RUNNING)
+
+    @override_settings(DSH_HEADLESS_TIMEOUT=10)
+    def test_status_poll_reclaims_stale_running_sort(self):
+        from datetime import timedelta
+
+        from checklists_app.sort_service import serialize_run
+
+        run = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.RUNNING,
+            started_at=timezone.now() - timedelta(minutes=30),
+        )
+        payload = serialize_run(run)
+        self.assertEqual(payload["status"], ChecklistSortRun.Status.ERROR)
+        self.assertIn("не завершилась", payload["error_message"])
+
+    @override_settings(
+        DSH_SORT_INLINE=True,
+        DSH_HEADLESS_CMD="dsh --profile headless",
+    )
+    def test_code_nn_inbox_kits_skip_dsh(self):
+        from unittest.mock import patch
+
+        from yandexdisk_app.workspace import _build_item_folder_name
+
+        item = ChecklistItem.objects.get(project=self.project, section=self.section)
+        kit_name = _build_item_folder_name(item)
+
+        def _materialize(inbox_dir, user, source_folder, section_label, **kwargs):
+            kit = Path(inbox_dir) / section_label / kit_name
+            kit.mkdir(parents=True)
+            (kit / "a.pdf").write_text("x", encoding="utf-8")
+
+        self.client.force_login(self.admin)
+        with patch(
+            "checklists_app.sort_service.materialize_inbox_tree",
+            side_effect=_materialize,
+        ), patch("checklists_app.sort_service.run_headless") as headless:
+            response = self.client.post(
+                reverse("checklists_app:sort_start"),
+                {
+                    "project_uid": self.project.short_uid,
+                    "section": str(self.section.id),
+                    "asset": "Asset A",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()["run"]
+        self.assertEqual(payload["status"], "done")
+        headless.assert_not_called()
+        row = next(item for item in payload["proposals"] if item.get("kit_path"))
+        self.assertIn(kit_name, row["kit_path"])
+        self.assertEqual(row["action"], "move")
+        self.assertEqual(row["confidence"], "высокая")
+
+    @override_settings(DSH_SORT_INLINE=True, DSH_HEADLESS_CMD="dsh --profile headless")
+    def test_code_only_name_is_sent_to_dsh(self):
+        from unittest.mock import patch
+
+        fake_output = """
+```json
+[{"kit":"TSF-05 Старое имя","files":1,"dest":"dest/01 TSF Хвостохранилище/TSF-05 Документы по безопасности","name":"Документы по безопасности","quote":"Декларация безопасности ГТС хвостохранилища","confidence":"высокая","action":"move"}]
+```
+"""
+        self.client.force_login(self.admin)
+        with patch(
+            "checklists_app.sort_service.materialize_inbox_tree",
+            side_effect=self._cloud_materializer(
+                "TSF-05 Старое имя/a.pdf",
+                "TSF-05 Старое имя/b.pdf",
+            ),
+        ), patch(
+            "checklists_app.sort_service.run_headless",
+            return_value=fake_output,
+        ) as headless:
+            response = self.client.post(
+                reverse("checklists_app:sort_start"),
+                {
+                    "project_uid": self.project.short_uid,
+                    "section": str(self.section.id),
+                    "asset": "Asset A",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["run"]["status"], "done")
+        self.assertEqual(headless.call_count, 1)
+
+    @override_settings(DSH_SORT_INLINE=True, DSH_HEADLESS_CMD="dsh --profile headless")
+    def test_empty_inventory_skips_dsh(self):
+        from unittest.mock import patch
+
+        self.client.force_login(self.admin)
+        with patch("checklists_app.sort_service.run_headless") as headless:
+            response = self.client.post(
+                reverse("checklists_app:sort_start"),
+                {
+                    "project_uid": self.project.short_uid,
+                    "section": str(self.section.id),
+                    "asset": "Asset A",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()["run"]
+        self.assertEqual(payload["status"], "done")
+        self.assertEqual(payload["progress"]["kits_total"], 0)
+        headless.assert_not_called()
+
+    @override_settings(
+        DSH_SORT_INLINE=True,
+        DSH_SORT_ALLOW_LOCAL_INBOX=True,
+        DSH_HEADLESS_CMD="dsh --profile headless",
+        DSH_SORT_CHUNK_SIZE=5,
+        DSH_SORT_CHUNK_RETRIES=1,
+    )
+    def test_truncated_chunk_retries_then_splits(self):
+        from unittest.mock import patch
+
+        from core.dsh_run import DshRunError
+
+        calls = []
+
+        def _headless(prompt, cwd=None, **kwargs):
+            calls.append(prompt)
+            if len(calls) <= 2:
+                raise DshRunError("Stream ended without finish_reason")
+            payload = json.loads(
+                prompt.split("<chunk-json>\n", 1)[1].split("\n</chunk-json>", 1)[0]
+            )
+            rows = [
+                {
+                    "kit": kit["kit_path"],
+                    "files": kit["file_count"],
+                    "dest": "dest/01 TSF Хвостохранилище/TSF-05 Документы по безопасности",
+                    "name": "Документы по безопасности",
+                    "quote": "Декларация безопасности ГТС хвостохранилища",
+                    "confidence": "высокая",
+                    "action": "move",
+                }
+                for kit in payload["kits"]
+            ]
+            return "```json\n" + json.dumps(rows, ensure_ascii=False) + "\n```"
+
+        self.client.force_login(self.admin)
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            inbox.mkdir()
+            for index in range(5):
+                (inbox / f"Документ {index}.pdf").write_text("stub", encoding="utf-8")
+            with override_settings(DSH_SORT_LOCAL_ROOTS=(tmp,)), patch(
+                "checklists_app.sort_service.run_headless",
+                side_effect=_headless,
+            ):
+                response = self.client.post(
+                    reverse("checklists_app:sort_start"),
+                    {
+                        "project_uid": self.project.short_uid,
+                        "section": str(self.section.id),
+                        "asset": "Asset A",
+                        "source_kind": "local",
+                        "local_inbox_path": str(inbox),
+                    },
+                )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()["run"]
+        self.assertEqual(payload["status"], "done")
+        self.assertEqual(len([row for row in payload["proposals"] if row.get("kit_path")]), 5)
+        self.assertEqual(len(calls), 4)
+        run = ChecklistSortRun.objects.get(pk=payload["id"])
+        self.assertTrue(run.chunks.filter(status=ChecklistSortChunk.Status.SPLIT).exists())
+
+    @override_settings(
+        DSH_SORT_INLINE=True,
+        DSH_SORT_ALLOW_LOCAL_INBOX=True,
+        DSH_HEADLESS_CMD="dsh --profile headless",
+    )
+    def test_unknown_dest_is_persisted_as_review(self):
+        from unittest.mock import patch
+
+        fake_output = """
+```json
+[{"kit":"Неизвестный.pdf","files":9999999999,"dest":"dest/99 XXX/XXX-99 Выдумка","name":"Выдумка","quote":"нет","confidence":"высокая","action":"move"}]
+```
+"""
+        self.client.force_login(self.admin)
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            inbox.mkdir()
+            (inbox / "Неизвестный.pdf").write_text("stub", encoding="utf-8")
+            with override_settings(DSH_SORT_LOCAL_ROOTS=(tmp,)), patch(
+                "checklists_app.sort_service.run_headless",
+                return_value=fake_output,
+            ):
+                response = self.client.post(
+                    reverse("checklists_app:sort_start"),
+                    {
+                        "project_uid": self.project.short_uid,
+                        "section": str(self.section.id),
+                        "asset": "Asset A",
+                        "source_kind": "local",
+                        "local_inbox_path": str(inbox),
+                    },
+                )
+        self.assertEqual(response.status_code, 200, response.content)
+        row = ChecklistSortProposal.objects.get(run_id=response.json()["run"]["id"])
+        self.assertEqual(row.action, "review")
+        self.assertEqual(row.file_count, 1)
+        self.assertEqual(row.dest_path, "dest/01 TSF Хвостохранилище")
+
+    @override_settings(
+        DSH_SORT_INLINE=True,
+        DSH_SORT_ALLOW_LOCAL_INBOX=True,
+        DSH_HEADLESS_CMD="dsh --profile headless",
+        DSH_SORT_CHUNK_SIZE=12,
+        DSH_SORT_MAX_PROPOSAL_FILES=1,
+        DSH_SORT_MAX_REFINEMENT_DEPTH=4,
+    )
+    def test_broad_match_is_refined_before_publication(self):
+        from unittest.mock import patch
+
+        calls = []
+
+        def _headless(prompt, cwd=None, **kwargs):
+            payload = json.loads(
+                prompt.split("<chunk-json>\n", 1)[1].split("\n</chunk-json>", 1)[0]
+            )
+            calls.append([kit["kit_path"] for kit in payload["kits"]])
+            rows = [
+                {
+                    "id": kit["id"],
+                    "kit": kit["kit_path"],
+                    "files": kit["file_count"],
+                    "dest": "dest/01 TSF Хвостохранилище/TSF-05 Документы по безопасности",
+                    "name": "Документы по безопасности",
+                    "quote": "Декларация безопасности ГТС хвостохранилища",
+                    "confidence": "высокая",
+                    "action": "move",
+                }
+                for kit in payload["kits"]
+            ]
+            return "```json\n" + json.dumps(rows, ensure_ascii=False) + "\n```"
+
+        self.client.force_login(self.admin)
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            (inbox / "Геология" / "1").mkdir(parents=True)
+            (inbox / "Геология" / "1" / "форма 2-гр.pdf").write_text("x", encoding="utf-8")
+            (inbox / "Геология" / "2.pdf").write_text("x", encoding="utf-8")
+            with override_settings(DSH_SORT_LOCAL_ROOTS=(tmp,)), patch(
+                "checklists_app.sort_service.run_headless",
+                side_effect=_headless,
+            ):
+                response = self.client.post(
+                    reverse("checklists_app:sort_start"),
+                    {
+                        "project_uid": self.project.short_uid,
+                        "section": str(self.section.id),
+                        "asset": "Asset A",
+                        "source_kind": "local",
+                        "local_inbox_path": str(inbox),
+                    },
+                )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()["run"]
+        self.assertEqual(payload["status"], "done")
+        paths = [
+            row["kit_path"]
+            for row in payload["proposals"]
+            if row.get("kit_path")
+        ]
+        self.assertNotIn("Геология", paths)
+        self.assertEqual(set(paths), {"Геология/1", "Геология/2.pdf"})
+        self.assertEqual(len(calls), 2)
+
+    @override_settings(
+        DSH_SORT_INLINE=True,
+        DSH_SORT_ALLOW_LOCAL_INBOX=True,
+        DSH_HEADLESS_CMD="dsh --profile headless",
+        DSH_SORT_FAST_FIRST_MAX_KITS=200,
+    )
+    def test_matching_section_folder_uses_one_fast_first_call_and_keeps_reviews(self):
+        from unittest.mock import patch
+
+        calls = []
+
+        def _headless(prompt, cwd=None, **kwargs):
+            payload = json.loads(
+                prompt.split("<chunk-json>\n", 1)[1].split("\n</chunk-json>", 1)[0]
+            )
+            calls.append(payload)
+            kit = next(
+                kit for kit in payload["kits"]
+                if kit["kit_path"].endswith("Декларация.pdf")
+            )
+            return "```json\n" + json.dumps([{
+                "id": kit["id"],
+                "dest": "dest/01 TSF Хвостохранилище/TSF-05 Документы по безопасности",
+                "confidence": "высокая",
+                "action": "move",
+            }], ensure_ascii=False) + "\n```"
+
+        self.client.force_login(self.admin)
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            source = inbox / "Хвостохранилище"
+            source.mkdir(parents=True)
+            (source / "Декларация.pdf").write_text("x", encoding="utf-8")
+            (source / "Неопределенный.pdf").write_text("x", encoding="utf-8")
+            with override_settings(DSH_SORT_LOCAL_ROOTS=(tmp,)), patch(
+                "checklists_app.sort_service.run_headless",
+                side_effect=_headless,
+            ):
+                response = self.client.post(
+                    reverse("checklists_app:sort_start"),
+                    {
+                        "project_uid": self.project.short_uid,
+                        "section": str(self.section.id),
+                        "asset": "Asset A",
+                        "source_kind": "local",
+                        "local_inbox_path": str(inbox),
+                    },
+                )
+        self.assertEqual(response.status_code, 200, response.content)
+        run = response.json()["run"]
+        self.assertEqual(run["status"], "done")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            {kit["kit_path"] for kit in calls[0]["kits"]},
+            {
+                "Хвостохранилище/Декларация.pdf",
+                "Хвостохранилище/Неопределенный.pdf",
+            },
+        )
+        proposals = {row["kit_path"]: row for row in run["proposals"]}
+        self.assertEqual(proposals["Хвостохранилище/Декларация.pdf"]["confidence"], "высокая")
+        unresolved = proposals["Хвостохранилище/Неопределенный.pdf"]
+        self.assertEqual(unresolved["dest_path"], "dest/01 TSF Хвостохранилище")
+        self.assertEqual(unresolved["action"], "review")
+
+    @override_settings(
+        DSH_SORT_INLINE=True,
+        DSH_SORT_ALLOW_LOCAL_INBOX=True,
+        DSH_HEADLESS_CMD="dsh --profile headless",
+    )
+    def test_omitted_irrelevant_kits_do_not_trigger_retry(self):
+        from unittest.mock import patch
+
+        self.client.force_login(self.admin)
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            inbox.mkdir()
+            (inbox / "Чужой раздел.pdf").write_text("x", encoding="utf-8")
+            with override_settings(DSH_SORT_LOCAL_ROOTS=(tmp,)), patch(
+                "checklists_app.sort_service.run_headless",
+                return_value="```json\n[]\n```",
+            ) as headless:
+                response = self.client.post(
+                    reverse("checklists_app:sort_start"),
+                    {
+                        "project_uid": self.project.short_uid,
+                        "section": str(self.section.id),
+                        "asset": "Asset A",
+                        "source_kind": "local",
+                        "local_inbox_path": str(inbox),
+                    },
+                )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["run"]["status"], "done")
+        self.assertEqual(headless.call_count, 1)
+
+    def test_finalize_sort_run_rolls_back_proposal_replace(self):
+        from unittest.mock import patch
+
+        from checklists_app.sort_service import finalize_sort_run
+
+        run = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.RUNNING,
+            worker_id="test-worker",
+            started_at=timezone.now(),
+        )
+        old = ChecklistSortProposal.objects.create(
+            run=run,
+            kit_path="Старый.pdf",
+            kit_key="старый.pdf",
+            action="review",
+        )
+        ChecklistSortChunk.objects.create(
+            run=run,
+            order_key="000001",
+            status=ChecklistSortChunk.Status.DONE,
+            input_kits=[{"id": "k-1", "kit_path": "Новый.pdf", "file_count": 1}],
+            result_rows=[{
+                "kit_path": "Новый.pdf",
+                "file_count": 1,
+                "dest_path": "dest/01 TSF Хвостохранилище",
+                "request_name": "",
+                "quote": "",
+                "confidence": "",
+                "action": "review",
+                "position": 1,
+            }],
+        )
+        with patch.object(
+            ChecklistSortProposal.objects,
+            "bulk_create",
+            side_effect=RuntimeError("database write failed"),
+        ):
+            with self.assertRaises(RuntimeError):
+                finalize_sort_run(run.id, "test-worker")
+        self.assertTrue(ChecklistSortProposal.objects.filter(pk=old.pk).exists())
+        run.refresh_from_db()
+        self.assertEqual(run.status, ChecklistSortRun.Status.RUNNING)
+
+    def test_sort_step_stops_on_orphaned_running_chunk(self):
+        from datetime import timedelta
+
+        from checklists_app.sort_service import process_sort_step
+
+        run = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.RUNNING,
+            worker_id="test-worker",
+            started_at=timezone.now(),
+            heartbeat_at=timezone.now(),
+            lease_expires_at=timezone.now() + timedelta(minutes=2),
+        )
+        ChecklistSortChunk.objects.create(
+            run=run,
+            order_key="000001",
+            status=ChecklistSortChunk.Status.RUNNING,
+            input_kits=[{"id": "k-1", "kit_path": "A.pdf", "file_count": 1}],
+        )
+        self.assertFalse(process_sort_step(run.id, "test-worker"))
+        run.refresh_from_db()
+        self.assertEqual(run.status, ChecklistSortRun.Status.RUNNING)
+
+    @override_settings(
+        DSH_SORT_INLINE=True,
+        DSH_SORT_ALLOW_LOCAL_INBOX=True,
+        DSH_HEADLESS_CMD="dsh --profile headless",
+    )
+    def test_leftover_dsh_failure_becomes_review_not_hanging(self):
+        from unittest.mock import patch
+
+        from core.dsh_run import DshRunError
+
+        self.client.force_login(self.admin)
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            inbox.mkdir()
+            (inbox / "Сырая выгрузка.pdf").write_text("stub", encoding="utf-8")
+            with override_settings(DSH_SORT_LOCAL_ROOTS=(tmp,)), patch(
+                "checklists_app.sort_service.run_headless",
+                side_effect=DshRunError("Сессия DSH оборвалась (стрим закрылся без ответа)."),
+            ):
+                response = self.client.post(
+                    reverse("checklists_app:sort_start"),
+                    {
+                        "project_uid": self.project.short_uid,
+                        "section": str(self.section.id),
+                        "asset": "Asset A",
+                        "source_kind": "local",
+                        "local_inbox_path": str(inbox),
+                    },
+                )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()["run"]
+        self.assertEqual(payload["status"], "partial")
+        self.assertIn("оборвалась", payload["error_message"])
+        row = next(item for item in payload["proposals"] if item.get("kit_path"))
+        self.assertEqual(row["kit_path"], "Сырая выгрузка.pdf")
+        self.assertEqual(row["action"], "review")
+
 
 class SortWorkspaceRootTests(SimpleTestCase):
+    def test_inventory_parser_rejects_invalid_schema(self):
+        from checklists_app.sort_workspace import (
+            SortWorkspaceError,
+            parse_inbox_inventory,
+        )
+
+        with self.assertRaises(SortWorkspaceError):
+            parse_inbox_inventory('{"version": 999, "kits": []}')
+
+    def test_cloud_tree_reads_all_pages(self):
+        from unittest.mock import patch
+
+        from checklists_app.sort_workspace import list_cloud_tree
+
+        entries = [
+            {"name": f"f{index}.pdf", "path": f"/root/f{index}.pdf", "type": "file", "size": index}
+            for index in range(5)
+        ]
+
+        def _list(user, path, *, limit, offset):
+            return entries[offset : offset + limit]
+
+        with patch("checklists_app.sort_workspace.INVENTORY_PAGE_SIZE", 2), patch(
+            "checklists_app.sort_workspace.list_folder_resources",
+            side_effect=_list,
+        ) as listed:
+            rows = list_cloud_tree(object(), "/root")
+        self.assertEqual(len(rows), 5)
+        self.assertEqual(
+            [call.kwargs["offset"] for call in listed.call_args_list],
+            [0, 2, 4],
+        )
+
+    def test_cloud_tree_does_not_treat_listing_error_as_empty(self):
+        from unittest.mock import patch
+
+        from checklists_app.sort_workspace import list_cloud_tree
+        from core.cloud_storage import CloudStorageNotReadyError
+
+        with patch(
+            "checklists_app.sort_workspace.list_folder_resources",
+            side_effect=CloudStorageNotReadyError("offline"),
+        ):
+            with self.assertRaises(CloudStorageNotReadyError):
+                list_cloud_tree(object(), "/root")
+
     def test_prod_requires_explicit_workspace(self):
         from checklists_app.sort_workspace import SortWorkspaceError, workspace_root_for
 
@@ -1602,6 +2283,57 @@ class SortWorkspaceRootTests(SimpleTestCase):
             materialize_local_inbox(inbox, source)
             self.assertTrue(inbox.is_symlink())
             self.assertTrue((inbox / "Геология").is_dir())
+
+    def test_inbox_inventory_counts_first_level_kits_without_listing_files(self):
+        from checklists_app.sort_workspace import INVENTORY_NAME, write_inbox_inventory
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "run"
+            inbox = workspace / "inbox" / "06 LGL Право"
+            (inbox / "LGL-01 Лицензии на недра" / "inner" / "a.pdf").parent.mkdir(parents=True)
+            (inbox / "LGL-01 Лицензии на недра" / "inner" / "a.pdf").write_text("x", encoding="utf-8")
+            (inbox / "LGL-01 Лицензии на недра" / "inner" / "b.pdf").write_text("x", encoding="utf-8")
+            (inbox / "LGL-03 Бизнес-планы").mkdir()
+            (inbox / ".cloud-file-sizes.json").write_text("{}", encoding="utf-8")
+            write_inbox_inventory(workspace, workspace / "inbox", inbox)
+            text = (workspace / INVENTORY_NAME).read_text(encoding="utf-8")
+        self.assertNotIn(".cloud-file-sizes.json", text)
+        from checklists_app.sort_workspace import parse_inbox_inventory
+
+        kits = parse_inbox_inventory(text)
+        self.assertEqual(
+            [(row["kit_path"], row["file_count"]) for row in kits],
+            [
+                ("LGL-01 Лицензии на недра", 2),
+                ("LGL-03 Бизнес-планы", 0),
+            ],
+        )
+        self.assertEqual(kits[0]["extensions"], {".pdf": 2})
+        self.assertIn("inner/a.pdf", kits[0]["samples"])
+        self.assertTrue(kits[0]["fingerprint"])
+
+    def test_inbox_inventory_reads_only_small_text_excerpts(self):
+        from checklists_app.sort_workspace import (
+            INVENTORY_NAME,
+            parse_inbox_inventory,
+            write_inbox_inventory,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "run"
+            inbox = workspace / "inbox"
+            kit = inbox / "Раздел" / "Комплект"
+            kit.mkdir(parents=True)
+            (kit / "hint.txt").write_text("Содержательная подсказка", encoding="utf-8")
+            (kit / "binary.docx").write_bytes(b"PK\x03\x04\x00binary")
+            write_inbox_inventory(workspace, inbox, inbox / "Раздел")
+            rows = parse_inbox_inventory(
+                (workspace / INVENTORY_NAME).read_text(encoding="utf-8")
+            )
+        self.assertEqual(
+            rows[0]["text_excerpts"],
+            [{"path": "hint.txt", "text": "Содержательная подсказка"}],
+        )
 
     def test_cloud_placeholder_manifest_preserves_remote_size_limit(self):
         from types import SimpleNamespace
@@ -2067,7 +2799,7 @@ class ChecklistSortVerifyTests(TestCase):
             ]
             self.assertEqual(tsf_kits, [])
 
-    def test_status_adopts_kit_already_classified_to_another_section(self):
+    def test_status_does_not_mutate_cross_section_proposal(self):
         inf = TypicalSection.objects.create(
             product=self.product,
             code="INF",
@@ -2120,21 +2852,15 @@ class ChecklistSortVerifyTests(TestCase):
         )
         self.assertEqual(response.status_code, 200, response.content)
         groups = {group["section_id"]: group for group in response.json()["groups"]}
-        inf_row = [
+        self.assertIsNone(groups[inf.id]["run"])
+        tsf_rows = [
             item
-            for item in groups[inf.id]["run"]["proposals"]
-            if item.get("id") == proposal.id
-        ][0]
-        self.assertEqual(inf_row["action"], "move")
-        self.assertEqual(inf_row["confidence"], "высокая")
-        tsf_kits = [
-            item.get("kit_path")
             for item in groups[self.section.id]["run"]["proposals"]
             if item.get("id") == proposal.id
         ]
-        self.assertEqual(tsf_kits, [])
+        self.assertEqual(len(tsf_rows), 1)
         proposal.refresh_from_db()
-        self.assertEqual(proposal.run.section_id, inf.id)
+        self.assertEqual(proposal.run.section_id, self.section.id)
 
     def test_verify_rejects_move_rows(self):
         run = ChecklistSortRun.objects.create(
@@ -2188,7 +2914,7 @@ class ChecklistSortVerifyTests(TestCase):
         self.assertFalse(row["verifying"])
         self.assertIn("не завершилась", row["verify_error"])
         proposal.refresh_from_db()
-        self.assertEqual(proposal.verify_status, "error")
+        self.assertEqual(proposal.verify_status, "running")
 
     def test_durable_worker_requeues_only_its_interrupted_jobs(self):
         from checklists_app.sort_worker import recover_interrupted_jobs
@@ -2225,14 +2951,110 @@ class ChecklistSortVerifyTests(TestCase):
         done.refresh_from_db()
         proposal.refresh_from_db()
         self.assertEqual(running.status, ChecklistSortRun.Status.QUEUED)
-        self.assertIsNone(running.started_at)
+        self.assertIsNotNone(running.started_at)
         self.assertEqual(done.status, ChecklistSortRun.Status.DONE)
         self.assertEqual(proposal.verify_status, "queued")
-        self.assertIsNone(proposal.verify_started_at)
+        self.assertIsNotNone(proposal.verify_started_at)
+
+    def test_worker_recovery_keeps_fresh_leases(self):
+        from datetime import timedelta
+
+        from checklists_app.sort_worker import recover_interrupted_jobs
+
+        deadline = timezone.now() + timedelta(minutes=2)
+        running = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.RUNNING,
+            worker_id="live-worker",
+            started_at=timezone.now(),
+            heartbeat_at=timezone.now(),
+            lease_expires_at=deadline,
+        )
+        done = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset B",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.DONE,
+        )
+        proposal = ChecklistSortProposal.objects.create(
+            run=done,
+            kit_path="Декларация.pdf",
+            action="review",
+            verify_status="running",
+            verify_started_at=timezone.now(),
+            verify_heartbeat_at=timezone.now(),
+            verify_lease_expires_at=deadline,
+            verify_worker_id="live-worker",
+        )
+        self.assertEqual(recover_interrupted_jobs("new-worker"), (0, 0))
+        running.refresh_from_db()
+        proposal.refresh_from_db()
+        self.assertEqual(running.status, ChecklistSortRun.Status.RUNNING)
+        self.assertEqual(proposal.verify_status, "running")
+
+    def test_resumed_run_processes_only_pending_chunk(self):
+        from unittest.mock import patch
+
+        from checklists_app.sort_service import process_sort_step
+
+        workspace = Path(self._sort_workspace.name) / "resume"
+        workspace.mkdir(parents=True)
+        run = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.QUEUED,
+            workspace_path=str(workspace),
+        )
+        ChecklistSortChunk.objects.create(
+            run=run,
+            order_key="000001",
+            status=ChecklistSortChunk.Status.DONE,
+            input_kits=[{"id": "k-1", "kit_path": "Готовый.pdf", "file_count": 1}],
+            result_rows=[{
+                "kit_path": "Готовый.pdf",
+                "file_count": 1,
+                "dest_path": "dest/01 TSF Хвостохранилище/TSF-05 Документы по безопасности",
+                "request_name": "Документы по безопасности",
+                "quote": "Декларация безопасности ГТС хвостохранилища",
+                "confidence": "высокая",
+                "action": "move",
+                "position": 1,
+            }],
+        )
+        ChecklistSortChunk.objects.create(
+            run=run,
+            order_key="000002",
+            status=ChecklistSortChunk.Status.PENDING,
+            input_kits=[{"id": "k-2", "kit_path": "Новый.pdf", "file_count": 1}],
+        )
+        output = """
+```json
+[{"kit":"Новый.pdf","files":1,"dest":"dest/01 TSF Хвостохранилище/TSF-05 Документы по безопасности","name":"Документы по безопасности","quote":"Декларация безопасности ГТС хвостохранилища","confidence":"высокая","action":"move"}]
+```
+"""
+        with patch(
+            "checklists_app.sort_service._prepare_workspace"
+        ) as prepare, patch(
+            "checklists_app.sort_service.run_headless",
+            return_value=output,
+        ) as headless:
+            self.assertTrue(process_sort_step(run.id, "resume-worker"))
+        prepare.assert_not_called()
+        self.assertEqual(headless.call_count, 1)
+        run.refresh_from_db()
+        self.assertEqual(run.status, ChecklistSortRun.Status.DONE)
+        self.assertEqual(run.proposals.exclude(kit_path="").count(), 2)
 
     def test_worker_runs_queued_verify_before_replacement_sort(self):
         from unittest.mock import patch
 
+        from checklists_app import sort_worker
         from checklists_app.sort_worker import process_next_job
 
         done = ChecklistSortRun.objects.create(
@@ -2258,15 +3080,17 @@ class ChecklistSortVerifyTests(TestCase):
         )
         order = []
 
-        def _verify(pk):
+        def _verify(pk, **kwargs):
             order.append(("verify", pk))
             ChecklistSortProposal.objects.filter(pk=pk).update(verify_status="")
 
-        def _sort(pk):
+        def _sort(pk, worker_id):
             order.append(("sort", pk))
+            return True
 
+        sort_worker._verify_streak = 0
         with patch("checklists_app.sort_worker.execute_verify_proposal", side_effect=_verify), patch(
-            "checklists_app.sort_worker.execute_sort_run", side_effect=_sort
+            "checklists_app.sort_worker.process_sort_step", side_effect=_sort
         ):
             self.assertTrue(process_next_job())
             self.assertTrue(process_next_job())
@@ -2296,6 +3120,35 @@ class ChecklistSortVerifyTests(TestCase):
         )
         self.assertEqual(response.status_code, 409)
         self.assertIn("проверки", response.json()["error"].lower())
+
+    def test_verify_start_blocked_while_sort_queued(self):
+        done = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.DONE,
+        )
+        proposal = ChecklistSortProposal.objects.create(
+            run=done,
+            kit_path="Декларация.pdf",
+            action="review",
+        )
+        ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.QUEUED,
+        )
+        response = self.client.post(
+            reverse("checklists_app:sort_verify"),
+            {"proposal_id": str(proposal.id)},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("выполняется", response.json()["error"].lower())
+        proposal.refresh_from_db()
+        self.assertNotEqual(proposal.verify_status, "queued")
 
     def test_cleanup_keeps_workspace_while_verify_queued(self):
         from checklists_app.sort_workspace import cleanup_stale_sort_workspaces

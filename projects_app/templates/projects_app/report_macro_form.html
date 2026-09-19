@@ -1,0 +1,43 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить макрос{% else %}Изменить макрос{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'report_macro_form_create' %}"
+    {% else %}
+      hx-post="{% url 'report_macro_form_edit' macro.pk %}"
+    {% endif %}
+    hx-target="#performers-modal .modal-content"
+    hx-swap="innerHTML"
+    hx-on::after-request="if (event.detail.xhr.status === 204) { window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('performers-modal'))?.hide(); }">
+  {% csrf_token %}
+  <div class="modal-body">
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.name.id_for_label }}">Название</label>
+      {{ form.name }}
+      {{ form.name.errors }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.description.id_for_label }}">Описание</label>
+      {{ form.description }}
+      {{ form.description.errors }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.code.id_for_label }}">Код</label>
+      {{ form.code }}
+      {{ form.code.errors }}
+    </div>
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">Проверьте введённые данные.</div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

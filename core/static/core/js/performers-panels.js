@@ -78,7 +78,7 @@
   function pane() { return document.getElementById('performers-pane'); }
   function updatePaymentRequestScrollGaps() {
     qa(
-      '#participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap',
+      '#participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap, #report-submission-section .report-submission-table-wrap, #report-check-section .report-check-table-wrap, #report-macros-section .report-macros-table-wrap',
       document
     ).forEach(function(wrap) {
       wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
@@ -901,6 +901,7 @@
       var table = tbody.closest('table');
       var isContractDispatchTable = table?.id === 'contract-dispatch-table';
       var isContractDraftingTable = table?.id === 'contract-drafting-table';
+      var isReportTable = table?.id === 'report-submission-table';
       if (isContractDispatchTable) {
         rows.forEach(function(row) {
           if (row.classList.contains('contract-dispatch-collapsed')) {
@@ -921,9 +922,15 @@
         var detailCells = row.querySelectorAll('.cell-detail-val');
         detailCells.forEach(function(c) { c.classList.remove('cell-repeated'); });
         if (isFilterHidden(row)) return;
-        var groupKey = isParticipationTable
-          ? getParticipationGroupKey(row)
-          : (isContractDraftingTable ? getContractDraftingGroupKey(row) : getContractGroupKey(row, includeContractBatchInGroup));
+        var groupKey = isReportTable
+          ? (
+            (row.dataset.projectId || '')
+            + '||' + (row.dataset.assetName || '')
+            + '||' + (row.dataset.reportKind === 'full' ? '__full__' : (row.dataset.executor || ''))
+          )
+          : (isParticipationTable
+            ? getParticipationGroupKey(row)
+            : (isContractDraftingTable ? getContractDraftingGroupKey(row) : getContractGroupKey(row, includeContractBatchInGroup)));
         var assetKey = groupKey + '||' + (row.dataset.assetName || '');
         if (groupKey !== prevGroupKey) {
           row.classList.add('group-first');
@@ -936,7 +943,7 @@
           }
         }
         var curGroupTexts = [];
-        if (isParticipationTable || isContractDraftingTable) {
+        if (isParticipationTable || isContractDraftingTable || isReportTable) {
           groupCells.forEach(function(c, i) {
             var txt = c.textContent.trim();
             curGroupTexts.push(txt);
@@ -1154,8 +1161,8 @@
   }
 
   function collapseParticipationSections(sectionEl) {
-    if (!sectionEl) return;
-    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!sectionEl || sectionEl.id === 'report-submission-section') return;
+    var tbody = sectionEl.querySelector('table.performers-table:not(#report-submission-table) tbody');
     if (!tbody) return;
     var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
     var currentFirst = null;
@@ -1305,8 +1312,8 @@
   }
 
   function collapseParticipationAssets(sectionEl) {
-    if (!sectionEl) return;
-    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!sectionEl || sectionEl.id === 'report-submission-section') return;
+    var tbody = sectionEl.querySelector('table.performers-table:not(#report-submission-table) tbody');
     if (!tbody) return;
     var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
     var i = 0;
@@ -2192,6 +2199,859 @@
     applyFilter(window.__paymentRequestsProjectFilter);
   }
 
+  function getReportSubmissionSection() {
+    return pane()?.querySelector('#report-submission-section') || null;
+  }
+
+  function getReportSubmissionRows() {
+    const section = getReportSubmissionSection();
+    if (!section) return [];
+    return Array.from(section.querySelectorAll('#report-submission-table tbody tr[data-project-id]'));
+  }
+
+  function getVisibleReportSelectChecks() {
+    return getReportSubmissionRows()
+      .filter(function(row) {
+        return !row.classList.contains('d-none')
+          && !row.classList.contains('report-version-row-collapsed-hidden');
+      })
+      .map(function(row) { return row.querySelector('input[name="report-select"]'); })
+      .filter(function(checkbox) { return checkbox && !checkbox.disabled; });
+  }
+
+  function updateReportSubmissionMasterState() {
+    const section = getReportSubmissionSection();
+    if (!section) return;
+    const master = section.querySelector('#report-submission-master');
+    if (!master || master.disabled) return;
+    const checks = getVisibleReportSelectChecks();
+    const checked = checks.filter((checkbox) => checkbox.checked);
+    master.checked = checks.length > 0 && checked.length === checks.length;
+    master.indeterminate = checked.length > 0 && checked.length < checks.length;
+    updateReportSendButtonState();
+    updateRowHighlight('report-select');
+  }
+
+  function updateReportSendButtonState() {
+    const section = getReportSubmissionSection();
+    if (!section) return;
+    const btn = section.querySelector('#report-submission-send-btn');
+    if (!btn) return;
+    const checked = getVisibleReportSelectChecks().filter(function(checkbox) { return checkbox.checked; });
+    const selectedRow = checked.length === 1 ? checked[0].closest('tr') : null;
+    const uploadId = selectedRow && (selectedRow.dataset.uploadId || '').trim();
+    btn.disabled = !uploadId;
+  }
+
+  function getReportCheckSection() {
+    return pane()?.querySelector('#report-check-section') || null;
+  }
+
+  function getReportCheckRows() {
+    const section = getReportCheckSection();
+    if (!section) return [];
+    return Array.from(section.querySelectorAll('#report-check-table tbody tr[data-edit-url]'));
+  }
+
+  function getVisibleReportCheckChecks() {
+    return getReportCheckRows()
+      .filter((row) => !row.classList.contains('d-none'))
+      .map((row) => row.querySelector('input[name="report-check-select"]'))
+      .filter((checkbox) => checkbox && !checkbox.disabled);
+  }
+
+  function updateReportCheckMasterState() {
+    const section = getReportCheckSection();
+    if (!section) return;
+    const master = section.querySelector('#report-check-master');
+    if (!master || master.disabled) return;
+    const checks = getVisibleReportCheckChecks();
+    const checked = checks.filter((checkbox) => checkbox.checked);
+    master.checked = checks.length > 0 && checked.length === checks.length;
+    master.indeterminate = checked.length > 0 && checked.length < checks.length;
+  }
+
+  function ensureReportCheckActionsVisibility() {
+    const panel = pane()?.querySelector('#report-check-actions');
+    if (!panel) return;
+    const any = getVisibleReportCheckChecks().some((checkbox) => checkbox.checked);
+    panel.classList.toggle('d-none', !any);
+    panel.classList.toggle('d-flex', any);
+  }
+
+  function getReportMacrosSection() {
+    return pane()?.querySelector('#report-macros-section') || null;
+  }
+
+  function getReportMacroRows() {
+    const section = getReportMacrosSection();
+    if (!section) return [];
+    return Array.from(section.querySelectorAll('#report-macros-table tbody tr[data-edit-url]'));
+  }
+
+  function getVisibleReportMacroChecks() {
+    return getReportMacroRows()
+      .filter((row) => !row.classList.contains('d-none'))
+      .map((row) => row.querySelector('input[name="report-macro-select"]'))
+      .filter((checkbox) => checkbox && !checkbox.disabled);
+  }
+
+  function updateReportMacrosMasterState() {
+    const section = getReportMacrosSection();
+    if (!section) return;
+    const master = section.querySelector('#report-macros-master');
+    if (!master || master.disabled) return;
+    const checks = getVisibleReportMacroChecks();
+    const checked = checks.filter((checkbox) => checkbox.checked);
+    master.checked = checks.length > 0 && checked.length === checks.length;
+    master.indeterminate = checked.length > 0 && checked.length < checks.length;
+  }
+
+  function ensureReportMacrosActionsVisibility() {
+    const panel = pane()?.querySelector('#report-macros-actions');
+    if (!panel) return;
+    const any = getVisibleReportMacroChecks().some((checkbox) => checkbox.checked);
+    panel.classList.toggle('d-none', !any);
+    panel.classList.toggle('d-flex', any);
+  }
+
+  function initReportSubmissionProjectFilter() {
+    const root = pane();
+    if (!root) return;
+    const FILTER_ALL = '__all__';
+    window.__reportSubmissionProjectFilter = window.__reportSubmissionProjectFilter || [FILTER_ALL];
+
+    const dropdown = root.querySelector('#report-submission-project-filter-toggle')?.closest('.dropdown');
+    const checks = root.querySelectorAll('.js-report-submission-filter');
+    const label = root.querySelector('.js-report-submission-filter-label');
+    const master = root.querySelector('#report-submission-master');
+    if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
+    dropdown.dataset.bound = '1';
+    if (window.bindProjectFilterMenuWidth) window.bindProjectFilterMenuWidth(dropdown);
+
+    function syncCheckboxes(values) {
+      const set = new Set(values);
+      checks.forEach((cb) => { cb.checked = set.has(cb.value); });
+    }
+
+    function updateLabel(values) {
+      if (values.includes(FILTER_ALL) || !values.length) {
+        label.textContent = 'Все';
+        return;
+      }
+      if (values.length === 1) {
+        const selected = Array.from(checks).find((cb) => cb.value === values[0]);
+        label.textContent = selected
+          ? window.getProjectFilterSummaryLabel(selected, '1 проект')
+          : '1 проект';
+        return;
+      }
+      label.textContent = values.length + ' выбрано';
+    }
+
+    function applyFilter(values) {
+      window.__reportSubmissionProjectFilter = values.slice();
+      const showAll = values.includes(FILTER_ALL) || !values.length;
+      getReportSubmissionRows().forEach((row) => {
+        const pid = row.dataset.projectId || '';
+        const visible = showAll || values.includes(pid);
+        row.classList.toggle('d-none', !visible);
+        if (!visible) {
+          const checkbox = row.querySelector('input[name="report-select"]');
+          if (checkbox) checkbox.checked = false;
+        }
+      });
+      applyRowGrouping(getReportSubmissionSection());
+      if (master && !showAll && !getReportSubmissionRows().some((row) => !row.classList.contains('d-none'))) {
+        master.checked = false;
+        master.indeterminate = false;
+      }
+      updateLabel(values);
+      updateReportSubmissionMasterState();
+    }
+
+    function normalizeSelection() {
+      let values = Array.from(checks)
+        .filter((cb) => cb.checked)
+        .map((cb) => cb.value);
+      if (!values.length) values = [FILTER_ALL];
+      if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+      syncCheckboxes(values);
+      return values;
+    }
+
+    checks.forEach((cb) => {
+      cb.addEventListener('change', (event) => {
+        const value = event.target.value;
+        if (value === FILTER_ALL && event.target.checked) {
+          syncCheckboxes([FILTER_ALL]);
+          applyFilter([FILTER_ALL]);
+          return;
+        }
+        if (value === FILTER_ALL && !event.target.checked) {
+          const firstProject = Array.from(checks).find((item) => item.value !== FILTER_ALL);
+          if (firstProject) firstProject.checked = true;
+        } else {
+          const allCheckbox = root.querySelector('#report-submission-filter-all');
+          if (allCheckbox && allCheckbox.checked) allCheckbox.checked = false;
+        }
+        applyFilter(normalizeSelection());
+      });
+    });
+
+    window.__syncReportSubmissionProjectFilter = function(values) {
+      var isAll = values[0] === FILTER_ALL;
+      var isSingle = !isAll && values.length === 1;
+      var set = new Set(values);
+      checks.forEach(function(cb) {
+        if (isAll) { cb.checked = cb.value === FILTER_ALL; cb.disabled = false; }
+        else if (isSingle) { cb.checked = cb.value === values[0]; cb.disabled = true; }
+        else {
+          if (cb.value === FILTER_ALL) { cb.checked = true; cb.disabled = false; }
+          else { cb.checked = set.has(cb.value); cb.disabled = !set.has(cb.value); }
+        }
+      });
+      applyFilter(isAll ? [FILTER_ALL] : values.slice());
+    };
+
+    const initialValues = window.__reportSubmissionProjectFilter && window.__reportSubmissionProjectFilter.length
+      ? window.__reportSubmissionProjectFilter
+      : [FILTER_ALL];
+    syncCheckboxes(initialValues);
+    applyFilter(initialValues);
+  }
+
+  function ensureReportUploadProgressModal() {
+    if (document.getElementById('report-upload-progress-modal')) return;
+    document.body.insertAdjacentHTML('beforeend',
+      '<div class="modal fade" id="report-upload-progress-modal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">'
+      + '<div class="modal-dialog"><div class="modal-content">'
+      + '<div class="modal-header"><h5 class="modal-title">Загрузка отчета</h5></div>'
+      + '<div class="modal-body">'
+      + '<div id="report-upload-progress"><div class="ws-progress-track"><div class="ws-progress-fill" id="report-upload-progress-bar" style="width:0%"></div></div></div>'
+      + '<div id="report-upload-status" class="small mt-2"></div>'
+      + '</div>'
+      + '<div class="modal-footer"><button type="button" class="btn btn-outline-secondary btn-sm" id="report-upload-close-btn" data-bs-dismiss="modal" disabled>Закрыть</button></div>'
+      + '</div></div></div>'
+    );
+  }
+
+  function handleReportUpload(inputEl) {
+    var section = getReportSubmissionSection();
+    var url = section && section.dataset.reportUploadUrl;
+    if (!url) return;
+
+    var sourceSel = section.querySelector('#report-submission-source');
+    var isLocal = Boolean(sourceSel && sourceSel.value === 'local');
+    var file = inputEl.files && inputEl.files[0];
+    if (!file) return;
+    var localPath = '';
+    if (isLocal) {
+      var pathInput = section.querySelector('#report-submission-local-path');
+      localPath = pathInput ? pathInput.value.trim() : '';
+      if (!localPath) {
+        ensureReportUploadProgressModal();
+        var emptyModal = document.getElementById('report-upload-progress-modal');
+        var emptyStatus = document.getElementById('report-upload-status');
+        var emptyClose = document.getElementById('report-upload-close-btn');
+        if (emptyStatus) emptyStatus.textContent = 'Укажите путь к локальной папке.';
+        if (emptyClose) emptyClose.disabled = false;
+        if (emptyModal && window.bootstrap) bootstrap.Modal.getOrCreateInstance(emptyModal).show();
+        inputEl.value = '';
+        return;
+      }
+    }
+
+    ensureReportUploadProgressModal();
+    var modalEl = document.getElementById('report-upload-progress-modal');
+    var progressBar = document.getElementById('report-upload-progress-bar');
+    var statusEl = document.getElementById('report-upload-status');
+    var closeBtn = document.getElementById('report-upload-close-btn');
+    if (progressBar) progressBar.style.width = '0%';
+    if (statusEl) statusEl.textContent = isLocal ? 'Загрузка в локальную папку…' : '';
+    if (closeBtn) closeBtn.disabled = true;
+    if (modalEl && window.bootstrap) {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+
+    var fd = new FormData();
+    fd.append('file', file);
+    if (isLocal) {
+      fd.append('source_kind', 'local');
+      fd.append('local_folder_path', localPath);
+    }
+    if (inputEl.dataset.fullReport === '1') {
+      fd.append('is_full_report', '1');
+      fd.append('registration_id', inputEl.dataset.registrationId || '');
+      fd.append('asset_name', inputEl.dataset.assetName || '');
+      fd.append('executor', inputEl.dataset.executor || '');
+    } else if (inputEl.dataset.allSections === '1') {
+      fd.append('is_all_sections', '1');
+      fd.append('registration_id', inputEl.dataset.registrationId || '');
+      fd.append('executor', inputEl.dataset.executor || '');
+      fd.append('asset_name', inputEl.dataset.assetName || '');
+    } else {
+      fd.append('performer_id', inputEl.dataset.performerId || '');
+    }
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('X-CSRFToken', csrftoken);
+    xhr.upload.addEventListener('progress', function(ev) {
+      if (ev.lengthComputable && progressBar) {
+        progressBar.style.width = Math.round(ev.loaded / ev.total * 100) + '%';
+      }
+    });
+    xhr.addEventListener('load', function() {
+      if (progressBar) progressBar.style.width = '100%';
+      var data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status >= 200 && xhr.status < 300 && data && data.ok) {
+        if (statusEl) {
+          statusEl.textContent = '';
+          var icon = document.createElement('i');
+          icon.className = 'bi bi-check-circle me-1';
+          var span = document.createElement('span');
+          span.className = 'text-success';
+          span.appendChild(icon);
+          var successText = data.local
+            ? 'Файл сохранён в локальную папку.'
+            : ('Файл успешно загружен на ' + (data.storage_label || 'облачное хранилище') + ' в папку с отчетами проекта.');
+          span.appendChild(document.createTextNode(successText));
+          statusEl.appendChild(span);
+        }
+        try {
+          var cell = inputEl.closest('.report-upload-cell');
+          var row = inputEl.closest('tr');
+          if (cell && data.file_name && data.download_url) {
+            var existing = cell.querySelector('.report-file-name-link');
+            if (existing) existing.remove();
+            var link = document.createElement('a');
+            link.href = data.download_url;
+            link.className = 'report-file-name-link';
+            link.setAttribute('download', '');
+            link.title = data.file_name;
+            var nameSpan = document.createElement('span');
+            nameSpan.className = 'report-file-name-text';
+            nameSpan.textContent = data.file_name;
+            link.appendChild(nameSpan);
+            cell.appendChild(link);
+          }
+          if (row) {
+            if (data.upload_id) row.dataset.uploadId = String(data.upload_id);
+            applyReportUploadVersionUpdate(row, data);
+          }
+          updateReportSendButtonState();
+        } catch (err) {
+          console.error(err);
+        }
+      } else if (statusEl) {
+        statusEl.textContent = '';
+        var errSpan = document.createElement('span');
+        errSpan.className = 'text-danger';
+        errSpan.textContent = (data && data.error) || 'Ошибка при загрузке файла.';
+        statusEl.appendChild(errSpan);
+      }
+      if (closeBtn) closeBtn.disabled = false;
+    });
+    xhr.addEventListener('error', function() {
+      if (statusEl) {
+        statusEl.textContent = '';
+        var errSpan = document.createElement('span');
+        errSpan.className = 'text-danger';
+        errSpan.textContent = 'Ошибка сети при загрузке файла.';
+        statusEl.appendChild(errSpan);
+      }
+      if (closeBtn) closeBtn.disabled = false;
+    });
+    xhr.send(fd);
+    inputEl.value = '';
+  }
+
+  var REPORT_VERSIONS_STORAGE_KEY = 'report-versions-collapsed';
+
+  function loadReportVersionCollapsed() {
+    try {
+      var raw = window.localStorage.getItem(REPORT_VERSIONS_STORAGE_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr.map(String) : []);
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function saveReportVersionCollapsed(set) {
+    try {
+      window.localStorage.setItem(
+        REPORT_VERSIONS_STORAGE_KEY,
+        JSON.stringify(Array.from(set))
+      );
+    } catch (_) { /* storage may be disabled */ }
+  }
+
+  function applyReportVersionCollapsedState() {
+    var section = getReportSubmissionSection();
+    if (!section) return;
+    var collapsed = loadReportVersionCollapsed();
+    section.querySelectorAll('#report-submission-table tbody tr[data-is-current="1"]').forEach(function(row) {
+      var group = row.dataset.versionGroup || '';
+      var btn = row.querySelector('.js-report-version-toggle');
+      if (btn) {
+        btn.setAttribute('aria-expanded', collapsed.has(group) ? 'false' : 'true');
+      }
+    });
+    section.querySelectorAll('#report-submission-table tbody tr[data-parent-id]').forEach(function(row) {
+      var parentId = row.dataset.parentId || '';
+      row.classList.toggle('report-version-row-collapsed-hidden', collapsed.has(parentId));
+    });
+    updateReportSendButtonState();
+  }
+
+  function expandReportVersionGroup(group) {
+    if (!group) return;
+    var collapsed = loadReportVersionCollapsed();
+    if (collapsed.delete(group)) {
+      saveReportVersionCollapsed(collapsed);
+    }
+    applyReportVersionCollapsedState();
+  }
+
+  function ensureReportVersionToggle(row) {
+    if (!row) return;
+    var cell = row.querySelector('.cell-typical-val');
+    if (!cell) return;
+    var btn = cell.querySelector('.js-report-version-toggle');
+    if (btn) {
+      btn.setAttribute('aria-expanded', 'true');
+      return;
+    }
+    var slot = cell.querySelector('.report-section-toggle-slot');
+    if (!slot) {
+      slot = document.createElement('span');
+      slot.className = 'report-section-toggle-slot';
+      cell.insertBefore(slot, cell.firstChild);
+    }
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'col-task-toggle js-report-version-toggle';
+    btn.setAttribute('aria-label', 'Свернуть/развернуть версии');
+    btn.setAttribute('aria-expanded', 'true');
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-caret-down-fill';
+    btn.appendChild(icon);
+    slot.appendChild(btn);
+    row.dataset.hasHistory = '1';
+  }
+
+  function insertPreviousReportVersionRow(currentRow, html) {
+    if (!currentRow || !html) return;
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var histRow = wrap.querySelector('tr');
+    if (!histRow) return;
+    var rowId = histRow.dataset.rowId || '';
+    if (rowId) {
+      var table = currentRow.closest('table');
+      var existing = table && table.querySelector('tr[data-row-id="' + rowId + '"]');
+      if (existing) return;
+    }
+    var parentId = currentRow.dataset.versionGroup || currentRow.dataset.rowId || '';
+    if (parentId) histRow.dataset.parentId = parentId;
+    var histCheckbox = histRow.querySelector('input[name="report-select"]');
+    if (histCheckbox) {
+      histCheckbox.checked = false;
+      histCheckbox.disabled = true;
+    }
+    if (currentRow.classList.contains('d-none')) histRow.classList.add('d-none');
+    currentRow.after(histRow);
+  }
+
+  function ensureReportSelectCheckbox(row) {
+    if (!row || row.dataset.isCurrent !== '1') return;
+    var section = getReportSubmissionSection();
+    if (section && section.dataset.expertReadonly === '1') return;
+    var cell = row.querySelector('.report-select-cell');
+    if (!cell) return;
+    var checkbox = cell.querySelector('input[name="report-select"]');
+    if (!checkbox) {
+      var wrap = document.createElement('div');
+      wrap.className = 'form-check m-0';
+      checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = 'report-sel-' + (row.dataset.rowId || '');
+      checkbox.name = 'report-select';
+      checkbox.value = row.dataset.rowId || '';
+      checkbox.setAttribute('aria-label', 'Выделить строку отчета');
+      wrap.appendChild(checkbox);
+      cell.appendChild(wrap);
+    }
+    checkbox.disabled = false;
+    checkbox.checked = false;
+    row.classList.remove('table-active');
+  }
+
+  function reportFindingsMeetThreshold(count, threshold) {
+    var findings = Number(count) || 0;
+    var limit = Number(threshold) || 0;
+    if (limit === 0) return findings === 0;
+    return findings < limit;
+  }
+
+  function updateReportFindingCountCell(row, data) {
+    if (!row) return;
+    var cell = row.querySelector('.report-finding-count-cell');
+    if (!cell) return;
+    if (data && data.finding_count_display) {
+      cell.textContent = data.finding_count_display;
+      return;
+    }
+    if (data && data.check_status === 'done') {
+      cell.textContent = String(Number(data.check_finding_count) || 0);
+      return;
+    }
+    cell.textContent = '—';
+  }
+
+  function reportWorkflowStatusClass(status) {
+    if (status === 'Сдан') return 'report-status--accepted';
+    if (status === 'Проверен') return 'report-status--checked';
+    if (status === 'Отправлен') return 'report-status--sent';
+    if (status === 'Загружен') return 'report-status--uploaded';
+    return 'report-status--idle';
+  }
+
+  function updateReportWorkflowStatusCell(row, data) {
+    if (!row) return;
+    var cell = row.querySelector('.report-workflow-status-cell');
+    var status = (data && data.workflow_status) || '';
+    if (!status) {
+      if (data && data.check_status === 'done') {
+        status = reportFindingsMeetThreshold(data.check_finding_count, data.finding_threshold) ? 'Сдан' : 'Проверен';
+      } else if (data && data.sent_at && data.sent_at !== '—') {
+        status = 'Отправлен';
+      } else if (data && data.file_name) {
+        status = 'Загружен';
+      } else {
+        status = 'В работе';
+      }
+    }
+    var statusClass = (data && data.workflow_status_class) || reportWorkflowStatusClass(status);
+    row.dataset.workflowStatus = status;
+    if (!cell) return;
+    cell.innerHTML = '';
+    var inner = document.createElement('span');
+    inner.className = 'report-workflow-status-inner';
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-circle reg-launch-icon reg-launch-indicator ' + statusClass;
+    icon.setAttribute('aria-hidden', 'true');
+    var label = document.createElement('span');
+    label.className = 'report-workflow-status-label';
+    if (status === 'Сдан' || status === 'Загружен') {
+      label.classList.add('report-workflow-status-label--inset');
+      label.style.paddingLeft = '1px';
+    }
+    label.textContent = status;
+    inner.appendChild(icon);
+    inner.appendChild(label);
+    cell.appendChild(inner);
+  }
+
+  function reportStatusDateDisplay(data) {
+    if (data && data.status_date) return data.status_date;
+    var status = (data && data.workflow_status) || '';
+    if (status === 'Загружен') return (data && data.uploaded_at) || '—';
+    if (status === 'Отправлен') return (data && data.sent_at) || '—';
+    if (status === 'Проверен' || status === 'Сдан') {
+      return (data && (data.checked_at || data.sent_at)) || '—';
+    }
+    return '—';
+  }
+
+  function updateReportStatusDateCell(row, data) {
+    if (!row) return;
+    var cell = row.querySelector('.report-status-date-cell, .report-sent-at-cell');
+    if (cell) cell.textContent = reportStatusDateDisplay(data);
+  }
+
+  function applyReportUploadVersionUpdate(row, data) {
+    var versionCell = row.querySelector('.report-version-cell');
+    if (versionCell && data.version_display) {
+      versionCell.textContent = data.version_display;
+    }
+    row.dataset.checkStatus = '';
+    updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), {});
+    updateReportWorkflowStatusCell(row, Object.assign({}, data, {
+      check_status: '',
+      sent_at: '',
+      checked_at: '',
+      workflow_status: data.workflow_status || 'Загружен'
+    }));
+    updateReportStatusDateCell(row, Object.assign({}, data, {
+      sent_at: '',
+      checked_at: '',
+      workflow_status: data.workflow_status || 'Загружен'
+    }));
+    updateReportFindingCountCell(row, Object.assign({}, data, {
+      check_status: '',
+      finding_count_display: '—'
+    }));
+    ensureReportSelectCheckbox(row);
+    if (data.previous_row_html) {
+      insertPreviousReportVersionRow(row, data.previous_row_html);
+    }
+    if (data.has_history) {
+      ensureReportVersionToggle(row);
+      expandReportVersionGroup(row.dataset.versionGroup || row.dataset.rowId || '');
+    }
+    applyRowGrouping(getReportSubmissionSection());
+    applyReportVersionCollapsedState();
+  }
+
+  function applyReportSendResult(row, data) {
+    if (!row || !data) return;
+    if (data.check_status) row.dataset.checkStatus = data.check_status;
+    updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), data);
+    updateReportWorkflowStatusCell(row, data);
+    updateReportStatusDateCell(row, data);
+    updateReportFindingCountCell(row, data);
+    if (data.check_status === 'done') {
+      var checkbox = row.querySelector('input[name="report-select"]');
+      if (checkbox) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+      }
+      row.classList.remove('table-active');
+    }
+    updateReportSubmissionMasterState();
+  }
+
+  function updateReportCheckResultCell(cell, data) {
+    if (!cell) return;
+    cell.innerHTML = '';
+    if (data.check_file_name && data.check_download_url) {
+      var iconLink = document.createElement('a');
+      iconLink.href = data.check_download_url;
+      iconLink.className = 'ct-upload-link report-check-download-icon';
+      iconLink.setAttribute('download', '');
+      iconLink.title = 'Скачать результат проверки';
+      var icon = document.createElement('i');
+      icon.className = 'bi bi-download';
+      iconLink.appendChild(icon);
+      cell.appendChild(iconLink);
+      var link = document.createElement('a');
+      link.href = data.check_download_url;
+      link.className = 'report-file-name-link js-report-check-file-link';
+      link.setAttribute('download', '');
+      link.title = data.check_file_name;
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'report-file-name-text';
+      nameSpan.textContent = data.check_file_name;
+      link.appendChild(nameSpan);
+      cell.appendChild(link);
+    }
+    if (data.check_status === 'error') {
+      var badge = document.createElement('span');
+      badge.className = 'text-danger small ms-1 js-report-check-badge';
+      badge.textContent = 'ошибка проверки';
+      if (data.check_error) badge.title = data.check_error;
+      cell.appendChild(badge);
+    } else if (data.check_status === 'running') {
+      var pending = document.createElement('span');
+      pending.className = 'text-muted small js-report-check-badge';
+      pending.textContent = 'проверка…';
+      cell.appendChild(pending);
+    } else if (!data.check_file_name) {
+      cell.textContent = '—';
+    }
+  }
+
+  function syncReportLocalSourceUi() {
+    var section = getReportSubmissionSection();
+    if (!section) return;
+    var sourceSel = section.querySelector('#report-submission-source');
+    var wrap = section.querySelector('#report-submission-local-wrap');
+    var isLocal = Boolean(sourceSel && sourceSel.value === 'local');
+    if (wrap) wrap.classList.toggle('d-none', !isLocal);
+    section.querySelectorAll('.report-upload-cell .ct-upload-link').forEach(function(label) {
+      label.title = isLocal ? 'Загрузить файл в локальную папку' : 'Загрузить файл';
+    });
+  }
+
+  function initReportLocalSource() {
+    var section = getReportSubmissionSection();
+    if (!section) return;
+    var sourceSel = section.querySelector('#report-submission-source');
+    var pathInput = section.querySelector('#report-submission-local-path');
+    if (!sourceSel) return;
+    if (window.UIPref) {
+      var savedSource = UIPref.get('reports:source', 'cloud');
+      if (savedSource === 'local') sourceSel.value = 'local';
+      var savedPath = UIPref.get('reports:localFolder', '');
+      if (pathInput && !pathInput.value && savedPath) pathInput.value = savedPath;
+    }
+    syncReportLocalSourceUi();
+  }
+
+  document.addEventListener('change', function(e) {
+    var inputEl = e.target.closest('.js-report-upload');
+    var root = pane();
+    if (!inputEl || !root || !root.contains(inputEl)) return;
+    handleReportUpload(inputEl);
+  });
+
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.js-report-version-toggle');
+    if (!btn) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(btn)) return;
+    var row = btn.closest('tr');
+    var group = row && (row.dataset.versionGroup || row.dataset.rowId);
+    if (!group) return;
+    e.preventDefault();
+    var collapsed = loadReportVersionCollapsed();
+    if (collapsed.has(group)) collapsed.delete(group);
+    else collapsed.add(group);
+    saveReportVersionCollapsed(collapsed);
+    applyReportVersionCollapsedState();
+  });
+
+  document.addEventListener('click', async function(e) {
+    var btn = e.target.closest('#report-submission-send-btn');
+    if (!btn) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(btn) || btn.disabled) return;
+    e.preventDefault();
+    var checked = getVisibleReportSelectChecks().filter(function(checkbox) { return checkbox.checked; });
+    if (checked.length !== 1) {
+      updateReportSendButtonState();
+      return;
+    }
+    var row = checked[0].closest('tr');
+    var uploadId = row && (row.dataset.uploadId || '').trim();
+    var url = section.dataset.reportSendUrl || '';
+    if (!uploadId || !url) {
+      alert('Выберите одну строку с загруженным файлом.');
+      return;
+    }
+    var resultCell = row.querySelector('.report-check-result-cell');
+    if (resultCell) {
+      resultCell.textContent = '';
+      var pending = document.createElement('span');
+      pending.className = 'text-muted small js-report-check-badge';
+      pending.textContent = 'проверка…';
+      resultCell.appendChild(pending);
+    }
+    updateReportFindingCountCell(row, { check_status: 'running' });
+    btn.disabled = true;
+    try {
+      var fd = new FormData();
+      fd.append('upload_id', uploadId);
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: fd,
+      });
+      var data = null;
+      try { data = await response.json(); } catch (_) {}
+      if (!response.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || 'Не удалось отправить файл.');
+      }
+      applyReportSendResult(row, data);
+    } catch (err) {
+      alert(err.message || 'Не удалось отправить файл.');
+      if (resultCell && resultCell.querySelector('.js-report-check-badge')) {
+        resultCell.textContent = '—';
+      }
+    } finally {
+      updateReportSendButtonState();
+    }
+  });
+
+  document.addEventListener('click', function(e) {
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(e.target)) return;
+    var sourceSel = section.querySelector('#report-submission-source');
+    if (!sourceSel || sourceSel.value !== 'local') return;
+    var label = e.target.closest('.ct-upload-link');
+    if (!label || !section.contains(label) || !label.closest('.report-upload-cell')) return;
+    if (!label.querySelector('.js-report-upload')) return;
+    var pathInput = section.querySelector('#report-submission-local-path');
+    var localPath = pathInput ? pathInput.value.trim() : '';
+    if (localPath) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ensureReportUploadProgressModal();
+    var emptyModal = document.getElementById('report-upload-progress-modal');
+    var emptyStatus = document.getElementById('report-upload-status');
+    var emptyClose = document.getElementById('report-upload-close-btn');
+    if (emptyStatus) emptyStatus.textContent = 'Укажите путь к локальной папке.';
+    if (emptyClose) emptyClose.disabled = false;
+    if (emptyModal && window.bootstrap) bootstrap.Modal.getOrCreateInstance(emptyModal).show();
+  }, true);
+
+  document.addEventListener('change', function(e) {
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(e.target)) return;
+    if (e.target.id === 'report-submission-source') {
+      if (window.UIPref) UIPref.set('reports:source', e.target.value);
+      syncReportLocalSourceUi();
+    }
+    if (e.target.id === 'report-submission-local-path' && window.UIPref) {
+      UIPref.set('reports:localFolder', e.target.value.trim());
+    }
+  });
+
+  document.addEventListener('change', function(e) {
+    var root = pane();
+    if (!root) return;
+    if (e.target.id === 'report-submission-master') {
+      var checked = e.target.checked;
+      getVisibleReportSelectChecks().forEach(function(checkbox) {
+        checkbox.checked = checked;
+      });
+      updateReportSubmissionMasterState();
+      return;
+    }
+    if (e.target.name === 'report-select' && root.contains(e.target)) {
+      updateReportSubmissionMasterState();
+      return;
+    }
+    if (e.target.id === 'report-check-master') {
+      var reportCheckChecked = e.target.checked;
+      getVisibleReportCheckChecks().forEach(function(checkbox) {
+        checkbox.checked = reportCheckChecked;
+      });
+      e.target.indeterminate = false;
+      updateReportCheckMasterState();
+      updateRowHighlight('report-check-select');
+      ensureReportCheckActionsVisibility();
+      return;
+    }
+    if (e.target.name === 'report-check-select' && root.contains(e.target)) {
+      updateReportCheckMasterState();
+      updateRowHighlight('report-check-select');
+      ensureReportCheckActionsVisibility();
+      return;
+    }
+    if (e.target.id === 'report-macros-master') {
+      var reportMacroChecked = e.target.checked;
+      getVisibleReportMacroChecks().forEach(function(checkbox) {
+        checkbox.checked = reportMacroChecked;
+      });
+      e.target.indeterminate = false;
+      updateReportMacrosMasterState();
+      updateRowHighlight('report-macro-select');
+      ensureReportMacrosActionsVisibility();
+      return;
+    }
+    if (e.target.name === 'report-macro-select' && root.contains(e.target)) {
+      updateReportMacrosMasterState();
+      updateRowHighlight('report-macro-select');
+      ensureReportMacrosActionsVisibility();
+    }
+  });
+
   document.addEventListener('click', async (e) => {
     const paymentPaidToggleIcon = e.target.closest('[data-payment-paid-toggle]');
     const paymentSectionFromToggle = paymentPaidToggleIcon ? findPaymentRequestSection(paymentPaidToggleIcon) : null;
@@ -2915,6 +3775,104 @@
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
 
+    if (btn.closest('#report-check-actions')) {
+      const action = btn.dataset.panelAction;
+      const checked = getChecked('report-check-select');
+      if (!checked.length) return;
+      window.__tableSel['report-check-select'] = checked.map(ch => String(ch.value));
+      window.__tableSelLast = 'report-check-select';
+
+      if (action === 'edit') {
+        const tr = checked[0].closest('tr');
+        const url = tr?.dataset?.editUrl;
+        if (!url) return;
+        await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
+        ensureReportCheckActionsVisibility();
+        return;
+      }
+
+      if (action === 'delete') {
+        if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+        const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
+        }
+        return;
+      }
+
+      if (action === 'up' || action === 'down') {
+        let urls = checked
+          .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
+          .filter(Boolean);
+        if (action === 'down') urls = urls.reverse();
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
+        }
+        ensureReportCheckActionsVisibility();
+      }
+      return;
+    }
+
+    if (btn.closest('#report-macros-actions')) {
+      const action = btn.dataset.panelAction;
+      const checked = getChecked('report-macro-select');
+      if (!checked.length) return;
+      window.__tableSel['report-macro-select'] = checked.map(ch => String(ch.value));
+      window.__tableSelLast = 'report-macro-select';
+
+      if (action === 'edit') {
+        const tr = checked[0].closest('tr');
+        const url = tr?.dataset?.editUrl;
+        if (!url) return;
+        await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
+        ensureReportMacrosActionsVisibility();
+        return;
+      }
+
+      if (action === 'delete') {
+        if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+        const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
+        }
+        return;
+      }
+
+      if (action === 'up' || action === 'down') {
+        let urls = checked
+          .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
+          .filter(Boolean);
+        if (action === 'down') urls = urls.reverse();
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
+        }
+        ensureReportMacrosActionsVisibility();
+      }
+      return;
+    }
+
+    if (!btn.closest('#performers-actions')) return;
+
     const action = btn.dataset.panelAction; // up|down|edit|delete
     const checked = getChecked('performer-select');
     if (!checked.length) return;
@@ -3393,6 +4351,33 @@
     updatePaymentRequestState();
     try { delete window.__tableSel['payment-request-select']; } catch(_) {}
 
+    var reportIds = (window.__tableSel && window.__tableSel['report-select']) || [];
+    var reportSet = new Set(reportIds || []);
+    getRowChecks('report-select').forEach(function(b) { b.checked = reportSet.has(String(b.value)); });
+    initReportSubmissionProjectFilter();
+    initReportLocalSource();
+    applyRowGrouping(root.querySelector('#report-submission-section'));
+    applyReportVersionCollapsedState();
+    updateReportSubmissionMasterState();
+    updateRowHighlight('report-select');
+    try { delete window.__tableSel['report-select']; } catch(_) {}
+
+    var reportCheckIds = (window.__tableSel && window.__tableSel['report-check-select']) || [];
+    var reportCheckSet = new Set(reportCheckIds || []);
+    getRowChecks('report-check-select').forEach(function(b) { b.checked = reportCheckSet.has(String(b.value)); });
+    updateReportCheckMasterState();
+    updateRowHighlight('report-check-select');
+    ensureReportCheckActionsVisibility();
+    try { delete window.__tableSel['report-check-select']; } catch(_) {}
+
+    var reportMacroIds = (window.__tableSel && window.__tableSel['report-macro-select']) || [];
+    var reportMacroSet = new Set(reportMacroIds || []);
+    getRowChecks('report-macro-select').forEach(function(b) { b.checked = reportMacroSet.has(String(b.value)); });
+    updateReportMacrosMasterState();
+    updateRowHighlight('report-macro-select');
+    ensureReportMacrosActionsVisibility();
+    try { delete window.__tableSel['report-macro-select']; } catch(_) {}
+
     applyRowGrouping(root.querySelector('#participation-confirmation-section'));
     applyParticipationSentState();
     reapplyParticipationCollapse();
@@ -3455,6 +4440,8 @@
     var root = pane(); if (!root) return;
     if (!(e.target === root || root.contains(e.target))) return;
     ensurePerformerActionsVisibility();
+    ensureReportCheckActionsVisibility();
+    ensureReportMacrosActionsVisibility();
     schedulePaymentRequestScrollGapsUpdate();
     if (typeof window.__perfScrollY === 'number') {
       window.scrollTo(0, window.__perfScrollY);
@@ -3604,6 +4591,8 @@
     initContractProjectFilter();
     initInfoRequestProjectFilter();
     initPaymentRequestProjectFilter();
+    initReportSubmissionProjectFilter();
+    initReportLocalSource();
     var root = pane();
     if (root) {
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));
@@ -3615,7 +4604,16 @@
       reapplyContractCollapse();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
       reapplyInfoRequestCollapse();
+      applyRowGrouping(root.querySelector('#report-submission-section'));
+      applyReportVersionCollapsedState();
       updatePaymentRequestState();
+      updateReportSubmissionMasterState();
+      updateReportCheckMasterState();
+      updateRowHighlight('report-check-select');
+      ensureReportCheckActionsVisibility();
+      updateReportMacrosMasterState();
+      updateRowHighlight('report-macro-select');
+      ensureReportMacrosActionsVisibility();
       syncCollapseButtons();
     }
     schedulePaymentRequestScrollGapsUpdate();
@@ -3636,7 +4634,7 @@
   window.addEventListener('resize', schedulePaymentRequestScrollGapsUpdate);
   window.addEventListener('load', schedulePaymentRequestScrollGapsUpdate);
   window.addEventListener('projects:section-shown', function(e) {
-    if (e.detail && (e.detail.section === 'team' || e.detail.section === 'performer-payments' || e.detail.section === 'info-request')) {
+    if (e.detail && (e.detail.section === 'team' || e.detail.section === 'performer-payments' || e.detail.section === 'info-request' || e.detail.section === 'report-submission')) {
       schedulePaymentRequestScrollGapsUpdate();
     }
   });

@@ -1,10 +1,12 @@
 import copy
+import logging
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core import signing
-from django.http import Http404, HttpResponse, HttpResponseForbidden, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 from django.db import models, transaction
@@ -17,13 +19,38 @@ from .models import (
     LegalEntity,
     Performer,
     PerformerParticipationSnapshot,
+    PerformerReportUpload,
     ProjectRegistration,
     ProjectRegistrationProduct,
     RegistrationWorkspaceFolder,
+    ReportCheckRule,
+    ReportMacro,
     WorkVolume,
     WorkVolumeItem,
     _ensure_performer_rows_for_work_item,
     _sync_project_registration_primary_product,
+)
+from .report_macro_runner import report_acceptance_threshold
+from .report_submission import (
+    ReportUploadError,
+    build_report_history_row,
+    build_report_submission_rows,
+    format_report_datetime,
+    format_report_finding_count,
+    format_report_status_date,
+    format_report_version,
+    is_local_report_path,
+    local_report_folder_enabled,
+    local_report_folder_placeholder,
+    parse_local_report_path,
+    previous_report_upload,
+    read_local_report_bytes,
+    report_workflow_status,
+    report_workflow_status_class,
+    resolve_report_upload_source,
+    send_report_upload,
+    upload_report_file,
+    validate_workspace_folder_roles,
 )
 from .forms import (
     ProjectRegistrationForm,
@@ -33,6 +60,8 @@ from .forms import (
     PerformerForm,
     BootstrapMixin,
     LegalEntityForm,
+    ReportCheckRuleForm,
+    ReportMacroForm,
     _project_manager_choices,
     _resolve_project_manager_choice,
 )
@@ -45,10 +74,12 @@ import time
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from types import SimpleNamespace
 from urllib.parse import quote
 
 from experts_app.models import ExpertProfile
+from core.dsh_catalog import dsh_model_labels
 from core.cloud_storage import (
     CloudStorageNotReadyError,
     build_workspace_folder_tree,
@@ -126,6 +157,8 @@ CONTRACT_FORM_TEMPLATE  = "projects_app/contract_form.html"
 SCHEDULE_FORM_TEMPLATE  = "projects_app/project_schedule_form.html"
 WORK_FORM_TEMPLATE      = "projects_app/work_form.html"
 LEGAL_FORM_TEMPLATE     = "projects_app/legal_entity_form.html"
+REPORT_CHECK_FORM_TEMPLATE = "projects_app/report_check_form.html"
+REPORT_MACRO_FORM_TEMPLATE = "projects_app/report_macro_form.html"
 
 PERF_FORM_TEMPLATE    = "projects_app/performer_form.html"
 PERFORMERS_PARTIAL_TEMPLATE = "projects_app/performers_partial.html"
@@ -133,6 +166,8 @@ PERFORMERS_PARTIAL_TEMPLATE = "projects_app/performers_partial.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_PERFORMERS_UPDATED_EVENT = "performers-updated"
 HX_PROJECTS_UPDATED_EVENT = "projects-updated"
+logger = logging.getLogger(__name__)
+
 CONTRACT_DOCX_SOURCE_TOKEN_SALT = "projects_app.contract_docx_source"
 CONTRACT_PERFORMER_FACSIMILE_PLACEHOLDER = "[[facsimile_prfrm]]"
 CONTRACT_IMAGE_PLACEHOLDER_SPECS = (
@@ -1868,6 +1903,7 @@ def _performers_context(user=None):
         .filter(
             registration__status__in=active_participation_statuses,
             participation_response=Performer.ParticipationResponse.CONFIRMED,
+            typical_section__accounting_type="Раздел",
         )
         .exclude(executor_trim="")
         .order_by("registration_id", "executor", "asset_name", "position", "id")
@@ -2049,6 +2085,27 @@ def _performers_context(user=None):
         )
     participation_display_rows.sort(key=_participation_sort_key)
 
+    report_uploads = list(
+        PerformerReportUpload.objects.filter(
+            registration_id__in=participation_project_ids,
+        )
+    )
+    report_submission_rows = build_report_submission_rows(
+        list(participation_performers),
+        report_uploads,
+    )
+    model_labels = dsh_model_labels()
+    report_check_rules = list(
+        ReportCheckRule.objects
+        .select_related("product", "section", "section__product")
+        .prefetch_related("macros")
+        .order_by("position", "id")
+    )
+    for rule in report_check_rules:
+        rule.model_display = model_labels.get(rule.model_id) or rule.model_id or "—"
+
+    report_macros = list(ReportMacro.objects.order_by("position", "id"))
+
     return {
         "performers": performers,
         "performer_projects": performer_projects,
@@ -2056,6 +2113,12 @@ def _performers_context(user=None):
         "participation_performers": participation_performers,
         "participation_display_rows": participation_display_rows,
         "participation_projects": participation_projects,
+        "report_submission_rows": report_submission_rows,
+        "report_submission_projects": participation_projects,
+        "allow_local_report_folder": local_report_folder_enabled(),
+        "local_report_folder_placeholder": local_report_folder_placeholder(),
+        "report_check_rules": report_check_rules,
+        "report_macros": report_macros,
         "participation_request_sent_initial": request_sent_initial,
         "info_request_performers": info_request_performers,
         "info_request_projects": info_request_projects,
@@ -3219,6 +3282,14 @@ def info_request_approval(request):
     )
     if len(selected_performers) != len(performer_ids):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
+    if any(
+        getattr(performer.typical_section, "accounting_type", None) != "Раздел"
+        for performer in selected_performers
+    ):
+        return JsonResponse(
+            {"ok": False, "error": "Запрос информации доступен только для строк с типом учета «Раздел»."},
+            status=400,
+        )
 
     try:
         with transaction.atomic():
@@ -3819,12 +3890,16 @@ def _get_effective_folders(user):
 @require_GET
 def workspace_folders_list(request):
     qs, is_custom = _get_effective_folders(request.user)
-    folders = list(qs.values("id", "level", "name", "position"))
+    folders = list(qs.values("id", "level", "name", "position", "role"))
     return JsonResponse(
         {
             "folders": folders,
             "is_custom": is_custom,
             "storage_label": get_primary_cloud_storage_label(),
+            "role_choices": [
+                {"value": value, "label": label}
+                for value, label in RegistrationWorkspaceFolder.ROLE_CHOICES
+            ],
         }
     )
 
@@ -3844,6 +3919,12 @@ def workspace_folders_save(request):
 
     owner = None if request.user.is_superuser else request.user
 
+    try:
+        named_rows = [row for row in rows if (row.get("name") or "").strip()]
+        validate_workspace_folder_roles(named_rows)
+    except ReportUploadError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
     objects = []
     for i, row in enumerate(rows):
         level = row.get("level", 1)
@@ -3852,7 +3933,16 @@ def workspace_folders_save(request):
             continue
         if level not in (1, 2, 3):
             level = 1
-        objects.append(RegistrationWorkspaceFolder(user=owner, level=level, name=name, position=i))
+        role = (row.get("role") or "").strip()
+        objects.append(
+            RegistrationWorkspaceFolder(
+                user=owner,
+                level=level,
+                name=name,
+                position=i,
+                role=role,
+            )
+        )
 
     with transaction.atomic():
         RegistrationWorkspaceFolder.objects.filter(user=owner).delete()
@@ -3867,8 +3957,508 @@ def workspace_folders_save(request):
 def workspace_folders_reset(request):
     RegistrationWorkspaceFolder.objects.filter(user=request.user).delete()
     qs, is_custom = _get_effective_folders(request.user)
-    folders = list(qs.values("id", "level", "name", "position"))
+    folders = list(qs.values("id", "level", "name", "position", "role"))
     return JsonResponse({"ok": True, "folders": folders, "is_custom": is_custom})
+
+
+def _report_upload_fallback_payload(upload, **extra):
+    payload = {
+        "ok": True,
+        "file_name": getattr(upload, "file_name", "") or "",
+        "download_url": reverse("report_file_download", args=[upload.pk]),
+        "storage_label": "облачное хранилище",
+        "local": False,
+        "version": int(getattr(upload, "version", 0) or 0),
+        "version_display": format_report_version(getattr(upload, "version", 0)),
+        "has_history": False,
+        "previous_row_html": "",
+        "check_status": getattr(upload, "check_status", "") or "",
+        "check_finding_count": getattr(upload, "check_finding_count", 0) or 0,
+        "check_error": getattr(upload, "check_error", "") or "",
+        "check_file_name": getattr(upload, "check_file_name", "") or "",
+        "check_download_url": "",
+        "sent_at": format_report_datetime(getattr(upload, "sent_at", None)),
+        "checked_at": format_report_datetime(getattr(upload, "checked_at", None)),
+        "uploaded_at": format_report_datetime(getattr(upload, "uploaded_at", None)),
+        "upload_id": getattr(upload, "pk", None) or "",
+        "finding_threshold": report_acceptance_threshold(upload),
+        "finding_count_display": format_report_finding_count(upload),
+    }
+    payload["workflow_status"] = report_workflow_status(upload, threshold=payload["finding_threshold"])
+    payload["workflow_status_class"] = report_workflow_status_class(payload["workflow_status"])
+    payload["status_date"] = format_report_status_date(upload, payload["workflow_status"])
+    payload.update(extra)
+    return payload
+
+
+def _report_upload_response(request, upload):
+    try:
+        payload = _report_upload_fallback_payload(upload)
+        try:
+            is_local = is_local_report_path(upload.cloud_path) or is_local_report_path(upload.check_cloud_path)
+            payload["local"] = is_local
+            payload["storage_label"] = (
+                "локальную папку" if is_local else get_primary_cloud_storage_label()
+            )
+        except Exception:
+            logger.exception("Failed to resolve report upload storage label for upload %s", upload.pk)
+        if upload.check_file_name:
+            try:
+                payload["check_download_url"] = reverse("report_check_file_download", args=[upload.pk])
+            except Exception:
+                logger.exception("Failed to build check download URL for upload %s", upload.pk)
+        previous = None
+        try:
+            previous = previous_report_upload(upload)
+        except Exception:
+            logger.exception("Failed to load previous report version for upload %s", upload.pk)
+        if previous is not None:
+            payload["has_history"] = True
+            try:
+                employee = getattr(request.user, "employee_profile", None)
+                is_expert = (
+                    getattr(employee, "role", "") == EXPERT_GROUP
+                    or request.user.groups.filter(name=EXPERT_GROUP).exists()
+                )
+                payload["previous_row_html"] = str(
+                    render_to_string(
+                        "projects_app/report_submission_row.html",
+                        {
+                            "row": build_report_history_row(upload, previous),
+                            "is_expert": is_expert,
+                        },
+                        request=request,
+                    )
+                )
+            except Exception:
+                logger.exception("Failed to render previous report version row for upload %s", upload.pk)
+                payload["previous_row_html"] = ""
+        return JsonResponse(payload)
+    except Exception:
+        logger.exception("Failed to build report upload JSON for upload %s", getattr(upload, "pk", None))
+        try:
+            return JsonResponse(_report_upload_fallback_payload(upload, has_history=True))
+        except Exception:
+            logger.exception("Failed to build fallback report upload JSON")
+            return JsonResponse({"ok": True, "file_name": "", "download_url": "", "previous_row_html": ""})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_file_upload(request):
+    performer_id = (request.POST.get("performer_id") or "").strip()
+    is_all_sections = (request.POST.get("is_all_sections") or "") in {"1", "true", "True"}
+    is_full_report = (request.POST.get("is_full_report") or "") in {"1", "true", "True"}
+    active_statuses = ["Не начат", "В работе"]
+
+    try:
+        uploaded_file, local_folder_path = resolve_report_upload_source(request)
+        if is_full_report:
+            try:
+                registration_id = int(request.POST.get("registration_id") or "")
+            except (TypeError, ValueError):
+                return JsonResponse({"ok": False, "error": "Некорректный проект."}, status=400)
+            asset_name = (request.POST.get("asset_name") or "").strip()
+            project = get_object_or_404(
+                ProjectRegistration.objects.filter(status__in=active_statuses),
+                pk=registration_id,
+            )
+            has_asset_rows = (
+                Performer.objects.annotate(executor_trim=Trim("executor"))
+                .filter(registration_id=registration_id, asset_name=asset_name)
+                .exclude(executor_trim="")
+                .exists()
+            )
+            if not has_asset_rows:
+                return JsonResponse(
+                    {"ok": False, "error": "Для этого актива нет строк исполнителей."},
+                    status=400,
+                )
+            upload = upload_report_file(
+                user=request.user,
+                project=project,
+                executor=(project.project_manager or "").strip(),
+                asset_name=asset_name,
+                performer=None,
+                is_all_sections=False,
+                is_full_report=True,
+                uploaded_file=uploaded_file,
+                local_folder_path=local_folder_path,
+            )
+        elif is_all_sections:
+            try:
+                registration_id = int(request.POST.get("registration_id") or "")
+            except (TypeError, ValueError):
+                return JsonResponse({"ok": False, "error": "Некорректный проект."}, status=400)
+            executor = (request.POST.get("executor") or "").strip()
+            asset_name = (request.POST.get("asset_name") or "").strip()
+            group = list(
+                Performer.objects.select_related("registration", "typical_section")
+                .annotate(executor_trim=Trim("executor"))
+                .filter(
+                    registration_id=registration_id,
+                    executor=executor,
+                    asset_name=asset_name,
+                    registration__status__in=active_statuses,
+                )
+                .exclude(executor_trim="")
+            )
+            if len(group) < 2:
+                return JsonResponse(
+                    {"ok": False, "error": "Для загрузки всех разделов нужно не меньше двух разделов."},
+                    status=400,
+                )
+            project = group[0].registration
+            upload = upload_report_file(
+                user=request.user,
+                project=project,
+                executor=executor,
+                asset_name=asset_name,
+                performer=None,
+                is_all_sections=True,
+                uploaded_file=uploaded_file,
+                local_folder_path=local_folder_path,
+            )
+        else:
+            try:
+                performer_id = int(performer_id)
+            except (TypeError, ValueError):
+                return JsonResponse({"ok": False, "error": "Некорректная строка исполнителя."}, status=400)
+            performer = get_object_or_404(
+                Performer.objects.select_related("registration", "typical_section")
+                .annotate(executor_trim=Trim("executor"))
+                .filter(registration__status__in=active_statuses)
+                .exclude(executor_trim=""),
+                pk=performer_id,
+            )
+            upload = upload_report_file(
+                user=request.user,
+                project=performer.registration,
+                executor=performer.executor,
+                asset_name=performer.asset_name,
+                performer=performer,
+                is_all_sections=False,
+                uploaded_file=uploaded_file,
+                local_folder_path=local_folder_path,
+            )
+    except ReportUploadError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    try:
+        return _report_upload_response(request, upload)
+    except Exception:
+        logger.exception("Failed to return report upload JSON for upload %s", getattr(upload, "pk", None))
+        return JsonResponse(
+            {
+                "ok": True,
+                "file_name": getattr(upload, "file_name", "") or "",
+                "download_url": reverse("report_file_download", args=[upload.pk]),
+                "previous_row_html": "",
+            }
+        )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_file_send(request):
+    try:
+        upload_id = int(request.POST.get("upload_id") or "")
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Выберите одну строку с загруженным файлом."}, status=400)
+    upload = get_object_or_404(PerformerReportUpload, pk=upload_id)
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    try:
+        upload = send_report_upload(user=request.user, upload=upload)
+    except ReportUploadError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    payload = _report_upload_fallback_payload(upload)
+    if upload.check_file_name:
+        payload["check_download_url"] = reverse("report_check_file_download", args=[upload.pk])
+    return JsonResponse(payload)
+
+
+@login_required
+@require_GET
+def report_file_download(request, pk):
+    upload = get_object_or_404(PerformerReportUpload, pk=pk)
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    return _serve_report_stored_file(
+        upload,
+        file_name=upload.file_name,
+        cloud_path=upload.cloud_path,
+        file_link=upload.file_link,
+        user=request.user,
+    )
+
+
+@login_required
+@require_GET
+def report_check_file_download(request, pk):
+    upload = get_object_or_404(PerformerReportUpload, pk=pk)
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    if not (upload.check_file_name or upload.check_cloud_path or upload.check_file_link):
+        raise Http404("Файл не найден.")
+    return _serve_report_stored_file(
+        upload,
+        file_name=upload.check_file_name,
+        cloud_path=upload.check_cloud_path,
+        file_link=upload.check_file_link,
+        user=request.user,
+    )
+
+
+def _forbid_report_file_access(request, upload):
+    expert_project_ids = _confirmed_project_ids_for_expert(request.user)
+    if expert_project_ids is not None and upload.registration_id not in expert_project_ids:
+        return HttpResponseForbidden("Недостаточно прав.")
+    if expert_project_ids is None and not staff_required(request.user):
+        return HttpResponseForbidden("Недостаточно прав.")
+    return None
+
+
+def _serve_report_stored_file(upload, *, file_name, cloud_path, file_link, user):
+    if is_local_report_path(cloud_path):
+        file_bytes = read_local_report_bytes(cloud_path)
+        if not file_bytes:
+            raise Http404("Файл не найден.")
+        filename = file_name or os.path.basename(parse_local_report_path(cloud_path) or "")
+        return FileResponse(BytesIO(file_bytes), as_attachment=True, filename=filename)
+
+    if cloud_path:
+        try:
+            cloud_user = user if is_nextcloud_primary() else get_any_connected_service_user()
+        except CloudStorageNotReadyError:
+            cloud_user = None
+        if cloud_user:
+            _mime, file_bytes = cloud_download_file(cloud_user, cloud_path)
+            if file_bytes:
+                filename = file_name or os.path.basename(cloud_path)
+                return FileResponse(BytesIO(file_bytes), as_attachment=True, filename=filename)
+
+    if file_link:
+        return redirect(file_link)
+    raise Http404("Файл не найден.")
+
+
+def _report_check_form_response(request, form, action, item=None, status=200):
+    selected_macro_ids = set()
+    if form.is_bound:
+        selected_macro_ids = {str(value) for value in request.POST.getlist("macros")}
+    elif item is not None:
+        selected_macro_ids = {str(pk) for pk in item.macros.values_list("pk", flat=True)}
+    return render(
+        request,
+        REPORT_CHECK_FORM_TEMPLATE,
+        {
+            "form": form,
+            "action": action,
+            "rule": item,
+            "sections_payload": getattr(form, "sections_payload", []),
+            "skill_choices": getattr(form, "skill_choices", []),
+            "macros_list": getattr(form, "macros_list", []),
+            "selected_macro_ids": selected_macro_ids,
+        },
+        status=status,
+    )
+
+
+def _normalize_report_check_positions():
+    items = list(ReportCheckRule.objects.order_by("position", "id").only("id", "position"))
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            ReportCheckRule.objects.filter(pk=item.pk).update(position=idx)
+
+
+def _render_report_check_saved():
+    resp = HttpResponse(status=204)
+    resp[HX_TRIGGER_HEADER] = HX_PERFORMERS_UPDATED_EVENT
+    return resp
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def report_check_form_create(request):
+    if request.method == "GET":
+        return _report_check_form_response(request, ReportCheckRuleForm(), "create")
+    form = ReportCheckRuleForm(request.POST)
+    if not form.is_valid():
+        return _report_check_form_response(request, form, "create")
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(ReportCheckRule)
+    obj.save()
+    form.save_m2m()
+    if obj.check_type != ReportCheckRule.CheckType.MACRO:
+        obj.macros.clear()
+    return _render_report_check_saved()
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def report_check_form_edit(request, pk: int):
+    item = get_object_or_404(
+        ReportCheckRule.objects.select_related("product", "section", "section__product").prefetch_related("macros"),
+        pk=pk,
+    )
+    if request.method == "GET":
+        return _report_check_form_response(request, ReportCheckRuleForm(instance=item), "edit", item)
+    form = ReportCheckRuleForm(request.POST, instance=item)
+    if not form.is_valid():
+        return _report_check_form_response(request, form, "edit", item)
+    form.save()
+    return _render_report_check_saved()
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_check_delete(request, pk: int):
+    item = get_object_or_404(ReportCheckRule, pk=pk)
+    item.delete()
+    _normalize_report_check_positions()
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+
+
+def _swap_report_check_positions(pk: int, direction: str):
+    _normalize_report_check_positions()
+    items = list(ReportCheckRule.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
+    if idx is None:
+        return
+    if direction == "up" and idx > 0:
+        current, other = items[idx], items[idx - 1]
+    elif direction == "down" and idx < len(items) - 1:
+        current, other = items[idx], items[idx + 1]
+    else:
+        return
+    ReportCheckRule.objects.filter(pk=current.id).update(position=other.position)
+    ReportCheckRule.objects.filter(pk=other.id).update(position=current.position)
+    _normalize_report_check_positions()
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST", "GET"])
+def report_check_move_up(request, pk: int):
+    get_object_or_404(ReportCheckRule, pk=pk)
+    _swap_report_check_positions(pk, "up")
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST", "GET"])
+def report_check_move_down(request, pk: int):
+    get_object_or_404(ReportCheckRule, pk=pk)
+    _swap_report_check_positions(pk, "down")
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+
+
+def _report_macro_form_response(request, form, action, item=None, status=200):
+    return render(
+        request,
+        REPORT_MACRO_FORM_TEMPLATE,
+        {"form": form, "action": action, "macro": item},
+        status=status,
+    )
+
+
+def _normalize_report_macro_positions():
+    items = list(ReportMacro.objects.order_by("position", "id").only("id"))
+    for idx, item in enumerate(items, start=1):
+        if item.position != idx:
+            ReportMacro.objects.filter(pk=item.pk).update(position=idx)
+
+
+def _render_report_macro_saved():
+    resp = HttpResponse(status=204)
+    resp[HX_TRIGGER_HEADER] = HX_PERFORMERS_UPDATED_EVENT
+    return resp
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def report_macro_form_create(request):
+    if request.method == "GET":
+        return _report_macro_form_response(request, ReportMacroForm(), "create")
+    form = ReportMacroForm(request.POST)
+    if not form.is_valid():
+        return _report_macro_form_response(request, form, "create")
+    obj = form.save(commit=False)
+    if not getattr(obj, "position", 0):
+        obj.position = _next_position(ReportMacro)
+    obj.save()
+    return _render_report_macro_saved()
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def report_macro_form_edit(request, pk: int):
+    item = get_object_or_404(ReportMacro, pk=pk)
+    if request.method == "GET":
+        return _report_macro_form_response(request, ReportMacroForm(instance=item), "edit", item)
+    form = ReportMacroForm(request.POST, instance=item)
+    if not form.is_valid():
+        return _report_macro_form_response(request, form, "edit", item)
+    form.save()
+    return _render_report_macro_saved()
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_macro_delete(request, pk: int):
+    item = get_object_or_404(ReportMacro, pk=pk)
+    item.delete()
+    _normalize_report_macro_positions()
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+
+
+def _swap_report_macro_positions(pk: int, direction: str):
+    _normalize_report_macro_positions()
+    items = list(ReportMacro.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
+    if idx is None:
+        return
+    if direction == "up" and idx > 0:
+        current, other = items[idx], items[idx - 1]
+    elif direction == "down" and idx < len(items) - 1:
+        current, other = items[idx], items[idx + 1]
+    else:
+        return
+    ReportMacro.objects.filter(pk=current.id).update(position=other.position)
+    ReportMacro.objects.filter(pk=other.id).update(position=current.position)
+    _normalize_report_macro_positions()
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST", "GET"])
+def report_macro_move_up(request, pk: int):
+    get_object_or_404(ReportMacro, pk=pk)
+    _swap_report_macro_positions(pk, "up")
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["POST", "GET"])
+def report_macro_move_down(request, pk: int):
+    get_object_or_404(ReportMacro, pk=pk)
+    _swap_report_macro_positions(pk, "down")
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
 
 
 @login_required
