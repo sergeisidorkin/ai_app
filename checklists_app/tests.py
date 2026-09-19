@@ -3181,6 +3181,51 @@ class ChecklistSortVerifyTests(TestCase):
         done.refresh_from_db()
         self.assertEqual(done.workspace_path, str(old_root))
 
+    def test_worker_runs_queued_verify_before_replacement_sort(self):
+        from unittest.mock import patch
+
+        from checklists_app import sort_worker
+        from checklists_app.sort_worker import process_next_job
+
+        done = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.DONE,
+            workspace_path="/tmp/old-sort",
+        )
+        proposal = ChecklistSortProposal.objects.create(
+            run=done,
+            kit_path="Декларация.pdf",
+            action="review",
+            verify_status="queued",
+        )
+        queued_sort = ChecklistSortRun.objects.create(
+            project=self.project,
+            section=self.section,
+            asset_name="Asset A",
+            started_by=self.admin,
+            status=ChecklistSortRun.Status.QUEUED,
+        )
+        order = []
+
+        def _verify(pk, user=None, close_connections=False, worker_id=None):
+            order.append(("verify", pk))
+            ChecklistSortProposal.objects.filter(pk=pk).update(verify_status="")
+
+        def _sort(pk, worker_id, user=None):
+            order.append(("sort", pk))
+            return True
+
+        sort_worker._verify_streak = 0
+        with patch("checklists_app.sort_worker.execute_verify_proposal", side_effect=_verify), patch(
+            "checklists_app.sort_worker.process_sort_step", side_effect=_sort
+        ):
+            self.assertTrue(process_next_job())
+            self.assertTrue(process_next_job())
+        self.assertEqual(order, [("verify", proposal.id), ("sort", queued_sort.id)])
+
 
 class ChecklistSortWorkerUnitTests(SimpleTestCase):
     def test_systemd_unit_waits_for_dsh(self):
