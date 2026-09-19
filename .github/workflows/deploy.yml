@@ -58,12 +58,23 @@ jobs:
             ENV_PATH_FILE="$APP_DIR/env/prod.env"
             REPO_SSH="git@github.com:sergeisidorkin/ai_app.git"
 
+            github_git() {
+              # Production hosts often block outbound TCP/22 to github.com.
+              # Retry the same git command over GitHub's SSH-on-443 endpoint.
+              local ssh_base='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=12'
+              if GIT_SSH_COMMAND="$ssh_base" git "$@"; then
+                return 0
+              fi
+              echo "GitHub SSH on port 22 failed — retrying via ssh.github.com:443"
+              GIT_SSH_COMMAND="$ssh_base -o HostName=ssh.github.com -p 443" git "$@"
+            }
+
             echo "== Preflight =="
             mkdir -p "$APP_DIR" "$APP_DIR/env" "$APP_DIR/run"
 
             if [ ! -d "$REPO_DIR/.git" ]; then
               echo "Cloning repo..."
-              git clone "$REPO_SSH" "$REPO_DIR"
+              github_git clone "$REPO_SSH" "$REPO_DIR"
             fi
 
             if [ ! -d "$VENV_DIR" ]; then
@@ -79,7 +90,7 @@ jobs:
               git remote set-url origin "$REPO_SSH"
             fi
 
-            git fetch --all --prune --tags
+            github_git fetch --all --prune --tags
 
             REF="${DEPLOY_REF:-main}"
             echo "DEPLOY_REF=${REF}"
