@@ -6,6 +6,8 @@ from .models import (
     Performer,
     ProjectRegistration,
     ProjectRegistrationProduct,
+    ReportCheckRule,
+    ReportMacro,
     WorkVolume,
 )
 
@@ -281,4 +283,33 @@ class LegalEntityAdmin(admin.ModelAdmin):
 
     @admin.display(description="Наименование актива", ordering="work_item__asset_name")
     def asset_name(self, obj):
-        return getattr(obj.work_item, "asset_name", "")        
+        return getattr(obj.work_item, "asset_name", "")
+
+
+@admin.register(ReportMacro)
+class ReportMacroAdmin(admin.ModelAdmin):
+    list_display = ("position", "name", "description")
+    list_editable = ("position",)
+    list_display_links = ("name",)
+    search_fields = ("name", "description", "code")
+    ordering = ("position", "id")
+
+
+@admin.register(ReportCheckRule)
+class ReportCheckRuleAdmin(admin.ModelAdmin):
+    list_display = ("position", "product_label_display", "section_label_display", "check_type", "finding_threshold", "check_value", "model_id")
+    list_editable = ("position",)
+    list_display_links = ("check_value",)
+    list_filter = ("check_type", "product")
+    search_fields = ("check_value", "model_id", "product__short_name", "section__code", "section__short_name_ru")
+    list_select_related = ("product", "section", "section__product")
+    ordering = ("position", "id")
+
+    @admin.display(description="Продукт")
+    def product_label_display(self, obj):
+        return obj.product_label
+
+    @admin.display(description="Раздел")
+    def section_label_display(self, obj):
+        return obj.section_label
+        

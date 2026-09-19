@@ -1,6 +1,8 @@
 # Seeded into $DSH_HOME/settings.yaml on first start when SILICONFLOW_API_KEY is set.
 # After that, edit the live file or the Web UI (Settings → Models).
 # The API key is not stored here: set SILICONFLOW_API_KEY in dsh.env or paste it in the UI.
+# Local `scripts/dev_dsh.sh` copies this SiliconFlow catalog on every start.
+# Keep Qwen/Qwen3.5-27B as the default so checklist sorting does not change.
 
 llm-pi-ai:
   providers:
@@ -12,11 +14,75 @@ llm-pi-ai:
       compat:
         supportsDeveloperRole: false
         maxTokensField: max_tokens
+        thinkingFormat: qwen
       models:
+        - id: Qwen/Qwen3.8-2.4T-A95B
+          name: Flagship · Qwen3.8-2.4T-A95B
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: deepseek-ai/DeepSeek-V4-Pro-0813
+          name: Flagship · DeepSeek-V4-Pro-0813
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: moonshotai/Kimi-K3
+          name: Flagship · Kimi-K3
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: zai-org/GLM-5.3
+          name: Flagship · GLM-5.3
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: MiniMaxAI/MiniMax-M3
+          name: Flagship · MiniMax-M3
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: deepseek-ai/DeepSeek-V4-Flash-0731
+          name: Balanced · DeepSeek-V4-Flash-0731
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: Qwen/Qwen3.5-122B-A10B
+          name: Balanced · Qwen3.5-122B-A10B
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: Qwen/Qwen3.6-35B-A3B
+          name: Balanced · Qwen3.6-35B-A3B
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: moonshotai/Kimi-K2.6
+          name: Balanced · Kimi-K2.6
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: zai-org/GLM-5.3-Flash
+          name: Balanced · GLM-5.3-Flash
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
         - id: Qwen/Qwen3.5-27B
-          name: Qwen3.5-27B (SiliconFlow)
-          input: [text, image]
+          name: Efficient · Qwen3.5-27B
+          input: [text]
           contextWindow: 262144
+          maxTokens: 8192
+          reasoningEfforts:
+            "off":
+            low: low
+        - id: Qwen/Qwen3.6-27B
+          name: Efficient · Qwen3.6-27B
+          input: [text]
+          contextWindow: 131072
+          maxTokens: 8192
+        - id: Qwen/Qwen3.5-9B
+          name: Efficient · Qwen3.5-9B
+          input: [text]
+          contextWindow: 131072
           maxTokens: 8192
 
 agent-default-model:

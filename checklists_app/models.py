@@ -636,6 +636,7 @@ class ChecklistSortRun(models.Model):
         QUEUED = "queued", "В очереди"
         RUNNING = "running", "Выполняется"
         DONE = "done", "Готово"
+        PARTIAL = "partial", "Готово частично"
         ERROR = "error", "Ошибка"
 
     project = models.ForeignKey(
@@ -676,6 +677,15 @@ class ChecklistSortRun(models.Model):
     error_message = models.TextField("Ошибка", blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    worker_id = models.CharField(max_length=128, blank=True, default="")
+    kits_total = models.PositiveIntegerField(default=0)
+    kits_done = models.PositiveIntegerField(default=0)
+    chunks_total = models.PositiveIntegerField(default=0)
+    chunks_done = models.PositiveIntegerField(default=0)
+    deterministic_count = models.PositiveIntegerField(default=0)
+    fallback_count = models.PositiveIntegerField(default=0)
     finished_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -691,6 +701,55 @@ class ChecklistSortRun(models.Model):
         return f"SortRun:{self.project_id}:{self.section_id}:{self.status}"
 
 
+class ChecklistSortChunk(models.Model):
+    class Kind(models.TextChoices):
+        DETERMINISTIC = "deterministic", "Точное сопоставление"
+        DSH = "dsh", "DSH"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает"
+        RUNNING = "running", "Выполняется"
+        DONE = "done", "Готово"
+        ERROR = "error", "Ошибка"
+        SPLIT = "split", "Разделён"
+
+    run = models.ForeignKey(
+        ChecklistSortRun,
+        on_delete=models.CASCADE,
+        related_name="chunks",
+    )
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="children",
+    )
+    order_key = models.CharField(max_length=128)
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.DSH)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    input_kits = models.JSONField(default=list, blank=True)
+    result_rows = models.JSONField(default=list, blank=True)
+    raw_response = models.TextField(blank=True, default="")
+    error_message = models.TextField(blank=True, default="")
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    duration_ms = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["order_key", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "order_key"], name="uniq_sort_chunk_order"),
+        ]
+        indexes = [
+            models.Index(fields=["run", "status"]),
+        ]
+
+    def __str__(self):
+        return f"SortChunk:{self.run_id}:{self.order_key}:{self.status}"
+
+
 class ChecklistSortProposal(models.Model):
     run = models.ForeignKey(
         ChecklistSortRun,
@@ -704,9 +763,20 @@ class ChecklistSortProposal(models.Model):
     quote = models.TextField("Цитата", blank=True, default="")
     confidence = models.CharField("Уверенность", max_length=32, blank=True, default="")
     action = models.CharField("Действие", max_length=32, blank=True, default="review")
+    chunk = models.ForeignKey(
+        ChecklistSortChunk,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="proposals",
+    )
+    kit_key = models.CharField(max_length=2048, blank=True, default="", db_index=True)
     verify_status = models.CharField("Статус проверки", max_length=16, blank=True, default="")
     verify_error = models.TextField("Ошибка проверки", blank=True, default="")
     verify_started_at = models.DateTimeField("Начало проверки", blank=True, null=True)
+    verify_heartbeat_at = models.DateTimeField(blank=True, null=True)
+    verify_lease_expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    verify_worker_id = models.CharField(max_length=128, blank=True, default="")
     verify_started_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -723,3 +793,17 @@ class ChecklistSortProposal(models.Model):
 
     def __str__(self):
         return f"SortProposal:{self.run_id}:{self.kit_path[:60]}"
+
+
+class ChecklistSortWorkerState(models.Model):
+    key = models.CharField(max_length=32, primary_key=True, default="default")
+    worker_id = models.CharField(max_length=128, blank=True, default="")
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Состояние worker сортировки"
+        verbose_name_plural = "Состояния worker сортировки"
+
+    def __str__(self):
+        return f"SortWorker:{self.worker_id or 'offline'}"

@@ -23,18 +23,28 @@ def _auth_headers(user) -> Dict[str, str]:
     return {"Authorization": f"OAuth {token}"}
 
 
-def list_resources(user, path: str = "/", limit: int = 100) -> List[Dict]:
+def list_resources(
+    user,
+    path: str = "/",
+    limit: int = 100,
+    offset: int = 0,
+    *,
+    raise_errors: bool = False,
+) -> List[Dict]:
     """
     Получить список файлов/папок по указанному пути.
     """
     token = _get_token(user)
     if not token:
+        if raise_errors:
+            raise RuntimeError("Для пользователя не настроен OAuth-токен Яндекс.Диска.")
         return []
 
     headers = {"Authorization": f"OAuth {token}"}
     params = {
         "path": path,
         "limit": limit,
+        "offset": max(int(offset or 0), 0),
         "fields": "_embedded.items.name,_embedded.items.path,_embedded.items.type,_embedded.items.size,_embedded.items.modified",
     }
 
@@ -54,6 +64,8 @@ def list_resources(user, path: str = "/", limit: int = 100) -> List[Dict]:
             for it in items
         ]
     except Exception:
+        if raise_errors:
+            raise
         return []
 
 

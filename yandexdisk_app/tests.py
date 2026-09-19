@@ -22,6 +22,15 @@ from yandexdisk_app.workspace import (
 )
 
 
+class YandexDiskServiceTests(SimpleTestCase):
+    @patch("yandexdisk_app.service._get_token", return_value="")
+    def test_strict_listing_rejects_missing_token(self, mocked_token):
+        from yandexdisk_app.service import list_resources
+
+        with self.assertRaises(RuntimeError):
+            list_resources(object(), "/root", raise_errors=True)
+
+
 class CloudFolderMetadataCommandTests(SimpleTestCase):
     @patch(
         "yandexdisk_app.management.commands.sync_cloud_folder_metadata.run_sync",

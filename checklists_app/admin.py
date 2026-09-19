@@ -7,6 +7,9 @@ from .models import (
     ChecklistItem,
     ChecklistItemAuditLog,
     ChecklistRequestNote,
+    ChecklistSortChunk,
+    ChecklistSortRun,
+    ChecklistSortWorkerState,
     ChecklistStatus,
     ChecklistStatusHistory,
     _sync_project_gantt_for_checklist_item,
@@ -152,3 +155,49 @@ class ChecklistCommentHistoryAdmin(admin.ModelAdmin):
     list_display = ("note", "field", "author", "created_at")
     list_filter = ("field", "created_at")
     search_fields = ("note__checklist_item__name", "author__username")
+
+
+@admin.register(ChecklistSortRun)
+class ChecklistSortRunAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "project",
+        "section",
+        "asset_name",
+        "status",
+        "kits_done",
+        "kits_total",
+        "chunks_done",
+        "chunks_total",
+        "heartbeat_at",
+        "finished_at",
+    )
+    list_filter = ("status", "section", "created_at")
+    search_fields = ("project__name", "asset_name", "worker_id", "error_message")
+    readonly_fields = ("created_at", "started_at", "heartbeat_at", "finished_at")
+
+
+@admin.register(ChecklistSortChunk)
+class ChecklistSortChunkAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "run",
+        "order_key",
+        "kind",
+        "status",
+        "attempts",
+        "duration_ms",
+        "finished_at",
+    )
+    list_filter = ("kind", "status")
+    search_fields = ("run__project__name", "error_message")
+    readonly_fields = ("started_at", "finished_at")
+
+
+@admin.register(ChecklistSortWorkerState)
+class ChecklistSortWorkerStateAdmin(admin.ModelAdmin):
+    list_display = ("key", "worker_id", "started_at", "heartbeat_at")
+    readonly_fields = ("key", "worker_id", "started_at", "heartbeat_at")
+
+    def has_add_permission(self, request):
+        return False

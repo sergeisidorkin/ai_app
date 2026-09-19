@@ -7,7 +7,12 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from checklists_app.sort_worker import process_next_job, recover_interrupted_jobs
+from checklists_app.sort_worker import (
+    make_worker_id,
+    process_next_job,
+    recover_interrupted_jobs,
+    touch_worker,
+)
 
 
 def _lock_path():
@@ -34,7 +39,8 @@ class Command(BaseCommand):
             except BlockingIOError as exc:
                 raise CommandError("Another checklist_sort_worker is already running.") from exc
 
-            sort_count, verify_count = recover_interrupted_jobs()
+            worker_id = make_worker_id()
+            sort_count, verify_count = recover_interrupted_jobs(worker_id)
             if sort_count or verify_count:
                 self.stdout.write(
                     f"Recovered interrupted jobs: sort={sort_count}, verify={verify_count}"
@@ -43,7 +49,8 @@ class Command(BaseCommand):
             once = options["once"]
             poll_interval = max(0.1, options["poll_interval"])
             while True:
-                processed = process_next_job()
+                touch_worker(worker_id)
+                processed = process_next_job(worker_id)
                 if once:
                     return
                 if not processed:

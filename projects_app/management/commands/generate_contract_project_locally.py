@@ -34,12 +34,14 @@ class LocalContractCloud:
         self.local_path(cloud_path).mkdir(parents=True, exist_ok=True)
         return True
 
-    def list_resources(self, _user, cloud_path, *, limit=100):
+    def list_resources(self, _user, cloud_path, *, limit=100, offset=0):
         local_path = self.local_path(cloud_path)
         if not local_path.exists():
             return []
         items = []
-        for child in sorted(local_path.iterdir(), key=lambda item: item.name)[:limit]:
+        start = max(int(offset or 0), 0)
+        children = sorted(local_path.iterdir(), key=lambda item: item.name)
+        for child in children[start:start + limit]:
             items.append({
                 "name": child.name,
                 "path": f"{self._normalize_cloud_path(cloud_path).rstrip('/')}/{child.name}",

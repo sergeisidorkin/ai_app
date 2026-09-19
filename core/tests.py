@@ -240,12 +240,26 @@ class HomePagePermissionsTests(TestCase):
         self.assertContains(response, 'data-projects-section="scope"', html=False)
         self.assertContains(response, 'data-projects-section="team"', html=False)
         self.assertContains(response, 'data-projects-section="info-request"', html=False)
+        self.assertContains(response, 'data-projects-section="report-submission"', html=False)
         self.assertContains(response, 'id="projects-section-title">Проекты</h5>', html=False)
         self.assertContains(response, 'id="projects-content-launch" class="projects-section-content"', html=False)
         self.assertContains(response, 'id="projects-content-scope" class="projects-section-content d-none"', html=False)
         self.assertContains(response, 'id="projects-content-team" class="projects-section-content d-none"', html=False)
         self.assertContains(response, 'id="projects-content-info-request" class="projects-section-content d-none"', html=False)
+        self.assertContains(response, 'id="projects-content-report-submission" class="projects-section-content d-none"', html=False)
         self.assertContains(response, 'id="master-project-filter-dropdown"', html=False)
+        self.assertContains(
+            response,
+            'class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"\n'
+            '                            id="master-project-filter-toggle"',
+            html=False,
+        )
+        self.assertNotContains(
+            response,
+            'class="btn btn-primary btn-sm dropdown-toggle" type="button"\n'
+            '                            id="master-project-filter-toggle"',
+            html=False,
+        )
         self.assertContains(response, 'id="projects-pane"', html=False)
         self.assertContains(response, 'id="performers-pane"', html=False)
 
@@ -848,6 +862,62 @@ class DshHeadlessRunTests(SimpleTestCase):
         self.assertNotIn("EBADENGINE", text)
         self.assertIn("Node >= 20", text)
 
+    def test_run_headless_treats_truncated_stream_as_error(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from core.dsh_run import DshRunError, run_headless
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                DSH_HEADLESS_CMD="dsh --profile headless",
+                DSH_HEADLESS_CONTAINER_CWD="",
+            ):
+                with patch(
+                    "core.dsh_run.subprocess.Popen",
+                    return_value=SimpleNamespace(
+                        returncode=0,
+                        communicate=lambda timeout: (
+                            "partial table\nStream ended without finish_reason",
+                            "",
+                        ),
+                    ),
+                ):
+                    with self.assertRaises(DshRunError) as raised:
+                        run_headless("prompt", cwd=tmp)
+        self.assertIn("оборвалась", str(raised.exception))
+
+    def test_run_headless_renews_heartbeat_while_waiting(self):
+        from unittest.mock import Mock, patch
+
+        from core.dsh_run import run_headless
+
+        class Process:
+            returncode = 0
+
+            def __init__(self):
+                self.calls = 0
+
+            def communicate(self, timeout):
+                self.calls += 1
+                if self.calls == 1:
+                    raise subprocess.TimeoutExpired("dsh", timeout)
+                return ("```json\n[]\n```", "")
+
+        heartbeat = Mock(return_value=True)
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_HEADLESS_CMD="dsh --profile headless",
+            DSH_HEADLESS_CONTAINER_CWD="",
+        ), patch("core.dsh_run.subprocess.Popen", return_value=Process()):
+            output = run_headless(
+                "prompt",
+                cwd=tmp,
+                heartbeat=heartbeat,
+                heartbeat_interval=1,
+            )
+        self.assertIn("[]", output)
+        heartbeat.assert_called_once()
+
 
 class DshBrandingTests(SimpleTestCase):
     repo_root = Path(__file__).resolve().parents[1]
@@ -877,6 +947,48 @@ class DshBrandingTests(SimpleTestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_local_dsh_registers_siliconflow_qwen_default(self):
+        import yaml
+
+        script = (self.repo_root / "scripts" / "dev_dsh.sh").read_text(encoding="utf-8")
+        example = yaml.safe_load(
+            (self.repo_root / "deploy" / "dsh" / "settings.yaml.example").read_text(
+                encoding="utf-8"
+            )
+        )
+        models = example["llm-pi-ai"]["providers"]["siliconflow"]["models"]
+        model_ids = [model["id"] for model in models]
+        self.assertIn("SILICONFLOW_API_KEY", script)
+        self.assertIn("settings.yaml.example", script)
+        self.assertIn('"provider": "siliconflow"', script)
+        self.assertEqual(
+            example["agent-default-model"],
+            {"provider": "siliconflow", "model": "Qwen/Qwen3.5-27B"},
+        )
+        self.assertEqual(
+            model_ids,
+            [
+                "Qwen/Qwen3.8-2.4T-A95B",
+                "deepseek-ai/DeepSeek-V4-Pro-0813",
+                "moonshotai/Kimi-K3",
+                "zai-org/GLM-5.3",
+                "MiniMaxAI/MiniMax-M3",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "Qwen/Qwen3.5-122B-A10B",
+                "Qwen/Qwen3.6-35B-A3B",
+                "moonshotai/Kimi-K2.6",
+                "zai-org/GLM-5.3-Flash",
+                "Qwen/Qwen3.5-27B",
+                "Qwen/Qwen3.6-27B",
+                "Qwen/Qwen3.5-9B",
+            ],
+        )
+        prefixes = [model["name"].split(" · ", 1)[0] for model in models]
+        self.assertEqual(prefixes, ["Flagship"] * 5 + ["Balanced"] * 5 + ["Efficient"] * 3)
+        default_model = next(model for model in models if model["id"] == "Qwen/Qwen3.5-27B")
+        self.assertIn("off", default_model["reasoningEfforts"])
+        self.assertNotIn(False, default_model["reasoningEfforts"])
+
     def test_django_deploy_syncs_dsh_sidecar_when_it_changes(self):
         workflow = (self.repo_root / ".github" / "workflows" / "deploy.yml").read_text(
             encoding="utf-8"
@@ -905,6 +1017,11 @@ class DshBrandingTests(SimpleTestCase):
             copied = dest / "branding" / "logo.svg"
             self.assertTrue((dest / "apply-brand.sh").is_file())
             self.assertTrue((dest / "plugins" / "imc-brand" / "index.js").is_file())
+            sort_skill = dest / "skills" / "checklist-file-sort" / "SKILL.md"
+            self.assertTrue(sort_skill.is_file())
+            from checklists_app.sort_service import SORT_SKILL_VERSION
+
+            self.assertIn(f"version: {SORT_SKILL_VERSION}", sort_skill.read_text(encoding="utf-8"))
             self.assertTrue(copied.is_file())
             self.assertEqual(
                 copied.read_bytes(),
@@ -923,4 +1040,68 @@ class DshBrandingTests(SimpleTestCase):
             )
             self.assertEqual(again.returncode, 0, again.stderr)
             self.assertIn("SIDECAR_CHANGED=0", again.stdout)
+
+
+class DshCatalogTests(SimpleTestCase):
+    def test_lists_bundled_skills_and_models(self):
+        from core.dsh_catalog import list_dsh_models, list_dsh_skills
+
+        skills = dict(list_dsh_skills())
+        self.assertIn("checklist-file-sort", skills)
+        self.assertIn("checklist-file-verify", skills)
+        models = dict(list_dsh_models())
+        self.assertIn("Qwen/Qwen3.5-27B", models)
+        self.assertTrue(models["Qwen/Qwen3.5-27B"])
+
+    def test_prefers_dsh_home_skills_and_settings(self):
+        from core.dsh_catalog import list_dsh_models, list_dsh_skills
+
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            skill_dir = home / "skills" / "custom-check"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: custom-check\n---\n\n# custom-check\n",
+                encoding="utf-8",
+            )
+            (home / "settings.yaml").write_text(
+                "llm-pi-ai:\n  providers:\n    test:\n      models:\n"
+                "        - id: test/model-1\n          name: Test Model\n",
+                encoding="utf-8",
+            )
+            with override_settings(DSH_HOME=str(home)):
+                skills = dict(list_dsh_skills())
+                self.assertIn("custom-check", skills)
+                self.assertIn("checklist-file-sort", skills)
+                models = dict(list_dsh_models())
+                self.assertEqual(models, {"test/model-1": "Test Model"})
+
+    def test_groups_models_by_provider_display_name(self):
+        from core.dsh_catalog import list_dsh_model_groups, list_dsh_models
+
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            (home / "settings.yaml").write_text(
+                "llm-pi-ai:\n  providers:\n"
+                "    siliconflow:\n      displayName: SiliconFlow\n      models:\n"
+                "        - id: sf/model-a\n          name: Model A\n"
+                "    openrouter:\n      displayName: OpenRouter\n      models:\n"
+                "        - id: or/model-b\n          name: Model B\n"
+                "    empty:\n      displayName: Empty\n",
+                encoding="utf-8",
+            )
+            with override_settings(DSH_HOME=str(home)):
+                groups = list_dsh_model_groups()
+                self.assertEqual(
+                    groups,
+                    [
+                        ("SiliconFlow", [("sf/model-a", "Model A")]),
+                        ("OpenRouter", [("or/model-b", "Model B")]),
+                    ],
+                )
+                self.assertEqual(
+                    list_dsh_models(),
+                    [("sf/model-a", "Model A"), ("or/model-b", "Model B")],
+                )
+
 

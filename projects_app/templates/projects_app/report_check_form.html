@@ -1,0 +1,165 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'report_check_form_create' %}"
+    {% else %}
+      hx-post="{% url 'report_check_form_edit' rule.pk %}"
+    {% endif %}
+    hx-target="#performers-modal .modal-content"
+    hx-swap="innerHTML"
+    hx-on::after-request="if (event.detail.xhr.status === 204) { window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('performers-modal'))?.hide(); }">
+  {% csrf_token %}
+  <div class="modal-body">
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="{{ form.product.id_for_label }}">Продукты</label>
+        {{ form.product }}
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label" for="{{ form.section.id_for_label }}">Разделы</label>
+        {{ form.section }}
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.check_type.id_for_label }}">Тип проверки</label>
+        {{ form.check_type }}
+      </div>
+      <div class="col-md-4 mb-3 js-report-check-skill-fields">
+        <label class="form-label" for="{{ form.check_value.id_for_label }}">Проверка</label>
+        {{ form.check_value }}
+      </div>
+      <div class="col-md-4 mb-3 js-report-check-skill-fields">
+        <label class="form-label" for="{{ form.model_id.id_for_label }}">Модель</label>
+        {{ form.model_id }}
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.finding_threshold.id_for_label }}">Пороговое число замечаний</label>
+        {{ form.finding_threshold }}
+        {{ form.finding_threshold.errors }}
+      </div>
+    </div>
+    <div class="mb-3 js-report-check-macro-fields">
+      <label class="form-label">Макросы</label>
+      {% for macro in macros_list %}
+        <div class="form-check">
+          <input class="form-check-input"
+                 type="checkbox"
+                 name="macros"
+                 value="{{ macro.pk }}"
+                 id="report-check-macro-{{ macro.pk }}"
+                 {% if macro.pk|stringformat:"s" in selected_macro_ids %}checked{% endif %}>
+          <label class="form-check-label" for="report-check-macro-{{ macro.pk }}">
+            {{ macro.name }}
+            {% if macro.description %}<span class="text-muted">— {{ macro.description }}</span>{% endif %}
+          </label>
+        </div>
+      {% empty %}
+        <div class="text-muted">Сначала добавьте макросы в таблицу «Макросы».</div>
+      {% endfor %}
+      {{ form.macros.errors }}
+    </div>
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">Проверьте введённые данные.</div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+{{ sections_payload|json_script:"report-check-sections-json" }}
+{{ skill_choices|json_script:"report-check-skills-json" }}
+<script>
+(function(){
+  const modal = document.currentScript.closest('.modal-content');
+  const form = modal?.querySelector('form');
+  if (!form) return;
+
+  function readJson(id, fallback) {
+    const el = modal.querySelector(id);
+    if (!el) return fallback;
+    try { return JSON.parse(el.textContent || 'null') || fallback; }
+    catch (e) { return fallback; }
+  }
+
+  const sections = readJson('#report-check-sections-json', []);
+  const skills = readJson('#report-check-skills-json', []);
+  const productSel = form.querySelector('select[name="product"]');
+  const sectionSel = form.querySelector('select[name="section"]');
+  const typeSel = form.querySelector('select[name="check_type"]');
+  const checkSel = form.querySelector('select[name="check_value"]');
+  const skillFields = form.querySelectorAll('.js-report-check-skill-fields');
+  const macroFields = form.querySelector('.js-report-check-macro-fields');
+
+  function fillSelect(select, items, current, emptyLabel) {
+    if (!select) return;
+    const value = current == null ? select.value : String(current);
+    select.innerHTML = '';
+    if (emptyLabel != null) {
+      const all = document.createElement('option');
+      all.value = '';
+      all.textContent = emptyLabel;
+      select.appendChild(all);
+    }
+    items.forEach(function(item) {
+      const opt = document.createElement('option');
+      opt.value = String(item.value);
+      opt.textContent = item.label;
+      if (item.productId) opt.dataset.productId = String(item.productId);
+      select.appendChild(opt);
+    });
+    const exists = Array.from(select.options).some(function(opt) { return opt.value === value; });
+    select.value = exists ? value : (select.options[0] ? select.options[0].value : '');
+  }
+
+  function syncSections() {
+    const productId = productSel?.value || '';
+    const filtered = sections.filter(function(section) {
+      return !productId || String(section.product_id) === String(productId);
+    }).map(function(section) {
+      return { value: section.id, label: section.label, productId: section.product_id };
+    });
+    fillSelect(sectionSel, [
+      { value: '__full__', label: 'Весь отчет' },
+      { value: '', label: 'Все разделы' }
+    ].concat(filtered), null);
+  }
+
+  function syncCheckValue() {
+    const type = typeSel?.value || 'skill';
+    const isMacro = type === 'macro';
+    skillFields.forEach(function(el) {
+      el.classList.toggle('d-none', isMacro);
+      el.querySelectorAll('select, input, textarea').forEach(function(input) {
+        input.disabled = isMacro;
+      });
+    });
+    if (macroFields) {
+      macroFields.classList.toggle('d-none', !isMacro);
+      macroFields.querySelectorAll('input').forEach(function(input) {
+        input.disabled = !isMacro;
+      });
+    }
+    if (isMacro) return;
+    const items = (skills || []).map(function(pair) {
+      return { value: pair[0], label: pair[1] };
+    });
+    fillSelect(checkSel, items, null);
+  }
+
+  productSel?.addEventListener('change', syncSections);
+  typeSel?.addEventListener('change', syncCheckValue);
+  syncSections();
+  syncCheckValue();
+})();
+</script>

@@ -423,6 +423,10 @@
                 Запрос информации
               </a>
               <a href="#" class="list-group-item list-group-item-action"
+                 data-projects-section="report-submission">
+                Сдача отчетов
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
                  data-projects-section="performer-payments">
                 Платежи исполнителям
               </a>
@@ -435,7 +439,7 @@
                 <div class="d-flex align-items-center gap-3">
                   <h5 class="mb-0 ps-3 fs-4 pt-2" id="projects-section-title">Проекты</h5>
                   <div class="dropdown pt-1" id="master-project-filter-dropdown" style="transform: translateY(3px);">
-                    <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
+                    <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
                             id="master-project-filter-toggle" data-bs-toggle="dropdown" data-bs-display="static" data-bs-auto-close="outside" aria-expanded="false">
                       Проекты: <span class="js-master-filter-label">Все</span>
                     </button>
@@ -1948,6 +1952,7 @@
             'scope': 'Определение границ проекта',
             'team': 'Формирование команды',
             'info-request': 'Запрос информации',
+            'report-submission': 'Сдача отчетов',
             'performer-payments': 'Платежи исполнителям',
           };
           var DEFAULT_PROJECTS_SECTION = 'launch';

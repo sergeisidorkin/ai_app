@@ -47,6 +47,14 @@ if not DSH_SORT_LOCAL_ROOTS:
         str(Path.home() / "Desktop" / "Workspace"),
         str(BASE_DIR / "tmp"),
     )
+REPORT_CHECK_ALLOW_LOCAL_FOLDER = True
+if not REPORT_CHECK_LOCAL_ROOTS:
+    REPORT_CHECK_LOCAL_ROOTS = (
+        str(Path.home()),
+        str(BASE_DIR),
+        "/tmp",
+        "/private/tmp",
+    )
 
 # WhiteNoise в dev, чтобы статика работала под Daphne
 WHITENOISE_AUTOREFRESH = True       # авто-перечитывать файлы без collectstatic

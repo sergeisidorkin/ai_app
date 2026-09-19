@@ -346,12 +346,18 @@
         return run && (run.status === 'queued' || run.status === 'running');
     }
 
+    function isStoredBusy(run) {
+        if (!run) return false;
+        const status = run.stored_status || run.status;
+        return status === 'queued' || status === 'running';
+    }
+
     function anyVerifying(run) {
         return Boolean(run && (run.proposals || []).some((row) => row && row.verifying));
     }
 
-    function anyBusy(currentGroups) {
-        return (currentGroups || groups).some((group) => isBusy(group.run) || anyVerifying(group.run));
+    function anyPollable(currentGroups) {
+        return (currentGroups || groups).some((group) => isStoredBusy(group.run) || anyVerifying(group.run));
     }
 
     function proposalActionLabel(action) {
@@ -458,7 +464,14 @@
     }
 
     function buttonLabel(run) {
-        if (isBusy(run)) return 'Выполняется';
+        if (run && run.status === 'queued') return 'В очереди';
+        if (run && run.status === 'running') {
+            const progress = run.progress || {};
+            const done = Number(progress.chunks_done || 0);
+            const total = Number(progress.chunks_total || 0);
+            const current = total > 0 ? Math.min(done + 1, total) : 0;
+            return current > 0 ? `Выполняется ${current}/${total}` : 'Выполняется';
+        }
         if (anyVerifying(run)) return 'Проверка…';
         return 'Распределить';
     }
@@ -497,20 +510,23 @@
     function renderGroupBody(group) {
         const run = group.run;
         if (!run) return '';
-        if (run.status === 'error') {
-            return renderMessageRow(`<div class="alert alert-warning mb-0">${escapeHtml(run.error_message || 'Ошибка сортировки.')}</div>`);
-        }
         const rows = run.proposals || [];
+        const warning = run.error_message
+            ? renderMessageRow(`<div class="alert alert-warning mb-0">${escapeHtml(run.error_message)}</div>`)
+            : '';
+        if (run.status === 'error' && !rows.length) {
+            return warning || renderMessageRow('<div class="alert alert-warning mb-0">Ошибка сортировки.</div>');
+        }
         if (!rows.length) {
             if (run.status === 'done') {
-                return renderMessageRow('<span class="text-muted">Комплекты не найдены.</span>');
+                return warning + renderMessageRow('<span class="text-muted">Комплекты не найдены.</span>');
             }
             if (isBusy(run)) {
                 return renderMessageRow('<span class="text-muted">Ожидание результата…</span>');
             }
-            return '';
+            return warning;
         }
-        return groupProposalRows(rows).map(renderProposalGroup).join('');
+        return warning + groupProposalRows(rows).map(renderProposalGroup).join('');
     }
 
     function renderGroups(nextGroups) {
@@ -524,7 +540,24 @@
             .find((text) => text);
         if (verifyError) setStatus(verifyError, true);
         else if (verifyingRows.length) setStatus('Проверка файлов… обычно занимает 1–2 минуты.');
-        else setStatus('');
+        else {
+            const busyGroup = groups.find((group) => isBusy(group.run));
+            if (busyGroup && busyGroup.run.status === 'queued') {
+                setStatus('Прогон ожидает свободный worker.');
+            } else if (busyGroup) {
+                const progress = busyGroup.run.progress || {};
+                const chunksDone = Number(progress.chunks_done || 0);
+                const chunksTotal = Number(progress.chunks_total || 0);
+                const currentChunk = chunksTotal > 0 ? Math.min(chunksDone + 1, chunksTotal) : 0;
+                const kitsDone = Number(progress.kits_done || 0);
+                const kitsTotal = Number(progress.kits_total || 0);
+                setStatus(currentChunk > 0
+                    ? `Выполняется чанк ${currentChunk}/${chunksTotal}. Обработано комплектов: ${kitsDone} из ${kitsTotal}.`
+                    : 'Подготовка workspace и инвентаря…');
+            } else {
+                setStatus('');
+            }
+        }
         if (!groups.length) {
             setTableHtml('<div class="text-muted small">Выберите проект и раздел.</div>');
             return;
@@ -614,7 +647,7 @@
             const data = await readJson(resp);
             if (resp.status === 409 && data.run) {
                 mergeRun(data.run);
-                if (anyBusy()) startPolling();
+                if (anyPollable()) startPolling();
                 return;
             }
             if (!resp.ok) {
@@ -622,7 +655,7 @@
             }
             mergeRun(data.run);
             if (data.origin_run) mergeRun(data.origin_run);
-            if (anyBusy()) startPolling();
+            if (anyPollable()) startPolling();
             else await loadLatest();
         } catch (err) {
             if (err && err.name === 'AbortError') {
@@ -655,7 +688,7 @@
 
     function stopPolling() {
         if (pollTimer) {
-            window.clearInterval(pollTimer);
+            window.clearTimeout(pollTimer);
             pollTimer = null;
         }
     }
@@ -700,22 +733,34 @@
     function startPolling() {
         stopPolling();
         let pollInFlight = false;
+        let failures = 0;
+        let delay = 2000;
         const tick = async () => {
             if (pollInFlight) return;
             pollInFlight = true;
             try {
                 const next = await fetchGroups();
                 renderGroups(next);
-                if (!anyBusy(next)) stopPolling();
+                failures = 0;
+                delay = 2000;
+                if (!anyPollable(next)) {
+                    stopPolling();
+                    return;
+                }
             } catch (err) {
-                stopPolling();
-                setTableHtml(`<div class="alert alert-warning mb-0">${escapeHtml(err.message || err)}</div>`);
+                failures += 1;
+                delay = Math.min(delay * 2, 15000);
+                setStatus(`Не удалось обновить статус: ${err.message || err}. Повтор ${failures}/5.`, true);
+                if (failures >= 5) {
+                    stopPolling();
+                    return;
+                }
             } finally {
                 pollInFlight = false;
             }
+            pollTimer = window.setTimeout(tick, delay);
         };
         tick();
-        pollTimer = window.setInterval(tick, 2000);
     }
 
     function fillSelect(select, items, valueKey, labelKey, selected) {
@@ -801,7 +846,7 @@
         try {
             const next = await fetchGroups();
             renderGroups(next);
-            if (anyBusy(next)) startPolling();
+            if (anyPollable(next)) startPolling();
             else stopPolling();
         } catch (err) {
             setTableHtml(`<div class="alert alert-warning mb-0">${escapeHtml(err.message || err)}</div>`);
@@ -863,7 +908,7 @@
                 throw new Error(data.error || 'Не удалось запустить сортировку.');
             }
             mergeRun(data.run);
-            if (anyBusy()) startPolling();
+            if (anyPollable()) startPolling();
         } catch (err) {
             const sid = String(sectionId);
             groups = groups.map((group) => {

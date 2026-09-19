@@ -20,7 +20,6 @@ from .sort_service import (
 from .sort_verify import (
     VerifyConflict,
     VerifyError,
-    adopt_cross_section_proposals,
     start_verify_proposal,
 )
 from .views import _project_meta, _project_options, _resolve_asset_name, _resolve_section
@@ -64,7 +63,6 @@ def _section_groups(project, resolved_asset, section_id):
             sections_meta = match
         else:
             sections_meta = [{"id": section.id, "name": section_label(section)}]
-    adopt_cross_section_proposals(project, asset)
     runs_map = latest_runs_for_sections(
         project,
         [row["id"] for row in sections_meta],

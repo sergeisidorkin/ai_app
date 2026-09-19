@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.DOTALL | re.IGNORECASE)
 _FENCE_OBJECT_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
@@ -64,7 +65,7 @@ def _clean_dest(value):
 
 
 def _kit_key(kit):
-    return _clean_cell(kit).rstrip("/").casefold()
+    return unicodedata.normalize("NFC", _clean_cell(kit)).rstrip("/").casefold()
 
 
 def dest_leaf_name(path):
@@ -105,6 +106,8 @@ def dest_is_item_folder(path):
 
 def normalize_proposal_action(confidence, dest_path, action=""):
     cleaned = _clean_cell(action).lower()
+    if cleaned == "ignore":
+        return "ignore"
     if cleaned not in {"move", "review", "confirm"}:
         cleaned = "review"
     if not dest_is_item_folder(dest_path):
@@ -226,6 +229,7 @@ def decorate_dest_rows(rows, item_folders, section_folder=""):
 def _row_from_mapping(item, position):
     if not isinstance(item, dict):
         return None
+    kit_id = _clean_cell(item.get("id") or item.get("kit_id") or "")
     kit = _clean_cell(
         item.get("kit")
         or item.get("kit_path")
@@ -233,7 +237,7 @@ def _row_from_mapping(item, position):
         or item.get("inbox")
         or ""
     )
-    if not kit or kit.startswith("-"):
+    if (not kit and not kit_id) or kit.startswith("-"):
         return None
     dest = _clean_dest(item.get("dest") or item.get("dest_path") or item.get("папка dest") or "")
     if _KIT_ID_RE.fullmatch(kit):
@@ -241,6 +245,7 @@ def _row_from_mapping(item, position):
     confidence = _clean_cell(item.get("confidence") or item.get("уверенность") or "")
     action = _clean_cell(item.get("action") or item.get("действие") or "review").lower()
     return {
+        "kit_id": kit_id,
         "kit_path": kit,
         "file_count": _parse_file_count(item.get("files") or item.get("file_count") or item.get("файлов") or 0),
         "dest_path": dest,
@@ -254,20 +259,19 @@ def _row_from_mapping(item, position):
 
 def parse_json_proposals(text):
     payload = str(text or "")
+    decoder = json.JSONDecoder()
     candidates = []
-    for match in _FENCE_RE.finditer(payload):
-        candidates.append(match.group(1))
-    if not candidates:
-        match = _JSON_ARRAY_RE.search(payload)
-        if match:
-            candidates.append(match.group(0))
-    for raw in candidates:
+    index = payload.find("[")
+    while index != -1:
         try:
-            parsed = json.loads(raw)
+            parsed, end = decoder.raw_decode(payload, index)
         except json.JSONDecodeError:
+            index = payload.find("[", index + 1)
             continue
-        if not isinstance(parsed, list):
-            continue
+        if isinstance(parsed, list):
+            candidates.append(parsed)
+        index = payload.find("[", max(end, index + 1))
+    for parsed in reversed(candidates):
         rows = []
         for index, item in enumerate(parsed, start=1):
             row = _row_from_mapping(item, index)
@@ -276,6 +280,22 @@ def parse_json_proposals(text):
         if rows:
             return rows
     return []
+
+
+def contains_complete_json_array(text):
+    payload = str(text or "")
+    decoder = json.JSONDecoder()
+    index = payload.find("[")
+    while index != -1:
+        try:
+            parsed, _ = decoder.raw_decode(payload, index)
+        except json.JSONDecodeError:
+            index = payload.find("[", index + 1)
+            continue
+        if isinstance(parsed, list):
+            return True
+        index = payload.find("[", index + 1)
+    return False
 
 
 def parse_markdown_table(text):

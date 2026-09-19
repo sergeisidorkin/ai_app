@@ -7,14 +7,19 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db import close_old_connections
-from django.db.models import Max
+from django.db import close_old_connections, transaction
+from django.db.models import Max, Q
 from django.utils import timezone
 
 from core.cloud_storage import CloudStorageNotReadyError, download_file
 from core.dsh_run import DshRunError, run_headless
 
-from .models import ChecklistItem, ChecklistSortProposal, ChecklistSortRun
+from .models import (
+    ChecklistItem,
+    ChecklistSortProposal,
+    ChecklistSortRun,
+    ChecklistSortWorkerState,
+)
 from .sort_parse import (
     dest_code_nn,
     dest_leaf_name,
@@ -325,6 +330,7 @@ def _select_prompt(run, proposal, files_rel):
         "Укажи до трёх путей из списка, которые отличают пункты dest этого раздела.\n"
         "Выведи JSON-объект: {\"peek\": [\"rel/path\"], \"reason\": \"...\"}.\n"
         "Только пути из списка. Не больше трёх. Пропущенные (skipped) не бери.\n"
+        "/no_think\n"
     )
 
 
@@ -352,6 +358,7 @@ def _classify_prompt(run, proposal, peek_rel):
         "в текущей гипотезе.\n"
         "Цитата из документа нужна для себя, в JSON её не клади.\n"
         f"kit оставь {proposal.kit_path}.\n"
+        "/no_think\n"
     )
 
 
@@ -388,7 +395,10 @@ def ensure_host_run(source_run, target_section, user=None):
     if active and active.pk != source_run.pk:
         raise VerifyConflict("Сортировка раздела назначения ещё выполняется.")
     latest = latest_run_for(project, target_section, asset)
-    if latest and latest.status == ChecklistSortRun.Status.DONE:
+    if latest and latest.status in {
+        ChecklistSortRun.Status.DONE,
+        ChecklistSortRun.Status.PARTIAL,
+    }:
         return latest
     now = timezone.now()
     return ChecklistSortRun.objects.create(
@@ -429,7 +439,10 @@ def adopt_cross_section_proposals(project, asset_name="", user=None):
         ChecklistSortProposal.objects.filter(
             run__project=project,
             run__asset_name=asset,
-            run__status=ChecklistSortRun.Status.DONE,
+            run__status__in=[
+                ChecklistSortRun.Status.DONE,
+                ChecklistSortRun.Status.PARTIAL,
+            ],
         )
         .exclude(kit_path="")
         .select_related("run", "run__project", "run__section")
@@ -485,6 +498,9 @@ def apply_classify_row(proposal, row, user=None):
     proposal.verify_status = ""
     proposal.verify_error = ""
     proposal.verify_started_at = None
+    proposal.verify_heartbeat_at = None
+    proposal.verify_lease_expires_at = None
+    proposal.verify_worker_id = ""
     proposal.save(update_fields=[
         "dest_path",
         "confidence",
@@ -494,6 +510,9 @@ def apply_classify_row(proposal, row, user=None):
         "verify_status",
         "verify_error",
         "verify_started_at",
+        "verify_heartbeat_at",
+        "verify_lease_expires_at",
+        "verify_worker_id",
         *extra_fields,
     ])
 
@@ -503,51 +522,92 @@ def _verify_timeout_seconds():
 
 
 def _verify_stale_seconds():
-    return max((_verify_timeout_seconds() * 3) + 300, 900)
+    lease = int(getattr(settings, "DSH_SORT_WORKER_LEASE_SECONDS", 120) or 120)
+    return max((_verify_timeout_seconds() * 3) + 300, lease * 3)
+
+
+def _verify_lease_deadline():
+    seconds = max(int(getattr(settings, "DSH_SORT_WORKER_LEASE_SECONDS", 120) or 120), 30)
+    return timezone.now() + timedelta(seconds=seconds)
+
+
+def renew_verify_lease(proposal_id, worker_id):
+    now = timezone.now()
+    renewed = ChecklistSortProposal.objects.filter(
+        pk=proposal_id,
+        verify_status="running",
+        verify_worker_id=worker_id,
+    ).update(
+        verify_heartbeat_at=now,
+        verify_lease_expires_at=_verify_lease_deadline(),
+    ) == 1
+    if renewed:
+        ChecklistSortWorkerState.objects.filter(pk="default", worker_id=worker_id).update(
+            heartbeat_at=now,
+        )
+    return renewed
 
 
 def _fail_verify(proposal, message):
     proposal.verify_status = "error"
     proposal.verify_error = str(message)
     proposal.verify_started_at = None
-    proposal.save(update_fields=["verify_status", "verify_error", "verify_started_at"])
+    proposal.verify_heartbeat_at = None
+    proposal.verify_lease_expires_at = None
+    proposal.verify_worker_id = ""
+    proposal.save(update_fields=[
+        "verify_status",
+        "verify_error",
+        "verify_started_at",
+        "verify_heartbeat_at",
+        "verify_lease_expires_at",
+        "verify_worker_id",
+    ])
 
 
 def reclaim_stale_verifies(run_id=None):
     qs = ChecklistSortProposal.objects.filter(verify_status="running")
     if run_id is not None:
         qs = qs.filter(run_id=run_id)
-    rows = list(qs.only("id", "verify_started_at"))
-    if not rows:
-        return 0
     now = timezone.now()
-    stale_limit = timedelta(seconds=_verify_stale_seconds())
-    stale_ids = []
-    for row in rows:
-        started = row.verify_started_at
-        if started is None or (now - started) > stale_limit:
-            stale_ids.append(row.id)
-    if not stale_ids:
-        return 0
-    return ChecklistSortProposal.objects.filter(pk__in=stale_ids).update(
+    stale_cutoff = now - timedelta(seconds=_verify_stale_seconds())
+    return qs.filter(
+        Q(verify_lease_expires_at__lt=now)
+        | Q(verify_lease_expires_at__isnull=True, verify_started_at__lt=stale_cutoff)
+        | Q(verify_started_at__isnull=True)
+    ).update(
         verify_status="error",
         verify_error=STALE_RUNNING_MESSAGE,
         verify_started_at=None,
+        verify_heartbeat_at=None,
+        verify_lease_expires_at=None,
+        verify_worker_id="",
     )
 
 
-def execute_verify_proposal(proposal_id, user=None, *, close_connections=False):
+def execute_verify_proposal(
+    proposal_id,
+    user=None,
+    *,
+    close_connections=False,
+    worker_id=None,
+):
     if close_connections:
         close_old_connections()
     proposal = None
     run = None
     try:
+        identity = worker_id or f"inline:{os.getpid()}"
+        now = timezone.now()
         claimed = ChecklistSortProposal.objects.filter(
             pk=proposal_id,
             verify_status="queued",
         ).update(
             verify_status="running",
-            verify_started_at=timezone.now(),
+            verify_started_at=now,
+            verify_heartbeat_at=now,
+            verify_lease_expires_at=_verify_lease_deadline(),
+            verify_worker_id=identity,
         )
         if not claimed:
             return False
@@ -588,6 +648,7 @@ def execute_verify_proposal(proposal_id, user=None, *, close_connections=False):
                 _select_prompt(run, proposal, files_rel),
                 cwd=run.workspace_path,
                 timeout=timeout,
+                heartbeat=lambda: renew_verify_lease(proposal.id, identity),
             )
             selected = accept_peek_paths(
                 parse_verify_select_response(output),
@@ -600,6 +661,7 @@ def execute_verify_proposal(proposal_id, user=None, *, close_connections=False):
         budget = MAX_PEEK_CHARS
         copies = work / "files"
         for rel in selected:
+            renew_verify_lease(proposal.id, identity)
             dest = copies / Path(rel)
             data = _download_selected_file(run, user, kit_path, rel, dest)
             text = extract_text_from_bytes(rel, data, budget=budget)
@@ -612,6 +674,7 @@ def execute_verify_proposal(proposal_id, user=None, *, close_connections=False):
             _classify_prompt(run, proposal, peek_rel),
             cwd=run.workspace_path,
             timeout=timeout,
+            heartbeat=lambda: renew_verify_lease(proposal.id, identity),
         )
         row = parse_verify_classify_response(classified, kit_path=proposal.kit_path)
         if row is None:
@@ -638,39 +701,50 @@ def execute_verify_proposal(proposal_id, user=None, *, close_connections=False):
 
 def start_verify_proposal(*, proposal, user):
     run = proposal.run
-    if run.status in {ChecklistSortRun.Status.QUEUED, ChecklistSortRun.Status.RUNNING}:
-        raise VerifyConflict("Сортировка этого раздела ещё выполняется.")
-    if run.status != ChecklistSortRun.Status.DONE:
-        raise VerifyError("Проверить можно только после завершённого «Распределить».")
     if not (proposal.kit_path or "").strip():
         raise VerifyError("Нет комплекта для проверки.")
     if (proposal.action or "").lower() != "review":
         raise VerifyError("Проверка доступна только для строк «Проверить».")
-    reclaim_stale_verifies(run_id=run.pk)
-    proposal.refresh_from_db()
-    if proposal.verify_status in {"queued", "running"}:
-        raise VerifyConflict("Эта строка уже проверяется.")
-    from .sort_service import active_run_for
-
-    active = active_run_for(run.project, run.section, run.asset_name)
-    if active and active.pk != run.pk:
-        raise VerifyConflict("Сортировка этого раздела уже выполняется.")
     if not (getattr(settings, "DSH_HEADLESS_CMD", "") or "").strip():
         raise VerifyError(
             "DSH для сортировки не настроен. Локально запустите ./scripts/dev_dsh.sh; "
             "на проде задайте DSH_HEADLESS_CMD из deploy/dsh/prod.env.dsh.example."
         )
 
-    proposal.verify_status = "queued"
-    proposal.verify_error = ""
-    proposal.verify_started_at = None
-    proposal.verify_started_by = user
-    proposal.save(update_fields=[
-        "verify_status",
-        "verify_error",
-        "verify_started_at",
-        "verify_started_by",
-    ])
+    from .sort_service import active_run_for, lock_sort_scope
+
+    with transaction.atomic():
+        lock_sort_scope(run.project, run.section, run.asset_name)
+        run = ChecklistSortRun.objects.select_for_update().get(pk=run.pk)
+        proposal = ChecklistSortProposal.objects.select_for_update().get(pk=proposal.pk)
+        if run.status in {ChecklistSortRun.Status.QUEUED, ChecklistSortRun.Status.RUNNING}:
+            raise VerifyConflict("Сортировка этого раздела ещё выполняется.")
+        if run.status not in {ChecklistSortRun.Status.DONE, ChecklistSortRun.Status.PARTIAL}:
+            raise VerifyError("Проверить можно только после завершённого «Распределить».")
+        reclaim_stale_verifies(run_id=run.pk)
+        proposal.refresh_from_db()
+        if proposal.verify_status in {"queued", "running"}:
+            raise VerifyConflict("Эта строка уже проверяется.")
+        active = active_run_for(run.project, run.section, run.asset_name)
+        if active and active.pk != run.pk:
+            raise VerifyConflict("Сортировка этого раздела уже выполняется.")
+
+        proposal.verify_status = "queued"
+        proposal.verify_error = ""
+        proposal.verify_started_at = None
+        proposal.verify_heartbeat_at = None
+        proposal.verify_lease_expires_at = None
+        proposal.verify_worker_id = ""
+        proposal.verify_started_by = user
+        proposal.save(update_fields=[
+            "verify_status",
+            "verify_error",
+            "verify_started_at",
+            "verify_heartbeat_at",
+            "verify_lease_expires_at",
+            "verify_worker_id",
+            "verify_started_by",
+        ])
 
     inline = bool(getattr(settings, "DSH_SORT_INLINE", False))
     if inline:

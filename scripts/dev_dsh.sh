@@ -9,6 +9,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA_DIR="${DSH_DATA_DIR:-$ROOT/deploy/dsh/data}"
 HOME_DIR="$DATA_DIR/home"
 WORKSPACE_DIR="$DATA_DIR/workspace"
+WEB_WORKSPACE_DIR="${DSH_WEB_WORKSPACE:-$DATA_DIR/web-workspace}"
 SKILLS_DIR="$DATA_DIR/skills"
 NPM_PREFIX="$DATA_DIR/npm"
 LAUNCH_FILE="$DATA_DIR/web-launch.url"
@@ -18,7 +19,7 @@ PORT="${DSH_LOCAL_PORT:-3080}"
 VERSION="${DSH_VERSION:-0.1.5-rc.1}"
 DSH_BIN="$NPM_PREFIX/node_modules/.bin/dsh"
 
-mkdir -p "$HOME_DIR" "$WORKSPACE_DIR" "$SKILLS_DIR"
+mkdir -p "$HOME_DIR" "$WORKSPACE_DIR" "$WEB_WORKSPACE_DIR" "$SKILLS_DIR"
 
 REPO_SKILLS="$ROOT/deploy/dsh/skills"
 if [[ -d "$REPO_SKILLS" ]]; then
@@ -55,6 +56,91 @@ apply_web_brand() {
     return 1
   fi
 }
+
+load_dsh_api_key() {
+  local name="$1"
+  local env_file="$ROOT/deploy/dsh/dsh.env"
+  if [[ -n "${!name:-}" || ! -f "$env_file" ]]; then
+    return 0
+  fi
+  local value
+  value="$(grep -E "^${name}=" "$env_file" | tail -1 | cut -d= -f2- || true)"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  if [[ -n "$value" ]]; then
+    export "${name}=${value}"
+  fi
+}
+
+configure_siliconflow_model() {
+  local settings_file="$HOME_DIR/settings.yaml"
+  local credentials_file="$HOME_DIR/.credentials.yaml"
+  local example_file="$ROOT/deploy/dsh/settings.yaml.example"
+  local yaml_python="$ROOT/.venv/bin/python"
+  if [[ ! -x "$yaml_python" ]]; then
+    yaml_python="$(command -v python3)"
+  fi
+  local activate_default=0
+  if [[ -n "${SILICONFLOW_API_KEY:-}" ]] || grep -qE '^[[:space:]]*SILICONFLOW_API_KEY:' "$credentials_file" 2>/dev/null; then
+    activate_default=1
+  fi
+  "$yaml_python" - "$settings_file" "$activate_default" "$example_file" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+activate_default = sys.argv[2] == "1"
+example_path = Path(sys.argv[3])
+def restore_yaml_off_keys(value):
+    if isinstance(value, dict):
+        return {
+            ("off" if key is False else key): restore_yaml_off_keys(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [restore_yaml_off_keys(item) for item in value]
+    return value
+
+example = restore_yaml_off_keys(yaml.safe_load(example_path.read_text(encoding="utf-8")) or {})
+siliconflow = (
+    (example.get("llm-pi-ai") or {}).get("providers") or {}
+).get("siliconflow")
+if not siliconflow:
+    raise SystemExit(f"siliconflow provider missing from {example_path}")
+try:
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+except FileNotFoundError:
+    payload = {}
+providers = payload.setdefault("llm-pi-ai", {}).setdefault("providers", {})
+providers["siliconflow"] = siliconflow
+if activate_default:
+    payload["agent-default-model"] = example.get("agent-default-model") or {
+        "provider": "siliconflow",
+        "model": "Qwen/Qwen3.5-27B",
+    }
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(
+    yaml.safe_dump(payload, allow_unicode=True, sort_keys=False, width=120),
+    encoding="utf-8",
+)
+PY
+  if [[ "$activate_default" -eq 1 ]]; then
+    echo "[dsh] local default model: SiliconFlow / Qwen3.5-27B"
+  else
+    echo "[dsh] SiliconFlow catalog registered; default unchanged until SILICONFLOW_API_KEY is configured"
+  fi
+}
+
+load_dsh_api_key OPENROUTER_API_KEY
+load_dsh_api_key SILICONFLOW_API_KEY
+load_dsh_api_key DEEPSEEK_API_KEY
+load_dsh_api_key DASHSCOPE_API_KEY
+load_dsh_api_key OLLAMA_API_KEY
+configure_siliconflow_model
 
 if [[ "$(dsh_http_code)" =~ ^(200|401|302|403)$ ]]; then
   echo "[dsh] already listening on http://${HOST}:${PORT}"
@@ -118,33 +204,11 @@ export DSH_HOME="$HOME_DIR"
 export DSH_BRANDING_DIR="$ROOT/deploy/dsh/branding"
 export DSH_BRAND_LOGO_SOURCE="$ROOT/core/static/core/icons/favicon.svg"
 
-load_dsh_api_key() {
-  local name="$1"
-  local env_file="$ROOT/deploy/dsh/dsh.env"
-  if [[ -n "${!name:-}" || ! -f "$env_file" ]]; then
-    return 0
-  fi
-  local value
-  value="$(grep -E "^${name}=" "$env_file" | tail -1 | cut -d= -f2- || true)"
-  value="${value%\"}"
-  value="${value#\"}"
-  value="${value%\'}"
-  value="${value#\'}"
-  if [[ -n "$value" ]]; then
-    export "${name}=${value}"
-  fi
-}
-
-load_dsh_api_key OPENROUTER_API_KEY
-load_dsh_api_key DEEPSEEK_API_KEY
-load_dsh_api_key DASHSCOPE_API_KEY
-load_dsh_api_key OLLAMA_API_KEY
-
 if ! apply_web_brand; then
   fail_soft "web branding failed"
 fi
 
-cd "$WORKSPACE_DIR"
+cd "$WEB_WORKSPACE_DIR"
 write_plain_launch_url
 
 : > "$LOG_FILE"
@@ -191,8 +255,10 @@ if [[ "$ready" -ne 1 ]]; then
   fail_soft "timed out waiting for http://${HOST}:${PORT}/"
 fi
 
+set +e
 wait "$pid"
 status=$?
+set -e
 trap - EXIT INT TERM
 if [[ "$stop_from_honcho" -eq 1 ]]; then
   exit 0

@@ -1526,6 +1526,18 @@ class PerformerParticipationSnapshot(models.Model):
 
 
 class RegistrationWorkspaceFolder(models.Model):
+    ROLE_EMPTY = ""
+    ROLE_IMC_ID = "imc_id"
+    ROLE_CUSTOMER_ID = "customer_id"
+    ROLE_REPORTS = "reports"
+    ROLE_CHOICES = [
+        (ROLE_EMPTY, ""),
+        (ROLE_IMC_ID, "ИД IMC Montan"),
+        (ROLE_CUSTOMER_ID, "ИД Заказчика"),
+        (ROLE_REPORTS, "Отчеты"),
+    ]
+    NON_EMPTY_ROLES = (ROLE_IMC_ID, ROLE_CUSTOMER_ID, ROLE_REPORTS)
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -1539,12 +1551,201 @@ class RegistrationWorkspaceFolder(models.Model):
     )
     name = models.CharField(max_length=255)
     position = models.PositiveIntegerField(default=0)
+    role = models.CharField(
+        "Роль",
+        max_length=32,
+        blank=True,
+        default=ROLE_EMPTY,
+        choices=ROLE_CHOICES,
+    )
 
     class Meta:
         ordering = ["position"]
 
     def __str__(self):
         return f"L{self.level}: {self.name}"
+
+
+class PerformerReportUpload(models.Model):
+    """Загруженный отчёт исполнителя: один файл на раздел или на все разделы сразу."""
+
+    registration = models.ForeignKey(
+        ProjectRegistration,
+        on_delete=models.CASCADE,
+        related_name="report_uploads",
+        verbose_name="Проект",
+    )
+    executor = models.CharField("Исполнитель", max_length=255, blank=True, default="")
+    asset_name = models.CharField("Актив", max_length=255, blank=True, default="")
+    performer = models.ForeignKey(
+        Performer,
+        on_delete=models.CASCADE,
+        related_name="report_uploads",
+        verbose_name="Строка исполнителя",
+        null=True,
+        blank=True,
+    )
+    is_all_sections = models.BooleanField("Все разделы", default=False, db_index=True)
+    is_full_report = models.BooleanField("Весь отчет", default=False, db_index=True)
+    file_name = models.CharField("Имя файла", max_length=500, blank=True, default="")
+    file_link = models.URLField("Ссылка на файл", max_length=2000, blank=True, default="")
+    cloud_path = models.CharField("Путь в облаке", max_length=2048, blank=True, default="")
+    check_file_name = models.CharField("Имя файла проверки", max_length=500, blank=True, default="")
+    check_file_link = models.URLField("Ссылка на файл проверки", max_length=2000, blank=True, default="")
+    check_cloud_path = models.CharField("Путь файла проверки", max_length=2048, blank=True, default="")
+    uploaded_at = models.DateTimeField("Дата загрузки", null=True, blank=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="performer_report_uploads",
+        null=True,
+        blank=True,
+    )
+    sent_at = models.DateTimeField("Дата отправки", null=True, blank=True)
+    version = models.PositiveIntegerField("Версия", default=0, db_index=True)
+
+    class CheckStatus(models.TextChoices):
+        IDLE = "", "—"
+        RUNNING = "running", "Проверяется"
+        DONE = "done", "Проверено"
+        ERROR = "error", "Ошибка"
+
+    check_status = models.CharField(
+        "Статус проверки",
+        max_length=16,
+        choices=CheckStatus.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    check_finding_count = models.PositiveIntegerField("Замечаний", default=0)
+    check_error = models.TextField("Ошибка проверки", blank=True, default="")
+    checked_at = models.DateTimeField("Дата проверки", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Загрузка отчёта исполнителя"
+        verbose_name_plural = "Загрузки отчётов исполнителей"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["registration", "executor", "asset_name", "version"],
+                condition=models.Q(is_all_sections=True, is_full_report=False),
+                name="uniq_report_upload_all_sections_version",
+            ),
+            models.UniqueConstraint(
+                fields=["performer", "version"],
+                condition=models.Q(is_all_sections=False, is_full_report=False, performer__isnull=False),
+                name="uniq_report_upload_section_version",
+            ),
+            models.UniqueConstraint(
+                fields=["registration", "asset_name", "version"],
+                condition=models.Q(is_full_report=True),
+                name="uniq_report_upload_full_report_version",
+            ),
+        ]
+
+    @property
+    def version_label(self):
+        return f"{int(self.version):02d}"
+
+    def __str__(self):
+        if self.is_full_report:
+            scope = f"весь отчет / {self.asset_name}"
+        elif self.is_all_sections:
+            scope = "все разделы"
+        else:
+            scope = f"исполнитель {self.performer_id}"
+        return f"Отчёт {self.registration_id}: {scope} v{self.version_label}"
+
+
+class ReportMacro(models.Model):
+    """Редактируемый Python-макрос проверки отчёта."""
+
+    name = models.CharField("Название", max_length=255)
+    description = models.CharField("Описание", max_length=500, blank=True, default="")
+    code = models.TextField("Код")
+    position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Макрос проверки отчёта"
+        verbose_name_plural = "Макросы проверки отчётов"
+
+    def __str__(self):
+        return self.name
+
+
+class ReportCheckRule(models.Model):
+    """Правило проверки отчёта: продукт/раздел, навык или макрос, модель DSH."""
+
+    class CheckType(models.TextChoices):
+        SKILL = "skill", "Навык"
+        MACRO = "macro", "Макрос"
+
+    position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        related_name="report_check_rules",
+        verbose_name="Продукт",
+        null=True,
+        blank=True,
+    )
+    section = models.ForeignKey(
+        TypicalSection,
+        on_delete=models.SET_NULL,
+        related_name="report_check_rules",
+        verbose_name="Раздел",
+        null=True,
+        blank=True,
+    )
+    is_full_report = models.BooleanField("Весь отчет", default=False, db_index=True)
+    check_type = models.CharField(
+        "Тип проверки",
+        max_length=16,
+        choices=CheckType.choices,
+        default=CheckType.SKILL,
+        db_index=True,
+    )
+    finding_threshold = models.PositiveIntegerField("Число замечаний", default=0)
+    check_value = models.CharField("Проверка", max_length=255)
+    model_id = models.CharField("Модель", max_length=255, blank=True, default="")
+    macros = models.ManyToManyField(
+        ReportMacro,
+        blank=True,
+        related_name="check_rules",
+        verbose_name="Макросы",
+    )
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Правило проверки отчёта"
+        verbose_name_plural = "Правила проверки отчётов"
+
+    def __str__(self):
+        return f"{self.get_check_type_display()}: {self.check_value}"
+
+    @property
+    def product_label(self) -> str:
+        if self.product_id:
+            return getattr(self.product, "short_name", "") or str(self.product)
+        return "Все продукты"
+
+    @property
+    def section_label(self) -> str:
+        if self.is_full_report:
+            from .report_submission import FULL_REPORT_LABEL
+            return FULL_REPORT_LABEL
+        if not self.section_id:
+            return "Все разделы"
+        from .report_submission import typical_section_short
+        return typical_section_short(self.section) or str(self.section)
+
+    @property
+    def check_label(self) -> str:
+        if self.check_type == self.CheckType.MACRO:
+            names = [macro.name for macro in self.macros.all()]
+            return ", ".join(names) or (self.check_value or "Макрос")
+        return self.check_value or ""
 
 
 class SourceDataTargetFolder(models.Model):

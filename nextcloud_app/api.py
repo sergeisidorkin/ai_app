@@ -397,7 +397,14 @@ class NextcloudApiClient:
         normalized_dir = self._normalize_folder_path(dir_path)
         return f"{self.base_url}/apps/files/files/{file_id}?dir={quote(normalized_dir, safe='/')}&openfile=true"
 
-    def list_resources(self, owner_user_id: str, path: str, *, limit: int = 100) -> list[dict[str, object]]:
+    def list_resources(
+        self,
+        owner_user_id: str,
+        path: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, object]]:
         normalized = self._normalize_folder_path(path)
         response = self._dav_request(
             "PROPFIND",
@@ -442,9 +449,8 @@ class NextcloudApiClient:
                     "file_id": str(file_id_raw).strip() or None,
                 }
             )
-            if len(items) >= limit:
-                break
-        return items
+        start = max(int(offset or 0), 0)
+        return items[start : start + max(int(limit or 0), 0)]
 
     def upload_file(self, owner_user_id: str, path: str, data: bytes, *, overwrite: bool = True) -> bool:
         normalized = self._normalize_folder_path(path)
