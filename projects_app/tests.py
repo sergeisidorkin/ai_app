@@ -10168,6 +10168,7 @@ class ReportMacroRunnerTests(TestCase):
             password="secret",
             is_staff=True,
         )
+        Employee.objects.create(user=self.user, role=ADMIN_GROUP)
         self.product = Product.objects.create(
             short_name="DD",
             name_en="Due Diligence",
