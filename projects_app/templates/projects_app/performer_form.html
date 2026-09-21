@@ -19,6 +19,7 @@
 
 <form
   method="post"
+  {% if performer %}data-performer-id="{{ performer.id }}"{% endif %}
   hx-post="{% if action == 'edit' %}{% url 'performer_form_edit' performer.id %}{% else %}{% url 'performer_form_create' %}{% endif %}"
   hx-target="#performers-modal .modal-content"
   hx-swap="innerHTML"
@@ -29,7 +30,7 @@
     {{ form.non_field_errors }}
 
     <div class="row g-3">
-      <div class="col-md-6">
+      <div class="col-md-4">
         <label class="form-label">Этап</label>
         {{ form.registration }}
       </div>
@@ -37,37 +38,42 @@
         <label class="form-label">Продукт</label>
         <input type="text" class="form-control readonly-field" id="perf-type" value="" readonly>
       </div>
-      <div class="col-md-4">
+      <div class="col-md-6">
         <label class="form-label">Название</label>
         <input type="text" class="form-control readonly-field" id="perf-name" value="" readonly>
       </div>
 
-      <div class="col-md-6">
+      <div class="col-md-4">
         <label class="form-label">Актив</label>
         {{ form.asset_name }}
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="perf-section-code">Код</label>
+        <input type="text" class="form-control readonly-field" id="perf-section-code"
+               value="{{ section_code|default:'' }}" readonly tabindex="-1">
       </div>
       <div class="col-md-6">
         <label class="form-label">Типовой раздел</label>
         {{ form.typical_section }}
       </div>
 
-      <div class="col-md-6">
+      <div class="col-md-4">
         <label class="form-label">
           {% if executor_locked %}<i class="bi bi-lock text-secondary me-1" style="font-size:.85em"></i>{% endif %}Исполнитель
         </label>
         {{ form.executor }}
       </div>
-      <div class="col-md-3">
-        <label class="form-label">Грейд (наименование)</label>
-        <input type="text" class="form-control readonly-field" id="perf-grade-name-display"
-               value="{{ form.grade_name.value|default:'' }}" readonly>
-        <input type="hidden" name="grade_name" id="perf-grade-name" value="{{ form.grade_name.value|default:'' }}">
-      </div>
-      <div class="col-md-3">
+      <div class="col-md-2">
         <label class="form-label">Грейд (уровень)</label>
         <div class="form-control readonly-field d-flex align-items-center gap-1" id="perf-grade-stars"
              style="font-size:1.1rem; min-height:calc(1.5em + .75rem + 2px);"></div>
         <input type="hidden" name="grade" id="perf-grade-value" value="{{ form.grade.value|default:'' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Грейд (наименование)</label>
+        <input type="text" class="form-control readonly-field" id="perf-grade-name-display"
+               value="{{ form.grade_name.value|default:'' }}" readonly>
+        <input type="hidden" name="grade_name" id="perf-grade-name" value="{{ form.grade_name.value|default:'' }}">
       </div>
 
       <div class="col-md-2">
@@ -112,6 +118,7 @@
 <script id="perf-reg-map" type="application/json">{{ reg_map_json|safe }}</script>
 <script id="perf-assets-map" type="application/json">{{ assets_map_json|safe }}</script>
 <script id="perf-sections-map" type="application/json">{{ sections_map_json|safe }}</script>
+<script id="perf-section-codes-map" type="application/json">{{ section_codes_json|safe }}</script>
 <script id="perf-executor-options" type="application/json">{{ executor_options_json|safe }}</script>
 <script id="perf-executor-grade-map" type="application/json">{{ executor_grade_json|safe }}</script>
 <script id="perf-living-wage-map" type="application/json">{{ living_wage_json|safe }}</script>
@@ -136,6 +143,9 @@
   const regMap   = JSON.parse(document.getElementById('perf-reg-map').textContent || '{}');
   const assetsMap= JSON.parse(document.getElementById('perf-assets-map').textContent || '{}');
   const sectMap  = JSON.parse(document.getElementById('perf-sections-map').textContent || '{}');
+  const sectionCodesMap = JSON.parse(document.getElementById('perf-section-codes-map').textContent || '{}');
+  const sectionCodeEl = formEl.querySelector('#perf-section-code');
+  const performerId = (formEl.querySelector('form') && formEl.querySelector('form').dataset.performerId) || '';
   const executorOptions = JSON.parse(document.getElementById('perf-executor-options').textContent || '[]');
   const execGradeMap = JSON.parse(document.getElementById('perf-executor-grade-map').textContent || '{}');
   const lwMap    = JSON.parse(document.getElementById('perf-living-wage-map').textContent || '{}');
@@ -162,6 +172,24 @@
       assetSel.appendChild(custom);
     }
     if (current) assetSel.value = current;
+  }
+
+  function padSectionCode(n) {
+    return String(n).padStart(2, '0');
+  }
+
+  function updateSectionCode() {
+    if (!sectionCodeEl) return;
+    var info = getSelectedSectionInfo();
+    if (!info || info.accounting_type !== 'Раздел') {
+      sectionCodeEl.value = '';
+      return;
+    }
+    var regId = regSel ? regSel.value : '';
+    var asset = assetSel ? assetSel.value : '';
+    var ordered = ((sectionCodesMap[regId] || {})[asset] || []).map(String);
+    var idx = performerId ? ordered.indexOf(String(performerId)) : -1;
+    sectionCodeEl.value = padSectionCode(idx >= 0 ? idx + 1 : ordered.length + 1);
   }
 
   function refillSections(regId) {
@@ -232,6 +260,7 @@
     if (nameEl) nameEl.value = info.name || '';
     refillAssets(regId);
     refillSections(regId);
+    updateSectionCode();
   }
 
   function renderStars(container, qual, levels) {
@@ -341,8 +370,10 @@
     applyReg(regSel.value);
     calcEstimated();
   });
+  if (assetSel) assetSel.addEventListener('change', updateSectionCode);
   if (sectSel) sectSel.addEventListener('change', function() {
     refillExecutors();
+    updateSectionCode();
     calcEstimated();
   });
 

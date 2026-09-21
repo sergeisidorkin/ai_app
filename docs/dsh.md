@@ -262,8 +262,25 @@ DSH_SORT_WORKER_VERIFY_BURST=1
 
 The repository-managed skills are
 `deploy/dsh/skills/checklist-file-sort/SKILL.md` and
-`deploy/dsh/skills/checklist-file-verify/SKILL.md`. Their contents participate
-in the sidecar checksum and are copied to `/opt/dsh/skills` by CI/CD.
+`deploy/dsh/skills/checklist-file-verify/SKILL.md`, plus the file-in/file-out
+report checker `deploy/dsh/skills/report-final-check/SKILL.md`. Their contents
+participate in the sidecar checksum and are copied to `/opt/dsh/skills` by
+CI/CD.
+
+Report skills use one file-in/file-out contract. Django creates
+`sort-runs/report-checks/<run>/<rule>/input` and `output`, puts the uploaded
+file in `input`, and invokes the configured slash skill. The skill must create
+one processed file with the same extension in `output`; that file is stored as
+the report check result. Matching skills run in rule order, with each output
+becoming the next input. If a matching rule has «Удалить все примечания перед
+проверкой», Django strips Word comments from that rule's input DOCX before the
+skill or macros see the file; check-generated comments are written afterwards.
+For DOCX results Django derives the finding count from
+Word comments. Skill checks run in the background and the reports UI polls
+their database status. Each rule run uses the `report-check` headless profile
+and a workspace-local `settings.yaml`, so `ReportCheckRule.model_id` selects
+the actual DSH provider/model without changing the global Web UI or checklist
+model.
 
 For local DSH, `scripts/dev_dsh.sh` copies the SiliconFlow catalog from
 `deploy/dsh/settings.yaml.example`: 13 models with selector prefixes

@@ -219,7 +219,8 @@
     return (name === 'contract-select' || name === 'contract-dispatch-select') ? contractPane() : pane();
   }
   function getRowChecks(name) {
-    return qa(`tbody input.form-check-input[name="${name}"]`, getSelectionRoot(name));
+    return qa(`tbody input.form-check-input[name="${name}"]`, getSelectionRoot(name))
+      .filter(function(box) { return !box.closest('#performers-modal'); });
   }
   function getChecked(name) {
     return getRowChecks(name).filter(b => b.checked);
@@ -229,6 +230,29 @@
       const tr = b.closest('tr');
       if (tr) tr.classList.toggle('table-active', !!b.checked);
     });
+  }
+  function forgetTableSelection(name) {
+    try { delete window.__tableSel[name]; } catch (_) { window.__tableSel[name] = []; }
+    if (window.__tableSelLast === name) window.__tableSelLast = null;
+  }
+  function clearTableSelectionByName(name) {
+    getRowChecks(name).forEach(function(checkbox) { checkbox.checked = false; });
+    forgetTableSelection(name);
+    updateRowHighlight(name);
+    if (name === 'performer-select') {
+      updatePerformerMasterState();
+      ensurePerformerActionsVisibility();
+      return;
+    }
+    if (name === 'report-check-select') {
+      updateReportCheckMasterState();
+      ensureReportCheckActionsVisibility();
+      return;
+    }
+    if (name === 'report-macro-select') {
+      updateReportMacrosMasterState();
+      ensureReportMacrosActionsVisibility();
+    }
   }
   function updatePerformerMasterState() {
     const boxes = getVisiblePerformerChecks();
@@ -244,6 +268,83 @@
     const any = getVisiblePerformerChecks().some(b => b.checked);
     panel.classList.toggle('d-none', !any);
     panel.classList.toggle('d-flex', any);
+    updatePerformerLockedActionButtons(panel);
+  }
+  function performerRowIsSectionLocked(tr) {
+    return !!(tr && tr.dataset.reportSectionLocked === '1');
+  }
+  function padPerformerSectionCode(n) {
+    return String(n).padStart(2, '0');
+  }
+  function performerRowIsSectionAccounting(tr) {
+    return !!(tr && String(tr.dataset.accountingType || '').trim() === 'Раздел');
+  }
+  function performerGroupSortKey(tr) {
+    const number = parseInt(tr && tr.dataset ? tr.dataset.projectNumber : '0', 10) || 0;
+    const stage = String((tr && tr.dataset && tr.dataset.stageUid) || '');
+    const asset = String((tr && tr.dataset && tr.dataset.assetName) || '');
+    return [number, stage, asset];
+  }
+  function sortPerformerRowsByProjectAndAsset(table) {
+    const rootTable = table || pane()?.querySelector('#performers-main-section table.performers-table');
+    const tbody = rootTable && rootTable.querySelector('tbody');
+    if (!tbody) return rootTable;
+    const rows = Array.from(tbody.querySelectorAll('tr[data-row-order-id]'));
+    rows.sort(function (a, b) {
+      const ka = performerGroupSortKey(a);
+      const kb = performerGroupSortKey(b);
+      if (ka[0] !== kb[0]) return kb[0] - ka[0];
+      if (ka[1] !== kb[1]) return ka[1] < kb[1] ? -1 : 1;
+      if (ka[2] !== kb[2]) return ka[2] < kb[2] ? -1 : 1;
+      return 0;
+    });
+    rows.forEach(function (row) { tbody.appendChild(row); });
+    return rootTable;
+  }
+  function updatePerformerSectionCodes(table) {
+    const rootTable = table || pane()?.querySelector('#performers-main-section table.performers-table');
+    if (!rootTable) return;
+    const grouped = {};
+    Array.from(rootTable.querySelectorAll('tbody tr[data-row-order-id]')).forEach((tr) => {
+      const key = String(tr.dataset.projectId || '') + '\0' + String(tr.dataset.assetName || '');
+      (grouped[key] || (grouped[key] = [])).push(tr);
+    });
+    Object.keys(grouped).forEach((key) => {
+      let index = 0;
+      grouped[key].forEach((tr) => {
+        const cell = tr.querySelector('td.js-section-code');
+        if (!cell) return;
+        if (performerRowIsSectionAccounting(tr)) {
+          index += 1;
+          cell.textContent = padPerformerSectionCode(index);
+        } else {
+          cell.textContent = '';
+        }
+      });
+    });
+  }
+  function syncPerformerSectionOrder(table) {
+    updatePerformerSectionCodes(sortPerformerRowsByProjectAndAsset(table));
+  }
+  function updatePerformerLockedActionButtons(panel) {
+    if (!panel) return;
+    const upBtn = panel.querySelector('[data-panel-action="up"]');
+    const downBtn = panel.querySelector('[data-panel-action="down"]');
+    const deleteBtn = panel.querySelector('[data-panel-action="delete"]');
+    const rows = getChecked('performer-select').map((box) => box.closest('tr')).filter(Boolean);
+    const anyLocked = rows.some(performerRowIsSectionLocked);
+    if (upBtn) {
+      upBtn.classList.toggle('d-none', anyLocked);
+      upBtn.disabled = anyLocked;
+    }
+    if (downBtn) {
+      downBtn.classList.toggle('d-none', anyLocked);
+      downBtn.disabled = anyLocked;
+    }
+    if (deleteBtn) {
+      deleteBtn.classList.toggle('d-none', anyLocked);
+      deleteBtn.disabled = anyLocked;
+    }
   }
   function movePerformerSelectionImmediately(action, checked) {
     if (
@@ -253,13 +354,17 @@
     ) {
       return false;
     }
+    if (checked.some((box) => performerRowIsSectionLocked(box.closest('tr')))) {
+      return false;
+    }
     const root = pane();
     if (!root) return false;
     return !!window.__queuedRowOrder.moveSelection(root, action, {
       selectionName: 'performer-select',
       selectedIds: checked.map((box) => String(box.value)),
       rowScopeDataKey: 'projectId',
-      onAfterMove: function () {
+      onAfterMove: function (table) {
+        syncPerformerSectionOrder(table);
         updatePerformerMasterState();
         updateRowHighlight('performer-select');
         ensurePerformerActionsVisibility();
@@ -2283,6 +2388,14 @@
     return pane()?.querySelector('#report-macros-section') || null;
   }
 
+  function reportMacrosListQuery() {
+    const section = getReportMacrosSection();
+    const params = new URLSearchParams();
+    params.set('macros_page', section?.dataset.macrosPage || '1');
+    params.set('macros_page_size', section?.dataset.macrosPageSize || '25');
+    return '?' + params.toString();
+  }
+
   function getReportMacroRows() {
     const section = getReportMacrosSection();
     if (!section) return [];
@@ -2324,7 +2437,6 @@
     const dropdown = root.querySelector('#report-submission-project-filter-toggle')?.closest('.dropdown');
     const checks = root.querySelectorAll('.js-report-submission-filter');
     const label = root.querySelector('.js-report-submission-filter-label');
-    const master = root.querySelector('#report-submission-master');
     if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
     dropdown.dataset.bound = '1';
     if (window.bindProjectFilterMenuWidth) window.bindProjectFilterMenuWidth(dropdown);
@@ -2349,25 +2461,64 @@
       label.textContent = values.length + ' выбрано';
     }
 
-    function applyFilter(values) {
-      window.__reportSubmissionProjectFilter = values.slice();
-      const showAll = values.includes(FILTER_ALL) || !values.length;
-      getReportSubmissionRows().forEach((row) => {
-        const pid = row.dataset.projectId || '';
-        const visible = showAll || values.includes(pid);
-        row.classList.toggle('d-none', !visible);
-        if (!visible) {
-          const checkbox = row.querySelector('input[name="report-select"]');
-          if (checkbox) checkbox.checked = false;
-        }
-      });
-      applyRowGrouping(getReportSubmissionSection());
-      if (master && !showAll && !getReportSubmissionRows().some((row) => !row.classList.contains('d-none'))) {
-        master.checked = false;
-        master.indeterminate = false;
+    function reportFilterIsSpecific(values) {
+      const filter = values || window.__reportSubmissionProjectFilter || [FILTER_ALL];
+      return filter.length > 0 && !filter.includes(FILTER_ALL);
+    }
+
+    function maxReportPageSize() {
+      const select = document.querySelector('#policy-page-size-report-submission');
+      if (!select || !select.options.length) return '100';
+      return select.options[select.options.length - 1].value;
+    }
+
+    function reportPageSizeForRequest() {
+      if (reportFilterIsSpecific()) return maxReportPageSize();
+      return window.__reportSubmissionPageSize || '25';
+    }
+
+    function reportSubmissionTableUrl(page) {
+      const block = document.querySelector('#report-submission-table-block');
+      if (!block) return '';
+      const params = new URLSearchParams();
+      params.set('page', String(page || '1'));
+      params.set('page_size', reportPageSizeForRequest());
+      const filter = window.__reportSubmissionProjectFilter || [FILTER_ALL];
+      if (reportFilterIsSpecific(filter)) {
+        filter.forEach((id) => params.append('project', id));
       }
+      return (block.dataset.reportsTableUrl || '') + '?' + params.toString();
+    }
+
+    function reloadReportSubmissionTable(page) {
+      const url = reportSubmissionTableUrl(page || '1');
+      if (!url || !window.htmx) return;
+      window.htmx.ajax('GET', url, {
+        target: '#report-submission-table-block',
+        swap: 'outerHTML',
+      });
+    }
+
+    function reportBlockMatchesFilter(values) {
+      const block = document.querySelector('#report-submission-table-block');
+      if (!block) return true;
+      const rendered = (block.dataset.reportsProjects || FILTER_ALL).split(',').filter(Boolean).sort();
+      const wanted = (!values.length || values.includes(FILTER_ALL))
+        ? [FILTER_ALL]
+        : values.map(String).slice().sort();
+      return rendered.length === wanted.length && rendered.every((value, index) => value === wanted[index]);
+    }
+
+    function applyFilter(values, options) {
+      options = options || {};
+      const block = document.querySelector('#report-submission-table-block');
+      const rendered = block?.dataset.reportsProjects || FILTER_ALL;
+      if (block && rendered === FILTER_ALL && block.dataset.reportsPageSize) {
+        window.__reportSubmissionPageSize = block.dataset.reportsPageSize;
+      }
+      window.__reportSubmissionProjectFilter = values.slice();
       updateLabel(values);
-      updateReportSubmissionMasterState();
+      if (options.reload) reloadReportSubmissionTable('1');
     }
 
     function normalizeSelection() {
@@ -2385,7 +2536,7 @@
         const value = event.target.value;
         if (value === FILTER_ALL && event.target.checked) {
           syncCheckboxes([FILTER_ALL]);
-          applyFilter([FILTER_ALL]);
+          applyFilter([FILTER_ALL], { reload: true });
           return;
         }
         if (value === FILTER_ALL && !event.target.checked) {
@@ -2395,7 +2546,7 @@
           const allCheckbox = root.querySelector('#report-submission-filter-all');
           if (allCheckbox && allCheckbox.checked) allCheckbox.checked = false;
         }
-        applyFilter(normalizeSelection());
+        applyFilter(normalizeSelection(), { reload: true });
       });
     });
 
@@ -2411,14 +2562,14 @@
           else { cb.checked = set.has(cb.value); cb.disabled = !set.has(cb.value); }
         }
       });
-      applyFilter(isAll ? [FILTER_ALL] : values.slice());
+      applyFilter(isAll ? [FILTER_ALL] : values.slice(), { reload: true });
     };
 
     const initialValues = window.__reportSubmissionProjectFilter && window.__reportSubmissionProjectFilter.length
       ? window.__reportSubmissionProjectFilter
       : [FILTER_ALL];
     syncCheckboxes(initialValues);
-    applyFilter(initialValues);
+    applyFilter(initialValues, { reload: !reportBlockMatchesFilter(initialValues) });
   }
 
   function ensureReportUploadProgressModal() {
@@ -2669,7 +2820,8 @@
   function ensureReportSelectCheckbox(row) {
     if (!row || row.dataset.isCurrent !== '1') return;
     var section = getReportSubmissionSection();
-    if (section && section.dataset.expertReadonly === '1') return;
+    if (section && section.dataset.reportReadonly === '1') return;
+    if (row.dataset.canSend !== '1') return;
     var cell = row.querySelector('.report-select-cell');
     if (!cell) return;
     var checkbox = cell.querySelector('input[name="report-select"]');
@@ -2810,20 +2962,76 @@
 
   function applyReportSendResult(row, data) {
     if (!row || !data) return;
-    if (data.check_status) row.dataset.checkStatus = data.check_status;
+    if (Object.prototype.hasOwnProperty.call(data, 'check_status')) {
+      row.dataset.checkStatus = data.check_status || '';
+    }
     updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), data);
     updateReportWorkflowStatusCell(row, data);
     updateReportStatusDateCell(row, data);
     updateReportFindingCountCell(row, data);
-    if (data.check_status === 'done') {
-      var checkbox = row.querySelector('input[name="report-select"]');
+    var checkbox = row.querySelector('input[name="report-select"]');
+    if (data.check_status === 'done' || data.check_status === 'running') {
       if (checkbox) {
         checkbox.checked = false;
         checkbox.disabled = true;
       }
       row.classList.remove('table-active');
+    } else if (checkbox && row.dataset.isCurrent === '1') {
+      checkbox.disabled = false;
     }
     updateReportSubmissionMasterState();
+  }
+
+  var reportCheckPollingRows = new WeakSet();
+
+  function reportCheckStatusUrl(section, uploadId) {
+    var template = (section && section.dataset.reportCheckStatusUrl) || '';
+    if (!template || !uploadId) return '';
+    return template.replace(/\/0\/check-status\/?$/, '/' + uploadId + '/check-status/');
+  }
+
+  function reportPollDelay(milliseconds) {
+    return new Promise(function(resolve) {
+      window.setTimeout(resolve, milliseconds);
+    });
+  }
+
+  async function pollReportCheck(row) {
+    if (!row || reportCheckPollingRows.has(row)) return;
+    var uploadId = (row.dataset.uploadId || '').trim();
+    var section = getReportSubmissionSection();
+    var url = reportCheckStatusUrl(section, uploadId);
+    if (!url) return;
+    reportCheckPollingRows.add(row);
+    try {
+      while (row.isConnected && row.dataset.checkStatus === 'running') {
+        await reportPollDelay(2000);
+        if (!row.isConnected || row.dataset.checkStatus !== 'running') break;
+        try {
+          var response = await fetch(url, {
+            method: 'GET',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          });
+          var data = null;
+          try { data = await response.json(); } catch (_) {}
+          if (!response.ok || !data || !data.ok) {
+            throw new Error((data && data.error) || 'Не удалось получить статус проверки.');
+          }
+          applyReportSendResult(row, data);
+        } catch (err) {
+          console.warn('report check status error', err);
+          await reportPollDelay(3000);
+        }
+      }
+    } finally {
+      reportCheckPollingRows.delete(row);
+    }
+  }
+
+  function initReportCheckPolling() {
+    getReportSubmissionRows().forEach(function(row) {
+      if (row.dataset.checkStatus === 'running') pollReportCheck(row);
+    });
   }
 
   function updateReportCheckResultCell(cell, data) {
@@ -2852,14 +3060,18 @@
     }
     if (data.check_status === 'error') {
       var badge = document.createElement('span');
-      badge.className = 'text-danger small ms-1 js-report-check-badge';
+      badge.className = 'text-danger small js-report-check-badge';
       badge.textContent = 'ошибка проверки';
       if (data.check_error) badge.title = data.check_error;
       cell.appendChild(badge);
     } else if (data.check_status === 'running') {
+      var spacer = document.createElement('span');
+      spacer.className = 'report-upload-icon-spacer';
+      spacer.setAttribute('aria-hidden', 'true');
+      cell.appendChild(spacer);
       var pending = document.createElement('span');
-      pending.className = 'text-muted small js-report-check-badge';
-      pending.textContent = 'проверка…';
+      pending.className = 'text-muted js-report-check-badge report-check-pending-text';
+      pending.textContent = 'Идет проверка...';
       cell.appendChild(pending);
     } else if (!data.check_file_name) {
       cell.textContent = '—';
@@ -2892,6 +3104,158 @@
     }
     syncReportLocalSourceUi();
   }
+
+  function reportRowById(section, rowId) {
+    if (!section || !rowId) return null;
+    var escaped = window.CSS && CSS.escape ? CSS.escape(rowId) : String(rowId).replace(/"/g, '\\"');
+    return section.querySelector('#report-submission-table tbody tr[data-row-id="' + escaped + '"]');
+  }
+
+  function reportFileDeleteUrl(section, uploadId) {
+    var template = (section && section.dataset.reportDeleteUrl) || '';
+    if (!template || !uploadId) return '';
+    return template.replace(/\/0\/delete\/?$/, '/' + uploadId + '/delete/');
+  }
+
+  function reportFileDeleteMessage(btn) {
+    var kind = btn.dataset.removeKind || '';
+    var fileName = btn.dataset.fileName || '';
+    var row = btn.closest('tr');
+    var checkBtn = row && row.querySelector('.js-report-file-remove[data-remove-kind="check"]');
+    var checkName = checkBtn ? (checkBtn.dataset.fileName || '') : '';
+    if (kind === 'check') {
+      return 'Удалить результат проверки «' + fileName + '»? Файл будет удалён и с диска.';
+    }
+    var text = 'Удалить файл «' + fileName + '»? Файл будет удалён и с диска.';
+    if (checkName) {
+      text += ' Также будет удалён результат проверки «' + checkName + '» и его файл на диске.';
+    }
+    return text;
+  }
+
+  function clearReportVersionToggle(row) {
+    if (!row) return;
+    var btn = row.querySelector('.js-report-version-toggle');
+    if (btn) btn.remove();
+    delete row.dataset.hasHistory;
+  }
+
+  function replaceReportCurrentRow(section, slotRowId, html) {
+    var current = reportRowById(section, slotRowId);
+    if (!current || current.dataset.isCurrent !== '1' || !html) return null;
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var next = wrap.querySelector('tr');
+    if (!next) return null;
+    current.replaceWith(next);
+    return next;
+  }
+
+  var reportFileDeletePending = null;
+
+  function setReportFileDeleteBusy(busy) {
+    var confirmBtn = document.getElementById('report-file-delete-confirm');
+    var cancelBtn = document.getElementById('report-file-delete-cancel');
+    if (confirmBtn) confirmBtn.disabled = busy;
+    if (cancelBtn) cancelBtn.disabled = busy;
+  }
+
+  function showReportFileDeleteError(message) {
+    var messageEl = document.getElementById('report-file-delete-message');
+    if (!messageEl) return;
+    messageEl.textContent = message || 'Не удалось удалить файл.';
+    messageEl.classList.add('text-danger');
+  }
+
+  async function submitReportFileDelete() {
+    var pending = reportFileDeletePending;
+    if (!pending) return;
+    var section = getReportSubmissionSection();
+    var url = reportFileDeleteUrl(section, pending.uploadId);
+    if (!url) {
+      showReportFileDeleteError('Не удалось удалить файл.');
+      return;
+    }
+    setReportFileDeleteBusy(true);
+    var body = new FormData();
+    body.append('kind', pending.kind);
+    try {
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+        body: body,
+      });
+      var data = null;
+      try { data = await response.json(); } catch (_) {}
+      if (!response.ok || !data || !data.ok) {
+        showReportFileDeleteError((data && data.error) || 'Не удалось удалить файл.');
+        setReportFileDeleteBusy(false);
+        return;
+      }
+      if (pending.kind === 'check') {
+        var checkRow = pending.row && pending.row.isConnected ? pending.row : null;
+        if (checkRow) applyReportSendResult(checkRow, data);
+      } else if (data.replaced_current) {
+        var nextRow = replaceReportCurrentRow(section, data.slot_row_id || '', data.current_row_html);
+        if (data.remove_row_id) {
+          var historyRow = reportRowById(section, data.remove_row_id);
+          if (historyRow) historyRow.remove();
+        }
+        if (nextRow && nextRow.dataset.checkStatus === 'running') pollReportCheck(nextRow);
+      } else {
+        var removed = pending.row && pending.row.isConnected ? pending.row : reportRowById(section, pending.rowId);
+        if (removed) removed.remove();
+        if (!data.has_history) clearReportVersionToggle(reportRowById(section, data.slot_row_id || ''));
+      }
+      applyRowGrouping(section);
+      applyReportVersionCollapsedState();
+      updateReportSendButtonState();
+      reportFileDeletePending = null;
+      var modalEl = document.getElementById('report-file-delete-modal');
+      if (modalEl && window.bootstrap) {
+        var instance = window.bootstrap.Modal.getInstance(modalEl);
+        if (instance) instance.hide();
+      }
+    } catch (err) {
+      console.error(err);
+      showReportFileDeleteError('Ошибка сети при удалении файла.');
+    }
+    setReportFileDeleteBusy(false);
+  }
+
+  function openReportFileDeleteModal(btn) {
+    var row = btn.closest('tr');
+    var modalEl = document.getElementById('report-file-delete-modal');
+    var messageEl = document.getElementById('report-file-delete-message');
+    if (!row || !modalEl || !messageEl || !window.bootstrap) return;
+    reportFileDeletePending = {
+      kind: btn.dataset.removeKind || '',
+      uploadId: btn.dataset.uploadId || row.dataset.uploadId || '',
+      rowId: row.dataset.rowId || '',
+      row: row,
+    };
+    messageEl.classList.remove('text-danger');
+    messageEl.textContent = reportFileDeleteMessage(btn);
+    setReportFileDeleteBusy(false);
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  document.addEventListener('click', function(e) {
+    var removeBtn = e.target.closest('.js-report-file-remove');
+    if (!removeBtn) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(removeBtn)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openReportFileDeleteModal(removeBtn);
+  });
+
+  document.addEventListener('click', function(e) {
+    var confirmBtn = e.target.closest('#report-file-delete-confirm');
+    if (!confirmBtn || confirmBtn.disabled) return;
+    e.preventDefault();
+    submitReportFileDelete();
+  });
 
   document.addEventListener('change', function(e) {
     var inputEl = e.target.closest('.js-report-upload');
@@ -2927,19 +3291,28 @@
       updateReportSendButtonState();
       return;
     }
-    var row = checked[0].closest('tr');
+    var selectedCheckbox = checked[0];
+    var row = selectedCheckbox.closest('tr');
     var uploadId = row && (row.dataset.uploadId || '').trim();
     var url = section.dataset.reportSendUrl || '';
     if (!uploadId || !url) {
       alert('Выберите одну строку с загруженным файлом.');
       return;
     }
+    selectedCheckbox.checked = false;
+    selectedCheckbox.disabled = true;
+    row.classList.remove('table-active');
+    updateReportSubmissionMasterState();
     var resultCell = row.querySelector('.report-check-result-cell');
     if (resultCell) {
       resultCell.textContent = '';
+      var spacer = document.createElement('span');
+      spacer.className = 'report-upload-icon-spacer';
+      spacer.setAttribute('aria-hidden', 'true');
+      resultCell.appendChild(spacer);
       var pending = document.createElement('span');
-      pending.className = 'text-muted small js-report-check-badge';
-      pending.textContent = 'проверка…';
+      pending.className = 'text-muted js-report-check-badge report-check-pending-text';
+      pending.textContent = 'Идет проверка...';
       resultCell.appendChild(pending);
     }
     updateReportFindingCountCell(row, { check_status: 'running' });
@@ -2958,8 +3331,12 @@
         throw new Error((data && data.error) || 'Не удалось отправить файл.');
       }
       applyReportSendResult(row, data);
+      if (data.check_status === 'running') pollReportCheck(row);
     } catch (err) {
       alert(err.message || 'Не удалось отправить файл.');
+      if (selectedCheckbox && row.dataset.isCurrent === '1') {
+        selectedCheckbox.disabled = false;
+      }
       if (resultCell && resultCell.querySelector('.js-report-check-badge')) {
         resultCell.textContent = '—';
       }
@@ -3005,6 +3382,7 @@
   document.addEventListener('change', function(e) {
     var root = pane();
     if (!root) return;
+    if (e.target.closest && e.target.closest('#performers-modal')) return;
     if (e.target.id === 'report-submission-master') {
       var checked = e.target.checked;
       getVisibleReportSelectChecks().forEach(function(checkbox) {
@@ -3779,17 +4157,19 @@
       const action = btn.dataset.panelAction;
       const checked = getChecked('report-check-select');
       if (!checked.length) return;
-      window.__tableSel['report-check-select'] = checked.map(ch => String(ch.value));
-      window.__tableSelLast = 'report-check-select';
 
       if (action === 'edit') {
         const tr = checked[0].closest('tr');
         const url = tr?.dataset?.editUrl;
         if (!url) return;
+        forgetTableSelection('report-check-select');
         await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
         ensureReportCheckActionsVisibility();
         return;
       }
+
+      window.__tableSel['report-check-select'] = checked.map(ch => String(ch.value));
+      window.__tableSelLast = 'report-check-select';
 
       if (action === 'delete') {
         if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
@@ -3827,21 +4207,26 @@
       const action = btn.dataset.panelAction;
       const checked = getChecked('report-macro-select');
       if (!checked.length) return;
-      window.__tableSel['report-macro-select'] = checked.map(ch => String(ch.value));
-      window.__tableSelLast = 'report-macro-select';
 
       if (action === 'edit') {
         const tr = checked[0].closest('tr');
         const url = tr?.dataset?.editUrl;
         if (!url) return;
+        forgetTableSelection('report-macro-select');
         await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
         ensureReportMacrosActionsVisibility();
         return;
       }
 
+      window.__tableSel['report-macro-select'] = checked.map(ch => String(ch.value));
+      window.__tableSelLast = 'report-macro-select';
+
       if (action === 'delete') {
         if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
-        const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+        const urls = checked.map(ch => {
+          const url = ch.closest('tr')?.dataset?.deleteUrl;
+          return url ? url + reportMacrosListQuery() : '';
+        }).filter(Boolean);
         for (let i = 0; i < urls.length; i++) {
           const isLast = i === urls.length - 1;
           if (isLast) {
@@ -3855,7 +4240,10 @@
 
       if (action === 'up' || action === 'down') {
         let urls = checked
-          .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
+          .map(ch => {
+            const url = ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'];
+            return url ? url + reportMacrosListQuery() : '';
+          })
           .filter(Boolean);
         if (action === 'down') urls = urls.reverse();
         for (let i = 0; i < urls.length; i++) {
@@ -3891,8 +4279,10 @@
     }
 
     if (action === 'delete') {
-      if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
-      const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+      const deletable = checked.filter((box) => !performerRowIsSectionLocked(box.closest('tr')));
+      if (!deletable.length) return;
+      if (!confirm(`Удалить ${deletable.length} строк(у/и)?`)) return;
+      const urls = deletable.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
@@ -3905,6 +4295,7 @@
     }
 
     if (action === 'up' || action === 'down') {
+      if (checked.some((box) => performerRowIsSectionLocked(box.closest('tr')))) return;
       if (movePerformerSelectionImmediately(action, checked)) return;
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
@@ -4358,6 +4749,7 @@
     initReportLocalSource();
     applyRowGrouping(root.querySelector('#report-submission-section'));
     applyReportVersionCollapsedState();
+    initReportCheckPolling();
     updateReportSubmissionMasterState();
     updateRowHighlight('report-select');
     try { delete window.__tableSel['report-select']; } catch(_) {}
@@ -4442,6 +4834,7 @@
     ensurePerformerActionsVisibility();
     ensureReportCheckActionsVisibility();
     ensureReportMacrosActionsVisibility();
+    syncPerformerSectionOrder();
     schedulePaymentRequestScrollGapsUpdate();
     if (typeof window.__perfScrollY === 'number') {
       window.scrollTo(0, window.__perfScrollY);
@@ -4586,6 +4979,105 @@
     }
   });
 
+  function showProjectsCsvResult(html) {
+    var body = document.getElementById('projects-csv-result-body');
+    var modalEl = document.getElementById('projects-csv-result-modal');
+    if (!body || !modalEl) {
+      alert(html.replace(/<[^>]+>/g, ''));
+      return;
+    }
+    body.innerHTML = html;
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  async function handleReportMacrosCsvUpload(uploadUrl, file) {
+    var formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      var resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        var html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (var i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + data.warnings[i].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+          }
+          html += '</div>';
+        }
+        showProjectsCsvResult(html);
+        document.body.dispatchEvent(new Event('performers-updated'));
+      } else {
+        showProjectsCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
+          (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+      }
+    } catch (err) {
+      showProjectsCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
+        err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+    }
+  }
+
+  document.body.addEventListener('htmx:configRequest', function (evt) {
+    const path = evt.detail && evt.detail.path || '';
+    if (path.indexOf('performers/partial') === -1 || !evt.detail.parameters) return;
+    const macros = document.querySelector('#report-macros-section');
+    if (macros) {
+      evt.detail.parameters.macros_page = macros.dataset.macrosPage || '1';
+      evt.detail.parameters.macros_page_size = macros.dataset.macrosPageSize || '25';
+    }
+    const reports = document.querySelector('#report-submission-table-block');
+    if (reports) {
+      const filter = window.__reportSubmissionProjectFilter || [];
+      const filtered = filter.length && filter.indexOf('__all__') === -1;
+      const rendered = (reports.dataset.reportsProjects || '__all__').split(',').filter(Boolean).sort();
+      const wanted = filtered ? filter.map(String).slice().sort() : ['__all__'];
+      const sameFilter = rendered.length === wanted.length && rendered.every(function (value, index) {
+        return value === wanted[index];
+      });
+      evt.detail.parameters.reports_page = sameFilter ? (reports.dataset.reportsPage || '1') : '1';
+      if (filtered && !sameFilter) {
+        const select = document.querySelector('#policy-page-size-report-submission');
+        evt.detail.parameters.reports_page_size = (select && select.options.length)
+          ? select.options[select.options.length - 1].value
+          : '100';
+      } else if (!filtered) {
+        const blockUnfiltered = (reports.dataset.reportsProjects || '__all__') === '__all__';
+        if (blockUnfiltered && reports.dataset.reportsPageSize) {
+          window.__reportSubmissionPageSize = reports.dataset.reportsPageSize;
+        }
+        evt.detail.parameters.reports_page_size = window.__reportSubmissionPageSize || '25';
+      } else {
+        evt.detail.parameters.reports_page_size = reports.dataset.reportsPageSize || '100';
+      }
+      if (filtered) evt.detail.parameters.reports_project = filter.join(',');
+    }
+  });
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('#report-macros-csv-upload-btn');
+    if (!btn) return;
+    var fileInput = document.getElementById('report-macros-csv-file-input');
+    if (fileInput) {
+      fileInput.value = '';
+      fileInput.click();
+    }
+  });
+
+  document.addEventListener('change', async function (e) {
+    if (e.target.id !== 'report-macros-csv-file-input') return;
+    var file = e.target.files && e.target.files[0];
+    var btn = document.getElementById('report-macros-csv-upload-btn');
+    var uploadUrl = btn && btn.getAttribute('data-upload-url');
+    e.target.value = '';
+    if (!file || !uploadUrl) return;
+    await handleReportMacrosCsvUpload(uploadUrl, file);
+  });
+
   document.addEventListener('DOMContentLoaded', () => {
     initParticipationProjectFilter();
     initContractProjectFilter();
@@ -4593,6 +5085,7 @@
     initPaymentRequestProjectFilter();
     initReportSubmissionProjectFilter();
     initReportLocalSource();
+    initReportCheckPolling();
     var root = pane();
     if (root) {
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));
@@ -4615,18 +5108,16 @@
       updateRowHighlight('report-macro-select');
       ensureReportMacrosActionsVisibility();
       syncCollapseButtons();
+      syncPerformerSectionOrder();
     }
     schedulePaymentRequestScrollGapsUpdate();
 
     const perfModal = document.getElementById('performers-modal');
     if (perfModal) {
       perfModal.addEventListener('hidden.bs.modal', () => {
-        window.__tableSel['performer-select'] = [];
-        window.__tableSelLast = null;
-        getRowChecks('performer-select').forEach(b => { b.checked = false; });
-        updatePerformerMasterState();
-        updateRowHighlight('performer-select');
-        ensurePerformerActionsVisibility();
+        clearTableSelectionByName('performer-select');
+        clearTableSelectionByName('report-check-select');
+        clearTableSelectionByName('report-macro-select');
       });
     }
   });

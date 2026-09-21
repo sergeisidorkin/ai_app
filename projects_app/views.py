@@ -1,9 +1,12 @@
 import copy
+import csv
+import io
 import logging
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core import signing
+from django.core.paginator import Paginator
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
@@ -14,6 +17,7 @@ from django.db.models import Max, Q
 from django.db.models.functions import Trim
 from django import forms
 from django.utils import timezone
+from urllib.parse import urlencode
 from classifiers_app.models import LegalEntityIdentifier, LegalEntityRecord
 from .models import (
     LegalEntity,
@@ -30,11 +34,29 @@ from .models import (
     _ensure_performer_rows_for_work_item,
     _sync_project_registration_primary_product,
 )
+from .report_access import (
+    annotate_report_submission_rows,
+    can_manage_report_checks,
+    can_mutate_report_slot,
+    can_mutate_report_upload,
+    can_send_reports,
+    can_view_report_upload,
+    is_admin_user,
+    is_expert_user,
+    is_report_readonly_user,
+    report_visible_registration_ids,
+)
 from .report_macro_runner import report_acceptance_threshold
 from .report_submission import (
     ReportUploadError,
+    annotate_performers_report_section_lock,
+    annotate_performers_section_codes,
+    annotate_work_volumes_for_projects_table,
     build_report_history_row,
+    build_report_slot_current_row,
     build_report_submission_rows,
+    clear_report_check_result,
+    delete_report_upload,
     format_report_datetime,
     format_report_finding_count,
     format_report_status_date,
@@ -42,15 +64,23 @@ from .report_submission import (
     is_local_report_path,
     local_report_folder_enabled,
     local_report_folder_placeholder,
+    locked_report_section_sequences,
+    next_work_volume_asset_code,
     parse_local_report_path,
+    performer_report_section_locked,
+    performer_section_code_ids_by_asset,
     previous_report_upload,
     read_local_report_bytes,
     report_workflow_status,
     report_workflow_status_class,
+    report_section_number,
+    report_slot_row_id,
     resolve_report_upload_source,
     send_report_upload,
     upload_report_file,
     validate_workspace_folder_roles,
+    work_item_report_folder_locked,
+    work_volume_asset_code,
 )
 from .forms import (
     ProjectRegistrationForm,
@@ -159,6 +189,13 @@ WORK_FORM_TEMPLATE      = "projects_app/work_form.html"
 LEGAL_FORM_TEMPLATE     = "projects_app/legal_entity_form.html"
 REPORT_CHECK_FORM_TEMPLATE = "projects_app/report_check_form.html"
 REPORT_MACRO_FORM_TEMPLATE = "projects_app/report_macro_form.html"
+REPORT_MACROS_SECTION_TEMPLATE = "projects_app/report_macros_section.html"
+REPORT_MACRO_CSV_HEADERS = ["Курс", "Секция", "Название", "Описание", "Код"]
+REPORT_MACRO_PAGE_SIZE = 25
+REPORT_MACRO_PAGE_SIZE_OPTIONS = (25, 50, 100)
+REPORT_SUBMISSION_TABLE_TEMPLATE = "projects_app/report_submission_table.html"
+REPORT_TABLE_PAGE_SIZE = 25
+REPORT_TABLE_PAGE_SIZE_OPTIONS = (25, 50, 100)
 
 PERF_FORM_TEMPLATE    = "projects_app/performer_form.html"
 PERFORMERS_PARTIAL_TEMPLATE = "projects_app/performers_partial.html"
@@ -180,13 +217,7 @@ def staff_required(user):
 
 
 def _is_admin_user(user):
-    if not staff_required(user):
-        return False
-    employee = getattr(user, "employee_profile", None)
-    return (
-        getattr(employee, "role", "") == ADMIN_GROUP
-        or user.groups.filter(name=ADMIN_GROUP).exists()
-    )
+    return is_admin_user(user)
 
 
 def _normalize_contract_person_name(value):
@@ -291,6 +322,7 @@ def _projects_context(user=None):
     )
     if expert_project_ids is not None:
         work_items = work_items.filter(project_id__in=expert_project_ids)
+    work_items = annotate_work_volumes_for_projects_table(work_items)
     legal_entities = (
         LegalEntity.objects
         .select_related(
@@ -1281,6 +1313,7 @@ def work_deps(request):
         "name": reg.name or "",
         "project_manager": reg.project_manager_prs_id or reg.project_manager or "",
         "country_id": reg.country_id or "",
+        "next_asset_code": next_work_volume_asset_code(reg),
     })
 
 
@@ -1290,10 +1323,10 @@ def work_deps(request):
 def work_form_create(request):
     if request.method == "GET":
         form = WorkVolumeForm()
-        return render(request, WORK_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, WORK_FORM_TEMPLATE, _work_form_context(form, "create"))
     form = WorkVolumeForm(request.POST)
     if not form.is_valid():
-        return render(request, WORK_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return render(request, WORK_FORM_TEMPLATE, _work_form_context(form, "create"))
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_position(WorkVolume, {"project": obj.project})
@@ -1423,6 +1456,21 @@ def _typical_section_option_label(section):
 
 
 # Редактирование записи "Объем работ"
+def _work_form_context(form, action, work=None):
+    asset_code = ""
+    if work is not None and getattr(work, "pk", None) and getattr(work, "project_id", None):
+        asset_code = work_volume_asset_code(work)
+    elif action == "create":
+        project = None
+        if getattr(form, "is_bound", False):
+            raw_project = form.data.get("project")
+            if raw_project:
+                project = ProjectRegistration.objects.filter(pk=raw_project).first()
+        if project is not None:
+            asset_code = next_work_volume_asset_code(project)
+    return {"form": form, "action": action, "work": work, "asset_code": asset_code}
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
@@ -1430,14 +1478,10 @@ def work_form_edit(request, pk: int):
     item = get_object_or_404(WorkVolume, pk=pk)
     if request.method == "GET":
         form = WorkVolumeForm(instance=item)
-        return render(request, WORK_FORM_TEMPLATE, {
-            "form": form, "action": "edit", "work": item
-        })
+        return render(request, WORK_FORM_TEMPLATE, _work_form_context(form, "edit", item))
     form = WorkVolumeForm(request.POST, instance=item)
     if not form.is_valid():
-        return render(request, WORK_FORM_TEMPLATE, {
-            "form": form, "action": "edit", "work": item
-        })
+        return render(request, WORK_FORM_TEMPLATE, _work_form_context(form, "edit", item))
     obj = form.save()
     _sync_to_legal_entity_record(
         obj.asset_name, obj.country, obj.identifier,
@@ -1476,6 +1520,8 @@ def _delete_related_performers_for_work_item(item: WorkVolume):
 def work_delete(request, pk: int):
     item = get_object_or_404(WorkVolume, pk=pk)
     pid = item.project_id
+    if work_item_report_folder_locked(item):
+        return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
     _delete_related_performers_for_work_item(item)
     item.delete()
     _normalize_work_positions(pid)
@@ -1538,6 +1584,14 @@ def _normalize_legal_positions(project_id: int | None = None):
         if b.position != idx:
             LegalEntity.objects.filter(pk=b.pk).update(position=idx)
 
+def _swap_work_volumes_if_unlocked(first: WorkVolume, second: WorkVolume) -> bool:
+    if work_item_report_folder_locked(first) or work_item_report_folder_locked(second):
+        return False
+    WorkVolume.objects.filter(pk=first.pk).update(position=second.position)
+    WorkVolume.objects.filter(pk=second.pk).update(position=first.position)
+    return True
+
+
 @require_http_methods(["POST", "GET"])
 @login_required
 def work_move_up(request, pk: int):
@@ -1549,14 +1603,11 @@ def work_move_up(request, pk: int):
         WorkVolume.objects
         .filter(project_id=pid)
         .order_by("position", "id")
-        .only("id", "position")
     )
     idx = next((i for i, it in enumerate(items) if it.id == pk), None)
     if idx is not None and idx > 0:
-        cur, prev = items[idx], items[idx - 1]
-        WorkVolume.objects.filter(pk=cur.id).update(position=prev.position)
-        WorkVolume.objects.filter(pk=prev.id).update(position=cur.position)
-        _normalize_work_positions(pid)
+        if _swap_work_volumes_if_unlocked(items[idx], items[idx - 1]):
+            _normalize_work_positions(pid)
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
@@ -1572,14 +1623,11 @@ def work_move_down(request, pk: int):
         WorkVolume.objects
         .filter(project_id=pid)
         .order_by("position", "id")
-        .only("id", "position")
     )
     idx = next((i for i, it in enumerate(items) if it.id == pk), None)
     if idx is not None and idx < len(items) - 1:
-        cur, nxt = items[idx], items[idx + 1]
-        WorkVolume.objects.filter(pk=cur.id).update(position=nxt.position)
-        WorkVolume.objects.filter(pk=nxt.id).update(position=cur.position)
-        _normalize_work_positions(pid)
+        if _swap_work_volumes_if_unlocked(items[idx], items[idx + 1]):
+            _normalize_work_positions(pid)
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
@@ -1830,7 +1878,167 @@ def _payment_request_context(user=None, *, payment_request_performers_qs=None, p
         "has_active_smtp_connection": has_active_smtp_connection,
     }
 
-def _performers_context(user=None):
+def _catalog_page_params(request, *, dedicated_url_name, page_param, page_size_param, default_size, options):
+    page_size = default_size
+    page_number = None
+    if request is None:
+        return page_size, page_number
+    url_name = getattr(getattr(request, "resolver_match", None), "url_name", "")
+    if url_name == dedicated_url_name:
+        size_key, page_key = "page_size", "page"
+    else:
+        size_key, page_key = page_size_param, page_param
+    try:
+        page_size = int(request.GET.get(size_key, default_size))
+    except (TypeError, ValueError):
+        page_size = default_size
+    if page_size not in options:
+        page_size = default_size
+    return page_size, request.GET.get(page_key)
+
+
+def _catalog_pagination_urls(path, page_size, page_obj, paginator, extra_params):
+    def page_url(number):
+        query = [("page_size", page_size), ("page", number), *extra_params]
+        return f"{path}?{urlencode(query)}"
+
+    pagination_pages = []
+    for number in paginator.get_elided_page_range(page_obj.number):
+        if number == paginator.ELLIPSIS:
+            pagination_pages.append({"ellipsis": True})
+        else:
+            pagination_pages.append(
+                {
+                    "number": number,
+                    "url": page_url(number),
+                    "current": number == page_obj.number,
+                }
+            )
+    page_size_query = [("page", 1), *extra_params]
+    return {
+        "pages": pagination_pages,
+        "previous_url": page_url(page_obj.previous_page_number()) if page_obj.has_previous() else "",
+        "next_url": page_url(page_obj.next_page_number()) if page_obj.has_next() else "",
+        "page_size_url": f"{path}?{urlencode(page_size_query)}",
+    }
+
+
+def _report_macros_table_context(request):
+    page_size, page_number = _catalog_page_params(
+        request,
+        dedicated_url_name="report_macros_table",
+        page_param="macros_page",
+        page_size_param="macros_page_size",
+        default_size=REPORT_MACRO_PAGE_SIZE,
+        options=REPORT_MACRO_PAGE_SIZE_OPTIONS,
+    )
+    paginator = Paginator(ReportMacro.objects.order_by("position", "id"), page_size)
+    page_obj = paginator.get_page(page_number)
+    urls = _catalog_pagination_urls(reverse("report_macros_table"), page_size, page_obj, paginator, [])
+    return {
+        "report_macros": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "policy_pagination_pages": urls["pages"],
+        "policy_pagination_previous_url": urls["previous_url"],
+        "policy_pagination_next_url": urls["next_url"],
+        "policy_pagination_start": page_obj.start_index(),
+        "policy_pagination_end": page_obj.end_index(),
+        "policy_page_size": page_size,
+        "policy_page_size_options": REPORT_MACRO_PAGE_SIZE_OPTIONS,
+        "policy_page_size_url": urls["page_size_url"],
+    }
+
+
+def _report_submission_slots(rows):
+    """Group a current section row with the version rows hidden under its caret."""
+    slots = []
+    bucket = None
+    for row in rows:
+        if getattr(row, "is_current", True) or bucket is None:
+            bucket = [row]
+            slots.append(bucket)
+        else:
+            bucket.append(row)
+    return slots
+
+
+def _selected_report_project_ids(request):
+    if request is None:
+        return []
+    raw_values = []
+    for key in ("project", "reports_project"):
+        for value in request.GET.getlist(key):
+            raw_values.extend(part.strip() for part in str(value).split(",") if part.strip())
+    project_ids = []
+    seen = set()
+    for value in raw_values:
+        if value == "__all__":
+            continue
+        try:
+            project_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if project_id in seen:
+            continue
+        seen.add(project_id)
+        project_ids.append(project_id)
+    return project_ids
+
+
+def _report_page_size_specified(request):
+    if request is None:
+        return False
+    url_name = getattr(getattr(request, "resolver_match", None), "url_name", "")
+    if url_name == "report_submission_table":
+        return "page_size" in request.GET
+    return "reports_page_size" in request.GET
+
+
+def _report_submission_table_context(request, rows):
+    page_size, page_number = _catalog_page_params(
+        request,
+        dedicated_url_name="report_submission_table",
+        page_param="reports_page",
+        page_size_param="reports_page_size",
+        default_size=REPORT_TABLE_PAGE_SIZE,
+        options=REPORT_TABLE_PAGE_SIZE_OPTIONS,
+    )
+    project_ids = _selected_report_project_ids(request)
+    if project_ids and not _report_page_size_specified(request):
+        page_size = REPORT_TABLE_PAGE_SIZE_OPTIONS[-1]
+    if project_ids:
+        allowed = set(project_ids)
+        rows = [row for row in rows if getattr(row, "registration_id", None) in allowed]
+    slots = _report_submission_slots(rows)
+    paginator = Paginator(slots, page_size)
+    page_obj = paginator.get_page(page_number)
+    extra_params = [("project", project_id) for project_id in project_ids]
+    urls = _catalog_pagination_urls(
+        reverse("report_submission_table"),
+        page_size,
+        page_obj,
+        paginator,
+        extra_params,
+    )
+    flat_rows = [row for slot in page_obj.object_list for row in slot]
+    return {
+        "report_submission_rows": flat_rows,
+        "reports_page_obj": page_obj,
+        "reports_paginator": paginator,
+        "reports_pagination_pages": urls["pages"],
+        "reports_pagination_previous_url": urls["previous_url"],
+        "reports_pagination_next_url": urls["next_url"],
+        "reports_pagination_start": page_obj.start_index(),
+        "reports_pagination_end": page_obj.end_index(),
+        "reports_page_size": page_size,
+        "reports_page_size_options": REPORT_TABLE_PAGE_SIZE_OPTIONS,
+        "reports_page_size_url": urls["page_size_url"],
+        "reports_project_ids": project_ids,
+    }
+
+
+def _performers_context(user=None, request=None):
     expert_project_ids = _confirmed_project_ids_for_expert(user)
     is_expert = expert_project_ids is not None
     is_admin = _is_admin_user(user)
@@ -1856,7 +2064,14 @@ def _performers_context(user=None):
             "currency",
         )
         .prefetch_related(registration_products_prefetch)
-        .order_by("position", "id")
+        .order_by(
+            "-registration__number",
+            "registration__short_uid",
+            "registration_id",
+            "asset_name",
+            "position",
+            "id",
+        )
     )
     if expert_project_ids is not None:
         performers = performers.filter(registration_id__in=expert_project_ids)
@@ -1995,6 +2210,19 @@ def _performers_context(user=None):
 
     if user:
         performers = list(performers)
+        annotate_performers_report_section_lock(performers)
+        annotate_performers_section_codes(performers)
+        performers.sort(
+            key=lambda p: (
+                -(getattr(p.registration, "number", None) or 0),
+                getattr(p.registration, "short_uid", "") or "",
+                p.registration_id or 0,
+                p.asset_name or "",
+                p.section_code or "",
+                p.position or 0,
+                p.pk or 0,
+            )
+        )
         for p in performers:
             p.executor_locked = _is_executor_locked(user, p)
             if is_expert:
@@ -2085,28 +2313,69 @@ def _performers_context(user=None):
         )
     participation_display_rows.sort(key=_participation_sort_key)
 
+    report_performers_qs = (
+        Performer.objects
+        .select_related(
+            "registration",
+            "registration__type",
+            "typical_section",
+            "typical_section__product",
+            "typical_section__expertise_direction",
+            "employee",
+            "employee__user",
+            "employee__expert_profile",
+            "employee__expert_profile__expertise_direction",
+            "currency",
+        )
+        .prefetch_related(registration_products_prefetch)
+        .annotate(executor_trim=Trim("executor"))
+        .filter(registration__status__in=active_participation_statuses)
+        .exclude(executor_trim="")
+        .order_by("registration_id", "executor", "asset_name", "position", "id")
+    )
+    report_project_scope = report_visible_registration_ids(user)
+    if report_project_scope is not None:
+        report_performers_qs = report_performers_qs.filter(registration_id__in=report_project_scope)
+    report_registration_ids = list(report_performers_qs.values_list("registration_id", flat=True).distinct())
+    report_submission_projects = (
+        ProjectRegistration.objects
+        .select_related("type")
+        .prefetch_related(project_products_prefetch)
+        .filter(id__in=report_registration_ids)
+        .order_by("-number", "-id")
+    )
     report_uploads = list(
         PerformerReportUpload.objects.filter(
-            registration_id__in=participation_project_ids,
+            registration_id__in=report_registration_ids,
         )
     )
-    report_submission_rows = build_report_submission_rows(
-        list(participation_performers),
-        report_uploads,
+    report_submission_rows = annotate_report_submission_rows(
+        user,
+        build_report_submission_rows(
+            list(report_performers_qs),
+            report_uploads,
+        ),
     )
-    model_labels = dsh_model_labels()
-    report_check_rules = list(
-        ReportCheckRule.objects
-        .select_related("product", "section", "section__product")
-        .prefetch_related("macros")
-        .order_by("position", "id")
-    )
-    for rule in report_check_rules:
-        rule.model_display = model_labels.get(rule.model_id) or rule.model_id or "—"
+    report_submission_pagination = _report_submission_table_context(request, report_submission_rows)
+    report_submission_rows = report_submission_pagination["report_submission_rows"]
+    manage_report_checks = can_manage_report_checks(user)
+    report_check_rules = []
+    report_macros = []
+    report_macros_pagination = {}
+    if manage_report_checks:
+        model_labels = dsh_model_labels()
+        report_check_rules = list(
+            ReportCheckRule.objects
+            .select_related("product", "expertise_dir", "section", "section__product")
+            .prefetch_related("macros")
+            .order_by("position", "id")
+        )
+        for rule in report_check_rules:
+            rule.model_display = model_labels.get(rule.model_id) or rule.model_id or "—"
+        report_macros_pagination = _report_macros_table_context(request)
+        report_macros = report_macros_pagination["report_macros"]
 
-    report_macros = list(ReportMacro.objects.order_by("position", "id"))
-
-    return {
+    context = {
         "performers": performers,
         "performer_projects": performer_projects,
         "performer_order_signature": performer_order_signature,
@@ -2114,11 +2383,14 @@ def _performers_context(user=None):
         "participation_display_rows": participation_display_rows,
         "participation_projects": participation_projects,
         "report_submission_rows": report_submission_rows,
-        "report_submission_projects": participation_projects,
-        "allow_local_report_folder": local_report_folder_enabled(),
+        "report_submission_projects": report_submission_projects,
+        "allow_local_report_folder": local_report_folder_enabled() and not is_report_readonly_user(user),
         "local_report_folder_placeholder": local_report_folder_placeholder(),
         "report_check_rules": report_check_rules,
         "report_macros": report_macros,
+        "can_manage_report_checks": manage_report_checks,
+        "can_send_reports": can_send_reports(user),
+        "is_report_readonly": is_report_readonly_user(user),
         "participation_request_sent_initial": request_sent_initial,
         "info_request_performers": info_request_performers,
         "info_request_projects": info_request_projects,
@@ -2135,11 +2407,24 @@ def _performers_context(user=None):
         "is_admin": is_admin,
         "has_active_smtp_connection": has_active_smtp_connection,
     }
+    context.update(report_macros_pagination)
+    context.update(report_submission_pagination)
+    return context
 
 @login_required
 @require_http_methods(["GET"])
 def performers_partial(request):
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
+
+@login_required
+@require_http_methods(["GET"])
+def report_submission_table(request):
+    return render(
+        request,
+        REPORT_SUBMISSION_TABLE_TEMPLATE,
+        _performers_context(request.user, request),
+    )
+
 
 def _build_executor_grade_map():
     profiles = (
@@ -2306,6 +2591,7 @@ def _performer_form_ctx(form, action: str, performer=None):
                     for link in s.ranked_specialties.all()
                     if link.specialty_id
                 ],
+                "accounting_type": s.accounting_type or "",
             }
             for s in ordered_sections
         ]
@@ -2316,14 +2602,23 @@ def _performer_form_ctx(form, action: str, performer=None):
     tariff_map = _build_tariff_map()
     tariff_hours_map = _build_tariff_hours_map()
     direction_hourly_rate_map = _build_direction_hourly_rate_map()
+    section_code = ""
+    if performer is not None:
+        section_code = report_section_number(
+            performer.registration,
+            performer.asset_name or "",
+            performer=performer,
+        )
 
     return {
         "form": form,
         "action": action,
         "performer": performer,
+        "section_code": section_code,
         "reg_map_json": json.dumps(reg_map, ensure_ascii=False),
         "assets_map_json": json.dumps(assets_map, ensure_ascii=False),
         "sections_map_json": json.dumps(sections_map, ensure_ascii=False),
+        "section_codes_json": json.dumps(performer_section_code_ids_by_asset(), ensure_ascii=False),
         "executor_options_json": json.dumps(executor_options, ensure_ascii=False),
         "executor_grade_json": json.dumps(executor_grade_map, ensure_ascii=False),
         "living_wage_json": json.dumps(living_wage_map, ensure_ascii=False),
@@ -2333,7 +2628,7 @@ def _performer_form_ctx(form, action: str, performer=None):
     }
 
 def _render_performers_updated(request):
-    resp = render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    resp = render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
     resp[HX_TRIGGER_HEADER] = HX_PERFORMERS_UPDATED_EVENT
     return resp
 
@@ -2351,7 +2646,7 @@ def _performer_order_signature_for_items(items):
 @login_required
 @require_http_methods(["GET"])
 def performers_partial(request):
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 def _next_performer_position(registration_id: int | None = None):
     filters = {"registration_id": registration_id} if registration_id else None
@@ -3626,11 +3921,45 @@ def payment_paid_toggle(request):
     })
 
 
+def _performer_lock_order_items(registration_id=None, ordered_ids=None):
+    qs = (
+        Performer.objects
+        .select_related("typical_section")
+        .order_by("registration_id", "position", "id")
+    )
+    if registration_id:
+        qs = qs.filter(registration_id=registration_id)
+    rows = [
+        {
+            "id": item.pk,
+            "registration_id": item.registration_id,
+            "asset_name": item.asset_name or "",
+            "accounting_type": getattr(item.typical_section, "accounting_type", "") or "",
+        }
+        for item in qs
+    ]
+    if ordered_ids is None:
+        return rows
+    by_id = {row["id"]: row for row in rows}
+    return [by_id[item_id] for item_id in ordered_ids if item_id in by_id]
+
+
+def _performer_locked_section_order_changed(registration_id, current_ids, desired_ids) -> bool:
+    current = locked_report_section_sequences(
+        _performer_lock_order_items(registration_id=registration_id, ordered_ids=current_ids)
+    )
+    desired = locked_report_section_sequences(
+        _performer_lock_order_items(registration_id=registration_id, ordered_ids=desired_ids)
+    )
+    return current != desired
+
+
 @login_required
 @require_POST
 def performer_delete(request, pk: int):
-    p = get_object_or_404(Performer, pk=pk)
-    p.delete()
+    p = get_object_or_404(Performer.objects.select_related("typical_section"), pk=pk)
+    if not performer_report_section_locked(p):
+        p.delete()
     return _render_performers_updated(request)
 
 
@@ -3656,8 +3985,9 @@ def performer_row_order(request):
         current_items = list(
             Performer.objects
             .select_for_update()
+            .select_related("typical_section")
             .order_by("registration_id", "position", "id")
-            .values("id", "registration_id", "position")
+            .values("id", "registration_id", "position", "asset_name")
         )
         current_ids = [item["id"] for item in current_items]
         current_signature = _performer_order_signature_for_items(current_items)
@@ -3683,6 +4013,16 @@ def performer_row_order(request):
             return JsonResponse(conflict_payload, status=409)
         if set(ordered_performer_ids) != set(current_ids):
             return JsonResponse(conflict_payload, status=409)
+
+        current_lock_items = _performer_lock_order_items(ordered_ids=current_ids)
+        desired_lock_items = _performer_lock_order_items(ordered_ids=ordered_performer_ids)
+        if locked_report_section_sequences(current_lock_items) != locked_report_section_sequences(desired_lock_items):
+            return JsonResponse({
+                "ok": False,
+                "error": "После загрузки отчётов нельзя менять порядок разделов.",
+                "current_performer_ids": current_ids,
+                "order_signature": current_signature,
+            }, status=409)
 
         grouped_ids = defaultdict(list)
         for performer_id in ordered_performer_ids:
@@ -3736,11 +4076,15 @@ def performer_move_up(request, pk: int):
     idx = next((i for i, it in enumerate(items) if it["id"] == pk), None)
     if idx is not None and idx > 0:
         cur, prev = items[idx], items[idx-1]
-        Performer.objects.filter(pk=cur["id"]).update(position=prev["position"])
-        Performer.objects.filter(pk=prev["id"]).update(position=cur["position"])
-        _normalize_performer_positions(registration_id)
+        desired_ids = [item["id"] for item in items]
+        desired_ids[idx], desired_ids[idx - 1] = desired_ids[idx - 1], desired_ids[idx]
+        current_ids = [item["id"] for item in items]
+        if not _performer_locked_section_order_changed(registration_id, current_ids, desired_ids):
+            Performer.objects.filter(pk=cur["id"]).update(position=prev["position"])
+            Performer.objects.filter(pk=prev["id"]).update(position=cur["position"])
+            _normalize_performer_positions(registration_id)
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ, БЕЗ HX-Trigger
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 @login_required
 @require_http_methods(["POST", "GET"])
@@ -3759,11 +4103,15 @@ def performer_move_down(request, pk: int):
     idx = next((i for i, it in enumerate(items) if it["id"] == pk), None)
     if idx is not None and idx < len(items) - 1:
         cur, nxt = items[idx], items[idx+1]
-        Performer.objects.filter(pk=cur["id"]).update(position=nxt["position"])
-        Performer.objects.filter(pk=nxt["id"]).update(position=cur["position"])
-        _normalize_performer_positions(registration_id)
+        desired_ids = [item["id"] for item in items]
+        desired_ids[idx], desired_ids[idx + 1] = desired_ids[idx + 1], desired_ids[idx]
+        current_ids = [item["id"] for item in items]
+        if not _performer_locked_section_order_changed(registration_id, current_ids, desired_ids):
+            Performer.objects.filter(pk=cur["id"]).update(position=nxt["position"])
+            Performer.objects.filter(pk=nxt["id"]).update(position=cur["position"])
+            _normalize_performer_positions(registration_id)
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ, БЕЗ HX-Trigger
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 @login_required
 @require_GET
@@ -3961,6 +4309,23 @@ def workspace_folders_reset(request):
     return JsonResponse({"ok": True, "folders": folders, "is_custom": is_custom})
 
 
+def _render_report_submission_row(request, row):
+    annotate_report_submission_rows(request.user, [row])
+    return str(
+        render_to_string(
+            "projects_app/report_submission_row.html",
+            {
+                "row": row,
+                "is_expert": is_expert_user(request.user),
+                "is_report_readonly": is_report_readonly_user(request.user),
+                "can_send_reports": can_send_reports(request.user),
+                "is_admin": is_admin_user(request.user),
+            },
+            request=request,
+        )
+    )
+
+
 def _report_upload_fallback_payload(upload, **extra):
     payload = {
         "ok": True,
@@ -4015,21 +4380,8 @@ def _report_upload_response(request, upload):
         if previous is not None:
             payload["has_history"] = True
             try:
-                employee = getattr(request.user, "employee_profile", None)
-                is_expert = (
-                    getattr(employee, "role", "") == EXPERT_GROUP
-                    or request.user.groups.filter(name=EXPERT_GROUP).exists()
-                )
-                payload["previous_row_html"] = str(
-                    render_to_string(
-                        "projects_app/report_submission_row.html",
-                        {
-                            "row": build_report_history_row(upload, previous),
-                            "is_expert": is_expert,
-                        },
-                        request=request,
-                    )
-                )
+                history_row = build_report_history_row(upload, previous)
+                payload["previous_row_html"] = _render_report_submission_row(request, history_row)
             except Exception:
                 logger.exception("Failed to render previous report version row for upload %s", upload.pk)
                 payload["previous_row_html"] = ""
@@ -4075,6 +4427,12 @@ def report_file_upload(request):
                     {"ok": False, "error": "Для этого актива нет строк исполнителей."},
                     status=400,
                 )
+            if not can_mutate_report_slot(
+                request.user,
+                project=project,
+                is_full_report=True,
+            ):
+                return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
             upload = upload_report_file(
                 user=request.user,
                 project=project,
@@ -4110,6 +4468,13 @@ def report_file_upload(request):
                     status=400,
                 )
             project = group[0].registration
+            if not can_mutate_report_slot(
+                request.user,
+                project=project,
+                performers=group,
+                is_all_sections=True,
+            ):
+                return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
             upload = upload_report_file(
                 user=request.user,
                 project=project,
@@ -4126,12 +4491,25 @@ def report_file_upload(request):
             except (TypeError, ValueError):
                 return JsonResponse({"ok": False, "error": "Некорректная строка исполнителя."}, status=400)
             performer = get_object_or_404(
-                Performer.objects.select_related("registration", "typical_section")
+                Performer.objects.select_related(
+                    "registration",
+                    "typical_section",
+                    "employee",
+                    "employee__user",
+                    "employee__expert_profile",
+                    "employee__expert_profile__expertise_direction",
+                )
                 .annotate(executor_trim=Trim("executor"))
                 .filter(registration__status__in=active_statuses)
                 .exclude(executor_trim=""),
                 pk=performer_id,
             )
+            if not can_mutate_report_slot(
+                request.user,
+                project=performer.registration,
+                performer=performer,
+            ):
+                return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
             upload = upload_report_file(
                 user=request.user,
                 project=performer.registration,
@@ -4171,6 +4549,8 @@ def report_file_send(request):
     forbidden = _forbid_report_file_access(request, upload)
     if forbidden:
         return forbidden
+    if not can_mutate_report_upload(request.user, upload):
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
     try:
         upload = send_report_upload(user=request.user, upload=upload)
     except ReportUploadError as exc:
@@ -4178,6 +4558,77 @@ def report_file_send(request):
     payload = _report_upload_fallback_payload(upload)
     if upload.check_file_name:
         payload["check_download_url"] = reverse("report_check_file_download", args=[upload.pk])
+    return JsonResponse(payload)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_GET
+def report_check_status(request, pk):
+    upload = get_object_or_404(PerformerReportUpload, pk=pk)
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    payload = _report_upload_fallback_payload(upload)
+    if upload.check_file_name:
+        payload["check_download_url"] = reverse(
+            "report_check_file_download",
+            args=[upload.pk],
+        )
+    return JsonResponse(payload)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_file_delete(request, pk):
+    if not is_admin_user(request.user):
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    upload = get_object_or_404(
+        PerformerReportUpload.objects.select_related(
+            "registration",
+            "registration__type",
+            "performer",
+            "performer__typical_section",
+        ),
+        pk=pk,
+    )
+    kind = (request.POST.get("kind") or "").strip()
+    if kind not in {"upload", "check"}:
+        return JsonResponse({"ok": False, "error": "Некорректный тип удаления."}, status=400)
+    try:
+        if kind == "check":
+            upload = clear_report_check_result(request.user, upload)
+            payload = _report_upload_fallback_payload(upload)
+            payload["kind"] = "check"
+            return JsonResponse(payload)
+        was_latest, remaining = delete_report_upload(request.user, upload)
+    except ReportUploadError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    slot_row_id = report_slot_row_id(upload)
+    current = remaining[0] if remaining else None
+    payload = {
+        "ok": True,
+        "kind": "upload",
+        "deleted_upload_id": pk,
+        "slot_row_id": slot_row_id,
+        "replaced_current": was_latest,
+        "has_history": len(remaining) > 1,
+        "current_row_html": "",
+        "remove_row_id": "",
+    }
+    if was_latest:
+        row = build_report_slot_current_row(
+            upload,
+            current,
+            has_history=len(remaining) > 1,
+        )
+        payload["current_row_html"] = _render_report_submission_row(request, row)
+        if current is not None:
+            payload["remove_row_id"] = (
+                f"{slot_row_id}-v{format_report_version(current.version)}"
+            )
     return JsonResponse(payload)
 
 
@@ -4216,10 +4667,13 @@ def report_check_file_download(request, pk):
 
 
 def _forbid_report_file_access(request, upload):
-    expert_project_ids = _confirmed_project_ids_for_expert(request.user)
-    if expert_project_ids is not None and upload.registration_id not in expert_project_ids:
+    if not can_view_report_upload(request.user, upload):
         return HttpResponseForbidden("Недостаточно прав.")
-    if expert_project_ids is None and not staff_required(request.user):
+    return None
+
+
+def _forbid_report_check_manage(request):
+    if not can_manage_report_checks(request.user):
         return HttpResponseForbidden("Недостаточно прав.")
     return None
 
@@ -4287,6 +4741,9 @@ def _render_report_check_saved():
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def report_check_form_create(request):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     if request.method == "GET":
         return _report_check_form_response(request, ReportCheckRuleForm(), "create")
     form = ReportCheckRuleForm(request.POST)
@@ -4306,8 +4763,11 @@ def report_check_form_create(request):
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def report_check_form_edit(request, pk: int):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     item = get_object_or_404(
-        ReportCheckRule.objects.select_related("product", "section", "section__product").prefetch_related("macros"),
+        ReportCheckRule.objects.select_related("product", "expertise_dir", "section", "section__product").prefetch_related("macros"),
         pk=pk,
     )
     if request.method == "GET":
@@ -4323,10 +4783,13 @@ def report_check_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def report_check_delete(request, pk: int):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     item = get_object_or_404(ReportCheckRule, pk=pk)
     item.delete()
     _normalize_report_check_positions()
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 
 def _swap_report_check_positions(pk: int, direction: str):
@@ -4350,18 +4813,24 @@ def _swap_report_check_positions(pk: int, direction: str):
 @user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def report_check_move_up(request, pk: int):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     get_object_or_404(ReportCheckRule, pk=pk)
     _swap_report_check_positions(pk, "up")
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def report_check_move_down(request, pk: int):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     get_object_or_404(ReportCheckRule, pk=pk)
     _swap_report_check_positions(pk, "down")
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 
 def _report_macro_form_response(request, form, action, item=None, status=200):
@@ -4386,10 +4855,143 @@ def _render_report_macro_saved():
     return resp
 
 
+def _report_macro_csv_error_text(form) -> str:
+    parts = []
+    for field, errors in form.errors.items():
+        if field == "__all__":
+            prefix = ""
+        else:
+            bound = form.fields.get(field)
+            prefix = f"{bound.label}: " if bound and bound.label else f"{field}: "
+        for err in errors:
+            parts.append(f"{prefix}{err}")
+    return "; ".join(parts)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def report_macro_csv_download(request):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(REPORT_MACRO_CSV_HEADERS)
+    for macro in ReportMacro.objects.order_by("position", "id"):
+        writer.writerow(
+            [
+                macro.course,
+                macro.section,
+                macro.name,
+                macro.description,
+                macro.code,
+            ]
+        )
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="report_macros.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_macro_csv_upload(request):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return JsonResponse(
+            {"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."},
+            status=400,
+        )
+
+    if len(rows) < 2:
+        return JsonResponse(
+            {"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."},
+            status=400,
+        )
+
+    created = 0
+    warnings = []
+    expected_cols = len(REPORT_MACRO_CSV_HEADERS)
+
+    for i, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < expected_cols:
+            warnings.append(
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается {expected_cols}: "
+                f"{', '.join(REPORT_MACRO_CSV_HEADERS)})."
+            )
+            continue
+        form = ReportMacroForm(
+            {
+                "course": row[0],
+                "section": row[1],
+                "name": row[2],
+                "description": row[3],
+                "code": row[4],
+            }
+        )
+        if not form.is_valid():
+            warnings.append(f"Строка {i}: {_report_macro_csv_error_text(form)}")
+            continue
+        obj = form.save(commit=False)
+        if not getattr(obj, "position", 0):
+            obj.position = _next_position(ReportMacro)
+        obj.save()
+        created += 1
+
+    return JsonResponse({"ok": True, "created": created, "warnings": warnings})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def report_macros_table(request):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
+    context = _report_macros_table_context(request)
+    context["is_expert"] = is_expert_user(request.user)
+    return render(request, REPORT_MACROS_SECTION_TEMPLATE, context)
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def report_macro_form_create(request):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     if request.method == "GET":
         return _report_macro_form_response(request, ReportMacroForm(), "create")
     form = ReportMacroForm(request.POST)
@@ -4406,6 +5008,9 @@ def report_macro_form_create(request):
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def report_macro_form_edit(request, pk: int):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     item = get_object_or_404(ReportMacro, pk=pk)
     if request.method == "GET":
         return _report_macro_form_response(request, ReportMacroForm(instance=item), "edit", item)
@@ -4420,10 +5025,13 @@ def report_macro_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def report_macro_delete(request, pk: int):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     item = get_object_or_404(ReportMacro, pk=pk)
     item.delete()
     _normalize_report_macro_positions()
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 
 def _swap_report_macro_positions(pk: int, direction: str):
@@ -4447,18 +5055,24 @@ def _swap_report_macro_positions(pk: int, direction: str):
 @user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def report_macro_move_up(request, pk: int):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     get_object_or_404(ReportMacro, pk=pk)
     _swap_report_macro_positions(pk, "up")
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def report_macro_move_down(request, pk: int):
+    forbidden = _forbid_report_check_manage(request)
+    if forbidden:
+        return forbidden
     get_object_or_404(ReportMacro, pk=pk)
     _swap_report_macro_positions(pk, "down")
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
 
 
 @login_required

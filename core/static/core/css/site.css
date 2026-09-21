@@ -7909,6 +7909,8 @@ html.worktime-progress-cursor * {
 .work-table { table-layout: auto; width: 100%; min-width: max-content; }
 .work-table col.col-checkbox { width: 30px !important; }
 .work-table col.col-project  { width: 105px !important; }
+.work-table col.col-asset-code { width: 56px !important; }
+.performers-table col.col-section-code { width: 56px !important; }
 
 .work-table th,
 .work-table td {
@@ -8749,6 +8751,10 @@ html.worktime-progress-cursor * {
   width: auto !important;
 }
 
+#performers-main-section .performers-table col.col-section-code {
+  width: 56px !important;
+}
+
 #performers-main-section .performers-table thead th,
 #performers-main-section .performers-table tbody td {
   white-space: nowrap !important;
@@ -8800,6 +8806,13 @@ html.worktime-progress-cursor * {
   overflow: visible !important;
   text-overflow: clip !important;
   max-width: none !important;
+}
+
+#performers-main-section .performers-table thead th:nth-child(7),
+#performers-main-section .performers-table tbody td:nth-child(7) {
+  width: 56px !important;
+  min-width: 56px !important;
+  max-width: 56px !important;
 }
 
 #performers-main-section .performers-table .text-truncate {
@@ -12545,15 +12558,25 @@ body.proposal-service-text-modal-open {
 #report-submission-table td.report-check-result-cell {
   vertical-align: middle;
 }
+#report-submission-table td.report-check-result-cell {
+  display: flex;
+  align-items: center;
+}
 #report-submission-table td.report-upload-cell > *,
 #report-submission-table td.report-check-result-cell > * {
   display: inline-flex;
   align-items: center;
   vertical-align: middle;
+  flex-shrink: 0;
 }
 #report-submission-table td.report-upload-cell > * + *,
 #report-submission-table td.report-check-result-cell > * + * {
   margin-left: .35rem;
+}
+#report-submission-table .report-check-download-icon {
+  width: var(--report-upload-icon-size);
+  height: var(--report-upload-icon-size);
+  flex: 0 0 var(--report-upload-icon-size);
 }
 
 #report-submission-table {
@@ -12682,7 +12705,7 @@ body.proposal-service-text-modal-open {
 }
 #report-submission-table .report-status--sent {
   --reg-launch-color: var(--bs-primary);
-  --reg-launch-bg: var(--bs-primary);
+  --reg-launch-bg: #a4caff;
 }
 #report-submission-table .report-status--checked {
   --reg-launch-color: #fd7e14;
@@ -12697,8 +12720,47 @@ body.proposal-service-text-modal-open {
 }
 #report-submission-table .report-upload-cell,
 #report-submission-table .report-check-result-cell {
+  position: relative;
   overflow: visible;
   max-width: none;
+}
+#report-submission-table td.report-file-remove-host {
+  padding-right: 1.35rem;
+}
+#report-submission-table .report-file-remove-btn {
+  position: absolute;
+  right: 0.2rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #6c757d;
+  line-height: 1;
+  font-size: 16px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+#report-submission-table tbody tr:hover .report-file-remove-btn {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+#report-submission-table .report-file-remove-btn:hover {
+  color: #dc3545;
+}
+#report-submission-table td.report-upload-cell > .report-file-remove-btn,
+#report-submission-table td.report-check-result-cell > .report-file-remove-btn {
+  margin-left: 0;
 }
 #report-submission-table .report-file-name-link {
   max-width: none;

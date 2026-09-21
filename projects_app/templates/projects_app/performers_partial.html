@@ -70,6 +70,7 @@
       <col class="col-type">      <!-- Продукт -->
       <col class="col-name">      <!-- Название -->
       <col class="col-active">    <!-- Актив -->
+      <col class="col-section-code"> <!-- Код -->
       <col style="width:28px">   <!-- быстрое редактирование -->
       <col>                       <!-- Исполнитель -->
       <col>                       <!-- Грейд -->
@@ -103,6 +104,7 @@
       <th class="text-nowrap">Продукт</th>
       <th class="text-nowrap">Название</th>
       <th>Наименование актива</th>
+      <th>Код</th>
       <th></th>
       <th>Исполнитель</th>
       <th>Грейд</th>
@@ -122,11 +124,15 @@
       <tr
         data-row-order-id="{{ p.pk }}"
         data-project-id="{{ p.registration_id }}"
+        data-project-number="{{ p.registration.number|default:0 }}"
+        data-stage-uid="{{ p.registration.short_uid }}"
         data-asset-name="{{ p.asset_name }}"
         data-edit-url="{% url 'performer_form_edit' p.pk %}"
         data-delete-url="{% url 'performer_delete' p.pk %}"
         data-move-up-url="{% url 'performer_move_up' p.pk %}"
-        data-move-down-url="{% url 'performer_move_down' p.pk %}">
+        data-move-down-url="{% url 'performer_move_down' p.pk %}"
+        data-accounting-type="{% if p.typical_section %}{{ p.typical_section.accounting_type }}{% endif %}"
+        data-report-section-locked="{% if p.report_section_locked %}1{% else %}0{% endif %}">
         <td class="text-nowrap">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">
@@ -147,6 +153,7 @@
         </td>
         <td class="text-truncate">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.asset_name }}</td>
+        <td class="text-nowrap js-section-code">{{ p.section_code }}</td>
         <td class="text-center p-0">
           {% if request.user.is_authenticated and request.user.is_staff %}
             {% if p.executor_locked %}
@@ -173,13 +180,13 @@
         {% endif %}
       </tr>
     {% empty %}
-      <tr><td colspan="{% if is_expert %}10{% else %}16{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="{% if is_expert %}11{% else %}17{% endif %}" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
     {% if not is_expert %}
       <tfoot>
         <tr class="fw-semibold" id="perf-totals-row" style="border-top:1.5px solid #000;">
-          <td colspan="10" style="border-bottom:none; padding-bottom:0;"></td>
+          <td colspan="11" style="border-bottom:none; padding-bottom:0;"></td>
           <td class="text-nowrap text-end" id="perf-total-actual" style="border-bottom:none; padding-bottom:0;"></td>
           <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
           <td class="text-nowrap text-end" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"></td>

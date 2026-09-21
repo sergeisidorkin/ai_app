@@ -32,13 +32,25 @@
         {{ form.name }}
       </div>
     </div>
-    <div class="mb-3">
-      <label class="form-label">Наименование актива</label>
-      <div class="ler-ac-wrap">
-        {{ form.asset_name }}
-        <input type="hidden" name="asset_autocomplete_identifier_record_id" id="work-asset-autocomplete-identifier-record-id" value="">
-        <input type="hidden" name="asset_autocomplete_selected_from_autocomplete" id="work-asset-autocomplete-selected" value="0">
-        <div class="ler-ac-list" id="work-ler-ac-list"></div>
+    <div class="row">
+      <div class="col-md-8 mb-3">
+        <label class="form-label">Наименование актива</label>
+        <div class="ler-ac-wrap">
+          {{ form.asset_name }}
+          <input type="hidden" name="asset_autocomplete_identifier_record_id" id="work-asset-autocomplete-identifier-record-id" value="">
+          <input type="hidden" name="asset_autocomplete_selected_from_autocomplete" id="work-asset-autocomplete-selected" value="0">
+          <div class="ler-ac-list" id="work-ler-ac-list"></div>
+        </div>
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="work-asset-code">Код</label>
+        <input
+          type="text"
+          id="work-asset-code"
+          class="form-control readonly-field"
+          value="{{ asset_code|default:'' }}"
+          readonly
+          tabindex="-1">
       </div>
     </div>
     <div class="row">
@@ -96,6 +108,8 @@
   const managerSel = form.querySelector('select[name="manager"]');
   var countrySel   = form.querySelector('#work-country-select');
   var identField   = form.querySelector('#work-identifier-field');
+  const codeInput  = form.querySelector('#work-asset-code');
+  const currentWorkId = {{ work.pk|default:"null" }};
 
   async function refillByProject() {
     const id = projectSel?.value;
@@ -112,6 +126,13 @@
 
       // «Название»: берём из регистрации
       if (nameInput) nameInput.value = j.name || nameInput.value || "";
+
+      if (codeInput) {
+        const sameProject = currentWorkId && String(id) === String({{ work.project_id|default:"''" }});
+        codeInput.value = sameProject
+          ? (codeInput.defaultValue || j.next_asset_code || "")
+          : (j.next_asset_code || "");
+      }
 
       // «Менеджер проекта»: по умолчанию равен руководителю проекта выбранной регистрации
       if (managerSel) managerSel.value = j.project_manager || "";

@@ -1600,8 +1600,17 @@ class PerformerReportUpload(models.Model):
         related_name="performer_report_uploads",
         null=True,
         blank=True,
+        verbose_name="Загрузил",
     )
     sent_at = models.DateTimeField("Дата отправки", null=True, blank=True)
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="performer_report_sends",
+        null=True,
+        blank=True,
+        verbose_name="Отправил",
+    )
     version = models.PositiveIntegerField("Версия", default=0, db_index=True)
 
     class CheckStatus(models.TextChoices):
@@ -1660,6 +1669,8 @@ class PerformerReportUpload(models.Model):
 class ReportMacro(models.Model):
     """Редактируемый Python-макрос проверки отчёта."""
 
+    course = models.CharField("Курс", max_length=255, blank=True, default="")
+    section = models.CharField("Секция", max_length=255, blank=True, default="")
     name = models.CharField("Название", max_length=255)
     description = models.CharField("Описание", max_length=500, blank=True, default="")
     code = models.TextField("Код")
@@ -1690,6 +1701,14 @@ class ReportCheckRule(models.Model):
         null=True,
         blank=True,
     )
+    expertise_dir = models.ForeignKey(
+        "policy_app.ExpertiseDirection",
+        on_delete=models.SET_NULL,
+        related_name="report_check_rules",
+        verbose_name="Экспертиза",
+        null=True,
+        blank=True,
+    )
     section = models.ForeignKey(
         TypicalSection,
         on_delete=models.SET_NULL,
@@ -1715,6 +1734,7 @@ class ReportCheckRule(models.Model):
         related_name="check_rules",
         verbose_name="Макросы",
     )
+    clear_comments = models.BooleanField("Очистка", default=False)
 
     class Meta:
         ordering = ["position", "id"]
@@ -1731,21 +1751,32 @@ class ReportCheckRule(models.Model):
         return "Все продукты"
 
     @property
+    def expertise_label(self) -> str:
+        if self.expertise_dir_id:
+            return getattr(self.expertise_dir, "short_name", "") or str(self.expertise_dir)
+        return "Все направления"
+
+    @property
     def section_label(self) -> str:
         if self.is_full_report:
             from .report_submission import FULL_REPORT_LABEL
             return FULL_REPORT_LABEL
         if not self.section_id:
-            return "Все разделы"
+            from .report_check import ALL_DIRECTION_SECTIONS_LABEL, ALL_SECTIONS_LABEL
+            return ALL_DIRECTION_SECTIONS_LABEL if self.expertise_dir_id else ALL_SECTIONS_LABEL
         from .report_submission import typical_section_short
         return typical_section_short(self.section) or str(self.section)
 
     @property
     def check_label(self) -> str:
         if self.check_type == self.CheckType.MACRO:
-            names = [macro.name for macro in self.macros.all()]
-            return ", ".join(names) or (self.check_value or "Макрос")
+            from .report_submission import format_macro_check_label
+            return format_macro_check_label(self.macros.all()) or (self.check_value or "Макрос")
         return self.check_value or ""
+
+    @property
+    def clear_comments_label(self) -> str:
+        return "Да" if self.clear_comments else "Нет"
 
 
 class SourceDataTargetFolder(models.Model):

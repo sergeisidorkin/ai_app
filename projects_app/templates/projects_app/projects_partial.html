@@ -973,6 +973,7 @@
           <col class="col-type">        <!-- Тип -->
           <col class="col-name">        <!-- Название -->
           <col class="col-active">      <!-- Наименование актива -->
+          <col class="col-asset-code">  <!-- Код -->
           <col class="work-country">    <!-- Страна -->
           <col class="work-identifier"> <!-- Идент. -->
           <col class="work-regnumber">  <!-- Регистр. номер -->
@@ -998,6 +999,7 @@
         <th>Тип</th>
         <th>Название</th>
         <th>Наименование актива</th>
+        <th>Код</th>
         <th>Страна</th>
         <th>Идент.</th>
         <th>Регистр. номер</th>
@@ -1012,7 +1014,8 @@
           data-edit-url="{% url 'work_form_edit' w.pk %}"
           data-delete-url="{% url 'work_delete' w.pk %}"
           data-move-up-url="{% url 'work_move_up' w.pk %}"
-          data-move-down-url="{% url 'work_move_down' w.pk %}">
+          data-move-down-url="{% url 'work_move_down' w.pk %}"
+          data-report-folder-locked="{% if w.report_folder_locked %}1{% else %}0{% endif %}">
           <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
@@ -1030,6 +1033,7 @@
           <td class="text-nowrap">{{ w.project.type_short_display|default:w.type }}</td>
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
+          <td class="text-nowrap">{{ w.asset_code }}</td>
           <td class="text-nowrap">{{ w.country.short_name|default:"" }}</td>
           <td class="text-nowrap">{{ w.identifier }}</td>
           <td class="text-nowrap">{{ w.registration_number }}</td>
@@ -1037,7 +1041,7 @@
           <td class="text-nowrap">{{ w.manager|short_fio }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="11" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>

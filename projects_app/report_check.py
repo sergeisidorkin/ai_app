@@ -9,7 +9,9 @@ from .models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from .report_submission import typical_section_short
 
 ALL_PRODUCTS_LABEL = "Все продукты"
+ALL_EXPERTISE_LABEL = "Все направления"
 ALL_SECTIONS_LABEL = "Все разделы"
+ALL_DIRECTION_SECTIONS_LABEL = "Все разделы направления"
 FULL_REPORT_SECTION_VALUE = "__full__"
 MACRO_CHECK_VALUE = "Макрос"
 ACTIVE_REPORT_STATUSES = ["Не начат", "В работе"]
@@ -63,3 +65,7 @@ def section_choice_label(section) -> str:
 
 def product_choice_label(product) -> str:
     return (getattr(product, "short_name", "") or str(product or "")).strip()
+
+
+def expertise_choice_label(direction) -> str:
+    return (getattr(direction, "short_name", "") or str(direction or "")).strip()

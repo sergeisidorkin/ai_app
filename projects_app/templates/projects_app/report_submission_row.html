@@ -12,16 +12,17 @@
     data-is-current="{% if row.is_current %}1{% else %}0{% endif %}"
     {% if row.parent_row_id %}data-parent-id="{{ row.parent_row_id }}"{% endif %}
     {% if row.has_history %}data-has-history="1"{% endif %}
-    {% if row.is_full_report %}data-full-report="1"{% elif row.is_all_sections %}data-all-sections="1"{% elif row.performer %}data-performer-id="{{ row.performer.id }}"{% endif %}>
+    {% if row.is_full_report %}data-full-report="1"{% elif row.is_all_sections %}data-all-sections="1"{% elif row.performer %}data-performer-id="{{ row.performer.id }}"{% endif %}
+    data-can-send="{% if row.can_send %}1{% else %}0{% endif %}">
   <td class="text-nowrap report-select-cell">
-    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+    {% if can_send_reports %}
       <div class="form-check m-0">
         <input class="form-check-input"
                type="checkbox"
                id="report-sel-{{ row.row_id }}"
                name="report-select"
                value="{{ row.row_id }}"
-               {% if not row.is_current or not row.upload or row.upload.check_status == "done" %}disabled{% endif %}
+               {% if not row.can_send or not row.is_current or not row.upload or row.upload.check_status == "done" or row.upload.check_status == "running" %}disabled{% endif %}
                aria-label="Выделить строку отчета">
       </div>
     {% endif %}
@@ -49,8 +50,8 @@
       <i class="bi bi-circle reg-launch-icon reg-launch-indicator {{ row.workflow_status_class }}" aria-hidden="true"></i><span class="report-workflow-status-label{% if row.workflow_status == 'Сдан' or row.workflow_status == 'Загружен' %} report-workflow-status-label--inset{% endif %}">{{ row.workflow_status }}</span>
     </span>
   </td>
-  <td class="text-nowrap report-upload-cell">
-    {% if row.is_current and request.user.is_authenticated and request.user.is_staff and not is_expert %}
+  <td class="text-nowrap report-upload-cell{% if is_admin and row.upload and row.upload.file_name %} report-file-remove-host{% endif %}">
+    {% if row.is_current and row.can_upload %}
       <label class="ct-upload-link" title="Загрузить файл">
         <i class="bi bi-upload"></i>
         <input type="file" class="d-none js-report-upload"
@@ -79,10 +80,21 @@
         <span class="report-file-name-text">{{ row.upload.file_name }}</span>
       </a>
     {% endif %}
+    {% if is_admin and row.upload and row.upload.file_name %}
+      <button type="button"
+              class="report-file-remove-btn js-report-file-remove"
+              data-remove-kind="upload"
+              data-upload-id="{{ row.upload.pk }}"
+              data-file-name="{{ row.upload.file_name }}"
+              title="Удалить"
+              aria-label="Удалить загруженный файл">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    {% endif %}
   </td>
   <td class="text-nowrap report-version-cell">{% if row.version_display %}{{ row.version_display }}{% endif %}</td>
   <td class="text-nowrap report-status-date-cell report-sent-at-cell">{{ row.status_date_display }}</td>
-  <td class="text-nowrap report-check-result-cell">
+  <td class="text-nowrap report-check-result-cell{% if is_admin and row.upload and row.upload.check_file_name %} report-file-remove-host{% endif %}">{% spaceless %}
     {% if row.upload and row.upload.check_file_name %}
       <a href="{% url 'report_check_file_download' row.upload.pk %}"
          class="ct-upload-link report-check-download-icon"
@@ -97,15 +109,27 @@
         <span class="report-file-name-text">{{ row.upload.check_file_name }}</span>
       </a>
       {% if row.upload.check_status == "error" %}
-        <span class="text-danger small ms-1 js-report-check-badge" title="{{ row.upload.check_error }}">ошибка проверки</span>
+        <span class="text-danger small js-report-check-badge" title="{{ row.upload.check_error }}">ошибка проверки</span>
+      {% endif %}
+      {% if is_admin %}
+        <button type="button"
+                class="report-file-remove-btn js-report-file-remove"
+                data-remove-kind="check"
+                data-upload-id="{{ row.upload.pk }}"
+                data-file-name="{{ row.upload.check_file_name }}"
+                title="Удалить"
+                aria-label="Удалить результат проверки">
+          <i class="bi bi-x-lg"></i>
+        </button>
       {% endif %}
     {% elif row.upload and row.upload.check_status == "error" %}
       <span class="text-danger small js-report-check-badge" title="{{ row.upload.check_error }}">ошибка проверки</span>
     {% elif row.upload and row.upload.check_status == "running" %}
-      <span class="text-muted small js-report-check-badge">проверка…</span>
+      <span class="report-upload-icon-spacer" aria-hidden="true"></span>
+      <span class="text-muted js-report-check-badge report-check-pending-text">Идет проверка...</span>
     {% else %}
       —
     {% endif %}
-  </td>
+  {% endspaceless %}</td>
   <td class="text-nowrap report-finding-count-cell">{{ row.finding_count_display }}</td>
 </tr>

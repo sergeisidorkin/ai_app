@@ -786,6 +786,18 @@ class DshHeadlessRunTests(SimpleTestCase):
                 ["/usr/local/bin/dsh", "--profile", "headless"],
             )
 
+    def test_command_can_override_profile(self):
+        from core.dsh_run import command_parts
+
+        with override_settings(
+            DSH_HEADLESS_CMD="/usr/local/bin/dsh --profile headless",
+            DSH_HEADLESS_CONTAINER_CWD="",
+        ):
+            self.assertEqual(
+                command_parts("/tmp/run", profile="report-check"),
+                ["/usr/local/bin/dsh", "--profile", "report-check"],
+            )
+
     def test_npx_is_not_rewritten(self):
         from core.dsh_run import command_parts
 
@@ -989,6 +1001,51 @@ class DshBrandingTests(SimpleTestCase):
         self.assertIn("off", default_model["reasoningEfforts"])
         self.assertNotIn(False, default_model["reasoningEfforts"])
 
+    def test_local_dsh_registers_alibaba_payg_catalog(self):
+        import yaml
+
+        script = (self.repo_root / "scripts" / "dev_dsh.sh").read_text(encoding="utf-8")
+        example = yaml.safe_load(
+            (self.repo_root / "deploy" / "dsh" / "settings.yaml.example").read_text(
+                encoding="utf-8"
+            )
+        )
+        alibaba = example["llm-pi-ai"]["providers"]["alibaba"]
+        env_example = (self.repo_root / "deploy" / "dsh" / "dsh.env.example").read_text(
+            encoding="utf-8"
+        )
+        compose = (self.repo_root / "deploy" / "dsh" / "docker-compose.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("DASHSCOPE_WS_API_KEY", script)
+        self.assertIn("DASHSCOPE_WS_API_KEY=", env_example)
+        self.assertIn("DASHSCOPE_WS_API_KEY:", compose)
+        self.assertEqual(alibaba["displayName"], "Alibaba Cloud")
+        self.assertEqual(alibaba["apiKeyEnv"], "DASHSCOPE_WS_API_KEY")
+        self.assertEqual(alibaba["api"], "openai-completions")
+        self.assertEqual(
+            alibaba["baseURL"],
+            "https://ws-3ypc7qxql8fr66i7.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        )
+        self.assertIn("fetch_openai_models", script)
+        self.assertIn("/models", script)
+        model_ids = [model["id"] for model in alibaba["models"]]
+        self.assertGreaterEqual(len(model_ids), 150)
+        self.assertEqual(len(model_ids), len(set(model_ids)))
+        for required in ("qwen3.8-max", "qwen3.5-27b", "qwen-plus", "deepseek-v4.1-flash"):
+            self.assertIn(required, model_ids)
+        self.assertTrue(all(model["name"] == model["id"] for model in alibaba["models"]))
+        self.assertFalse(
+            any(
+                " · " in str(model.get("name") or "")
+                for model in alibaba["models"]
+            )
+        )
+        self.assertEqual(
+            example["agent-default-model"],
+            {"provider": "siliconflow", "model": "Qwen/Qwen3.5-27B"},
+        )
+
     def test_django_deploy_syncs_dsh_sidecar_when_it_changes(self):
         workflow = (self.repo_root / ".github" / "workflows" / "deploy.yml").read_text(
             encoding="utf-8"
@@ -1049,6 +1106,7 @@ class DshCatalogTests(SimpleTestCase):
         skills = dict(list_dsh_skills())
         self.assertIn("checklist-file-sort", skills)
         self.assertIn("checklist-file-verify", skills)
+        self.assertIn("report-final-check", skills)
         models = dict(list_dsh_models())
         self.assertIn("Qwen/Qwen3.5-27B", models)
         self.assertTrue(models["Qwen/Qwen3.5-27B"])

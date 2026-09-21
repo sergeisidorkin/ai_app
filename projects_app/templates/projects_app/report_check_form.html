@@ -18,11 +18,15 @@
   {% csrf_token %}
   <div class="modal-body">
     <div class="row">
-      <div class="col-md-6 mb-3">
+      <div class="col-md-4 mb-3">
         <label class="form-label" for="{{ form.product.id_for_label }}">Продукты</label>
         {{ form.product }}
       </div>
-      <div class="col-md-6 mb-3">
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.expertise_dir.id_for_label }}">Экспертиза</label>
+        {{ form.expertise_dir }}
+      </div>
+      <div class="col-md-4 mb-3">
         <label class="form-label" for="{{ form.section.id_for_label }}">Разделы</label>
         {{ form.section }}
       </div>
@@ -32,6 +36,13 @@
         <label class="form-label" for="{{ form.check_type.id_for_label }}">Тип проверки</label>
         {{ form.check_type }}
       </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.finding_threshold.id_for_label }}">Пороговое число замечаний</label>
+        {{ form.finding_threshold }}
+        {{ form.finding_threshold.errors }}
+      </div>
+    </div>
+    <div class="row">
       <div class="col-md-4 mb-3 js-report-check-skill-fields">
         <label class="form-label" for="{{ form.check_value.id_for_label }}">Проверка</label>
         {{ form.check_value }}
@@ -39,13 +50,6 @@
       <div class="col-md-4 mb-3 js-report-check-skill-fields">
         <label class="form-label" for="{{ form.model_id.id_for_label }}">Модель</label>
         {{ form.model_id }}
-      </div>
-    </div>
-    <div class="row">
-      <div class="col-md-4 mb-3">
-        <label class="form-label" for="{{ form.finding_threshold.id_for_label }}">Пороговое число замечаний</label>
-        {{ form.finding_threshold }}
-        {{ form.finding_threshold.errors }}
       </div>
     </div>
     <div class="mb-3 js-report-check-macro-fields">
@@ -56,17 +60,25 @@
                  type="checkbox"
                  name="macros"
                  value="{{ macro.pk }}"
-                 id="report-check-macro-{{ macro.pk }}"
+                 id="report-check-form-macro-{{ macro.pk }}"
+                 data-report-check-macro="1"
                  {% if macro.pk|stringformat:"s" in selected_macro_ids %}checked{% endif %}>
-          <label class="form-check-label" for="report-check-macro-{{ macro.pk }}">
+          <label class="form-check-label" for="report-check-form-macro-{{ macro.pk }}">
             {{ macro.name }}
-            {% if macro.description %}<span class="text-muted">— {{ macro.description }}</span>{% endif %}
           </label>
         </div>
       {% empty %}
         <div class="text-muted">Сначала добавьте макросы в таблицу «Макросы».</div>
       {% endfor %}
       {{ form.macros.errors }}
+    </div>
+    <div class="mb-3">
+      <div class="form-check">
+        {{ form.clear_comments }}
+        <label class="form-check-label" for="{{ form.clear_comments.id_for_label }}">
+          {{ form.clear_comments.label }}
+        </label>
+      </div>
     </div>
     {% if form.errors %}
       <div class="alert alert-danger mb-0">Проверьте введённые данные.</div>
@@ -84,6 +96,14 @@
   const modal = document.currentScript.closest('.modal-content');
   const form = modal?.querySelector('form');
   if (!form) return;
+  form.addEventListener('change', function(e) {
+    e.stopPropagation();
+  });
+  form.addEventListener('click', function(e) {
+    if (e.target && e.target.closest('input[data-report-check-macro], label[for^="report-check-form-macro-"]')) {
+      e.stopPropagation();
+    }
+  });
 
   function readJson(id, fallback) {
     const el = modal.querySelector(id);
@@ -95,6 +115,7 @@
   const sections = readJson('#report-check-sections-json', []);
   const skills = readJson('#report-check-skills-json', []);
   const productSel = form.querySelector('select[name="product"]');
+  const expertiseSel = form.querySelector('select[name="expertise_dir"]');
   const sectionSel = form.querySelector('select[name="section"]');
   const typeSel = form.querySelector('select[name="check_type"]');
   const checkSel = form.querySelector('select[name="check_value"]');
@@ -124,15 +145,23 @@
 
   function syncSections() {
     const productId = productSel?.value || '';
+    const expertiseId = expertiseSel?.value || '';
     const filtered = sections.filter(function(section) {
-      return !productId || String(section.product_id) === String(productId);
+      if (productId && String(section.product_id) !== String(productId)) return false;
+      if (expertiseId && String(section.expertise_dir_id || '') !== String(expertiseId)) return false;
+      return true;
     }).map(function(section) {
       return { value: section.id, label: section.label, productId: section.product_id };
     });
-    fillSelect(sectionSel, [
-      { value: '__full__', label: 'Весь отчет' },
-      { value: '', label: 'Все разделы' }
-    ].concat(filtered), null);
+    const sentinels = [];
+    if (!expertiseId) {
+      sentinels.push({ value: '__full__', label: 'Весь отчет' });
+    }
+    sentinels.push({
+      value: '',
+      label: expertiseId ? 'Все разделы направления' : 'Все разделы'
+    });
+    fillSelect(sectionSel, sentinels.concat(filtered), null);
   }
 
   function syncCheckValue() {
@@ -158,6 +187,7 @@
   }
 
   productSel?.addEventListener('change', syncSections);
+  expertiseSel?.addEventListener('change', syncSections);
   typeSel?.addEventListener('change', syncCheckValue);
   syncSections();
   syncCheckValue();

@@ -1,7 +1,9 @@
 {% load projects_extras %}
-<div id="report-submission-section"{% if is_expert %} data-expert-readonly="1"{% endif %}
+<div id="report-submission-section"{% if is_report_readonly %} data-report-readonly="1"{% endif %}
      data-report-upload-url="{% url 'report_file_upload' %}"
-     data-report-send-url="{% url 'report_file_send' %}">
+     data-report-send-url="{% url 'report_file_send' %}"
+     data-report-check-status-url="{% url 'report_check_status' 0 %}"
+     data-report-delete-url="{% url 'report_file_delete' 0 %}">
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <h5 class="table-section-title mb-0">
@@ -60,72 +62,10 @@
   </div>
   {% endif %}
 
-  <div class="report-submission-table-wrap">
-    <table id="report-submission-table" class="table table-sm align-middle performers-table">
-      <colgroup>
-        <col class="col-checkbox">
-        <col class="col-number">
-        <col class="col-type">
-        <col class="col-name">
-        <col class="col-executor">
-        <col class="col-active">
-        <col class="col-typical">
-        <col class="col-report-status">
-        <col class="col-report-upload">
-        <col class="col-report-version">
-        <col>
-        <col class="col-report-check-result">
-        <col class="col-report-finding-count">
-      </colgroup>
-      <thead>
-      <tr>
-        <th class="col-checkbox">
-          {% if request.user.is_authenticated and request.user.is_staff %}
-            <div class="form-check m-0">
-              <input class="form-check-input"
-                     type="checkbox"
-                     id="report-submission-master"
-                     {% if is_expert %}disabled{% endif %}
-                     aria-label="Выделить все строки отчетов">
-            </div>
-          {% endif %}
-        </th>
-        <th class="text-nowrap">Этап</th>
-        <th class="text-nowrap">Продукт</th>
-        <th class="text-nowrap">Название</th>
-        <th>Исполнитель</th>
-        <th class="text-nowrap">Наименование актива</th>
-        <th class="text-nowrap report-section-col">Раздел</th>
-        <th class="text-nowrap">Статус</th>
-        <th class="text-nowrap">Загрузить</th>
-        <th class="text-nowrap">Версия</th>
-        <th class="text-nowrap">Дата статуса</th>
-        <th class="text-nowrap">Результаты проверки</th>
-        <th class="text-nowrap">Число замечаний</th>
-      </tr>
-      </thead>
-      <tbody>
-      {% for row in report_submission_rows %}
-        {% include "projects_app/report_submission_row.html" %}
-      {% empty %}
-        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {% include "projects_app/report_submission_table.html" %}
 
-  {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-    <div class="d-flex align-items-stretch gap-2 products-actions-row" id="report-submission-actions">
-      <button type="button"
-              class="btn btn-primary btn-sm d-flex align-items-center"
-              id="report-submission-send-btn"
-              disabled>
-        <i class="bi bi-envelope-at me-2"></i>Отправить
-      </button>
-    </div>
-  {% endif %}
-
-  <div id="report-check-section"{% if is_expert %} data-expert-readonly="1"{% endif %}>
+  {% if can_manage_report_checks %}
+  <div id="report-check-section">
     <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
       <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
         <i class="bi bi-table"></i> Проверка
@@ -136,6 +76,8 @@
       <table id="report-check-table" class="table table-sm align-middle report-check-table">
         <colgroup>
           <col class="col-checkbox">
+          <col>
+          <col>
           <col>
           <col>
           <col>
@@ -159,11 +101,13 @@
             {% endif %}
           </th>
           <th class="text-nowrap">Продукты</th>
+          <th class="text-nowrap">Экспертиза</th>
           <th class="text-nowrap">Разделы</th>
           <th class="text-nowrap">Тип проверки</th>
           <th class="text-nowrap">Число замечаний</th>
           <th class="text-nowrap">Проверка</th>
           <th class="text-nowrap">Модель</th>
+          <th class="text-nowrap">Очистка</th>
         </tr>
         </thead>
         <tbody>
@@ -187,14 +131,16 @@
               {% endif %}
             </td>
             <td class="text-nowrap">{{ rule.product_label }}</td>
+            <td class="text-nowrap">{{ rule.expertise_label }}</td>
             <td class="text-nowrap">{{ rule.section_label }}</td>
             <td class="text-nowrap">{{ rule.get_check_type_display }}</td>
             <td class="text-nowrap">{{ rule.finding_threshold }}</td>
             <td class="text-nowrap">{{ rule.check_label }}</td>
             <td class="text-nowrap">{{ rule.model_display }}</td>
+            <td class="text-nowrap">{{ rule.clear_comments_label }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="7" class="text-muted">Пока нет данных.</td></tr>
+          <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -229,95 +175,26 @@
     {% endif %}
   </div>
 
-  <div id="report-macros-section"{% if is_expert %} data-expert-readonly="1"{% endif %}>
-    <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
-      <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
-        <i class="bi bi-table"></i> Макросы
-      </h5>
-    </div>
+  {% include "projects_app/report_macros_section.html" %}
+  {% endif %}
 
-    <div class="report-macros-table-wrap">
-      <table id="report-macros-table" class="table table-sm align-middle report-macros-table">
-        <colgroup>
-          <col class="col-checkbox">
-          <col>
-          <col>
-        </colgroup>
-        <thead>
-        <tr>
-          <th style="width:30px; min-width:30px; max-width:30px;">
-            {% if request.user.is_authenticated and request.user.is_staff %}
-              <div class="form-check m-0">
-                <input class="form-check-input"
-                       type="checkbox"
-                       id="report-macros-master"
-                       data-target-name="report-macro-select"
-                       data-actions-id="report-macros-actions"
-                       {% if is_expert %}disabled{% endif %}
-                       aria-label="Выделить все макросы">
-              </div>
-            {% endif %}
-          </th>
-          <th class="text-nowrap">Название</th>
-          <th class="text-nowrap">Описание</th>
-        </tr>
-        </thead>
-        <tbody>
-        {% for macro in report_macros %}
-          <tr
-            data-edit-url="{% url 'report_macro_form_edit' macro.pk %}"
-            data-delete-url="{% url 'report_macro_delete' macro.pk %}"
-            data-move-up-url="{% url 'report_macro_move_up' macro.pk %}"
-            data-move-down-url="{% url 'report_macro_move_down' macro.pk %}">
-            <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
-              {% if request.user.is_authenticated and request.user.is_staff %}
-                <div class="form-check m-0">
-                  <input class="form-check-input"
-                         type="checkbox"
-                         id="report-macro-sel-{{ macro.id }}"
-                         name="report-macro-select"
-                         value="{{ macro.id }}"
-                         {% if is_expert %}disabled{% endif %}
-                         aria-label="Выделить макрос">
-                </div>
-              {% endif %}
-            </td>
-            <td class="text-nowrap">{{ macro.name }}</td>
-            <td class="text-truncate">{{ macro.description|default:"—" }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="3" class="text-muted">Пока нет данных.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-      <div class="d-flex align-items-stretch gap-2 products-actions-row">
-        <button
-          class="btn btn-primary btn-sm d-flex align-items-center"
-          hx-get="{% url 'report_macro_form_create' %}"
-          hx-target="#performers-modal .modal-content"
-          hx-swap="innerHTML">
-          <i class="bi bi-plus-circle me-2"></i>Добавить строку
-        </button>
-        <div id="report-macros-actions" class="d-none">
-          <div class="btn-group">
-            <button type="button" id="report-macros-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
-              <i class="bi bi-arrow-up-square"></i>
-            </button>
-            <button type="button" id="report-macros-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
-              <i class="bi bi-arrow-down-square"></i>
-            </button>
-            <button type="button" id="report-macros-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
-              <i class="bi bi-pencil-square"></i>
-            </button>
-            <button type="button" id="report-macros-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
-              <i class="bi bi-x-square"></i>
-            </button>
-          </div>
+  {% if is_admin %}
+  <div class="modal fade" id="report-file-delete-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Удаление файла</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-0" id="report-file-delete-message"></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal" id="report-file-delete-cancel">Отмена</button>
+          <button type="button" class="btn btn-danger btn-sm" id="report-file-delete-confirm">Удалить</button>
         </div>
       </div>
-    {% endif %}
+    </div>
   </div>
+  {% endif %}
 </div>

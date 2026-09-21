@@ -482,6 +482,15 @@ class NextcloudApiClient:
         content_type = str(response.headers.get("Content-Type") or "").strip() or None
         return (content_type, response.content or b"")
 
+    def delete_file(self, owner_user_id: str, path: str) -> bool:
+        normalized = self._normalize_folder_path(path)
+        response = self._dav_request(
+            "DELETE",
+            self._webdav_path(owner_user_id, normalized),
+            allow_statuses={200, 204, 404},
+        )
+        return response.status_code in (200, 204, 404)
+
     def ensure_public_link_share(self, owner_user_id: str, path: str, *, _quick: bool = False) -> str:
         normalized = self._normalize_folder_path(path)
         existing = self.get_public_link_share(owner_user_id, normalized)
