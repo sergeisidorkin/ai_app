@@ -9,6 +9,7 @@ from group_app.models import GroupMember
 from policy_app.models import (
     DIRECTION_DIRECTOR_GROUP,
     PROJECTS_HEAD_GROUP,
+    ExpertiseDirection,
     Product,
     TypicalSection,
 )
@@ -1341,9 +1342,10 @@ class LegalEntityForm(BootstrapMixin, forms.ModelForm):
 
 
 class ReportCheckSectionSelect(forms.Select):
-    def __init__(self, attrs=None, choices=(), product_ids=None):
+    def __init__(self, attrs=None, choices=(), product_ids=None, expertise_dir_ids=None):
         super().__init__(attrs=attrs, choices=choices)
         self.product_ids = product_ids or {}
+        self.expertise_dir_ids = expertise_dir_ids or {}
 
     def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
         option = super().create_option(
@@ -1352,11 +1354,15 @@ class ReportCheckSectionSelect(forms.Select):
         raw = getattr(value, "value", value)
         if raw not in (None, ""):
             try:
-                product_id = self.product_ids.get(int(raw))
+                key = int(raw)
             except (TypeError, ValueError):
-                product_id = None
+                key = None
+            product_id = self.product_ids.get(key) if key is not None else None
             if product_id:
                 option["attrs"]["data-product-id"] = str(product_id)
+            expertise_id = self.expertise_dir_ids.get(key) if key is not None else None
+            if expertise_id:
+                option["attrs"]["data-expertise-dir-id"] = str(expertise_id)
         return option
 
 
@@ -1366,6 +1372,12 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
         queryset=Product.objects.none(),
         required=False,
         empty_label="Все продукты",
+    )
+    expertise_dir = forms.ModelChoiceField(
+        label="Экспертиза",
+        queryset=ExpertiseDirection.objects.none(),
+        required=False,
+        empty_label="Все направления",
     )
     section = forms.ChoiceField(
         label="Разделы",
@@ -1388,16 +1400,33 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
         initial=0,
         widget=forms.NumberInput(attrs={"min": "0", "step": "1", "inputmode": "numeric"}),
     )
+    clear_comments = forms.BooleanField(
+        label="Удалить все примечания перед проверкой",
+        required=False,
+        initial=False,
+    )
 
     class Meta:
         model = ReportCheckRule
-        fields = ["product", "section", "check_type", "finding_threshold", "check_value", "model_id", "macros"]
+        fields = [
+            "product",
+            "expertise_dir",
+            "section",
+            "check_type",
+            "finding_threshold",
+            "check_value",
+            "model_id",
+            "macros",
+            "clear_comments",
+        ]
 
     def __init__(self, *args, **kwargs):
         from core.dsh_catalog import list_dsh_model_groups, list_dsh_skills
         from .report_check import (
+            ALL_DIRECTION_SECTIONS_LABEL,
             ALL_SECTIONS_LABEL,
             FULL_REPORT_SECTION_VALUE,
+            expertise_choice_label,
             product_choice_label,
             report_check_products,
             report_check_sections,
@@ -1432,18 +1461,26 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
             {
                 "id": section.pk,
                 "product_id": section.product_id,
+                "expertise_dir_id": section.expertise_dir_id,
                 "label": section_choice_label(section),
             }
             for section in sections
         ]
-        section_choices = [
-            (FULL_REPORT_SECTION_VALUE, FULL_REPORT_LABEL),
-            ("", ALL_SECTIONS_LABEL),
-            *[
-                (str(section.pk), section_choice_label(section))
-                for section in sections
-            ],
-        ]
+        if self.data:
+            expertise_selected = bool((self.data.get("expertise_dir") or "").strip())
+        else:
+            expertise_selected = bool(getattr(self.instance, "expertise_dir_id", None))
+        all_sections_label = (
+            ALL_DIRECTION_SECTIONS_LABEL if expertise_selected else ALL_SECTIONS_LABEL
+        )
+        section_choices = []
+        if not expertise_selected:
+            section_choices.append((FULL_REPORT_SECTION_VALUE, FULL_REPORT_LABEL))
+        section_choices.append(("", all_sections_label))
+        section_choices.extend(
+            (str(section.pk), section_choice_label(section))
+            for section in sections
+        )
         self.fields["section"].choices = section_choices
         if getattr(self.instance, "is_full_report", False) and not self.data:
             self.fields["section"].initial = FULL_REPORT_SECTION_VALUE
@@ -1456,8 +1493,17 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
             pk__in=product_ids
         ).order_by("position", "short_name", "id")
         self.fields["product"].label_from_instance = product_choice_label
+        self.fields["expertise_dir"].queryset = ExpertiseDirection.objects.order_by(
+            "position", "short_name", "id"
+        )
+        self.fields["expertise_dir"].label_from_instance = expertise_choice_label
         self.fields["section"].widget.product_ids = {
             section.pk: section.product_id for section in sections
+        }
+        self.fields["section"].widget.expertise_dir_ids = {
+            section.pk: section.expertise_dir_id
+            for section in sections
+            if section.expertise_dir_id
         }
         self.fields["check_type"].label = "Тип проверки"
         self.fields["finding_threshold"].label = "Пороговое число замечаний"
@@ -1503,12 +1549,14 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
             elif not self.data and self.model_choices:
                 self.fields["model_id"].initial = self.model_choices[0][0]
         self._bootstrapify()
+        self.fields["clear_comments"].widget.attrs["class"] = "form-check-input"
 
     def clean_section(self):
         from .report_check import FULL_REPORT_SECTION_VALUE
 
         raw = (self.cleaned_data.get("section") or "").strip()
         product = self.cleaned_data.get("product")
+        expertise_dir = self.cleaned_data.get("expertise_dir")
         if raw == FULL_REPORT_SECTION_VALUE or not raw:
             return None
         section = (
@@ -1521,6 +1569,8 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
             raise forms.ValidationError("Выберите раздел из списка.")
         if product and section.product_id != product.pk:
             raise forms.ValidationError("Раздел не относится к выбранному продукту.")
+        if expertise_dir and section.expertise_dir_id != expertise_dir.pk:
+            raise forms.ValidationError("Раздел не относится к выбранному направлению экспертизы.")
         return section
 
     def clean(self):
@@ -1528,7 +1578,12 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
 
         cleaned = super().clean()
         raw = (self.data.get("section") or "").strip()
-        cleaned["is_full_report"] = raw == FULL_REPORT_SECTION_VALUE
+        is_full_report = raw == FULL_REPORT_SECTION_VALUE
+        if is_full_report and cleaned.get("expertise_dir"):
+            self.add_error("section", "При выбранном направлении экспертизы пункт «Весь отчет» недоступен.")
+            cleaned["is_full_report"] = False
+            return cleaned
+        cleaned["is_full_report"] = is_full_report
         if cleaned["is_full_report"]:
             cleaned["section"] = None
         return cleaned
@@ -1569,6 +1624,8 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
     def save(self, commit=True):
         obj = super().save(commit=False)
         obj.is_full_report = bool(self.cleaned_data.get("is_full_report"))
+        if obj.expertise_dir_id:
+            obj.is_full_report = False
         if obj.is_full_report:
             obj.section = None
         macros = self.cleaned_data.get("macros")
@@ -1587,8 +1644,10 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
 class ReportMacroForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = ReportMacro
-        fields = ["name", "description", "code"]
+        fields = ["course", "section", "name", "description", "code"]
         widgets = {
+            "course": forms.TextInput(attrs={**_common_input}),
+            "section": forms.TextInput(attrs={**_common_input}),
             "name": forms.TextInput(attrs={**_common_input}),
             "description": forms.TextInput(attrs={**_common_input}),
             "code": forms.Textarea(attrs={
@@ -1604,6 +1663,10 @@ class ReportMacroForm(BootstrapMixin, forms.ModelForm):
         from .report_macros import DEFAULT_MACRO_CODE
 
         super().__init__(*args, **kwargs)
+        self.fields["course"].label = "Курс"
+        self.fields["course"].required = False
+        self.fields["section"].label = "Секция"
+        self.fields["section"].required = False
         self.fields["name"].label = "Название"
         self.fields["description"].label = "Описание"
         self.fields["description"].required = False

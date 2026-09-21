@@ -1,0 +1,119 @@
+<div id="report-macros-section"
+     data-macros-page="{{ page_obj.number|default:'1' }}"
+     data-macros-page-size="{{ policy_page_size|default:'25' }}">
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
+    <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+      <i class="bi bi-table"></i> Макросы
+    </h5>
+  </div>
+
+  <div class="report-macros-table-wrap">
+    <table id="report-macros-table" class="table table-sm align-middle report-macros-table">
+      <colgroup>
+        <col class="col-checkbox">
+        <col>
+        <col>
+        <col>
+        <col>
+      </colgroup>
+      <thead>
+      <tr>
+        <th style="width:30px; min-width:30px; max-width:30px;">
+          {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="report-macros-master"
+                     data-target-name="report-macro-select"
+                     data-actions-id="report-macros-actions"
+                     {% if is_expert %}disabled{% endif %}
+                     aria-label="Выделить все макросы">
+            </div>
+          {% endif %}
+        </th>
+        <th class="text-nowrap">Курс</th>
+        <th class="text-nowrap">Секция</th>
+        <th class="text-nowrap">Название</th>
+        <th class="text-nowrap">Описание</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for macro in report_macros %}
+        <tr
+          data-edit-url="{% url 'report_macro_form_edit' macro.pk %}"
+          data-delete-url="{% url 'report_macro_delete' macro.pk %}"
+          data-move-up-url="{% url 'report_macro_move_up' macro.pk %}"
+          data-move-down-url="{% url 'report_macro_move_down' macro.pk %}">
+          <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
+            {% if request.user.is_authenticated and request.user.is_staff %}
+              <div class="form-check m-0">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="report-macro-sel-{{ macro.id }}"
+                       name="report-macro-select"
+                       value="{{ macro.id }}"
+                       {% if is_expert %}disabled{% endif %}
+                       aria-label="Выделить макрос">
+              </div>
+            {% endif %}
+          </td>
+          <td class="text-nowrap">{{ macro.course|default:"—" }}</td>
+          <td class="text-nowrap">{{ macro.section|default:"—" }}</td>
+          <td class="text-nowrap">{{ macro.name }}</td>
+          <td class="text-truncate">{{ macro.description|default:"—" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="policy-table-footer">
+    {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+      <div class="policy-table-footer-actions products-actions-row">
+        <button
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          hx-get="{% url 'report_macro_form_create' %}"
+          hx-target="#performers-modal .modal-content"
+          hx-swap="innerHTML">
+          <i class="bi bi-plus-circle me-2"></i>Добавить строку
+        </button>
+        <div id="report-macros-actions" class="d-none">
+          <div class="btn-group">
+            <button type="button" id="report-macros-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+              <i class="bi bi-arrow-up-square"></i>
+            </button>
+            <button type="button" id="report-macros-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+              <i class="bi bi-arrow-down-square"></i>
+            </button>
+            <button type="button" id="report-macros-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" id="report-macros-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+              <i class="bi bi-x-square"></i>
+            </button>
+          </div>
+        </div>
+        <a href="{% url 'report_macro_csv_download' %}"
+           id="report-macros-csv-download-btn"
+           class="btn btn-primary btn-sm d-flex align-items-center"
+           title="Скачать CSV"
+           role="button">
+          <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+        </a>
+        <button type="button"
+                id="report-macros-csv-upload-btn"
+                class="btn btn-primary btn-sm d-flex align-items-center"
+                data-upload-url="{% url 'report_macro_csv_upload' %}"
+                title="Загрузить CSV">
+          <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+        </button>
+        <input type="file" id="report-macros-csv-file-input" accept=".csv" class="d-none">
+      </div>
+    {% else %}
+      <div class="policy-table-footer-actions"></div>
+    {% endif %}
+    {% include "policy_app/_policy_pagination.html" with pagination_target="#report-macros-section" page_size_id="report-macros" %}
+  </div>
+</div>

@@ -80,6 +80,43 @@
     const anyChecked = getCheckedByName(name).length > 0;
     panel.classList.toggle('d-none', !anyChecked);
     panel.classList.toggle('d-flex', anyChecked);
+    if (name === 'work-select') updateWorkLockedActionButtons(panel);
+  }
+
+  function visibleWorkRowSibling(tr, direction) {
+    if (!tr) return null;
+    const projectId = tr.dataset.projectId || '';
+    let sibling = direction === 'up' ? tr.previousElementSibling : tr.nextElementSibling;
+    while (sibling) {
+      if (sibling.tagName === 'TR' && !sibling.classList.contains('d-none') && (sibling.dataset.projectId || '') === projectId) {
+        return sibling;
+      }
+      sibling = direction === 'up' ? sibling.previousElementSibling : sibling.nextElementSibling;
+    }
+    return null;
+  }
+
+  function updateWorkLockedActionButtons(panel) {
+    if (!panel) return;
+    const upBtn = panel.querySelector('[data-panel-action="up"]');
+    const downBtn = panel.querySelector('[data-panel-action="down"]');
+    const deleteBtn = panel.querySelector('[data-panel-action="delete"]');
+    const rows = getCheckedByName('work-select').map((box) => box.closest('tr')).filter(Boolean);
+    const anyLocked = rows.some((tr) => tr.dataset.reportFolderLocked === '1');
+    const blockUp = anyLocked || rows.some((tr) => visibleWorkRowSibling(tr, 'up')?.dataset?.reportFolderLocked === '1');
+    const blockDown = anyLocked || rows.some((tr) => visibleWorkRowSibling(tr, 'down')?.dataset?.reportFolderLocked === '1');
+    if (upBtn) {
+      upBtn.classList.toggle('d-none', blockUp);
+      upBtn.disabled = blockUp;
+    }
+    if (downBtn) {
+      downBtn.classList.toggle('d-none', blockDown);
+      downBtn.disabled = blockDown;
+    }
+    if (deleteBtn) {
+      deleteBtn.classList.toggle('d-none', anyLocked);
+      deleteBtn.disabled = anyLocked;
+    }
   }
   function clearHiddenSelections(name) {
     getRowChecksByName(name).forEach((box) => {
@@ -1159,8 +1196,12 @@
     }
 
     if (action === 'delete') {
-      if (!confirm(getDeleteConfirmationMessage(name, checked.length))) return;
-      const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+      const deletable = name === 'work-select'
+        ? checked.filter((box) => box.closest('tr')?.dataset?.reportFolderLocked !== '1')
+        : checked;
+      if (!deletable.length) return;
+      if (!confirm(getDeleteConfirmationMessage(name, deletable.length))) return;
+      const urls = deletable.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {

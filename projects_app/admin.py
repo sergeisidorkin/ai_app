@@ -288,26 +288,30 @@ class LegalEntityAdmin(admin.ModelAdmin):
 
 @admin.register(ReportMacro)
 class ReportMacroAdmin(admin.ModelAdmin):
-    list_display = ("position", "name", "description")
+    list_display = ("position", "course", "section", "name", "description")
     list_editable = ("position",)
     list_display_links = ("name",)
-    search_fields = ("name", "description", "code")
+    search_fields = ("course", "section", "name", "description", "code")
     ordering = ("position", "id")
 
 
 @admin.register(ReportCheckRule)
 class ReportCheckRuleAdmin(admin.ModelAdmin):
-    list_display = ("position", "product_label_display", "section_label_display", "check_type", "finding_threshold", "check_value", "model_id")
+    list_display = ("position", "product_label_display", "expertise_label_display", "section_label_display", "check_type", "finding_threshold", "check_value", "model_id", "clear_comments")
     list_editable = ("position",)
     list_display_links = ("check_value",)
-    list_filter = ("check_type", "product")
-    search_fields = ("check_value", "model_id", "product__short_name", "section__code", "section__short_name_ru")
-    list_select_related = ("product", "section", "section__product")
+    list_filter = ("check_type", "product", "expertise_dir")
+    search_fields = ("check_value", "model_id", "product__short_name", "expertise_dir__short_name", "section__code", "section__short_name_ru")
+    list_select_related = ("product", "expertise_dir", "section", "section__product")
     ordering = ("position", "id")
 
     @admin.display(description="Продукт")
     def product_label_display(self, obj):
         return obj.product_label
+
+    @admin.display(description="Экспертиза")
+    def expertise_label_display(self, obj):
+        return obj.expertise_label
 
     @admin.display(description="Раздел")
     def section_label_display(self, obj):

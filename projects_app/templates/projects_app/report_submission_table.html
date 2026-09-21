@@ -1,0 +1,75 @@
+<div id="report-submission-table-block"
+     data-reports-page="{{ reports_page_obj.number|default:'1' }}"
+     data-reports-page-size="{{ reports_page_size|default:'25' }}"
+     data-reports-projects="{% if reports_project_ids %}{% for project_id in reports_project_ids %}{% if not forloop.first %},{% endif %}{{ project_id }}{% endfor %}{% else %}__all__{% endif %}"
+     data-reports-table-url="{% url 'report_submission_table' %}">
+  <div class="report-submission-table-wrap">
+    <table id="report-submission-table" class="table table-sm align-middle performers-table">
+      <colgroup>
+        <col class="col-checkbox">
+        <col class="col-number">
+        <col class="col-type">
+        <col class="col-name">
+        <col class="col-executor">
+        <col class="col-active">
+        <col class="col-typical">
+        <col class="col-report-status">
+        <col class="col-report-upload">
+        <col class="col-report-version">
+        <col>
+        <col class="col-report-check-result">
+        <col class="col-report-finding-count">
+      </colgroup>
+      <thead>
+      <tr>
+        <th class="col-checkbox">
+          {% if request.user.is_authenticated and request.user.is_staff and can_send_reports %}
+            <div class="form-check m-0">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="report-submission-master"
+                     {% if is_report_readonly %}disabled{% endif %}
+                     aria-label="Выделить все строки отчетов">
+            </div>
+          {% endif %}
+        </th>
+        <th class="text-nowrap">Этап</th>
+        <th class="text-nowrap">Продукт</th>
+        <th class="text-nowrap">Название</th>
+        <th>Исполнитель</th>
+        <th class="text-nowrap">Наименование актива</th>
+        <th class="text-nowrap report-section-col">Раздел</th>
+        <th class="text-nowrap">Статус</th>
+        <th class="text-nowrap">Загрузить</th>
+        <th class="text-nowrap">Версия</th>
+        <th class="text-nowrap">Дата статуса</th>
+        <th class="text-nowrap">Результаты проверки</th>
+        <th class="text-nowrap">Число замечаний</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for row in report_submission_rows %}
+        {% include "projects_app/report_submission_row.html" %}
+      {% empty %}
+        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="policy-table-footer">
+    {% if can_send_reports %}
+      <div class="policy-table-footer-actions products-actions-row" id="report-submission-actions">
+        <button type="button"
+                class="btn btn-primary btn-sm d-flex align-items-center"
+                id="report-submission-send-btn"
+                disabled>
+          <i class="bi bi-envelope-at me-2"></i>Отправить
+        </button>
+      </div>
+    {% else %}
+      <div class="policy-table-footer-actions" id="report-submission-actions"></div>
+    {% endif %}
+    {% include "policy_app/_policy_pagination.html" with pagination_target="#report-submission-table-block" page_size_id="report-submission" page_obj=reports_page_obj paginator=reports_paginator policy_pagination_pages=reports_pagination_pages policy_pagination_previous_url=reports_pagination_previous_url policy_pagination_next_url=reports_pagination_next_url policy_pagination_start=reports_pagination_start policy_pagination_end=reports_pagination_end policy_page_size=reports_page_size policy_page_size_options=reports_page_size_options policy_page_size_url=reports_page_size_url %}
+  </div>
+</div>

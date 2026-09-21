@@ -74,7 +74,7 @@ load_dsh_api_key() {
   fi
 }
 
-configure_siliconflow_model() {
+configure_example_providers() {
   local settings_file="$HOME_DIR/settings.yaml"
   local credentials_file="$HOME_DIR/.credentials.yaml"
   local example_file="$ROOT/deploy/dsh/settings.yaml.example"
@@ -86,8 +86,12 @@ configure_siliconflow_model() {
   if [[ -n "${SILICONFLOW_API_KEY:-}" ]] || grep -qE '^[[:space:]]*SILICONFLOW_API_KEY:' "$credentials_file" 2>/dev/null; then
     activate_default=1
   fi
-  "$yaml_python" - "$settings_file" "$activate_default" "$example_file" <<'PY'
+  "$yaml_python" - "$settings_file" "$activate_default" "$example_file" "$credentials_file" <<'PY'
+import json
+import os
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import yaml
@@ -95,6 +99,7 @@ import yaml
 path = Path(sys.argv[1])
 activate_default = sys.argv[2] == "1"
 example_path = Path(sys.argv[3])
+credentials_path = Path(sys.argv[4])
 def restore_yaml_off_keys(value):
     if isinstance(value, dict):
         return {
@@ -105,18 +110,72 @@ def restore_yaml_off_keys(value):
         return [restore_yaml_off_keys(item) for item in value]
     return value
 
+def credential_value(name):
+    env_value = (os.environ.get(name) or "").strip()
+    if env_value:
+        return env_value
+    if not credentials_path.is_file():
+        return ""
+    try:
+        cred = yaml.safe_load(credentials_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return ""
+    return str(((cred.get("refs") or {}).get(name)) or "").strip()
+
+def fetch_openai_models(base_url, api_key):
+    url = base_url.rstrip("/") + "/models"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"{url} answered {exc.code}") from exc
+    models = []
+    seen = set()
+    for item in body.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id") or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append({"id": model_id, "name": model_id})
+    if not models:
+        raise RuntimeError(f"{url} returned no models")
+    return models
+
 example = restore_yaml_off_keys(yaml.safe_load(example_path.read_text(encoding="utf-8")) or {})
-siliconflow = (
-    (example.get("llm-pi-ai") or {}).get("providers") or {}
-).get("siliconflow")
-if not siliconflow:
-    raise SystemExit(f"siliconflow provider missing from {example_path}")
+example_providers = (example.get("llm-pi-ai") or {}).get("providers") or {}
+for name in ("siliconflow", "alibaba"):
+    if name not in example_providers:
+        raise SystemExit(f"{name} provider missing from {example_path}")
 try:
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 except FileNotFoundError:
     payload = {}
 providers = payload.setdefault("llm-pi-ai", {}).setdefault("providers", {})
-providers["siliconflow"] = siliconflow
+for name in ("siliconflow", "alibaba"):
+    providers[name] = example_providers[name]
+api_key = credential_value("DASHSCOPE_WS_API_KEY")
+base_url = str(providers["alibaba"].get("baseURL") or "").strip()
+if api_key and base_url:
+    try:
+        providers["alibaba"]["models"] = fetch_openai_models(base_url, api_key)
+        print(
+            f"[dsh] Alibaba Cloud models: {len(providers['alibaba']['models'])} from API",
+            file=sys.stderr,
+        )
+    except Exception as exc:
+        print(
+            f"[dsh] Alibaba Cloud model refresh failed, using bundled catalog: {exc}",
+            file=sys.stderr,
+        )
 if activate_default:
     payload["agent-default-model"] = example.get("agent-default-model") or {
         "provider": "siliconflow",
@@ -133,14 +192,16 @@ PY
   else
     echo "[dsh] SiliconFlow catalog registered; default unchanged until SILICONFLOW_API_KEY is configured"
   fi
+  echo "[dsh] Alibaba Cloud pay-as-you-go catalog registered"
 }
 
 load_dsh_api_key OPENROUTER_API_KEY
 load_dsh_api_key SILICONFLOW_API_KEY
 load_dsh_api_key DEEPSEEK_API_KEY
 load_dsh_api_key DASHSCOPE_API_KEY
+load_dsh_api_key DASHSCOPE_WS_API_KEY
 load_dsh_api_key OLLAMA_API_KEY
-configure_siliconflow_model
+configure_example_providers
 
 if [[ "$(dsh_http_code)" =~ ^(200|401|302|403)$ ]]; then
   echo "[dsh] already listening on http://${HOST}:${PORT}"

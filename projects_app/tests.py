@@ -1,12 +1,16 @@
 import base64
 import copy
+import csv
+import io
 import json
 import re
 import tempfile
 import uuid
 import zipfile
+import yaml
 from decimal import Decimal
 from importlib import import_module
+from importlib import util as importlib_util
 from io import BytesIO
 from datetime import date, timedelta
 from pathlib import Path
@@ -15,11 +19,15 @@ from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.db import IntegrityError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from docx import Document
+from docx.enum.section import WD_ORIENT
+from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_COLOR_INDEX
+from docx.shared import Cm, Pt, Twips
 
 from checklists_app.models import (
     ChecklistItem,
@@ -39,11 +47,13 @@ from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
 from policy_app.models import (
     ADMIN_GROUP,
+    DEPARTMENT_HEAD_GROUP,
     DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
     EXPERT_GROUP,
     LAWYER_GROUP,
     PROJECTS_HEAD_GROUP,
+    ExpertiseDirection,
     Product,
     TypicalServiceTerm,
     TypicalSectionSpecialty,
@@ -64,22 +74,64 @@ from projects_app.models import (
 )
 from projects_app.report_submission import (
     FULL_REPORT_LABEL,
+    REPORT_ASSET_FOLDER_NAME_MAX_LEN,
     build_check_filename,
+    build_report_asset_folder_name,
     build_report_filename,
     build_report_submission_rows,
+    format_macro_check_label,
+    format_report_file_date,
     format_report_finding_count,
     format_report_status_date,
+    encode_local_report_path,
     format_report_version,
+    ordered_report_asset_names,
+    plural_macros,
     plural_sections,
+    report_asset_code,
     report_findings_meet_threshold,
+    report_section_number,
+    report_scope_label,
     report_workflow_status,
     report_workflow_status_class,
     resolve_workspace_folder_relpath,
+    short_fio_no_dots,
+    upload_report_file,
 )
 from projects_app.forms import ContractConditionsForm, LegalEntityForm, PerformerForm, ProjectRegistrationForm, ReportCheckRuleForm, WorkVolumeForm
-from projects_app.report_macros import DEFAULT_MACRO_CODE, TPGR_MACROS, sync_tpgr_macros, tpgr_macro_code
-from projects_app.docx_comments import extract_document_text, insert_comments
+from projects_app.report_macros import (
+    DEFAULT_MACRO_CODE,
+    TPGR_COURSE_ABBR_URL,
+    TPGR_COURSE_DASH_URL,
+    TPGR_COURSE_LINK_TEXT,
+    TPGR_COURSE_NUM_URL,
+    TPGR_COURSE_QUOTE_URL,
+    TPGR_COURSE_LIST_URL,
+    TPGR_COURSE_SN_URL,
+    TPGR_COURSE_URL,
+    TPGR_MACROS,
+    sync_tpgr_macros,
+    tpgr_macro_code,
+)
+from projects_app.docx_comments import (
+    BROKEN_REF_RESULT,
+    count_comments,
+    extract_char_runs,
+    extract_document_text,
+    extract_notes,
+    extract_paragraphs,
+    extract_ref_fields,
+    extract_sections,
+    extract_tab_offsets,
+    extract_table_cells,
+    insert_comments,
+    materialize_symbols,
+    strip_comments,
+    update_broken_ref_fields,
+)
+from projects_app.docx_layout import extract_line_end_spaces
 from projects_app.report_macro_runner import apply_report_macro_checks, list_macros_for_upload, run_macro
+from projects_app.report_skill_runner import apply_report_checks, list_skill_rules_for_upload
 from group_app.models import GroupMember, OrgUnit
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
@@ -3037,6 +3089,102 @@ class WorkVolumePerformerCreationTests(TestCase):
 
         self.assertEqual(form.fields["manager"].label, "Менеджер проекта")
 
+    def test_work_volume_table_shows_a0_for_single_asset_and_an_for_many(self):
+        first = WorkVolume.objects.create(
+            project=self.project,
+            name="Карьер",
+            asset_name="Карьер",
+            manager=self.first_manager_name,
+            position=1,
+        )
+        response = self.client.get(reverse("projects_partial"))
+        self.assertContains(response, ">Код<", html=False)
+        self.assertContains(response, ">A0<", html=False)
+        self.assertNotContains(response, 'data-report-folder-locked="1"', html=False)
+
+        WorkVolume.objects.create(
+            project=self.project,
+            name="Фабрика",
+            asset_name="Фабрика",
+            manager=self.second_manager_name,
+            position=2,
+        )
+        response = self.client.get(reverse("projects_partial"))
+        self.assertContains(response, ">A1<", html=False)
+        self.assertContains(response, ">A2<", html=False)
+        self.assertNotContains(response, ">A0<", html=False)
+
+        edit = self.client.get(reverse("work_form_edit", args=[first.pk]))
+        self.assertEqual(edit.status_code, 200)
+        self.assertContains(edit, 'id="work-asset-code"', html=False)
+        self.assertContains(edit, 'value="A1"', html=False)
+        self.assertContains(edit, "readonly", html=False)
+
+    def test_work_deps_returns_next_asset_code(self):
+        empty = self.client.get(reverse("work_deps"), {"project": self.project.pk})
+        self.assertEqual(empty.json()["next_asset_code"], "A0")
+        WorkVolume.objects.create(
+            project=self.project,
+            name="Карьер",
+            asset_name="Карьер",
+            manager=self.first_manager_name,
+            position=1,
+        )
+        second = self.client.get(reverse("work_deps"), {"project": self.project.pk})
+        self.assertEqual(second.json()["next_asset_code"], "A2")
+
+    def test_work_move_is_blocked_after_report_asset_folder_exists(self):
+        first = WorkVolume.objects.create(
+            project=self.project,
+            name="Карьер",
+            asset_name="Карьер",
+            manager=self.first_manager_name,
+            position=1,
+        )
+        second = WorkVolume.objects.create(
+            project=self.project,
+            name="Фабрика",
+            asset_name="Фабрика",
+            manager=self.second_manager_name,
+            position=2,
+        )
+        PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=self.first_manager_name,
+            asset_name="Карьер",
+            file_name="6001_A1_Петров ПП_весь_отчет_00.docx",
+            cloud_path="/Corporate Root/03 Проекты/2026/proj/06 Отчеты/A1 Карьер/6001_A1_Петров ПП_весь_отчет_00.docx",
+            is_full_report=True,
+        )
+        response = self.client.get(reverse("projects_partial"))
+        html = response.content.decode()
+        self.assertIn(f'data-report-folder-locked="1"', html)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        original = (first.position, second.position)
+
+        blocked = self.client.post(reverse("work_move_down", args=[first.pk]))
+        self.assertEqual(blocked.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((first.position, second.position), original)
+
+        neighbor = self.client.post(reverse("work_move_up", args=[second.pk]))
+        self.assertEqual(neighbor.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((first.position, second.position), original)
+
+        blocked_delete = self.client.post(reverse("work_delete", args=[first.pk]))
+        self.assertEqual(blocked_delete.status_code, 200)
+        self.assertTrue(WorkVolume.objects.filter(pk=first.pk).exists())
+        self.assertTrue(WorkVolume.objects.filter(pk=second.pk).exists())
+
+        allowed_delete = self.client.post(reverse("work_delete", args=[second.pk]))
+        self.assertEqual(allowed_delete.status_code, 200)
+        self.assertTrue(WorkVolume.objects.filter(pk=first.pk).exists())
+        self.assertFalse(WorkVolume.objects.filter(pk=second.pk).exists())
+
     def test_equal_project_manager_and_manager_skips_prj_and_assigns_prd_to_project_manager(self):
         work_item = WorkVolume.objects.create(
             project=self.project,
@@ -5010,7 +5158,12 @@ class ExpertProjectVisibilityTests(TestCase):
         response = self.client.get(reverse("performers_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "products-actions-row")
+        html = response.content.decode("utf-8")
+        html_before_reports = html.split('id="report-submission-section"', 1)[0]
+        self.assertNotIn("products-actions-row", html_before_reports)
+        self.assertContains(response, 'id="report-submission-actions"')
+        self.assertNotContains(response, 'id="report-check-section"')
+        self.assertNotContains(response, 'id="report-macros-section"')
         self.assertContains(response, "performer-locked-icon")
         self.assertNotContains(response, "performer-quick-edit")
         self.assertContains(response, 'id="participation-confirmation-section" class="mt-5" data-expert-readonly="1"', html=False)
@@ -6477,6 +6630,7 @@ class ReportSubmissionTests(TestCase):
             password="secret",
             is_staff=True,
         )
+        Employee.objects.create(user=self.user, role=ADMIN_GROUP)
         self.client.force_login(self.user)
         self.product = Product.objects.create(
             short_name="DD",
@@ -6530,6 +6684,23 @@ class ReportSubmissionTests(TestCase):
         )
         return first, second
 
+    def _create_multi_asset_performers(self):
+        quarry = Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name="Карьер",
+            typical_section=self.mrk,
+            position=1,
+        )
+        factory = Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name="Фабрика",
+            typical_section=self.ecn,
+            position=2,
+        )
+        return quarry, factory
+
     def _prepare_reports_workspace(self):
         ProjectWorkspace.objects.create(
             project=self.project,
@@ -6550,6 +6721,16 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(plural_sections(1), "1 раздел")
         self.assertEqual(plural_sections(2), "2 раздела")
         self.assertEqual(plural_sections(5), "5 разделов")
+        self.assertEqual(plural_macros(1), "1 макрос")
+        self.assertEqual(plural_macros(2), "2 макроса")
+        self.assertEqual(plural_macros(3), "3 макроса")
+        self.assertEqual(plural_macros(4), "4 макроса")
+        self.assertEqual(plural_macros(5), "5 макросов")
+        self.assertEqual(plural_macros(6), "6 макросов")
+        self.assertEqual(plural_macros(11), "11 макросов")
+        self.assertEqual(plural_macros(21), "21 макрос")
+        self.assertEqual(plural_macros(22), "22 макроса")
+        self.assertEqual(plural_macros(25), "25 макросов")
         first, second = self._create_section_performers()
         rows = build_report_submission_rows([first, second])
         self.assertEqual(len(rows), 4)
@@ -6662,9 +6843,99 @@ class ReportSubmissionTests(TestCase):
         self.assertIn("В работе", section)
         self.assertIn("report-status--idle", section)
         self.assertIn("bi-circle", section)
+        self.assertIn('class="policy-table-pagination"', section)
+        self.assertIn('id="policy-page-size-report-submission"', section)
+        self.assertIn("1\u20134 из 4", section)
+        self.assertIn('hx-target="#report-submission-table-block"', section)
         self.assertEqual(len(self._report_select_tags(section)), section.count("data-project-id="))
         self.assertEqual(self._enabled_report_selects(section), [])
         self.assertNotIn("js-report-version-toggle", section)
+
+    def test_report_pagination_counts_collapsed_section_rows(self):
+        performers = [
+            Performer.objects.create(
+                registration=self.project,
+                executor=self.executor,
+                asset_name=self.asset_name,
+                typical_section=self.mrk if index % 2 == 0 else self.ecn,
+                position=index,
+            )
+            for index in range(1, 25)
+        ]
+        last = performers[-1]
+        for version in range(10):
+            PerformerReportUpload.objects.create(
+                registration=self.project,
+                performer=last,
+                executor=self.executor,
+                asset_name=self.asset_name,
+                version=version,
+                file_name=f"last-v{version}.docx",
+            )
+        for version in range(3):
+            PerformerReportUpload.objects.create(
+                registration=self.project,
+                executor=self.project.project_manager,
+                asset_name=self.asset_name,
+                is_full_report=True,
+                version=version,
+                file_name=f"full-v{version}.docx",
+            )
+        other = ProjectRegistration.objects.create(
+            number=8102,
+            type=self.product,
+            name="Другой проект отчетов",
+            year=2026,
+            status="В работе",
+        )
+        Performer.objects.create(
+            registration=other,
+            executor=self.executor,
+            asset_name="Другой актив",
+            typical_section=self.mrk,
+        )
+
+        first = self.client.get(reverse("report_submission_table"))
+        self.assertEqual(first.status_code, 200)
+        first_html = first.content.decode()
+        self.assertIn("1\u201325 из 28", first_html)
+        self.assertIn("full-v0.docx", first_html)
+        self.assertNotIn("last-v0.docx", first_html)
+        self.assertEqual(first_html.count('data-is-current="0"'), 2)
+        self.assertEqual(first_html.count('data-is-current="1"'), 25)
+        self.assertNotIn('id="report-check-table"', first_html)
+
+        second = self.client.get(reverse("report_submission_table"), {"page": 2, "page_size": 25})
+        second_html = second.content.decode()
+        self.assertIn("26\u201328 из 28", second_html)
+        self.assertIn("last-v0.docx", second_html)
+        self.assertIn("last-v9.docx", second_html)
+        self.assertNotIn("full-v0.docx", second_html)
+        self.assertEqual(second_html.count('data-is-current="1"'), 3)
+        self.assertEqual(second_html.count('data-is-current="0"'), 9)
+
+        filtered = self.client.get(reverse("report_submission_table"), {"project": other.pk})
+        filtered_html = filtered.content.decode()
+        self.assertIn("1\u20132 из 2", filtered_html)
+        self.assertIn('value="100" selected', filtered_html)
+        self.assertIn("Другой проект отчетов", filtered_html)
+        self.assertNotIn("last-v9.docx", filtered_html)
+        self.assertIn(f"project={other.pk}", filtered_html)
+
+        fitted = self.client.get(reverse("report_submission_table"), {"project": self.project.pk})
+        fitted_html = fitted.content.decode()
+        self.assertIn("1\u201326 из 26", fitted_html)
+        self.assertIn('value="100" selected', fitted_html)
+        self.assertIn("full-v0.docx", fitted_html)
+        self.assertIn("last-v0.docx", fitted_html)
+        self.assertEqual(fitted_html.count('data-is-current="1"'), 26)
+
+        narrowed = self.client.get(
+            reverse("report_submission_table"),
+            {"project": self.project.pk, "page_size": 25},
+        )
+        self.assertIn("1\u201325 из 26", narrowed.content.decode())
+        self.assertIn('value="25" selected', narrowed.content.decode())
 
     def test_workspace_folders_save_rejects_duplicate_reports_role(self):
         response = self.client.post(
@@ -6776,6 +7047,183 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(mocked_upload.call_args.args[2], b"report-bytes")
         self.assertIn("download_url", payload)
 
+    @patch("projects_app.report_submission.cloud_publish_resource", return_value="https://cloud.example/report")
+    @patch("projects_app.report_submission.is_nextcloud_primary", return_value=True)
+    def test_report_upload_reserves_version_before_writing_file(self, _mocked_primary, _mocked_publish):
+        first, _second = self._create_section_performers()
+        self._prepare_reports_workspace()
+        seen = {}
+
+        def upload_after_reserve(user, path, data, **kwargs):
+            reserved = PerformerReportUpload.objects.get(performer=first, is_all_sections=False)
+            seen["pk"] = reserved.pk
+            seen["version"] = reserved.version
+            seen["file_name"] = reserved.file_name
+            seen["cloud_path"] = reserved.cloud_path
+            self.assertTrue(path.endswith(reserved.file_name))
+            self.assertEqual(data, b"report-bytes")
+            return True
+
+        with patch("projects_app.report_submission.cloud_upload_file", side_effect=upload_after_reserve):
+            response = self.client.post(
+                reverse("report_file_upload"),
+                {
+                    "performer_id": str(first.pk),
+                    "file": SimpleUploadedFile("section.docx", b"report-bytes"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        upload = PerformerReportUpload.objects.get(pk=seen["pk"])
+        self.assertEqual(seen["version"], 0)
+        self.assertTrue(seen["file_name"].endswith(f"_00_{format_report_file_date()}.docx"))
+        self.assertEqual(seen["cloud_path"], "")
+        self.assertEqual(
+            upload.cloud_path,
+            "/Corporate Root/03 Проекты/2026/8101 DD Проект отчетов/06 Отчеты/" + upload.file_name,
+        )
+        self.assertEqual(upload.file_link, "https://cloud.example/report")
+
+    @patch("projects_app.report_submission.cloud_publish_resource", return_value="https://cloud.example/report")
+    @patch("projects_app.report_submission.cloud_upload_file", return_value=False)
+    @patch("projects_app.report_submission.is_nextcloud_primary", return_value=True)
+    def test_failed_cloud_write_deletes_reserved_version(self, _mocked_primary, mocked_upload, _mocked_publish):
+        first, _second = self._create_section_performers()
+        self._prepare_reports_workspace()
+
+        response = self.client.post(
+            reverse("report_file_upload"),
+            {
+                "performer_id": str(first.pk),
+                "file": SimpleUploadedFile("section.docx", b"report-bytes"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Не удалось загрузить файл", response.json()["error"])
+        mocked_upload.assert_called_once()
+        self.assertEqual(PerformerReportUpload.objects.filter(performer=first).count(), 0)
+
+    def test_failed_local_write_deletes_reserved_version(self):
+        first, _second = self._create_section_performers()
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=(tmp,),
+            ), patch.object(Path, "write_bytes", side_effect=OSError("disk full")):
+                response = self.client.post(
+                    reverse("report_file_upload"),
+                    {
+                        "performer_id": str(first.pk),
+                        "source_kind": "local",
+                        "local_folder_path": str(folder),
+                        "file": SimpleUploadedFile("picked.docx", b"report-bytes"),
+                    },
+                )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("локальную папку", response.json()["error"])
+        self.assertEqual(PerformerReportUpload.objects.filter(performer=first).count(), 0)
+
+    @patch("projects_app.report_submission.cloud_publish_resource", return_value="https://cloud.example/report")
+    @patch("projects_app.report_submission.cloud_upload_file", return_value=True)
+    @patch("projects_app.report_submission.is_nextcloud_primary", return_value=True)
+    def test_version_conflict_retries_reserve_before_write(self, _mocked_primary, mocked_upload, _mocked_publish):
+        first, _second = self._create_section_performers()
+        self._prepare_reports_workspace()
+        original_reserve = PerformerReportUpload.objects.create
+        calls = {"n": 0}
+
+        def create_with_one_conflict(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise IntegrityError("duplicate version")
+            return original_reserve(*args, **kwargs)
+
+        with patch.object(PerformerReportUpload.objects, "create", side_effect=create_with_one_conflict):
+            upload = upload_report_file(
+                user=self.user,
+                project=self.project,
+                executor=first.executor,
+                asset_name=first.asset_name,
+                performer=first,
+                is_all_sections=False,
+                uploaded_file=SimpleUploadedFile("section.docx", b"report-bytes"),
+            )
+
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(upload.version, 0)
+        self.assertTrue(upload.cloud_path.endswith(upload.file_name))
+        mocked_upload.assert_called_once()
+        self.assertEqual(PerformerReportUpload.objects.filter(performer=first, is_all_sections=False).count(), 1)
+
+    @patch("projects_app.report_submission.cloud_create_folder", return_value=True)
+    @patch("projects_app.report_submission.cloud_publish_resource", return_value="https://cloud.example/report")
+    @patch("projects_app.report_submission.cloud_upload_file", return_value=True)
+    @patch("projects_app.report_submission.is_nextcloud_primary", return_value=True)
+    def test_multi_asset_upload_uses_numbered_asset_folder(
+        self, _mocked_primary, mocked_upload, _mocked_publish, mocked_create_folder
+    ):
+        quarry, factory = self._create_multi_asset_performers()
+        self._prepare_reports_workspace()
+
+        quarry_response = self.client.post(
+            reverse("report_file_upload"),
+            {
+                "performer_id": str(quarry.pk),
+                "file": SimpleUploadedFile("section.docx", b"quarry-bytes"),
+            },
+        )
+        factory_response = self.client.post(
+            reverse("report_file_upload"),
+            {
+                "performer_id": str(factory.pk),
+                "file": SimpleUploadedFile("section.docx", b"factory-bytes"),
+            },
+        )
+        self.assertEqual(quarry_response.status_code, 200)
+        self.assertEqual(factory_response.status_code, 200)
+
+        quarry_upload = PerformerReportUpload.objects.get(performer=quarry, is_all_sections=False)
+        factory_upload = PerformerReportUpload.objects.get(performer=factory, is_all_sections=False)
+        reports_root = "/Corporate Root/03 Проекты/2026/8101 DD Проект отчетов/06 Отчеты"
+        self.assertEqual(quarry_upload.file_name, build_report_filename(
+            self.project,
+            quarry.executor,
+            section=quarry.typical_section,
+            original_name="section.docx",
+            asset_code="A1",
+        ))
+        self.assertEqual(factory_upload.file_name, build_report_filename(
+            self.project,
+            factory.executor,
+            section=factory.typical_section,
+            original_name="section.docx",
+            asset_code="A2",
+        ))
+        self.assertIn("_A1_", quarry_upload.file_name)
+        self.assertIn("_A2_", factory_upload.file_name)
+        self.assertEqual(
+            quarry_upload.cloud_path,
+            f"{reports_root}/A1 Карьер/{quarry_upload.file_name}",
+        )
+        self.assertEqual(
+            factory_upload.cloud_path,
+            f"{reports_root}/A2 Фабрика/{factory_upload.file_name}",
+        )
+        self.assertNotEqual(quarry_upload.cloud_path, factory_upload.cloud_path)
+        mocked_create_folder.assert_any_call(
+            self.user,
+            f"{reports_root}/A1 Карьер",
+        )
+        mocked_create_folder.assert_any_call(
+            self.user,
+            f"{reports_root}/A2 Фабрика",
+        )
+        mocked_upload.assert_any_call(self.user, quarry_upload.cloud_path, b"quarry-bytes")
+        mocked_upload.assert_any_call(self.user, factory_upload.cloud_path, b"factory-bytes")
+
     @patch("projects_app.report_submission.cloud_publish_resource", return_value="https://cloud.example/all")
     @patch("projects_app.report_submission.cloud_upload_file", return_value=True)
     @patch("projects_app.report_submission.is_nextcloud_primary", return_value=True)
@@ -6816,7 +7264,8 @@ class ReportSubmissionTests(TestCase):
         )
         self.assertEqual(upload.asset_name, self.asset_name)
         self.assertFalse(upload.is_full_report)
-        self.assertIn("все_разделы", upload.file_name)
+        self.assertIn("MRK-ECN", upload.file_name)
+        self.assertNotIn("все_разделы", upload.file_name)
         self.assertTrue(upload.cloud_path.endswith(upload.file_name))
         mocked_upload.assert_called_once()
 
@@ -6963,6 +7412,63 @@ class ReportSubmissionTests(TestCase):
                 self.assertIn("attachment", download["Content-Disposition"])
                 self.assertEqual(saved.read_bytes()[:2], b"PK")
 
+    @patch("projects_app.report_submission.cloud_upload_file")
+    def test_local_multi_asset_upload_creates_numbered_asset_folder(self, mocked_upload):
+        quarry, factory = self._create_multi_asset_performers()
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=(tmp,),
+            ):
+                quarry_response = self.client.post(
+                    reverse("report_file_upload"),
+                    {
+                        "performer_id": str(quarry.pk),
+                        "source_kind": "local",
+                        "local_folder_path": str(folder),
+                        "file": SimpleUploadedFile("picked.docx", b"quarry-bytes"),
+                    },
+                )
+                factory_response = self.client.post(
+                    reverse("report_file_upload"),
+                    {
+                        "performer_id": str(factory.pk),
+                        "source_kind": "local",
+                        "local_folder_path": str(folder),
+                        "file": SimpleUploadedFile("picked.docx", b"factory-bytes"),
+                    },
+                )
+                self.assertEqual(quarry_response.status_code, 200)
+                self.assertEqual(factory_response.status_code, 200)
+                mocked_upload.assert_not_called()
+                quarry_name = build_report_filename(
+                    self.project,
+                    quarry.executor,
+                    section=quarry.typical_section,
+                    original_name="picked.docx",
+                    asset_code="A1",
+                )
+                factory_name = build_report_filename(
+                    self.project,
+                    factory.executor,
+                    section=factory.typical_section,
+                    original_name="picked.docx",
+                    asset_code="A2",
+                )
+                quarry_saved = folder / "A1 Карьер" / quarry_name
+                factory_saved = folder / "A2 Фабрика" / factory_name
+                self.assertTrue(quarry_saved.is_file())
+                self.assertTrue(factory_saved.is_file())
+                self.assertEqual(quarry_saved.read_bytes(), b"quarry-bytes")
+                self.assertEqual(factory_saved.read_bytes(), b"factory-bytes")
+                quarry_upload = PerformerReportUpload.objects.get(performer=quarry, is_all_sections=False)
+                factory_upload = PerformerReportUpload.objects.get(performer=factory, is_all_sections=False)
+                self.assertEqual(quarry_upload.file_name, quarry_name)
+                self.assertEqual(factory_upload.file_name, factory_name)
+                self.assertTrue(quarry_upload.cloud_path.endswith(f"A1 Карьер/{quarry_name}"))
+                self.assertTrue(factory_upload.cloud_path.endswith(f"A2 Фабрика/{factory_name}"))
+
     def test_local_report_upload_rejects_file_path_instead_of_folder(self):
         first, _second = self._create_section_performers()
         with tempfile.TemporaryDirectory() as tmp:
@@ -6988,6 +7494,400 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(format_report_version(0), "00")
         self.assertEqual(format_report_version(1), "01")
         self.assertEqual(format_report_version(12), "12")
+
+    def test_single_asset_report_has_no_asset_code_or_folder(self):
+        self._create_section_performers()
+        self.assertEqual(ordered_report_asset_names(self.project), [self.asset_name])
+        self.assertEqual(report_asset_code(self.project, self.asset_name), "")
+        self.assertEqual(build_report_asset_folder_name("", self.asset_name), "")
+        filename = build_report_filename(
+            self.project,
+            self.executor,
+            section=self.mrk,
+            original_name="report.docx",
+            asset_name=self.asset_name,
+        )
+        self.assertNotIn("_A1_", filename)
+        self.assertIn("_01 MRK_", filename)
+        self.assertTrue(filename.endswith(f"_00_{format_report_file_date()}.docx"))
+
+    def test_multi_asset_report_code_folder_and_filename(self):
+        self._create_multi_asset_performers()
+        self.assertEqual(ordered_report_asset_names(self.project), ["Карьер", "Фабрика"])
+        self.assertEqual(report_asset_code(self.project, "Карьер"), "A1")
+        self.assertEqual(report_asset_code(self.project, "Фабрика"), "A2")
+        self.assertEqual(build_report_asset_folder_name("A1", "Карьер"), "A1 Карьер")
+        self.assertEqual(build_report_asset_folder_name("A2", "Фабрика"), "A2 Фабрика")
+        self.assertEqual(build_report_asset_folder_name("A1", ""), "A1 без_актива")
+        filename = build_report_filename(
+            self.project,
+            self.executor,
+            is_full_report=True,
+            original_name="report.docx",
+            asset_code="A1",
+        )
+        self.assertIn("_A1_", filename)
+        self.assertIn("_00 весь_отчет_", filename)
+        self.assertTrue(filename.endswith(f"_00_{format_report_file_date()}.docx"))
+
+    def test_report_filename_uses_section_number_fio_and_upload_date(self):
+        first, second = self._create_section_performers()
+        service = self.product.sections.create(
+            code="PRD",
+            short_name="Project Director",
+            short_name_ru="Руководитель проекта",
+            name_en="Project Director",
+            name_ru="Руководитель проекта",
+            accounting_type="Услуги",
+            position=0,
+        )
+        service_row = Performer.objects.create(
+            registration=self.project,
+            executor="Сидоров Сидор Сидорович",
+            asset_name=self.asset_name,
+            typical_section=service,
+            position=0,
+        )
+        date_part = format_report_file_date()
+        section_name = build_report_filename(
+            self.project,
+            first.executor,
+            section=first.typical_section,
+            original_name="report.docx",
+            performer=first,
+            asset_name=first.asset_name,
+        )
+        later_name = build_report_filename(
+            self.project,
+            second.executor,
+            section=second.typical_section,
+            original_name="report.docx",
+            performer=second,
+            asset_name=second.asset_name,
+        )
+        service_name = build_report_filename(
+            self.project,
+            service_row.executor,
+            section=service,
+            original_name="report.docx",
+            performer=service_row,
+            asset_name=service_row.asset_name,
+        )
+        summary_name = build_report_filename(
+            self.project,
+            self.executor,
+            is_all_sections=True,
+            original_name="report.docx",
+            asset_name=self.asset_name,
+        )
+        full_name = build_report_filename(
+            self.project,
+            self.project.project_manager,
+            is_full_report=True,
+            original_name="report.docx",
+            asset_name=self.asset_name,
+        )
+        self.assertEqual(report_section_number(self.project, first.asset_name, performer=first), "01")
+        self.assertEqual(report_section_number(self.project, second.asset_name, performer=second), "02")
+        self.assertEqual(report_section_number(self.project, service_row.asset_name, performer=service_row), "")
+        self.assertEqual(
+            report_section_number(self.project, self.asset_name, is_all_sections=True, executor=self.executor),
+            "01",
+        )
+        self.assertEqual(report_scope_label(is_all_sections=True, grouped_performers=[first, second]), "MRK-ECN")
+        self.assertIn(f"_01 MRK_{short_fio_no_dots(first.executor)}_00_{date_part}.docx", section_name)
+        self.assertIn("_02 ECN_", later_name)
+        self.assertIn("_PRD_", service_name)
+        self.assertNotIn("_00 PRD_", service_name)
+        self.assertNotIn("_01 PRD_", service_name)
+        self.assertIn("_01 MRK-ECN_", summary_name)
+        self.assertNotIn("все_разделы", summary_name)
+        self.assertIn("_00 весь_отчет_", full_name)
+        self.assertEqual(build_check_filename(section_name), section_name.replace(".docx", "_check.docx"))
+
+    def test_report_section_rows_are_locked_after_report_file_exists(self):
+        first, second = self._create_section_performers()
+        service = self.product.sections.create(
+            code="PRD",
+            short_name="Project Director",
+            short_name_ru="Руководитель проекта",
+            name_en="Project Director",
+            name_ru="Руководитель проекта",
+            accounting_type="Услуги",
+            position=0,
+        )
+        service_row = Performer.objects.create(
+            registration=self.project,
+            executor="Сидоров Сидор Сидорович",
+            asset_name=self.asset_name,
+            typical_section=service,
+            position=0,
+        )
+        first.position = 1
+        second.position = 2
+        first.save(update_fields=["position"])
+        second.save(update_fields=["position"])
+        PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+        )
+
+        html = self.client.get(reverse("performers_partial")).content.decode()
+        self.assertIn(f'data-row-order-id="{first.pk}"', html)
+        first_row = html[html.find(f'data-row-order-id="{first.pk}"'):html.find("</tr>", html.find(f'data-row-order-id="{first.pk}"'))]
+        second_row = html[html.find(f'data-row-order-id="{second.pk}"'):html.find("</tr>", html.find(f'data-row-order-id="{second.pk}"'))]
+        service_html = html[html.find(f'data-row-order-id="{service_row.pk}"'):html.find("</tr>", html.find(f'data-row-order-id="{service_row.pk}"'))]
+        self.assertIn('data-report-section-locked="1"', first_row)
+        self.assertIn('data-report-section-locked="1"', second_row)
+        self.assertIn('data-report-section-locked="0"', service_html)
+        js = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "performers-panels.js"
+        ).read_text()
+        self.assertIn("function updatePerformerLockedActionButtons(panel)", js)
+
+        original = list(
+            Performer.objects.filter(registration=self.project).order_by("position", "id").values_list("pk", flat=True)
+        )
+        blocked_move = self.client.post(reverse("performer_move_down", args=[first.pk]))
+        self.assertEqual(blocked_move.status_code, 200)
+        self.assertEqual(
+            list(Performer.objects.filter(registration=self.project).order_by("position", "id").values_list("pk", flat=True)),
+            original,
+        )
+        blocked_delete = self.client.post(reverse("performer_delete", args=[first.pk]))
+        self.assertEqual(blocked_delete.status_code, 200)
+        self.assertTrue(Performer.objects.filter(pk=first.pk).exists())
+
+        allowed_service_delete = self.client.post(reverse("performer_delete", args=[service_row.pk]))
+        self.assertEqual(allowed_service_delete.status_code, 200)
+        self.assertFalse(Performer.objects.filter(pk=service_row.pk).exists())
+
+        reorder = self.client.post(
+            reverse("performer_row_order"),
+            data=json.dumps({"ordered_performer_ids": [second.pk, first.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(reorder.status_code, 409)
+        self.assertIn("порядок разделов", reorder.json()["error"])
+        self.assertEqual(
+            list(Performer.objects.filter(registration=self.project).order_by("position", "id").values_list("pk", flat=True)),
+            [first.pk, second.pk],
+        )
+
+    def test_performers_table_and_form_show_readonly_section_code(self):
+        first, second = self._create_section_performers()
+        service = self.product.sections.create(
+            code="PRD",
+            short_name="Project Director",
+            short_name_ru="Руководитель проекта",
+            name_en="Project Director",
+            name_ru="Руководитель проекта",
+            accounting_type="Услуги",
+            position=0,
+        )
+        service_row = Performer.objects.create(
+            registration=self.project,
+            executor="Сидоров Сидор Сидорович",
+            asset_name=self.asset_name,
+            typical_section=service,
+            position=0,
+        )
+        first.position = 1
+        second.position = 2
+        first.save(update_fields=["position"])
+        second.save(update_fields=["position"])
+
+        listing = self.client.get(reverse("performers_partial"))
+        self.assertEqual(listing.status_code, 200)
+        html = listing.content.decode()
+        main_start = html.find('id="performers-main-section"')
+        main_html = html[main_start:html.find("</table>", main_start)]
+        self.assertIn(">Код</th>", main_html)
+        self.assertLess(main_html.find(">Наименование актива</th>"), main_html.find(">Код</th>"))
+        self.assertLess(main_html.find(">Код</th>"), main_html.find(">Типовой раздел</th>"))
+        first_row = main_html[main_html.find(f'data-row-order-id="{first.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{first.pk}"'))]
+        second_row = main_html[main_html.find(f'data-row-order-id="{second.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{second.pk}"'))]
+        service_row_html = main_html[main_html.find(f'data-row-order-id="{service_row.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{service_row.pk}"'))]
+        self.assertIn(">01<", first_row)
+        self.assertIn(">02<", second_row)
+        self.assertNotIn(">01<", service_row_html)
+        self.assertNotIn(">02<", service_row_html)
+        self.assertIn('data-accounting-type="Раздел"', first_row)
+        self.assertIn('data-accounting-type="Услуги"', service_row_html)
+        self.assertIn('js-section-code', first_row)
+        js = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "performers-panels.js"
+        ).read_text()
+        self.assertIn("function updatePerformerSectionCodes(", js)
+        self.assertIn("function sortPerformerRowsByProjectAndAsset(", js)
+        self.assertIn("function syncPerformerSectionOrder(", js)
+        self.assertIn("syncPerformerSectionOrder(table)", js)
+
+        create_form = self.client.get(reverse("performer_form_create"))
+        self.assertEqual(create_form.status_code, 200)
+        create_html = create_form.content.decode()
+        self.assertIn('id="perf-section-code"', create_html)
+        self.assertIn('for="perf-section-code">Код</label>', create_html)
+        self.assertIn('class="form-control readonly-field" id="perf-section-code"', create_html)
+        self.assertRegex(create_html, r'class="col-md-4"[\s\S]{0,120}>Этап</label>')
+        self.assertRegex(create_html, r'class="col-md-2"[\s\S]{0,120}>Продукт</label>')
+        self.assertRegex(create_html, r'class="col-md-6"[\s\S]{0,120}>Название</label>')
+        self.assertRegex(create_html, r'class="col-md-4"[\s\S]{0,120}>Актив</label>')
+        self.assertRegex(create_html, r'class="col-md-2"[\s\S]{0,120}for="perf-section-code">Код</label>')
+        self.assertRegex(create_html, r'class="col-md-6"[\s\S]{0,120}>Типовой раздел</label>')
+        self.assertRegex(create_html, r'class="col-md-4"[\s\S]{0,250}Исполнитель')
+        self.assertRegex(create_html, r'class="col-md-2"[\s\S]{0,120}>Грейд \(уровень\)</label>')
+        self.assertRegex(create_html, r'class="col-md-6"[\s\S]{0,120}>Грейд \(наименование\)</label>')
+        self.assertLess(create_html.find(">Актив</label>"), create_html.find('id="perf-section-code"'))
+        self.assertLess(create_html.find('id="perf-section-code"'), create_html.find(">Типовой раздел</label>"))
+        self.assertLess(create_html.find("Исполнитель"), create_html.find(">Грейд (уровень)</label>"))
+        self.assertLess(create_html.find(">Грейд (уровень)</label>"), create_html.find(">Грейд (наименование)</label>"))
+        self.assertIn("function updateSectionCode()", create_html)
+
+        edit_form = self.client.get(reverse("performer_form_edit", args=[first.pk]))
+        self.assertEqual(edit_form.status_code, 200)
+        edit_html = edit_form.content.decode()
+        code_input = edit_html[edit_html.find('id="perf-section-code"'):edit_html.find('id="perf-section-code"') + 220]
+        self.assertIn('value="01"', code_input)
+
+    def test_performer_move_updates_section_codes(self):
+        first, second = self._create_section_performers()
+        service = self.product.sections.create(
+            code="PRD",
+            short_name="Project Director",
+            short_name_ru="Руководитель проекта",
+            name_en="Project Director",
+            name_ru="Руководитель проекта",
+            accounting_type="Услуги",
+            position=0,
+        )
+        service_row = Performer.objects.create(
+            registration=self.project,
+            executor="Сидоров Сидор Сидорович",
+            asset_name=self.asset_name,
+            typical_section=service,
+            position=0,
+        )
+        first.position = 1
+        second.position = 2
+        first.save(update_fields=["position"])
+        second.save(update_fields=["position"])
+
+        moved = self.client.post(reverse("performer_move_down", args=[first.pk]))
+        self.assertEqual(moved.status_code, 200)
+        html = moved.content.decode()
+        main_start = html.find('id="performers-main-section"')
+        main_html = html[main_start:html.find("</table>", main_start)]
+        first_row = main_html[main_html.find(f'data-row-order-id="{first.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{first.pk}"'))]
+        second_row = main_html[main_html.find(f'data-row-order-id="{second.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{second.pk}"'))]
+        service_row_html = main_html[main_html.find(f'data-row-order-id="{service_row.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{service_row.pk}"'))]
+        self.assertIn(">02<", first_row)
+        self.assertIn(">01<", second_row)
+        self.assertNotIn(">01<", service_row_html)
+        self.assertNotIn(">02<", service_row_html)
+        self.assertEqual(
+            list(Performer.objects.filter(registration=self.project).order_by("position", "id").values_list("pk", flat=True)),
+            [service_row.pk, second.pk, first.pk],
+        )
+
+        edit_first = self.client.get(reverse("performer_form_edit", args=[first.pk])).content.decode()
+        edit_second = self.client.get(reverse("performer_form_edit", args=[second.pk])).content.decode()
+        first_code = edit_first[edit_first.find('id="perf-section-code"'):edit_first.find('id="perf-section-code"') + 220]
+        second_code = edit_second[edit_second.find('id="perf-section-code"'):edit_second.find('id="perf-section-code"') + 220]
+        self.assertIn('value="02"', first_code)
+        self.assertIn('value="01"', second_code)
+
+    def test_performers_table_groups_by_project_asset_then_code(self):
+        older = ProjectRegistration.objects.create(
+            number=8100,
+            type=self.product,
+            name="Старый проект",
+            year=2026,
+            status="В работе",
+        )
+        first, second = self._create_section_performers()
+        first.position = 1
+        second.position = 2
+        first.save(update_fields=["position"])
+        second.save(update_fields=["position"])
+        other_asset = Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name="Альфа актив",
+            typical_section=self.mrk,
+            position=1,
+        )
+        older_row = Performer.objects.create(
+            registration=older,
+            executor=self.executor,
+            asset_name="Старый актив",
+            typical_section=self.mrk,
+            position=1,
+        )
+
+        html = self.client.get(reverse("performers_partial")).content.decode()
+        main_start = html.find('id="performers-main-section"')
+        main_html = html[main_start:html.find("</table>", main_start)]
+        ids = [int(value) for value in re.findall(r'data-row-order-id="(\d+)"', main_html)]
+        self.assertEqual(ids, [other_asset.pk, first.pk, second.pk, older_row.pk])
+        other_asset_row = main_html[main_html.find(f'data-row-order-id="{other_asset.pk}"'):]
+        self.assertIn(">01<", other_asset_row[: other_asset_row.find("</tr>")])
+        first_row = main_html[main_html.find(f'data-row-order-id="{first.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{first.pk}"'))]
+        second_row = main_html[main_html.find(f'data-row-order-id="{second.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{second.pk}"'))]
+        self.assertIn(">01<", first_row)
+        self.assertIn(">02<", second_row)
+
+    def test_report_asset_code_follows_work_item_order(self):
+        Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name="Карьер",
+            typical_section=self.mrk,
+            position=1,
+        )
+        Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name="Фабрика",
+            typical_section=self.ecn,
+            position=2,
+        )
+        WorkVolume.objects.create(
+            project=self.project,
+            name="Фабрика",
+            asset_name="Фабрика",
+            position=0,
+        )
+        WorkVolume.objects.create(
+            project=self.project,
+            name="Карьер",
+            asset_name="Карьер",
+            position=1,
+        )
+        self.assertEqual(ordered_report_asset_names(self.project), ["Фабрика", "Карьер"])
+        self.assertEqual(report_asset_code(self.project, "Фабрика"), "A1")
+        self.assertEqual(report_asset_code(self.project, "Карьер"), "A2")
+
+    def test_report_asset_folder_name_truncates_long_asset(self):
+        long_name = "А" * (REPORT_ASSET_FOLDER_NAME_MAX_LEN + 12)
+        folder = build_report_asset_folder_name("A1", long_name)
+        display = folder.split(" ", 1)[1]
+        self.assertEqual(folder, f"A1 {'А' * REPORT_ASSET_FOLDER_NAME_MAX_LEN}")
+        self.assertEqual(len(display), REPORT_ASSET_FOLDER_NAME_MAX_LEN)
 
     def test_report_workflow_status_labels(self):
         from types import SimpleNamespace
@@ -7245,6 +8145,8 @@ class ReportSubmissionTests(TestCase):
         self.assertRegex(payload["sent_at"], r"^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$")
         upload = PerformerReportUpload.objects.get(pk=uploaded["upload_id"])
         self.assertIsNotNone(upload.sent_at)
+        self.assertEqual(upload.uploaded_by, self.user)
+        self.assertEqual(upload.sent_by, self.user)
         self.assertEqual(payload["status_date"], format_report_status_date(upload))
 
     def test_send_requires_uploaded_file(self):
@@ -7293,6 +8195,51 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(len(self._enabled_report_selects(history_row)), 0)
         self.assertIn('name="report-select"', history_row)
 
+    def test_check_result_filename_has_no_gap_before_name(self):
+        first, _second = self._create_section_performers()
+        PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="report_00.docx",
+            check_file_name="report_00_check.docx",
+            version=0,
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+        )
+        section = self._report_section_html(self.client.get(reverse("performers_partial")))
+        file_pos = section.find("report_00_check.docx")
+        self.assertGreaterEqual(file_pos, 0)
+        cell_start = section.rfind("report-check-result-cell", 0, file_pos)
+        self.assertGreaterEqual(cell_start, 0)
+        cell_html = section[cell_start:section.find("</td>", file_pos)]
+        self.assertIn("report-check-download-icon", cell_html)
+        self.assertIn("js-report-check-file-link", cell_html)
+        self.assertRegex(
+            cell_html,
+            r'report-check-download-icon[\s\S]*?</a><a\s+href="[^"]+"\s+class="report-file-name-link js-report-check-file-link"',
+        )
+        css = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "css"
+            / "site.css"
+        ).read_text()
+        self.assertIn("#report-submission-table td.report-check-result-cell {\n  display: flex;", css)
+        self.assertNotIn("#report-submission-table .report-check-pending-text {", css)
+        js = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "performers-panels.js"
+        ).read_text()
+        self.assertIn("function updateReportCheckResultCell(cell, data)", js)
+        self.assertNotIn("text-danger small ms-1 js-report-check-badge", js)
+
     def test_same_slot_can_store_two_versions(self):
         first, _second = self._create_section_performers()
         PerformerReportUpload.objects.create(
@@ -7318,6 +8265,614 @@ class ReportSubmissionTests(TestCase):
         )
 
 
+    def _local_report_upload(self, performer, folder, *, version=0, with_check=True, sent_at=None):
+        report_path = folder / f"report-v{version}.docx"
+        report_path.write_bytes(b"report-bytes")
+        check_path = folder / f"report-v{version}_check.docx"
+        check_fields = {}
+        if with_check:
+            check_path.write_bytes(b"check-bytes")
+            check_fields = {
+                "check_file_name": check_path.name,
+                "check_cloud_path": encode_local_report_path(check_path),
+                "check_status": PerformerReportUpload.CheckStatus.DONE,
+                "check_finding_count": 3,
+                "checked_at": timezone.now(),
+            }
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            performer=performer,
+            version=version,
+            file_name=report_path.name,
+            cloud_path=encode_local_report_path(report_path),
+            uploaded_at=timezone.now(),
+            uploaded_by=self.user,
+            sent_at=sent_at,
+            **check_fields,
+        )
+        return upload, report_path, check_path
+
+    def test_admin_delete_removes_local_report_and_check_files(self):
+        first, _second = self._create_section_performers()
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                upload, report_path, check_path = self._local_report_upload(first, Path(tmp), version=0)
+                page = self.client.get(reverse("performers_partial"))
+                self.assertContains(page, "js-report-file-remove")
+                self.assertContains(page, "report-file-delete-modal")
+                response = self.client.post(
+                    reverse("report_file_delete", args=[upload.pk]),
+                    {"kind": "upload"},
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertTrue(payload["ok"])
+                self.assertTrue(payload["replaced_current"])
+                self.assertIn("js-report-upload", payload["current_row_html"])
+                self.assertIn("В работе", payload["current_row_html"])
+                self.assertNotIn(upload.file_name, payload["current_row_html"])
+                self.assertFalse(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
+                self.assertFalse(report_path.exists())
+                self.assertFalse(check_path.exists())
+
+    def test_non_admin_cannot_delete_report_file(self):
+        first, _second = self._create_section_performers()
+        lawyer = get_user_model().objects.create_user(
+            username="report-lawyer-delete",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=lawyer, role=LAWYER_GROUP)
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                upload, report_path, check_path = self._local_report_upload(first, Path(tmp), version=0)
+                self.client.force_login(lawyer)
+                page = self.client.get(reverse("performers_partial"))
+                self.assertNotContains(page, "js-report-file-remove")
+                response = self.client.post(
+                    reverse("report_file_delete", args=[upload.pk]),
+                    {"kind": "upload"},
+                )
+                self.assertEqual(response.status_code, 403)
+                self.assertTrue(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
+                self.assertTrue(report_path.exists())
+                self.assertTrue(check_path.exists())
+
+    def test_delete_latest_report_version_shows_previous(self):
+        first, _second = self._create_section_performers()
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                older, older_report, older_check = self._local_report_upload(first, folder, version=0)
+                latest, latest_report, latest_check = self._local_report_upload(first, folder, version=1)
+                response = self.client.post(
+                    reverse("report_file_delete", args=[latest.pk]),
+                    {"kind": "upload"},
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertTrue(payload["replaced_current"])
+                self.assertFalse(payload["has_history"])
+                self.assertIn(older.file_name, payload["current_row_html"])
+                self.assertIn(">00<", payload["current_row_html"])
+                self.assertNotIn(latest.file_name, payload["current_row_html"])
+                self.assertEqual(payload["remove_row_id"], f"p-{first.pk}-v00")
+                self.assertFalse(PerformerReportUpload.objects.filter(pk=latest.pk).exists())
+                self.assertTrue(PerformerReportUpload.objects.filter(pk=older.pk).exists())
+                self.assertFalse(latest_report.exists())
+                self.assertFalse(latest_check.exists())
+                self.assertTrue(older_report.exists())
+                self.assertTrue(older_check.exists())
+
+    def test_delete_older_report_version_keeps_current_row(self):
+        first, _second = self._create_section_performers()
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                older, older_report, _older_check = self._local_report_upload(first, folder, version=0)
+                latest, latest_report, _latest_check = self._local_report_upload(first, folder, version=1)
+                response = self.client.post(
+                    reverse("report_file_delete", args=[older.pk]),
+                    {"kind": "upload"},
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertFalse(payload["replaced_current"])
+                self.assertFalse(payload["has_history"])
+                self.assertEqual(payload["current_row_html"], "")
+                self.assertFalse(PerformerReportUpload.objects.filter(pk=older.pk).exists())
+                self.assertTrue(PerformerReportUpload.objects.filter(pk=latest.pk).exists())
+                self.assertFalse(older_report.exists())
+                self.assertTrue(latest_report.exists())
+
+    def test_delete_check_result_keeps_report_file(self):
+        first, _second = self._create_section_performers()
+        sent_at = timezone.now()
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                upload, report_path, check_path = self._local_report_upload(
+                    first,
+                    Path(tmp),
+                    version=0,
+                    sent_at=sent_at,
+                )
+                response = self.client.post(
+                    reverse("report_file_delete", args=[upload.pk]),
+                    {"kind": "check"},
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertEqual(payload["kind"], "check")
+                self.assertEqual(payload["check_file_name"], "")
+                self.assertEqual(payload["workflow_status"], "Отправлен")
+                self.assertEqual(payload["finding_count_display"], "—")
+                upload.refresh_from_db()
+                self.assertEqual(upload.file_name, report_path.name)
+                self.assertEqual(upload.check_file_name, "")
+                self.assertEqual(upload.check_cloud_path, "")
+                self.assertEqual(upload.check_status, "")
+                self.assertTrue(report_path.exists())
+                self.assertFalse(check_path.exists())
+
+    @patch("projects_app.report_submission.cloud_delete_file", return_value=True)
+    @patch("projects_app.report_submission._cloud_upload_user")
+    def test_cloud_report_delete_removes_storage_files(self, mocked_user, mocked_delete):
+        mocked_user.return_value = self.user
+        first, _second = self._create_section_performers()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            performer=first,
+            version=0,
+            file_name="cloud-report.docx",
+            cloud_path="/Corporate Root/06 Отчеты/cloud-report.docx",
+            check_file_name="cloud-report_check.docx",
+            check_cloud_path="/Corporate Root/06 Отчеты/cloud-report_check.docx",
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            uploaded_at=timezone.now(),
+        )
+        response = self.client.post(
+            reverse("report_file_delete", args=[upload.pk]),
+            {"kind": "upload"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
+        mocked_delete.assert_any_call(self.user, "/Corporate Root/06 Отчеты/cloud-report.docx")
+        mocked_delete.assert_any_call(self.user, "/Corporate Root/06 Отчеты/cloud-report_check.docx")
+
+    @patch("projects_app.report_submission.cloud_delete_file", return_value=False)
+    @patch("projects_app.report_submission._cloud_upload_user")
+    def test_cloud_report_delete_keeps_record_when_storage_fails(self, mocked_user, mocked_delete):
+        mocked_user.return_value = self.user
+        first, _second = self._create_section_performers()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            performer=first,
+            version=0,
+            file_name="cloud-report.docx",
+            cloud_path="/Corporate Root/06 Отчеты/cloud-report.docx",
+            uploaded_at=timezone.now(),
+        )
+        response = self.client.post(
+            reverse("report_file_delete", args=[upload.pk]),
+            {"kind": "upload"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
+        mocked_delete.assert_called_once_with(self.user, "/Corporate Root/06 Отчеты/cloud-report.docx")
+
+
+class ReportSubmissionAccessTests(TestCase):
+    def setUp(self):
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.mrk = self.product.sections.create(
+            code="MRK",
+            short_name="Marketing",
+            short_name_ru="Маркетинг",
+            name_en="Marketing",
+            name_ru="Маркетинг",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.ecn = self.product.sections.create(
+            code="ECN",
+            short_name="Economics",
+            short_name_ru="Экономика",
+            name_en="Economics",
+            name_ru="Экономика",
+            accounting_type="Раздел",
+            position=2,
+        )
+        company = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=20,
+        )
+        self.direction = OrgUnit.objects.create(
+            company=company,
+            level=2,
+            department_name="Маркетинг",
+            short_name="MRK",
+            unit_type="expertise",
+        )
+        self.other_direction = OrgUnit.objects.create(
+            company=company,
+            level=2,
+            department_name="Экономика",
+            short_name="ECN",
+            unit_type="expertise",
+        )
+        self.admin_user, _admin = self._make_staff("report-access-admin", ADMIN_GROUP)
+        self.expert_user, self.expert_employee = self._make_staff(
+            "report-access-expert",
+            EXPERT_GROUP,
+            last_name="Петров",
+            first_name="Петр",
+            patronymic="Петрович",
+        )
+        ExpertProfile.objects.create(
+            employee=self.expert_employee,
+            expertise_direction=self.direction,
+        )
+        self.other_expert_user, self.other_expert_employee = self._make_staff(
+            "report-access-other-expert",
+            EXPERT_GROUP,
+            last_name="Иванов",
+            first_name="Иван",
+            patronymic="Иванович",
+        )
+        ExpertProfile.objects.create(
+            employee=self.other_expert_employee,
+            expertise_direction=self.other_direction,
+        )
+        self.head_user, self.head_employee = self._make_staff(
+            "report-access-head",
+            DEPARTMENT_HEAD_GROUP,
+            last_name="Голов",
+            first_name="Глеб",
+            patronymic="Глебович",
+            department=self.direction,
+        )
+        self.lawyer_user, _lawyer = self._make_staff(
+            "report-access-lawyer",
+            LAWYER_GROUP,
+            last_name="Юрин",
+            first_name="Юрий",
+            patronymic="Юрьевич",
+        )
+        self.pm_user, self.pm_employee = self._make_staff(
+            "report-access-pm",
+            PROJECTS_HEAD_GROUP,
+            last_name="Сидоров",
+            first_name="Сидор",
+            patronymic="Сидорович",
+        )
+        self.own_project = ProjectRegistration.objects.create(
+            number=9101,
+            type=self.product,
+            name="Проект эксперта",
+            year=2026,
+            status="В работе",
+            project_manager=Performer.employee_full_name(self.pm_employee),
+        )
+        self.foreign_project = ProjectRegistration.objects.create(
+            number=9102,
+            type=self.product,
+            name="Чужой проект",
+            year=2026,
+            status="В работе",
+            project_manager="Другой Руководитель",
+        )
+        self.own_mrk = Performer.objects.create(
+            registration=self.own_project,
+            employee=self.expert_employee,
+            executor=Performer.employee_full_name(self.expert_employee),
+            asset_name="Карьер",
+            typical_section=self.mrk,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        self.own_ecn = Performer.objects.create(
+            registration=self.own_project,
+            employee=self.expert_employee,
+            executor=Performer.employee_full_name(self.expert_employee),
+            asset_name="Карьер",
+            typical_section=self.ecn,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        self.foreign_row = Performer.objects.create(
+            registration=self.foreign_project,
+            employee=self.other_expert_employee,
+            executor=Performer.employee_full_name(self.other_expert_employee),
+            asset_name="Фабрика",
+            typical_section=self.mrk,
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        self.unconfirmed = Performer.objects.create(
+            registration=self.own_project,
+            employee=self.other_expert_employee,
+            executor=Performer.employee_full_name(self.other_expert_employee),
+            asset_name="Другой актив",
+            typical_section=self.mrk,
+        )
+
+    def _make_staff(self, username, role, **kwargs):
+        user = get_user_model().objects.create_user(
+            username=username,
+            password="secret",
+            is_staff=True,
+            first_name=kwargs.get("first_name", "Имя"),
+            last_name=kwargs.get("last_name", "Фамилия"),
+        )
+        employee = Employee.objects.create(
+            user=user,
+            role=role,
+            patronymic=kwargs.get("patronymic", "Отчество"),
+            department=kwargs.get("department"),
+        )
+        return user, employee
+
+    def test_expert_scope_and_slot_permissions(self):
+        from projects_app.report_access import (
+            can_manage_report_checks,
+            can_mutate_report_slot,
+            report_visible_registration_ids,
+        )
+
+        visible = report_visible_registration_ids(self.expert_user)
+        self.assertEqual(visible, {self.own_project.pk})
+        self.assertFalse(can_manage_report_checks(self.expert_user))
+        self.assertTrue(
+            can_mutate_report_slot(
+                self.expert_user,
+                project=self.own_project,
+                performer=self.own_mrk,
+            )
+        )
+        self.assertTrue(
+            can_mutate_report_slot(
+                self.expert_user,
+                project=self.own_project,
+                performers=[self.own_mrk, self.own_ecn],
+                is_all_sections=True,
+            )
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                self.expert_user,
+                project=self.own_project,
+                is_full_report=True,
+            )
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                self.expert_user,
+                project=self.foreign_project,
+                performer=self.foreign_row,
+            )
+        )
+
+    def test_expert_needs_confirmation_for_own_slot(self):
+        from projects_app.report_access import can_mutate_report_slot
+
+        self.own_mrk.participation_response = ""
+        self.own_mrk.save(update_fields=["participation_response"])
+        self.assertFalse(
+            can_mutate_report_slot(
+                self.expert_user,
+                project=self.own_project,
+                performer=self.own_mrk,
+            )
+        )
+
+    def test_lawyer_sees_all_projects_but_cannot_mutate(self):
+        from projects_app.report_access import (
+            can_manage_report_checks,
+            can_mutate_report_slot,
+            can_send_reports,
+            report_visible_registration_ids,
+        )
+
+        self.assertIsNone(report_visible_registration_ids(self.lawyer_user))
+        self.assertFalse(can_send_reports(self.lawyer_user))
+        self.assertFalse(can_manage_report_checks(self.lawyer_user))
+        self.assertFalse(
+            can_mutate_report_slot(
+                self.lawyer_user,
+                project=self.own_project,
+                performer=self.own_mrk,
+            )
+        )
+
+    def test_direction_head_acts_for_direction_experts_without_confirmation(self):
+        from projects_app.report_access import (
+            can_mutate_report_slot,
+            report_visible_registration_ids,
+        )
+
+        self.own_mrk.participation_response = ""
+        self.own_mrk.save(update_fields=["participation_response"])
+        visible = report_visible_registration_ids(self.head_user)
+        self.assertIn(self.own_project.pk, visible)
+        self.assertNotIn(self.foreign_project.pk, visible)
+        self.assertTrue(
+            can_mutate_report_slot(
+                self.head_user,
+                project=self.own_project,
+                performer=self.own_mrk,
+            )
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                self.head_user,
+                project=self.foreign_project,
+                performer=self.foreign_row,
+            )
+        )
+
+    def test_direction_head_keeps_own_expert_slots_without_confirmation(self):
+        from projects_app.report_access import can_mutate_report_slot
+
+        own_row = Performer.objects.create(
+            registration=self.foreign_project,
+            employee=self.head_employee,
+            executor=Performer.employee_full_name(self.head_employee),
+            asset_name="Участок головы",
+            typical_section=self.mrk,
+        )
+        self.assertTrue(
+            can_mutate_report_slot(
+                self.head_user,
+                project=self.foreign_project,
+                performer=own_row,
+            )
+        )
+
+    def test_project_manager_can_mutate_full_report_only(self):
+        from projects_app.report_access import (
+            can_mutate_report_slot,
+            report_visible_registration_ids,
+        )
+
+        visible = report_visible_registration_ids(self.pm_user)
+        self.assertIn(self.own_project.pk, visible)
+        self.assertTrue(
+            can_mutate_report_slot(
+                self.pm_user,
+                project=self.own_project,
+                is_full_report=True,
+            )
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                self.pm_user,
+                project=self.own_project,
+                performer=self.own_mrk,
+            )
+        )
+
+    def test_expert_http_cannot_upload_foreign_or_manage_macros(self):
+        self.client.force_login(self.expert_user)
+        response = self.client.post(
+            reverse("report_file_upload"),
+            {
+                "performer_id": str(self.foreign_row.pk),
+                "file": SimpleUploadedFile("section.docx", b"report-bytes"),
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(PerformerReportUpload.objects.filter(performer=self.foreign_row).exists())
+
+        created = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "name": "Вредоносный",
+                "description": "",
+                "code": "def check(ctx):\n    return []\n",
+            },
+        )
+        self.assertEqual(created.status_code, 403)
+        self.assertFalse(ReportMacro.objects.filter(name="Вредоносный").exists())
+
+        listing = self.client.get(reverse("performers_partial"))
+        html = listing.content.decode()
+        self.assertNotIn('id="report-check-section"', html)
+        self.assertNotIn('id="report-macros-section"', html)
+        self.assertIn('id="report-submission-send-btn"', html)
+        self.assertIn(f'data-performer-id="{self.own_mrk.pk}"', html)
+        self.assertNotIn(f'data-performer-id="{self.foreign_row.pk}"', html)
+
+    @patch("projects_app.report_submission.cloud_download_file", return_value=("docx", b"report-bytes"))
+    @patch("projects_app.report_submission.cloud_create_folder", return_value=True)
+    @patch("projects_app.report_submission.cloud_publish_resource", return_value="https://cloud.example/report")
+    @patch("projects_app.report_submission.cloud_upload_file", return_value=True)
+    @patch("projects_app.report_submission.is_nextcloud_primary", return_value=True)
+    def test_expert_http_upload_and_send_own_slot(self, _mocked_primary, _mocked_upload, _mocked_publish, _mocked_create, _mocked_download):
+        ProjectWorkspace.objects.create(
+            project=self.own_project,
+            disk_path="/Corporate Root/03 Проекты/2026/9101 DD Проект эксперта",
+            created_by=self.admin_user,
+        )
+        RegistrationWorkspaceFolder.objects.filter(user__isnull=True).delete()
+        RegistrationWorkspaceFolder.objects.create(
+            user=None,
+            level=1,
+            name="06 Отчеты",
+            position=0,
+            role=RegistrationWorkspaceFolder.ROLE_REPORTS,
+        )
+        self.client.force_login(self.expert_user)
+        uploaded = self.client.post(
+            reverse("report_file_upload"),
+            {
+                "performer_id": str(self.own_mrk.pk),
+                "file": SimpleUploadedFile("section.docx", b"report-bytes"),
+            },
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        upload = PerformerReportUpload.objects.get(performer=self.own_mrk)
+        self.assertEqual(upload.uploaded_by, self.expert_user)
+
+        sent = self.client.post(
+            reverse("report_file_send"),
+            {"upload_id": str(upload.pk)},
+        )
+        self.assertEqual(sent.status_code, 200)
+        upload.refresh_from_db()
+        self.assertEqual(upload.sent_by, self.expert_user)
+        self.assertIsNotNone(upload.sent_at)
+
+    def test_lawyer_http_readonly_and_sees_foreign_project(self):
+        self.client.force_login(self.lawyer_user)
+        listing = self.client.get(reverse("performers_partial"))
+        html = listing.content.decode()
+        self.assertIn('data-report-readonly="1"', html)
+        self.assertNotIn('id="report-submission-send-btn"', html)
+        self.assertNotIn("js-report-upload", html)
+        self.assertIn(self.own_project.name, html)
+        self.assertIn(self.foreign_project.name, html)
+        self.assertNotIn('id="report-macros-section"', html)
+
+        denied = self.client.post(
+            reverse("report_file_upload"),
+            {
+                "performer_id": str(self.own_mrk.pk),
+                "file": SimpleUploadedFile("section.docx", b"report-bytes"),
+            },
+        )
+        self.assertEqual(denied.status_code, 403)
+
+    def test_admin_still_manages_macros(self):
+        self.client.force_login(self.admin_user)
+        listing = self.client.get(reverse("performers_partial"))
+        html = listing.content.decode()
+        self.assertIn('id="report-check-section"', html)
+        self.assertIn('id="report-macros-section"', html)
+        created = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "name": "Админский макрос",
+                "description": "",
+                "code": DEFAULT_MACRO_CODE,
+            },
+        )
+        self.assertEqual(created.status_code, 204)
+        self.assertTrue(ReportMacro.objects.filter(name="Админский макрос").exists())
+
+
 class ReportCheckTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -7325,6 +8880,7 @@ class ReportCheckTests(TestCase):
             password="secret",
             is_staff=True,
         )
+        Employee.objects.create(user=self.user, role=ADMIN_GROUP)
         self.client.force_login(self.user)
         self.product = Product.objects.create(
             short_name="DD",
@@ -7368,6 +8924,20 @@ class ReportCheckTests(TestCase):
             accounting_type="Раздел",
             position=1,
         )
+        self.geo_expertise = ExpertiseDirection.objects.create(
+            name="Геология",
+            short_name="ГЕО",
+            position=1,
+        )
+        self.econ_expertise = ExpertiseDirection.objects.create(
+            name="Экономика",
+            short_name="ЭКОН",
+            position=2,
+        )
+        self.mrk.expertise_dir = self.geo_expertise
+        self.mrk.save(update_fields=["expertise_dir"])
+        self.other_section.expertise_dir = self.econ_expertise
+        self.other_section.save(update_fields=["expertise_dir"])
         Performer.objects.create(
             registration=self.project,
             executor="Петров Петр Петрович",
@@ -7391,11 +8961,15 @@ class ReportCheckTests(TestCase):
         self.assertIn("Добавить строку", html)
         self.assertIn('id="report-check-actions"', html)
         self.assertIn("Продукты", html)
+        self.assertIn("Экспертиза", html)
         self.assertIn("Разделы", html)
         self.assertIn("Тип проверки", html)
         check_html = html[html.find('id="report-check-table"'):]
+        self.assertLess(check_html.find(">Продукты</th>"), check_html.find(">Экспертиза</th>"))
+        self.assertLess(check_html.find(">Экспертиза</th>"), check_html.find(">Разделы</th>"))
         self.assertLess(check_html.find(">Тип проверки</th>"), check_html.find(">Число замечаний</th>"))
         self.assertLess(check_html.find(">Число замечаний</th>"), check_html.find(">Проверка</th>"))
+        self.assertLess(check_html.find(">Модель</th>"), check_html.find(">Очистка</th>"))
         self.assertIn(reverse("report_check_form_create"), html)
 
     def test_create_form_lists_all_products_sections_skills_and_models(self):
@@ -7403,16 +8977,26 @@ class ReportCheckTests(TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
         self.assertIn("Все продукты", html)
+        self.assertIn("Все направления", html)
         self.assertIn("Весь отчет", html)
         self.assertIn("Все разделы", html)
         self.assertIn("Навык", html)
         self.assertIn("Макрос", html)
         self.assertIn("Пороговое число замечаний", html)
         self.assertIn('name="finding_threshold"', html)
+        self.assertLess(html.find('name="check_type"'), html.find('name="finding_threshold"'))
+        self.assertNotIn(
+            '<div class="row">',
+            html[html.find('name="check_type"'): html.find('name="finding_threshold"')],
+        )
+        self.assertIn("Удалить все примечания перед проверкой", html)
+        self.assertIn('name="clear_comments"', html)
         self.assertIn('type="number"', html)
         self.assertIn("DD", html)
         self.assertIn("MRK Маркетинг", html)
         self.assertLess(html.find("Все продукты"), html.find("DD"))
+        self.assertLess(html.find("Все направления"), html.find("ГЕО"))
+        self.assertLess(html.find("Все направления"), html.find("ЭКОН"))
         self.assertLess(html.find("Весь отчет"), html.find("Все разделы"))
         self.assertLess(html.find("Все разделы"), html.find("MRK Маркетинг"))
         self.assertIn(self.skill, html)
@@ -7437,21 +9021,28 @@ class ReportCheckTests(TestCase):
         self.assertEqual(response.status_code, 204)
         rule = ReportCheckRule.objects.get()
         self.assertIsNone(rule.product_id)
+        self.assertIsNone(rule.expertise_dir_id)
         self.assertIsNone(rule.section_id)
         self.assertEqual(rule.check_type, ReportCheckRule.CheckType.SKILL)
         self.assertEqual(rule.check_value, self.skill)
         self.assertEqual(rule.model_id, self.model_id)
         self.assertEqual(rule.finding_threshold, 0)
+        self.assertFalse(rule.clear_comments)
+        self.assertEqual(rule.clear_comments_label, "Нет")
         self.assertEqual(rule.product_label, "Все продукты")
+        self.assertEqual(rule.expertise_label, "Все направления")
         self.assertEqual(rule.section_label, "Все разделы")
         self.assertFalse(rule.is_full_report)
 
         listing = self.client.get(reverse("performers_partial"))
         html = listing.content.decode()
         self.assertIn("Все продукты", html)
+        self.assertIn("Все направления", html)
         self.assertIn("Все разделы", html)
         self.assertIn("Навык", html)
         self.assertIn(self.skill, html)
+        check_html = html[html.find('id="report-check-table"'):]
+        self.assertIn(">Нет</td>", check_html)
 
     def test_create_saves_finding_threshold(self):
         response = self.client.post(
@@ -7471,6 +9062,26 @@ class ReportCheckTests(TestCase):
         listing = self.client.get(reverse("performers_partial")).content.decode()
         check_html = listing[listing.find('id="report-check-table"'):]
         self.assertIn(">4</td>", check_html)
+
+    def test_create_saves_clear_comments(self):
+        response = self.client.post(
+            reverse("report_check_form_create"),
+            {
+                "product": "",
+                "section": "",
+                "check_type": "skill",
+                "check_value": self.skill,
+                "model_id": self.model_id,
+                "clear_comments": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 204)
+        rule = ReportCheckRule.objects.get()
+        self.assertTrue(rule.clear_comments)
+        self.assertEqual(rule.clear_comments_label, "Да")
+        listing = self.client.get(reverse("performers_partial")).content.decode()
+        check_html = listing[listing.find('id="report-check-table"'):]
+        self.assertIn(">Да</td>", check_html)
 
     def test_create_full_report_section_rule(self):
         from projects_app.report_check import FULL_REPORT_SECTION_VALUE
@@ -7494,6 +9105,55 @@ class ReportCheckTests(TestCase):
 
         listing = self.client.get(reverse("performers_partial"))
         self.assertIn("Весь отчет", listing.content.decode())
+
+    def test_create_form_shows_macro_names_only(self):
+        unique_description = "уникальное описание макроса для формы проверки"
+        ReportMacro.objects.create(
+            name="Запрещённые слова",
+            description=unique_description,
+            code="def check(ctx):\n    return []\n",
+            position=1,
+        )
+        response = self.client.get(reverse("report_check_form_create"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("Запрещённые слова", html)
+        self.assertNotIn(unique_description, html)
+
+    def test_create_form_macro_checkbox_ids_do_not_match_macros_table(self):
+        macro = ReportMacro.objects.create(
+            name="Запрещённые слова",
+            code="def check(ctx):\n    return []\n",
+            position=1,
+        )
+        form_html = self.client.get(reverse("report_check_form_create")).content.decode()
+        listing = self.client.get(reverse("performers_partial")).content.decode()
+        form_id = f'id="report-check-form-macro-{macro.pk}"'
+        table_id = f'id="report-macro-sel-{macro.id}"'
+        self.assertIn(form_id, form_html)
+        self.assertNotIn(f'id="report-macro-sel-{macro.pk}"', form_html)
+        self.assertNotIn(f'id="report-check-macro-{macro.pk}"', form_html)
+        self.assertIn(table_id, listing)
+        self.assertNotIn(form_id, listing)
+
+    def test_performers_modal_clears_report_table_selection_on_hide(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "performers-panels.js"
+        ).read_text()
+        self.assertIn("function forgetTableSelection(name)", source)
+        self.assertIn("function clearTableSelectionByName(name)", source)
+        self.assertIn("e.target.closest('#performers-modal')", source)
+        self.assertIn("forgetTableSelection('report-check-select')", source)
+        self.assertIn("forgetTableSelection('report-macro-select')", source)
+        self.assertIn("clearTableSelectionByName('report-check-select')", source)
+        self.assertIn("clearTableSelectionByName('report-macro-select')", source)
+        self.assertIn("clearTableSelectionByName('performer-select')", source)
+        self.assertIn("perfModal.addEventListener('hidden.bs.modal'", source)
 
     def test_create_macro_requires_selected_macros(self):
         response = self.client.post(
@@ -7532,13 +9192,64 @@ class ReportCheckTests(TestCase):
         rule = ReportCheckRule.objects.get()
         self.assertEqual(rule.check_type, ReportCheckRule.CheckType.MACRO)
         self.assertEqual(set(rule.macros.values_list("name", flat=True)), {"Запрещённые слова", "Нумерация"})
-        self.assertIn("Запрещённые слова", rule.check_label)
-        self.assertIn("Нумерация", rule.check_label)
+        self.assertEqual(rule.check_label, "2 макроса")
 
         listing = self.client.get(reverse("performers_partial"))
         html = listing.content.decode()
-        self.assertIn("Запрещённые слова", html)
-        self.assertIn("Нумерация", html)
+        check_html = html[html.find('id="report-check-table"'): html.find('id="report-macros-table"')]
+        self.assertIn("2 макроса", check_html)
+        self.assertNotIn("Запрещённые слова", check_html)
+        self.assertNotIn("Нумерация", check_html)
+
+    def test_macro_check_label_groups_counts_by_course(self):
+        from types import SimpleNamespace
+
+        self.assertEqual(
+            format_macro_check_label([
+                SimpleNamespace(course="TPGR", position=2, id=2),
+                SimpleNamespace(course="DOCX", position=3, id=3),
+                SimpleNamespace(course="TPGR", position=1, id=1),
+                SimpleNamespace(course="", position=4, id=4),
+                SimpleNamespace(course="TPGR", position=5, id=5),
+            ]),
+            "3 макроса TPGR, 1 макрос DOCX, 1 макрос",
+        )
+        tpgr_one = ReportMacro.objects.create(
+            name="Знак процента",
+            course="TPGR",
+            code="def check(ctx):\n    return []\n",
+            position=1,
+        )
+        tpgr_two = ReportMacro.objects.create(
+            name="Знаки",
+            course="TPGR",
+            code="def check(ctx):\n    return []\n",
+            position=2,
+        )
+        docx = ReportMacro.objects.create(
+            name="Ссылки",
+            course="DOCX-SS",
+            code="def check(ctx):\n    return []\n",
+            position=3,
+        )
+        response = self.client.post(
+            reverse("report_check_form_create"),
+            {
+                "product": str(self.product.pk),
+                "section": str(self.mrk.pk),
+                "check_type": "macro",
+                "macros": [str(tpgr_one.pk), str(tpgr_two.pk), str(docx.pk)],
+            },
+        )
+        self.assertEqual(response.status_code, 204)
+        rule = ReportCheckRule.objects.get()
+        self.assertEqual(rule.check_label, "2 макроса TPGR, 1 макрос DOCX-SS")
+        listing = self.client.get(reverse("performers_partial"))
+        check_html = listing.content.decode()
+        check_html = check_html[check_html.find('id="report-check-table"'): check_html.find('id="report-macros-table"')]
+        self.assertIn("2 макроса TPGR, 1 макрос DOCX-SS", check_html)
+        self.assertNotIn("Знак процента", check_html)
+        self.assertNotIn("Ссылки", check_html)
 
     def test_form_rejects_section_from_another_product(self):
         form = ReportCheckRuleForm(
@@ -7552,6 +9263,92 @@ class ReportCheckTests(TestCase):
         )
         self.assertFalse(form.is_valid())
         self.assertIn("section", form.errors)
+
+    def test_create_saves_expertise_and_all_sections(self):
+        response = self.client.post(
+            reverse("report_check_form_create"),
+            {
+                "product": "",
+                "expertise_dir": str(self.geo_expertise.pk),
+                "section": "",
+                "check_type": "skill",
+                "check_value": self.skill,
+                "model_id": self.model_id,
+            },
+        )
+        self.assertEqual(response.status_code, 204)
+        rule = ReportCheckRule.objects.get()
+        self.assertEqual(rule.expertise_dir_id, self.geo_expertise.pk)
+        self.assertIsNone(rule.section_id)
+        self.assertFalse(rule.is_full_report)
+        self.assertEqual(rule.expertise_label, "ГЕО")
+        self.assertEqual(rule.section_label, "Все разделы направления")
+
+        listing = self.client.get(reverse("performers_partial"))
+        html = listing.content.decode()
+        check_html = html[html.find('id="report-check-table"'):]
+        self.assertIn("ГЕО", check_html)
+        self.assertIn("Все разделы направления", check_html)
+
+        edit = self.client.get(reverse("report_check_form_edit", args=[rule.pk]))
+        self.assertEqual(edit.status_code, 200)
+        self.assertIn("Все разделы направления", edit.content.decode())
+
+    def test_create_saves_expertise_and_matching_section(self):
+        response = self.client.post(
+            reverse("report_check_form_create"),
+            {
+                "product": str(self.product.pk),
+                "expertise_dir": str(self.geo_expertise.pk),
+                "section": str(self.mrk.pk),
+                "check_type": "skill",
+                "check_value": self.skill,
+                "model_id": self.model_id,
+            },
+        )
+        self.assertEqual(response.status_code, 204)
+        rule = ReportCheckRule.objects.get()
+        self.assertEqual(rule.expertise_dir_id, self.geo_expertise.pk)
+        self.assertEqual(rule.section_id, self.mrk.pk)
+        self.assertFalse(rule.is_full_report)
+
+    def test_form_rejects_expertise_with_full_report(self):
+        from projects_app.report_check import FULL_REPORT_SECTION_VALUE
+
+        form = ReportCheckRuleForm(
+            data={
+                "product": "",
+                "expertise_dir": str(self.geo_expertise.pk),
+                "section": FULL_REPORT_SECTION_VALUE,
+                "check_type": "skill",
+                "check_value": self.skill,
+                "model_id": self.model_id,
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("section", form.errors)
+        self.assertFalse(ReportCheckRule.objects.exists())
+
+    def test_form_rejects_section_from_another_expertise(self):
+        form = ReportCheckRuleForm(
+            data={
+                "product": "",
+                "expertise_dir": str(self.geo_expertise.pk),
+                "section": str(self.other_section.pk),
+                "check_type": "skill",
+                "check_value": self.skill,
+                "model_id": self.model_id,
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("section", form.errors)
+
+    def test_create_form_payload_includes_expertise_dir_id(self):
+        response = self.client.get(reverse("report_check_form_create"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn(f'"expertise_dir_id": {self.geo_expertise.pk}', html)
+        self.assertIn('name="expertise_dir"', html)
 
     def test_edit_delete_and_move_rules(self):
         first = ReportCheckRule.objects.create(
@@ -7606,6 +9403,425 @@ def _report_docx_bytes(*paragraphs: str) -> bytes:
     return buffer.getvalue()
 
 
+def _docx_with_soft_break(left, right) -> bytes:
+    """One paragraph with Shift+Enter (w:br) between two runs."""
+    buffer = BytesIO()
+    document = Document()
+    paragraph = document.add_paragraph()
+    paragraph.add_run(left)
+    paragraph.add_run().add_break()
+    paragraph.add_run(right)
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _table_docx(*cell_texts):
+    document = Document()
+    cols = max(1, len(cell_texts))
+    table = document.add_table(rows=1, cols=cols)
+    for index, value in enumerate(cell_texts):
+        table.cell(0, index).text = value
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _tables_with_body_between(first_cells, body_count=20, second_cells=("Текст ячейки",)):
+    """Two tables with body paragraphs between them — matches the TPGR sample."""
+    document = Document()
+    table = document.add_table(rows=1, cols=max(1, len(first_cells)))
+    for index, value in enumerate(first_cells):
+        table.cell(0, index).text = value
+    for _ in range(body_count):
+        document.add_paragraph("Промежуточный абзац.")
+    table2 = document.add_table(rows=1, cols=max(1, len(second_cells)))
+    for index, value in enumerate(second_cells):
+        table2.cell(0, index).text = value
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _two_section_docx(
+    *,
+    first="Первый раздел",
+    second="Второй раздел",
+    landscape=False,
+    link_header=True,
+    link_footer=True,
+    left_margin=None,
+):
+    """Two Word sections; the second can change page box and header/footer linking."""
+    document = Document()
+    document.add_paragraph(first)
+    section2 = document.add_section()
+    if landscape:
+        section2.orientation = WD_ORIENT.LANDSCAPE
+        section2.page_width, section2.page_height = section2.page_height, section2.page_width
+    if left_margin is not None:
+        section2.left_margin = left_margin
+    section2.header.is_linked_to_previous = link_header
+    section2.footer.is_linked_to_previous = link_footer
+    document.add_paragraph(second)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _istochnik_docx(*, space=" ", tab=True, rest="Иванов", prefix="Источник:"):
+    """Caption line «Источник:» with optional space/nbsp and a real Word tab."""
+    document = Document()
+    paragraph = document.add_paragraph()
+    run = paragraph.add_run(prefix + space)
+    if tab:
+        run.add_tab()
+    if rest:
+        paragraph.add_run(rest)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _para_style_docx(text, style_name):
+    document = Document()
+    if style_name not in [item.name for item in document.styles]:
+        document.styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
+    document.add_paragraph(text, style=style_name)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _char_style_docx(*styled_bits, paragraph_style=None):
+    """Body paragraph with (text, character_style_or_None) runs."""
+    document = Document()
+    paragraph = document.add_paragraph()
+    if paragraph_style:
+        if paragraph_style not in [item.name for item in document.styles]:
+            document.styles.add_style(paragraph_style, WD_STYLE_TYPE.PARAGRAPH)
+        paragraph.style = paragraph_style
+    existing = {item.name for item in document.styles}
+    for text, style_name in styled_bits:
+        if style_name and style_name not in existing:
+            document.styles.add_style(style_name, WD_STYLE_TYPE.CHARACTER)
+            existing.add(style_name)
+        run = paragraph.add_run(text)
+        if style_name:
+            run.style = style_name
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _split_trailing_period_into_own_run(docx_bytes: bytes) -> bytes:
+    """Match Word cells where the final '.' lives in a separate w:t."""
+    from lxml import etree
+
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with zipfile.ZipFile(BytesIO(docx_bytes)) as archive:
+        parts = {info.filename: archive.read(info.filename) for info in archive.infolist()}
+    root = etree.fromstring(parts["word/document.xml"])
+    for node in list(root.iter(f"{{{w_ns}}}t")):
+        value = node.text or ""
+        if not value.endswith(".") or len(value) < 2:
+            continue
+        node.text = value[:-1]
+        run = node.getparent()
+        parent = run.getparent() if run is not None else None
+        if parent is None:
+            continue
+        new_run = etree.Element(f"{{{w_ns}}}r")
+        new_t = etree.SubElement(new_run, f"{{{w_ns}}}t")
+        new_t.text = "."
+        parent.insert(list(parent).index(run) + 1, new_run)
+    parts["word/document.xml"] = etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _list_style_docx(items, trailing="текст после списка."):
+    """DOCX with named list styles from the TPGR template."""
+    document = Document()
+    seen = []
+    for _text, style_name in items:
+        if style_name not in seen:
+            seen.append(style_name)
+    for style_name in seen:
+        try:
+            document.styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
+        except ValueError:
+            pass
+    for text, style_name in items:
+        document.add_paragraph(text, style=style_name)
+    if trailing is not None:
+        document.add_paragraph(trailing)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _word_list_paragraph_docx(*items, trailing="Новое предложение."):
+    document = Document()
+    for text in items:
+        document.add_paragraph(text, style="List Paragraph")
+    if trailing is not None:
+        document.add_paragraph(trailing)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _docx_with_ref_field(
+    result_text="3.1",
+    bookmark="_Ref111",
+    include_bookmark=False,
+    instr=None,
+    extra_paragraphs=(),
+    second_result=None,
+    hyphen_as_nobreak=False,
+):
+    """Minimal DOCX with a REF field whose cached result still looks valid."""
+    from lxml import etree
+
+    source = _report_docx_bytes("см. " + result_text + " далее")
+    with zipfile.ZipFile(BytesIO(source)) as archive:
+        parts = {info.filename: archive.read(info.filename) for info in archive.infolist()}
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    xml_space = "{http://www.w3.org/XML/1998/namespace}space"
+    root = etree.fromstring(parts["word/document.xml"])
+    paragraph = list(root.iter(f"{{{w_ns}}}p"))[-1]
+    for child in list(paragraph):
+        paragraph.remove(child)
+    code = instr or f" REF {bookmark} \\h "
+
+    def add_run(*children):
+        run = etree.SubElement(paragraph, f"{{{w_ns}}}r")
+        for child in children:
+            run.append(child)
+        return run
+
+    def t_node(value):
+        node = etree.Element(f"{{{w_ns}}}t")
+        node.text = value
+        if value[:1] in " \t" or value[-1:] in " \t":
+            node.set(xml_space, "preserve")
+        return node
+
+    def fld(kind):
+        node = etree.Element(f"{{{w_ns}}}fldChar")
+        node.set(f"{{{w_ns}}}fldCharType", kind)
+        return node
+
+    def add_ref(result, field_code):
+        add_run(fld("begin"))
+        instr_node = etree.Element(f"{{{w_ns}}}instrText")
+        instr_node.set(xml_space, "preserve")
+        instr_node.text = field_code
+        add_run(instr_node)
+        add_run(fld("separate"))
+        if hyphen_as_nobreak and "-" in result:
+            hyphen_parts = result.split("-")
+            for index, part in enumerate(hyphen_parts):
+                if index:
+                    run = etree.SubElement(paragraph, f"{{{w_ns}}}r")
+                    etree.SubElement(run, f"{{{w_ns}}}noBreakHyphen")
+                if part:
+                    add_run(t_node(part))
+        else:
+            add_run(t_node(result))
+        add_run(fld("end"))
+
+    if include_bookmark:
+        start = etree.SubElement(paragraph, f"{{{w_ns}}}bookmarkStart")
+        start.set(f"{{{w_ns}}}id", "1")
+        start.set(f"{{{w_ns}}}name", bookmark)
+        end = etree.SubElement(paragraph, f"{{{w_ns}}}bookmarkEnd")
+        end.set(f"{{{w_ns}}}id", "1")
+    add_run(t_node("см. "))
+    add_ref(result_text, code)
+    if second_result:
+        add_run(t_node(" и "))
+        add_ref(second_result, f" REF {bookmark}2 \\h ")
+    add_run(t_node(" далее"))
+    body = root.find(f"{{{w_ns}}}body")
+    sect = body.find(f"{{{w_ns}}}sectPr") if body is not None else None
+    for extra in extra_paragraphs:
+        extra_p = etree.Element(f"{{{w_ns}}}p")
+        if hyphen_as_nobreak and "-" in extra:
+            hyphen_parts = extra.split("-")
+            for index, part in enumerate(hyphen_parts):
+                if index:
+                    run = etree.SubElement(extra_p, f"{{{w_ns}}}r")
+                    etree.SubElement(run, f"{{{w_ns}}}noBreakHyphen")
+                if part:
+                    run = etree.SubElement(extra_p, f"{{{w_ns}}}r")
+                    run.append(t_node(part))
+        else:
+            extra_r = etree.SubElement(extra_p, f"{{{w_ns}}}r")
+            extra_t = etree.SubElement(extra_r, f"{{{w_ns}}}t")
+            extra_t.text = extra
+        if sect is not None:
+            sect.addprevious(extra_p)
+        elif body is not None:
+            body.append(extra_p)
+    parts["word/document.xml"] = etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _docx_with_footnote(
+    body_text,
+    footnote_text,
+    note_id="1",
+    wrap_brackets=False,
+    bracket_superscript=False,
+    left_bracket_superscript=None,
+    right_bracket_superscript=None,
+    bracket_rstyle=None,
+    leading_tab=False,
+    leading_space=False,
+    footnote_ref_mark=False,
+):
+    """DOCX with a footnote whose body is not in the main story."""
+    from lxml import etree
+
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    ct_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    source = _report_docx_bytes(body_text)
+    with zipfile.ZipFile(BytesIO(source)) as archive:
+        parts = {info.filename: archive.read(info.filename) for info in archive.infolist()}
+    root = etree.fromstring(parts["word/document.xml"])
+    paragraph = list(root.iter(f"{{{w_ns}}}p"))[-1]
+
+    def add_text(value, superscript=False, rstyle=None):
+        run = etree.SubElement(paragraph, f"{{{w_ns}}}r")
+        if superscript or rstyle:
+            r_pr = etree.SubElement(run, f"{{{w_ns}}}rPr")
+            if rstyle:
+                style = etree.SubElement(r_pr, f"{{{w_ns}}}rStyle")
+                style.set(f"{{{w_ns}}}val", rstyle)
+            if superscript:
+                align = etree.SubElement(r_pr, f"{{{w_ns}}}vertAlign")
+                align.set(f"{{{w_ns}}}val", "superscript")
+        node = etree.SubElement(run, f"{{{w_ns}}}t")
+        node.text = value
+        return node
+
+    left_super = bracket_superscript if left_bracket_superscript is None else left_bracket_superscript
+    right_super = bracket_superscript if right_bracket_superscript is None else right_bracket_superscript
+    wrap_open = bool(wrap_brackets)
+    wrap_close = wrap_brackets is True
+    if wrap_open:
+        add_text("<", superscript=left_super, rstyle=bracket_rstyle)
+    ref_run = etree.SubElement(paragraph, f"{{{w_ns}}}r")
+    ref = etree.SubElement(ref_run, f"{{{w_ns}}}footnoteReference")
+    ref.set(f"{{{w_ns}}}id", str(note_id))
+    if wrap_close:
+        add_text(">", superscript=right_super, rstyle=bracket_rstyle)
+    parts["word/document.xml"] = etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    fn_root = etree.Element(f"{{{w_ns}}}footnotes")
+    for fid, ftype in (("-1", "separator"), ("0", "continuationSeparator")):
+        mark = etree.SubElement(fn_root, f"{{{w_ns}}}footnote")
+        mark.set(f"{{{w_ns}}}type", ftype)
+        mark.set(f"{{{w_ns}}}id", fid)
+        etree.SubElement(etree.SubElement(mark, f"{{{w_ns}}}p"), f"{{{w_ns}}}r")
+    note = etree.SubElement(fn_root, f"{{{w_ns}}}footnote")
+    note.set(f"{{{w_ns}}}id", str(note_id))
+    para = etree.SubElement(note, f"{{{w_ns}}}p")
+    if footnote_ref_mark:
+        mark_run = etree.SubElement(para, f"{{{w_ns}}}r")
+        etree.SubElement(mark_run, f"{{{w_ns}}}footnoteRef")
+    if leading_space:
+        space_run = etree.SubElement(para, f"{{{w_ns}}}r")
+        space_t = etree.SubElement(space_run, f"{{{w_ns}}}t")
+        space_t.text = leading_space if leading_space not in (True, False) else " "
+        space_t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    if leading_tab:
+        tab_run = etree.SubElement(para, f"{{{w_ns}}}r")
+        etree.SubElement(tab_run, f"{{{w_ns}}}tab")
+    if footnote_text:
+        run = etree.SubElement(para, f"{{{w_ns}}}r")
+        t_elem = etree.SubElement(run, f"{{{w_ns}}}t")
+        t_elem.text = footnote_text
+    parts["word/footnotes.xml"] = etree.tostring(
+        fn_root, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    rels = etree.fromstring(parts["word/_rels/document.xml.rels"])
+    used = {rel.get("Id") for rel in rels}
+    rid = "rIdFn1"
+    n = 1
+    while rid in used:
+        n += 1
+        rid = f"rIdFn{n}"
+    rel = etree.SubElement(rels, f"{{{rel_ns}}}Relationship")
+    rel.set("Id", rid)
+    rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes")
+    rel.set("Target", "footnotes.xml")
+    parts["word/_rels/document.xml.rels"] = etree.tostring(
+        rels, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    types = etree.fromstring(parts["[Content_Types].xml"])
+    override = etree.SubElement(types, f"{{{ct_ns}}}Override")
+    override.set("PartName", "/word/footnotes.xml")
+    override.set(
+        "ContentType",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+    )
+    parts["[Content_Types].xml"] = etree.tostring(
+        types, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    if bracket_rstyle:
+        styles_root = etree.fromstring(parts["word/styles.xml"])
+        style = etree.SubElement(styles_root, f"{{{w_ns}}}style")
+        style.set(f"{{{w_ns}}}type", "character")
+        style.set(f"{{{w_ns}}}styleId", bracket_rstyle)
+        name = etree.SubElement(style, f"{{{w_ns}}}name")
+        name.set(f"{{{w_ns}}}val", bracket_rstyle)
+        style_rpr = etree.SubElement(style, f"{{{w_ns}}}rPr")
+        align = etree.SubElement(style_rpr, f"{{{w_ns}}}vertAlign")
+        align.set(f"{{{w_ns}}}val", "superscript")
+        parts["word/styles.xml"] = etree.tostring(
+            styles_root, xml_declaration=True, encoding="UTF-8", standalone=True
+        )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _word_visible_docx_text(docx_bytes: bytes) -> str:
+    """Approximate how Word shows w:t text without xml:space=preserve."""
+    from lxml import etree
+
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    xml_space = "{http://www.w3.org/XML/1998/namespace}space"
+    with zipfile.ZipFile(BytesIO(docx_bytes)) as archive:
+        root = etree.fromstring(archive.read("word/document.xml"))
+    parts = []
+    for paragraph in root.iter(f"{{{w_ns}}}p"):
+        for node in paragraph.iter(f"{{{w_ns}}}t"):
+            value = node.text or ""
+            if node.get(xml_space) != "preserve":
+                value = value.lstrip(" \t\r\n").rstrip(" \t\r\n")
+            parts.append(value)
+        parts.append("\n")
+    return "".join(parts)
+
+
 class ReportMacroTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -7613,10 +9829,19 @@ class ReportMacroTests(TestCase):
             password="secret",
             is_staff=True,
         )
+        Employee.objects.create(user=self.user, role=ADMIN_GROUP)
         self.client.force_login(self.user)
         ReportMacro.objects.all().delete()
 
     def test_performers_partial_renders_macros_table(self):
+        ReportMacro.objects.create(
+            course="TPGR",
+            section="ZN",
+            name="Знак процента",
+            description="regex",
+            code=DEFAULT_MACRO_CODE,
+            position=1,
+        )
         response = self.client.get(reverse("performers_partial"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
@@ -7624,6 +9849,83 @@ class ReportMacroTests(TestCase):
         self.assertIn('id="report-macros-table"', html)
         self.assertIn('id="report-macros-actions"', html)
         self.assertIn(reverse("report_macro_form_create"), html)
+        self.assertIn('id="report-macros-csv-download-btn"', html)
+        self.assertIn('id="report-macros-csv-upload-btn"', html)
+        self.assertIn(reverse("report_macro_csv_download"), html)
+        self.assertIn(reverse("report_macro_csv_upload"), html)
+        macros_html = html[html.find('id="report-macros-table"'):]
+        self.assertLess(macros_html.find(">Курс</th>"), macros_html.find(">Секция</th>"))
+        self.assertLess(macros_html.find(">Секция</th>"), macros_html.find(">Название</th>"))
+        self.assertLess(macros_html.find(">Название</th>"), macros_html.find(">Описание</th>"))
+        self.assertIn("TPGR", macros_html)
+        self.assertIn(">ZN<", macros_html)
+        self.assertIn('class="policy-table-pagination"', html)
+        self.assertIn('id="policy-page-size-report-macros"', html)
+        self.assertIn("Показано строк", html)
+        self.assertIn("1\u20131 из 1", html)
+        self.assertIn('hx-target="#report-macros-section"', html)
+
+    def test_macros_table_paginates_like_product_catalog(self):
+        ReportMacro.objects.bulk_create(
+            [
+                ReportMacro(
+                    name=f"Макрос {index:02d}",
+                    code=DEFAULT_MACRO_CODE,
+                    position=index,
+                )
+                for index in range(1, 27)
+            ]
+        )
+        first = self.client.get(reverse("performers_partial"))
+        self.assertEqual(first.status_code, 200)
+        first_html = first.content.decode()
+        self.assertIn("1\u201325 из 26", first_html)
+        self.assertIn("Макрос 01", first_html)
+        self.assertIn("Макрос 25", first_html)
+        self.assertNotIn("Макрос 26", first_html)
+        self.assertIn(">25</option>", first_html)
+        self.assertIn(">50</option>", first_html)
+        self.assertIn(">100</option>", first_html)
+        table_url = reverse("report_macros_table")
+        self.assertIn(f'hx-get="{table_url}?page_size=25&amp;page=2"', first_html)
+
+        second = self.client.get(table_url, {"page": 2, "page_size": 25})
+        self.assertEqual(second.status_code, 200)
+        second_html = second.content.decode()
+        self.assertIn('id="report-macros-section"', second_html)
+        self.assertNotIn('id="report-submission-table"', second_html)
+        self.assertIn("Макрос 26", second_html)
+        self.assertNotIn("Макрос 01", second_html)
+        self.assertIn("26\u201326 из 26", second_html)
+        self.assertIn('data-macros-page="2"', second_html)
+        self.assertIn('data-macros-page-size="25"', second_html)
+
+        fifty = self.client.get(table_url, {"page_size": 50})
+        fifty_html = fifty.content.decode()
+        self.assertIn("1\u201326 из 26", fifty_html)
+        self.assertIn("Макрос 01", fifty_html)
+        self.assertIn("Макрос 26", fifty_html)
+
+        invalid = self.client.get(table_url, {"page_size": "abc"})
+        self.assertIn("1\u201325 из 26", invalid.content.decode())
+
+        kept = self.client.get(
+            reverse("performers_partial"),
+            {"macros_page": 2, "macros_page_size": 25},
+        )
+        kept_html = kept.content.decode()
+        self.assertIn("Макрос 26", kept_html)
+        self.assertNotIn("Макрос 01", kept_html)
+
+        last = ReportMacro.objects.get(name="Макрос 26")
+        moved = self.client.post(
+            f"{reverse('report_macro_move_up', args=[last.pk])}?macros_page=2&macros_page_size=25"
+        )
+        self.assertEqual(moved.status_code, 200)
+        moved_html = moved.content.decode()
+        self.assertIn("Макрос 25", moved_html)
+        self.assertNotIn("Макрос 26", moved_html)
+        self.assertNotIn("Макрос 01", moved_html)
 
     def test_create_form_has_code_stub(self):
         response = self.client.get(reverse("report_macro_form_create"))
@@ -7631,11 +9933,22 @@ class ReportMacroTests(TestCase):
         html = response.content.decode()
         self.assertIn("def check(ctx):", html)
         self.assertIn("findings", html)
+        self.assertIn('name="course"', html)
+        self.assertIn('name="section"', html)
+        row_html = html[html.find('<div class="row">'): html.find('name="name"')]
+        self.assertIn('name="course"', row_html)
+        self.assertIn('name="section"', row_html)
+        self.assertNotIn(
+            '<div class="row">',
+            html[html.find('name="course"'): html.find('name="section"')],
+        )
 
     def test_create_edit_delete_and_move_macros(self):
         created = self.client.post(
             reverse("report_macro_form_create"),
             {
+                "course": "TPGR",
+                "section": "ZN",
                 "name": "Запрещённые слова",
                 "description": "regex",
                 "code": DEFAULT_MACRO_CODE,
@@ -7644,6 +9957,8 @@ class ReportMacroTests(TestCase):
         self.assertEqual(created.status_code, 204)
         first = ReportMacro.objects.get(name="Запрещённые слова")
         self.assertIn("def check(ctx):", first.code)
+        self.assertEqual(first.course, "TPGR")
+        self.assertEqual(first.section, "ZN")
 
         first.position = 10000
         first.save(update_fields=["position"])
@@ -7655,6 +9970,8 @@ class ReportMacroTests(TestCase):
         edited = self.client.post(
             reverse("report_macro_form_edit", args=[first.pk]),
             {
+                "course": "TPGR-2",
+                "section": "ZN-01",
                 "name": "Запрещённые фразы",
                 "description": "обновлено",
                 "code": "def check(ctx):\n    return []\n",
@@ -7664,6 +9981,8 @@ class ReportMacroTests(TestCase):
         first.refresh_from_db()
         self.assertEqual(first.name, "Запрещённые фразы")
         self.assertEqual(first.description, "обновлено")
+        self.assertEqual(first.course, "TPGR-2")
+        self.assertEqual(first.section, "ZN-01")
 
         moved = self.client.post(reverse("report_macro_move_up", args=[second.pk]))
         self.assertEqual(moved.status_code, 200)
@@ -7682,6 +10001,165 @@ class ReportMacroTests(TestCase):
         self.assertFalse(ReportMacro.objects.filter(pk=first.pk).exists())
         self.assertTrue(ReportMacro.objects.filter(pk=second.pk).exists())
 
+    def _macros_csv_upload(self, header, rows, *, name="macros.csv"):
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=";", lineterminator="\n")
+        writer.writerow(header)
+        for row in rows:
+            writer.writerow(row)
+        return SimpleUploadedFile(
+            name,
+            ("\ufeff" + output.getvalue()).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+    def test_csv_download_exports_all_macros_including_multiline_code(self):
+        code = "def check(ctx):\n    return [{\"start\": 1, \"end\": 2, \"message\": \"ok\"}]\n"
+        ReportMacro.objects.create(
+            course="TPGR",
+            section="ZN",
+            name="Знак процента",
+            description="regex",
+            code=code,
+            position=1,
+        )
+        ReportMacro.objects.create(
+            course="",
+            section="",
+            name="Нумерация",
+            description="",
+            code="def check(ctx):\n    return []",
+            position=2,
+        )
+
+        response = self.client.get(reverse("report_macro_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("report_macros.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(rows[0], ["Курс", "Секция", "Название", "Описание", "Код"])
+        self.assertEqual(rows[1][0], "TPGR")
+        self.assertEqual(rows[1][1], "ZN")
+        self.assertEqual(rows[1][2], "Знак процента")
+        self.assertEqual(rows[1][3], "regex")
+        self.assertEqual(rows[1][4], code)
+        self.assertEqual(rows[2][2], "Нумерация")
+        self.assertIn("def check(ctx):", rows[2][4])
+
+    def test_csv_upload_creates_macros_like_add_row(self):
+        code = "def check(ctx):\n    return []\n"
+        upload = self._macros_csv_upload(
+            ["Курс", "Секция", "Название", "Описание", "Код"],
+            [["TPGR", "ZN", "Запрещённые слова", "regex", code]],
+        )
+
+        response = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 1)
+        self.assertEqual(payload["warnings"], [])
+        macro = ReportMacro.objects.get(name="Запрещённые слова")
+        self.assertEqual(macro.course, "TPGR")
+        self.assertEqual(macro.section, "ZN")
+        self.assertEqual(macro.description, "regex")
+        self.assertEqual(macro.position, 1)
+        form_created = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "name": "Через форму",
+                "description": "regex",
+                "code": code,
+            },
+        )
+        self.assertEqual(form_created.status_code, 204)
+        via_form = ReportMacro.objects.get(name="Через форму")
+        self.assertEqual(macro.code, via_form.code)
+
+    def test_csv_upload_round_trip_adds_copies_not_updates(self):
+        original = ReportMacro.objects.create(
+            course="TPGR",
+            section="ZN",
+            name="Знак процента",
+            description="regex",
+            code="def check(ctx):\n    return []",
+            position=1,
+        )
+        download = self.client.get(reverse("report_macro_csv_download"))
+        upload = SimpleUploadedFile(
+            "macros.csv",
+            download.content,
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(ReportMacro.objects.count(), 2)
+        original.refresh_from_db()
+        self.assertEqual(original.name, "Знак процента")
+        copies = list(ReportMacro.objects.filter(name="Знак процента").order_by("id"))
+        self.assertEqual(len(copies), 2)
+        self.assertEqual(copies[0].pk, original.pk)
+        self.assertNotEqual(copies[1].pk, original.pk)
+        self.assertEqual(copies[1].course, original.course)
+        self.assertEqual(copies[1].section, original.section)
+        self.assertEqual(copies[1].description, original.description)
+        self.assertEqual(copies[1].code, original.code)
+
+    def test_csv_upload_skips_invalid_rows_with_warnings(self):
+        upload = self._macros_csv_upload(
+            ["Курс", "Секция", "Название", "Описание", "Код"],
+            [
+                ["TPGR", "ZN", "", "regex", "def check(ctx):\n    return []"],
+                ["TPGR", "ZN", "Без кода", "regex", ""],
+                ["TPGR"],
+            ],
+        )
+
+        response = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 0)
+        self.assertEqual(len(payload["warnings"]), 3)
+        self.assertFalse(ReportMacro.objects.exists())
+
+    def test_csv_upload_rejects_non_csv_file(self):
+        upload = SimpleUploadedFile("macros.txt", b"not csv", content_type="text/plain")
+        response = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+
+    def test_expert_cannot_download_or_upload_macros_csv(self):
+        expert = get_user_model().objects.create_user(
+            username="report-macro-expert",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=expert, role=EXPERT_GROUP)
+        self.client.force_login(expert)
+
+        download = self.client.get(reverse("report_macro_csv_download"))
+        self.assertEqual(download.status_code, 403)
+
+        upload = self._macros_csv_upload(
+            ["Курс", "Секция", "Название", "Описание", "Код"],
+            [["TPGR", "ZN", "Вредоносный", "", "def check(ctx):\n    return []"]],
+        )
+        uploaded = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
+        self.assertEqual(uploaded.status_code, 403)
+        self.assertFalse(ReportMacro.objects.filter(name="Вредоносный").exists())
+
+        listing = self.client.get(reverse("performers_partial"))
+        self.assertNotContains(listing, 'id="report-macros-csv-download-btn"')
+        self.assertNotContains(listing, 'id="report-macros-csv-upload-btn"')
+
 
 class ReportMacroRunnerTests(TestCase):
     def setUp(self):
@@ -7690,6 +10168,7 @@ class ReportMacroRunnerTests(TestCase):
             password="secret",
             is_staff=True,
         )
+        Employee.objects.create(user=self.user, role=ADMIN_GROUP)
         self.product = Product.objects.create(
             short_name="DD",
             name_en="Due Diligence",
@@ -7760,6 +10239,77 @@ class ReportMacroRunnerTests(TestCase):
         self.assertIn("Исправьте формулировку", comments_xml)
         self.assertIn("commentRangeStart", document_xml)
         Document(BytesIO(result))
+
+    def test_insert_comments_does_not_drop_spaces(self):
+        source = _report_docx_bytes(
+            "доля 10 % запасов и ещё 12,5 % в тексте.",
+            "В тексте есть ошибка и ещё текст.",
+        )
+        original = extract_document_text(source)[0]
+        visible_before = _word_visible_docx_text(source)
+        self.assertIn("доля 10 % запасов", visible_before)
+        self.assertIn("есть ошибка и", visible_before)
+        percent = run_macro(
+            ReportMacro(name="percent", code=tpgr_macro_code("TPGR-ZN-01.03")),
+            type("Ctx", (), {"text": original})(),
+        )
+        error_start = original.index("ошибка")
+        findings = list(percent) + [{
+            "start": error_start,
+            "end": error_start + len("ошибка"),
+            "message": "Найдено",
+        }]
+        self.assertGreaterEqual(len(findings), 3)
+        result = insert_comments(source, findings)
+        self.assertEqual(extract_document_text(result)[0], original)
+        visible_after = _word_visible_docx_text(result)
+        self.assertEqual(visible_after, visible_before)
+        self.assertIn("доля 10 % запасов", visible_after)
+        self.assertIn("12,5 % в тексте", visible_after)
+        self.assertIn("есть ошибка и", visible_after)
+        Document(BytesIO(result))
+
+    def test_insert_comments_writes_hyperlink_in_note(self):
+        source = _report_docx_bytes("В тексте есть ошибка и ещё текст.")
+        text, _spans = extract_document_text(source)
+        start = text.index("ошибка")
+        result = insert_comments(source, [{
+            "start": start,
+            "end": start + len("ошибка"),
+            "message": "Исправьте формулировку",
+            "author": "Слово ошибка",
+            "links": [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_URL}],
+        }])
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_URL, rels_xml)
+        self.assertIn("TargetMode=\"External\"", rels_xml)
+        Document(BytesIO(result))
+
+    def test_strip_comments_removes_markers_and_keeps_text(self):
+        source = _report_docx_bytes("В тексте есть ошибка и ещё текст.")
+        text, _spans = extract_document_text(source)
+        start = text.index("ошибка")
+        commented = insert_comments(source, [{
+            "start": start,
+            "end": start + len("ошибка"),
+            "message": "Старое примечание",
+            "author": "Редактор",
+        }])
+        self.assertEqual(count_comments(commented), 1)
+        cleaned = strip_comments(commented)
+        self.assertEqual(count_comments(cleaned), 0)
+        cleaned_text, _ = extract_document_text(cleaned)
+        self.assertIn("ошибка", cleaned_text)
+        with zipfile.ZipFile(BytesIO(cleaned)) as archive:
+            self.assertNotIn("word/comments.xml", archive.namelist())
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertNotIn("commentRangeStart", document_xml)
+        self.assertNotIn("commentReference", document_xml)
+        Document(BytesIO(cleaned))
 
     def test_run_macro_uses_regex_on_context_text(self):
         ctx = type("Ctx", (), {"text": "здесь ошибка есть"})()
@@ -7832,6 +10382,150 @@ class ReportMacroRunnerTests(TestCase):
         self.assertEqual(list_macros_for_upload(section_upload), [self.macro])
         self.assertEqual(list_macros_for_upload(full_upload), [full_macro])
 
+    def test_full_report_matches_only_explicit_full_report_rules(self):
+        ReportCheckRule.objects.create(
+            position=2,
+            product=None,
+            section=None,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        full_upload = PerformerReportUpload(
+            registration=self.project,
+            asset_name=self.performer.asset_name,
+            file_name="full.docx",
+            is_full_report=True,
+        )
+        self.assertEqual(list_skill_rules_for_upload(full_upload), [])
+
+        explicit_skill = ReportCheckRule.objects.create(
+            position=3,
+            product=self.product,
+            section=None,
+            is_full_report=True,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        self.assertEqual(
+            list_skill_rules_for_upload(full_upload),
+            [explicit_skill],
+        )
+
+    def test_all_sections_macro_does_not_run_on_full_report(self):
+        rule = ReportCheckRule.objects.get(check_type=ReportCheckRule.CheckType.MACRO)
+        rule.section = None
+        rule.save(update_fields=["section_id"])
+
+        full_upload = PerformerReportUpload(
+            registration=self.project,
+            asset_name=self.performer.asset_name,
+            file_name="full.docx",
+            is_full_report=True,
+        )
+        section_upload = PerformerReportUpload(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="section.docx",
+        )
+        self.assertEqual(list_macros_for_upload(full_upload), [])
+        self.assertEqual(list_macros_for_upload(section_upload), [self.macro])
+
+        full_skill = ReportCheckRule.objects.create(
+            position=2,
+            product=None,
+            section=None,
+            is_full_report=True,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        self.assertEqual(list_skill_rules_for_upload(full_upload), [full_skill])
+        self.assertEqual(list_macros_for_upload(full_upload), [])
+        self.assertEqual(list_skill_rules_for_upload(section_upload), [])
+        self.assertEqual(list_macros_for_upload(section_upload), [self.macro])
+
+    def test_expertise_all_sections_matches_only_that_direction(self):
+        geo = ExpertiseDirection.objects.create(name="Геология", short_name="ГЕО", position=1)
+        econ = ExpertiseDirection.objects.create(name="Экономика", short_name="ЭКОН", position=2)
+        self.mrk.expertise_dir = geo
+        self.mrk.save(update_fields=["expertise_dir"])
+        econ_section = self.product.sections.create(
+            code="ECN",
+            short_name="Economics",
+            short_name_ru="Экономика",
+            name_en="Economics",
+            name_ru="Экономика",
+            accounting_type="Раздел",
+            position=2,
+            expertise_dir=econ,
+        )
+        econ_performer = Performer.objects.create(
+            registration=self.project,
+            executor="Сидоров Сидор Сидорович",
+            asset_name=self.performer.asset_name,
+            typical_section=econ_section,
+        )
+        geo_rule = ReportCheckRule.objects.create(
+            position=2,
+            product=None,
+            expertise_dir=geo,
+            section=None,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        geo_upload = PerformerReportUpload(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="geo.docx",
+        )
+        econ_upload = PerformerReportUpload(
+            registration=self.project,
+            performer=econ_performer,
+            executor=econ_performer.executor,
+            asset_name=econ_performer.asset_name,
+            file_name="econ.docx",
+        )
+        self.assertEqual(list_skill_rules_for_upload(geo_upload), [geo_rule])
+        self.assertEqual(list_skill_rules_for_upload(econ_upload), [])
+
+    def test_expertise_all_sections_does_not_match_full_report(self):
+        geo = ExpertiseDirection.objects.create(name="Геология", short_name="ГЕО", position=1)
+        self.mrk.expertise_dir = geo
+        self.mrk.save(update_fields=["expertise_dir"])
+        ReportCheckRule.objects.create(
+            position=2,
+            product=None,
+            expertise_dir=geo,
+            section=None,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        full_upload = PerformerReportUpload(
+            registration=self.project,
+            asset_name=self.performer.asset_name,
+            file_name="full.docx",
+            is_full_report=True,
+        )
+        self.assertEqual(list_skill_rules_for_upload(full_upload), [])
+
+        ReportCheckRule.objects.create(
+            position=3,
+            product=None,
+            section=None,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        self.assertEqual(list_skill_rules_for_upload(full_upload), [])
+
     def test_apply_report_macro_checks_writes_comments_and_status(self):
         source = _report_docx_bytes("В отчёте ошибка.")
         upload = PerformerReportUpload.objects.create(
@@ -7848,6 +10542,331 @@ class ReportMacroRunnerTests(TestCase):
         self.assertNotEqual(result, source)
         with zipfile.ZipFile(BytesIO(result)) as archive:
             self.assertIn("Найдено", archive.read("word/comments.xml").decode("utf-8"))
+
+    def test_apply_report_macro_checks_strips_existing_comments_when_flag_on(self):
+        ReportCheckRule.objects.filter(check_type=ReportCheckRule.CheckType.MACRO).update(clear_comments=True)
+        source = _report_docx_bytes("В отчёте ошибка.")
+        text, _spans = extract_document_text(source)
+        start = text.index("отчёте")
+        commented = insert_comments(source, [{
+            "start": start,
+            "end": start + len("отчёте"),
+            "message": "Старое примечание",
+            "author": "Редактор",
+        }])
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        result = apply_report_macro_checks(upload, commented)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 1)
+        self.assertEqual(count_comments(result), 1)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("Найдено", comments_xml)
+        self.assertNotIn("Старое примечание", comments_xml)
+
+    def test_apply_report_macro_checks_keeps_existing_comments_when_flag_off(self):
+        source = _report_docx_bytes("В отчёте ошибка.")
+        text, _spans = extract_document_text(source)
+        start = text.index("отчёте")
+        commented = insert_comments(source, [{
+            "start": start,
+            "end": start + len("отчёте"),
+            "message": "Старое примечание",
+            "author": "Редактор",
+        }])
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        result = apply_report_macro_checks(upload, commented)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 2)
+        self.assertEqual(count_comments(result), 2)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("Найдено", comments_xml)
+        self.assertIn("Старое примечание", comments_xml)
+
+    def test_skill_pipeline_uses_dsh_output_then_runs_macros(self):
+        skill_rule = ReportCheckRule.objects.create(
+            position=0,
+            product=self.product,
+            section=self.mrk,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        dsh_runtime = {}
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            cwd = Path(cwd)
+            dsh_runtime["profile"] = kwargs.get("profile")
+            dsh_runtime["settings"] = yaml.safe_load(
+                (cwd / "settings.yaml").read_text(encoding="utf-8")
+            )
+            original = (cwd / "input" / "report.docx").read_bytes()
+            text, _spans = extract_document_text(original)
+            start = text.index("Падеж")
+            processed = insert_comments(original, [{
+                "start": start,
+                "end": start + len("Падеж"),
+                "message": "Проверка падежа",
+                "author": "report-final-check",
+            }])
+            (cwd / "output" / "report.docx").write_bytes(processed)
+            return "Файл создан, комментариев: 1"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ) as mocked_dsh:
+            result = apply_report_checks(upload, source)
+
+        upload.refresh_from_db()
+        self.assertEqual(
+            list_skill_rules_for_upload(upload),
+            [skill_rule],
+        )
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 2)
+        self.assertEqual(count_comments(result), 2)
+        prompt = mocked_dsh.call_args.args[0]
+        self.assertIn("/report-final-check", prompt)
+        self.assertIn("input/report.docx", prompt)
+        self.assertIn("output/report.docx", prompt)
+        self.assertEqual(dsh_runtime["profile"], "report-check")
+        self.assertEqual(
+            dsh_runtime["settings"]["agent-default-model"],
+            {
+                "provider": "siliconflow",
+                "model": "Qwen/Qwen3.5-27B",
+            },
+        )
+
+    def test_skill_pipeline_strips_comments_before_dsh_when_flag_on(self):
+        ReportCheckRule.objects.filter(
+            check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        skill_rule = ReportCheckRule.objects.create(
+            position=1,
+            product=self.product,
+            section=self.mrk,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+            clear_comments=True,
+        )
+        source = _report_docx_bytes("Падеж нарушен.")
+        text, _spans = extract_document_text(source)
+        start = text.index("Падеж")
+        commented = insert_comments(source, [{
+            "start": start,
+            "end": start + len("Падеж"),
+            "message": "Старое примечание",
+            "author": "Редактор",
+        }])
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        seen = {}
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            original = (Path(cwd) / "input" / "report.docx").read_bytes()
+            seen["comment_count"] = count_comments(original)
+            with zipfile.ZipFile(BytesIO(original)) as archive:
+                seen["has_comments_xml"] = "word/comments.xml" in archive.namelist()
+            (Path(cwd) / "output" / "report.docx").write_bytes(original)
+            return "Файл создан, комментариев: 0"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ):
+            result = apply_report_checks(upload, commented)
+
+        upload.refresh_from_db()
+        self.assertEqual(list_skill_rules_for_upload(upload), [skill_rule])
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(seen["comment_count"], 0)
+        self.assertFalse(seen["has_comments_xml"])
+        self.assertEqual(count_comments(result), 0)
+        self.assertEqual(count_comments(commented), 1)
+
+    def test_report_skill_runtime_uses_exact_selected_model(self):
+        from projects_app.report_skill_runner import _prepare_model_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            run = root / "run"
+            home.mkdir()
+            run.mkdir()
+            with override_settings(
+                DSH_HOME=str(home),
+                DSH_COMPOSE_DIR="",
+            ):
+                profile = _prepare_model_runtime(run, "zai-org/GLM-5.3")
+            runtime = yaml.safe_load(
+                (run / "settings.yaml").read_text(encoding="utf-8")
+            )
+            profile_patch = (
+                home
+                / "profiles"
+                / "report-check"
+                / "cordis.patch.yml"
+            ).read_text(encoding="utf-8")
+
+        self.assertEqual(profile, "report-check")
+        self.assertEqual(
+            runtime["agent-default-model"],
+            {
+                "provider": "siliconflow",
+                "model": "zai-org/GLM-5.3",
+            },
+        )
+        self.assertIn("path: settings.yaml", profile_patch)
+
+    def test_skill_pipeline_errors_when_dsh_does_not_create_output(self):
+        ReportCheckRule.objects.filter(
+            check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        ReportCheckRule.objects.create(
+            position=1,
+            product=self.product,
+            section=self.mrk,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        source = _report_docx_bytes("Текст отчёта.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_skill_runner.run_headless",
+            return_value="Готово",
+        ):
+            result = apply_report_checks(upload, source)
+
+        upload.refresh_from_db()
+        self.assertEqual(result, source)
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.ERROR)
+        self.assertIn("не создал", upload.check_error)
+
+    def test_report_final_check_helper_creates_word_comment(self):
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "deploy"
+            / "dsh"
+            / "skills"
+            / "report-final-check"
+            / "scripts"
+            / "docx_comments.py"
+        )
+        spec = importlib_util.spec_from_file_location(
+            "report_final_check_docx_comments",
+            script,
+        )
+        helper = importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        source = _report_docx_bytes("Согласно утвержденного графика выполнены работы.")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "input.docx"
+            text_path = root / "report.txt"
+            findings_path = root / "findings.json"
+            result_path = root / "output.docx"
+            source_path.write_bytes(source)
+            helper.extract(source_path, text_path)
+            self.assertIn("утвержденного графика", text_path.read_text(encoding="utf-8"))
+            findings_path.write_text(json.dumps([{
+                "quote": "Согласно утвержденного графика",
+                "message": "Предлог «согласно» требует дательного падежа.",
+                "author": "report-final-check",
+            }], ensure_ascii=False), encoding="utf-8")
+            helper.annotate(source_path, result_path, findings_path)
+            result = result_path.read_bytes()
+
+        self.assertEqual(count_comments(result), 1)
+        Document(BytesIO(result))
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+            self.assertIn(
+                "требует дательного падежа",
+                archive.read("word/comments.xml").decode("utf-8"),
+            )
+        ignorable = re.search(r'mc:Ignorable="([^"]+)"', document_xml)
+        self.assertIsNotNone(ignorable)
+        for prefix in ignorable.group(1).split():
+            self.assertIn(f"xmlns:{prefix}=", document_xml)
+
+    @patch("projects_app.report_submission._start_report_check_background")
+    def test_skill_send_returns_running_and_status_endpoint(self, mocked_start):
+        ReportCheckRule.objects.create(
+            position=0,
+            product=self.product,
+            section=self.mrk,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            check_value="report-final-check",
+            model_id="Qwen/Qwen3.5-27B",
+        )
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("report_file_send"),
+            {"upload_id": upload.pk},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["check_status"], "running")
+        mocked_start.assert_called_once_with(self.user.pk, upload.pk)
+
+        status = self.client.get(
+            reverse("report_check_status", args=[upload.pk]),
+        )
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["check_status"], "running")
 
     def test_workflow_status_accepted_when_findings_below_threshold(self):
         ReportCheckRule.objects.filter(section=self.mrk).update(finding_threshold=5)
@@ -8037,19 +11056,34 @@ class TpgrPercentMacroTests(TestCase):
         self.assertEqual(first["name"], "TPGR-ZN-01.03 Знак %")
         self.assertIn("слитно с числом", first["description"])
         self.assertIn(self.MSG, first["code"])
+        self.assertIn(TPGR_COURSE_URL, first["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, first["code"])
 
     def test_flags_space_and_nbsp_between_number_and_percent(self):
         for text in ("доля 10 % запасов", "доля 10\u00a0% запасов", "12.5 %", "12,5 %"):
             findings = self._findings(text)
             self.assertEqual(len(findings), 1, text)
             self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_URL}],
+            )
             snippet = text[findings[0]["start"]:findings[0]["end"]]
             self.assertTrue(snippet[0].isdigit(), snippet)
             self.assertNotIn("%", snippet)
             self.assertFalse(snippet.endswith(" ") or snippet.endswith("\u00a0"), snippet)
 
     def test_skips_glued_percent_and_non_numeric_prefix(self):
-        for text in ("доля 10% запасов", "около % запасов", "раздел %", "abc %"):
+        for text in (
+            "доля 10% запасов",
+            "около % запасов",
+            "раздел %",
+            "abc %",
+            "показатель, %",
+            "Доля, %",
+            "ед., %",
+            "мас. %",
+        ):
             self.assertEqual(self._findings(text), [], text)
 
     def test_skips_percent_inside_angle_brackets(self):
@@ -8057,12 +11091,24 @@ class TpgrPercentMacroTests(TestCase):
         self.assertEqual(self._findings("<a <b> доля 10 % текст>"), [])
         self.assertEqual(len(self._findings("после > доля 10 %")), 1)
 
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("доля 10 % запасов")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_URL, rels_xml)
+
     def test_sync_creates_or_updates_percent_macro(self):
         name = "TPGR-ZN-01.03 Знак %"
         ReportMacro.objects.filter(name=name).delete()
         created, updated = sync_tpgr_macros(ReportMacro)
         self.assertEqual(created, 1)
-        self.assertEqual(updated, 0)
         stored = ReportMacro.objects.get(name=name)
         self.assertEqual(stored.code, tpgr_macro_code("TPGR-ZN-01.03"))
 
@@ -8075,4 +11121,2710 @@ class TpgrPercentMacroTests(TestCase):
         stored.refresh_from_db()
         self.assertEqual(stored.code, tpgr_macro_code("TPGR-ZN-01.03"))
         self.assertEqual(stored.description, TPGR_MACROS[0]["description"])
+
+
+class TpgrSignsMacroTests(TestCase):
+    """Блок 2 VBA TPGR(): TPGR-ZN-01.01 — №, § и °C с неразрывным пробелом."""
+
+    MSG = "TPGR-ZN-01.01: Знаки №, §, °C отделяются от числа неразрывным пробелом"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name=TPGR_MACROS[1]["name"],
+            code=tpgr_macro_code("TPGR-ZN-01.01"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_signs_macro_with_course_link(self):
+        spec = TPGR_MACROS[1]
+        self.assertEqual(spec["name"], "TPGR-ZN-01.01 Знаки №, §, °C")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_missing_or_regular_space_after_number_sign(self):
+        for text in ("скважина №5", "скважина № 5", "см. §1", "см. § 1"):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, text)
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_URL}],
+            )
+
+    def test_skips_signs_listed_with_commas(self):
+        for text in (
+            "Знаки №, §, °C",
+            "знаки №, § и °C",
+            "температура, °C",
+            "см. №, указанный в таблице",
+        ):
+            self.assertEqual(self._findings(text), [], text)
+
+    def test_skips_nbsp_after_number_sign(self):
+        for text in ("скважина №\u00a05", "см. §\u00a01"):
+            self.assertEqual(self._findings(text), [], text)
+
+    def test_skips_number_sign_at_line_end(self):
+        self.assertEqual(self._findings("Таблица №"), [])
+        self.assertEqual(self._findings("Таблица №\nдалее"), [])
+        self.assertEqual(self._findings("Таблица № \nдалее"), [])
+
+    def test_flags_celsius_without_nbsp(self):
+        for text in ("температура 10°C", "температура 10 °C"):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, text)
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_URL}],
+            )
+
+    def test_skips_celsius_with_nbsp(self):
+        self.assertEqual(self._findings("температура 10\u00a0°C"), [])
+
+    def test_skips_signs_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <скважина №5>"), [])
+        self.assertEqual(self._findings("шаблон <10°C>"), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("скважина № 5")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_URL, rels_xml)
+
+
+class TpgrDashMacroTests(TestCase):
+    """Блок 3 VBA TPGR(): TPGR-TR-01.15 — длинное тире между словами."""
+
+    MSG = "TPGR-TR-01.15: Для разделения слов и предложений используется длинное тире с отбивкой пробелами"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name=TPGR_MACROS[2]["name"],
+            code=tpgr_macro_code("TPGR-TR-01.15"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_dash_macro_with_course_link(self):
+        spec = TPGR_MACROS[2]
+        self.assertEqual(spec["name"], "TPGR-TR-01.15 Длинное тире")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_DASH_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_hyphen_endash_minus_between_words(self):
+        for text in (
+            "слово - слово",
+            "слово \u2013 слово",
+            "слово \u2212 слово",
+            "слово -слово",
+            "слово- слово",
+            "слово\u2013слово",
+            "слово \u2013слово",
+            "слово\u2013 слово",
+            "слово\u2212слово",
+            "слово \u2212слово",
+            "слово\u2212 слово",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_DASH_URL}],
+            )
+            marked = text[findings[0]["start"]:findings[0]["end"]]
+            self.assertIn(marked, ("-", "\u2013", "\u2212"))
+
+    def test_skips_hyphen_in_compound_words(self):
+        for text in (
+            "слово-слово",
+            "А-Д",
+            "северо-восток",
+            "кто-то",
+            "из-за",
+            "какой-либо",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_correct_emdash_and_ranges(self):
+        for text in (
+            "слово \u2014 слово",
+            "слово\u00a0\u2014\u00a0слово",
+            "10 - 20",
+            "10-20",
+            "10\u201420",
+            "I - V",
+            "COVID-19",
+            "А-Д-12131231",
+            "D-F-432342123",
+            "номер А-Д-12131231 указан",
+            "TPGR-TR-01.15\nА-Д-12131231",
+            "TPGR-TR-01.15А-Д-12131231",
+            ": А-Д-12131231, D-F-432342123;",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_flags_emdash_missing_spaces(self):
+        for text in (
+            "слово\u2014слово",
+            "слово \u2014слово",
+            "слово\u2014 слово",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "\u2014")
+            self.assertEqual(findings[0]["message"], self.MSG)
+
+    def test_skips_dash_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <слово - слово>"), [])
+        self.assertEqual(self._findings("шаблон <слово\u2014слово>"), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("слово - слово")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_DASH_URL, rels_xml)
+
+
+class TpgrRangeDashMacroTests(TestCase):
+    """Блок 4 VBA TPGR(): TPGR-TR-01.13 — короткое тире в диапазонах."""
+
+    MSG = "TPGR-TR-01.13: В цифровых диапазонах и римских числах должно быть короткое тире без отбивки пробелами"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name=TPGR_MACROS[3]["name"],
+            code=tpgr_macro_code("TPGR-TR-01.13"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_range_dash_macro_with_course_link(self):
+        spec = TPGR_MACROS[3]
+        self.assertEqual(spec["name"], "TPGR-TR-01.13 Короткое тире в диапазонах")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_DASH_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_wrong_dash_or_spaces_in_numeric_range(self):
+        for text in (
+            "диапазон 10-20 м",
+            "диапазон 10 - 20 м",
+            "диапазон 10—20 м",
+            "диапазон 10 – 20 м",
+            "диапазон 10\u221220 м",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_DASH_URL}],
+            )
+
+    def test_skips_correct_en_dash_range(self):
+        for text in (
+            "диапазон 10\u201320 м",
+            "века I\u2013V",
+            "слово-слово",
+            "скважина №10-12",
+            "см. Табл. 1-2",
+            "12.05.2018-2019",
+            "1-2-3",
+            "12:00-13:00",
+            "ГОСТ 123-456",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_flags_roman_range_with_hyphen(self):
+        findings = self._findings("века IV-VI")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+
+    def test_skips_range_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <10-20>"), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("диапазон 10-20 м")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_DASH_URL, rels_xml)
+
+
+class TpgrAbbrMacroTests(TestCase):
+    """Блок 5 VBA TPGR(): TPGR-PR-01.01 — неразрывный пробел в сокращениях."""
+
+    MSG = "TPGR-PR-01.01: Между графическими сокращениями с точкой, состоящими из нескольких слов, всегда используется неразрывный пробел"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name=TPGR_MACROS[4]["name"],
+            code=tpgr_macro_code("TPGR-PR-01.01"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_abbr_macro_with_course_link(self):
+        spec = TPGR_MACROS[4]
+        self.assertEqual(spec["name"], "TPGR-PR-01.01 Неразрывный пробел в сокращениях")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_ABBR_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_regular_space_or_glued_abbreviation(self):
+        for text in ("и т. д.", "и т. п.", "т.е.", "т.д."):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_ABBR_URL}],
+            )
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ".")
+
+    def test_flags_initials_without_nbsp(self):
+        for text in ("А. С. Пушкин", "А.С. Пушкин", "И. И. Иванов"):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ".")
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_ABBR_URL}],
+            )
+
+    def test_skips_nbsp_and_non_abbreviations(self):
+        for text in (
+            "и т.\u00a0д.",
+            "А.\u00a0С. Пушкин",
+            "www.example.com",
+            "г. Москва",
+            "см. Рис.",
+            "например. далее",
+            "рис. 1",
+            "формат ДД.ММ.ГГ",
+            "формат ДД.ММ.ГГГГ",
+            "формат дд.мм.гг",
+            "сайт дом.рф",
+            "сайт дом.рф.",
+            "портал ДОМ.РФ.",
+            "https://президент.рф/",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_abbreviation_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <и т. д.>"), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("и т. д.")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_ABBR_URL, rels_xml)
+
+
+class TpgrHangingPrepositionMacroTests(TestCase):
+    """Блок 7 VBA TPGR(): TPGR-PR-01.08 — висячие предлоги и частицы."""
+
+    MSG = "TPGR-PR-01.08: В конце строки после частиц, предлогов и аббревиатур (до 3 знаков) должен ставиться неразрывный пробел"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name=TPGR_MACROS[5]["name"],
+            code=tpgr_macro_code("TPGR-PR-01.08"),
+        )
+
+    def _findings(self, text, line_end_spaces=None):
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": text, "line_end_spaces": line_end_spaces})(),
+        )
+
+    def test_catalog_has_hanging_macro_with_course_link(self):
+        spec = TPGR_MACROS[5]
+        self.assertEqual(spec["name"], "TPGR-PR-01.08 Висячие предлоги")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_ABBR_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_particle_before_line_break(self):
+        for text, word in (
+            ("текст в \nдоме", "в"),
+            ("текст на \nучастке", "на"),
+            ("текст ООО \nРомашка", "ООО"),
+            ("текст (в \nдоме", "в"),
+            ("текст «и \nдалее", "и"),
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_ABBR_URL}],
+            )
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], word)
+
+    def test_flags_visual_wrap_from_explicit_break(self):
+        document = Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("текст в ")
+        paragraph.add_run().add_break()
+        paragraph.add_run("доме")
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        text, _spans = extract_document_text(source)
+        ends = extract_line_end_spaces(source)
+        self.assertIn("текст в доме", text.replace("\n", ""))
+        space = text.find("в ") + 1
+        self.assertIn(space, ends)
+        findings = self._findings(text, ends)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "в")
+
+    def test_flags_visual_wrap_inside_paragraph(self):
+        document = Document()
+        section = document.sections[0]
+        section.page_width = Cm(8)
+        section.left_margin = Cm(1)
+        section.right_margin = Cm(1)
+        paragraph = document.add_paragraph()
+        run = paragraph.add_run(
+            "слово слово слово в следующаяоченьдлиннаялексемабезпробелов"
+        )
+        run.font.size = Pt(14)
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        text, _spans = extract_document_text(source)
+        ends = extract_line_end_spaces(source)
+        findings = self._findings(text, ends)
+        hanging = [item for item in findings if text[item["start"]:item["end"]] == "в"]
+        self.assertEqual(len(hanging), 1, (text, ends, findings))
+
+    def test_skips_same_line_and_non_particles(self):
+        for text in (
+            "текст в доме",
+            "текст в\u00a0доме",
+            "вопрос во дворе",
+            "в \nдоме",
+            "\nв \nдоме",
+            "текст в ",
+            "текст же \nдалее",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_s_in_list_bullet_item(self):
+        text = (
+            "почтовые индексы: не отмечаются как ошибка целые числа из 5 или 6 цифр, после которых "
+            "идут обозначения населенных пунктов (г., пгт, пос., с., р.\u00a0п.) или слово начинается с "
+            "заглавной буквы; например, 125047 г. Москва или 125047 Москва."
+        )
+        document = Document()
+        section = document.sections[0]
+        section.page_width = Twips(11900)
+        section.left_margin = Twips(1701)
+        section.right_margin = Twips(1134)
+        document.add_paragraph(text, style="List Bullet")
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        extracted, _spans = extract_document_text(source)
+        ends = extract_line_end_spaces(source)
+        findings = self._findings(extracted, ends)
+        hanging_s = [
+            item for item in findings
+            if extracted[item["start"]:item["end"]] == "с"
+            and extracted[max(0, item["start"] - 12):item["start"]].endswith("начинается ")
+        ]
+        self.assertEqual(hanging_s, [], (extracted, ends, findings))
+
+    def test_skips_nbsp_keeping_pair_together(self):
+        document = Document()
+        section = document.sections[0]
+        section.page_width = Cm(8)
+        section.left_margin = Cm(1)
+        section.right_margin = Cm(1)
+        paragraph = document.add_paragraph()
+        run = paragraph.add_run(
+            "слово слово слово в\u00a0следующаяоченьдлиннаялексемабезпробелов"
+        )
+        run.font.size = Pt(14)
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        text, _spans = extract_document_text(source)
+        ends = extract_line_end_spaces(source)
+        hanging = [
+            item for item in self._findings(text, ends)
+            if text[item["start"]:item["end"]] == "в"
+        ]
+        self.assertEqual(hanging, [])
+
+    def test_skips_particle_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <текст в \nдоме>"), [])
+
+    def test_skips_when_layout_has_no_wrap_at_particle(self):
+        self.assertEqual(self._findings("текст в доме и конец", frozenset()), [])
+
+    def _docx_findings(self, text, *, bold=False, italic=False, size=None, font=None,
+                       page_width=None, left=None, right=None):
+        document = Document()
+        section = document.sections[0]
+        if page_width is not None:
+            section.page_width = page_width
+        if left is not None:
+            section.left_margin = left
+        if right is not None:
+            section.right_margin = right
+        paragraph = document.add_paragraph()
+        run = paragraph.add_run(text)
+        if size is not None:
+            run.font.size = size
+        run.bold = bold
+        run.italic = italic
+        if font:
+            run.font.name = font
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        extracted, _spans = extract_document_text(source)
+        ends = extract_line_end_spaces(source)
+        return extracted, ends, self._findings(extracted, ends)
+
+    def test_skips_particle_on_last_visual_line(self):
+        text = (
+            "Алгоритм идёт по документу слева направо, собирает слова из букв и проверяет их по "
+            "множеству элементов из приведенного списка. Если после слова идет обычный пробел, а "
+            "дальше перевод строки или окончание текста, то такую строку следует считать висячей, и "
+            "комментарий устанавливает на само слово. Слова в середине абзаца (например, текст в доме) "
+            "и вхождения внутри более длинных слов не отмечаются."
+        )
+        extracted, ends, findings = self._docx_findings(
+            text,
+            page_width=Twips(11900),
+            left=Twips(1701),
+            right=Twips(1134),
+            size=Pt(11),
+        )
+        words = [extracted[item["start"]:item["end"]] for item in findings]
+        self.assertEqual(words, ["по", "а", "и", "в"], (words, ends, extracted))
+        last_and = extracted.rfind(" и вхождения") + 1
+        self.assertTrue(all(item["start"] != last_and for item in findings))
+
+    def test_italic_does_not_false_flag_kept_together(self):
+        text = (
+            "ФНС напомнила об изменениях в учете обособленных подразделений с 1 сентября 2026 года "
+            "С 1 сентября 2026 года изменился порядок учета организаций с обособленными подразделениями. "
+            "Теперь компании могут не только выбрать одну налоговую инспекцию для учета подразделений, "
+            "но и отказаться от ранее сделанного выбора."
+        )
+        extracted, ends, findings = self._docx_findings(
+            text,
+            italic=True,
+            page_width=Twips(11900),
+            left=Twips(1701),
+            right=Twips(1134),
+            size=Pt(11),
+        )
+        words = [extracted[item["start"]:item["end"]] for item in findings]
+        self.assertNotIn("С", words, (words, ends, extracted))
+
+    def test_monospace_wraps_hanging_particles(self):
+        text = (
+            "Искусственный интеллект внедрят в работу российских судов Верховный суд определил "
+            "основные направления использования технологий искусственного интеллекта в судопроизводстве. "
+            "Новые инструменты должны ускорить работу с материалами дел, облегчить взаимодействие "
+            "граждан с судебной системой и помочь сократить количество технических и иных ошибок. "
+            "При этом ключевой принцип концепции — окончательные решения остаются за человеком."
+        )
+        extracted, ends, findings = self._docx_findings(
+            text,
+            font="Consolas",
+            size=Pt(10),
+            page_width=Twips(11900),
+            left=Twips(1701),
+            right=Twips(1134),
+        )
+        intel = extracted.find("интеллекта в ")
+        work = extracted.find("работу с ")
+        system = extracted.find("системой и ")
+        self.assertGreater(intel, -1)
+        self.assertIn(intel + len("интеллекта в ") - 1, ends, (extracted, ends))
+        self.assertNotIn(work + len("работу с ") - 1, ends, (extracted, ends))
+        self.assertNotIn(system + len("системой и ") - 1, ends, (extracted, ends))
+        words = [
+            extracted[item["start"]:item["end"]]
+            for item in findings
+        ]
+        self.assertIn("в", words, (words, findings))
+        hanging_v = [
+            item for item in findings
+            if extracted[item["start"]:item["end"]] == "в"
+            and extracted[max(0, item["start"] - 12):item["start"]].endswith("интеллекта ")
+        ]
+        self.assertEqual(len(hanging_v), 1, (words, findings))
+
+    def test_consolas_does_not_wrap_one_word_too_early(self):
+        paragraphs = [
+            (
+                "Искусственный интеллект внедрят в работу российских судов Верховный суд определил "
+                "основные направления использования технологий искусственного интеллекта в судопроизводстве. "
+                "Новые инструменты должны ускорить работу с материалами дел, облегчить взаимодействие "
+                "граждан с судебной системой и помочь сократить количество технических и иных ошибок. "
+                "При этом ключевой принцип концепции — окончательные решения остаются за человеком."
+            ),
+            (
+                "ДОМ.РФ разместил два выпуска ипотечных облигаций в объеме 249 млрд руб. Ценные бумаги "
+                "обеспечены ипотечными кредитами «Сбера» и поручительством ДОМ.РФ. Выпуски реализованы "
+                "в рамках подписанного на ПМЭФ-2026 меморандума о сотрудничестве, по которому "
+                "планируется секьюритизировать портфель ипотечных кредитов банка общим объемом "
+                "3 трлн руб. на платформе ДОМ.РФ до конца 2030 года."
+            ),
+            (
+                "Ипотечные покрытия двух выпусков полностью сформированы из электронных закладных и "
+                "включают более 79 тыс. кредитов, выданных по рыночным и льготным ипотечным "
+                "программам на покупку 3,7 млн кв. м жилья. Облигации включены в Котировальный "
+                "список первого уровня Московской биржи."
+            ),
+            (
+                "Общий объем выпусков ипотечных облигаций ДОМ.РФ превысил 4 трлн руб. Ипотечная "
+                "секьюритизация создает для банков дополнительные возможности по управлению "
+                "ликвидностью и рисками ипотечного кредитования, что в конечном итоге позволяет "
+                "наращивать объемы кредитования на покупку жилья."
+            ),
+        ]
+        document = Document()
+        section = document.sections[0]
+        section.page_width = Twips(11900)
+        section.left_margin = Twips(1701)
+        section.right_margin = Twips(1134)
+        for text in paragraphs:
+            run = document.add_paragraph().add_run(text)
+            run.font.name = "Consolas"
+            run.font.size = Pt(10)
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        extracted, _spans = extract_document_text(source)
+        ends = extract_line_end_spaces(source)
+        findings = self._findings(extracted, ends)
+        want_end = (
+            "интеллекта в ",
+            "сотрудничестве, по ",
+            "закладных и ",
+        )
+        want_mid = (
+            "работу с ",
+            "системой и ",
+            "ДОМ.РФ до ",
+            "рыночным и ",
+            "возможности по ",
+        )
+        for phrase in want_end:
+            pos = extracted.find(phrase)
+            self.assertGreater(pos, -1, phrase)
+            self.assertIn(pos + len(phrase) - 1, ends, (phrase, extracted, ends))
+        for phrase in want_mid:
+            pos = extracted.find(phrase)
+            self.assertGreater(pos, -1, phrase)
+            self.assertNotIn(pos + len(phrase) - 1, ends, (phrase, extracted, ends))
+        hanging = [extracted[item["start"]:item["end"]] for item in findings]
+        self.assertEqual(sorted(hanging), ["в", "и", "по"], hanging)
+
+    def test_bold_can_wrap_when_regular_stays_on_one_line(self):
+        text = "слово слово слово в следующаяоченьдлиннаялексемабезпробелов"
+        regular_text, regular_ends, regular = self._docx_findings(
+            text, size=Pt(14), page_width=Cm(17), left=Cm(1), right=Cm(1),
+        )
+        bold_text, bold_ends, bold = self._docx_findings(
+            text, bold=True, size=Pt(14), page_width=Cm(17), left=Cm(1), right=Cm(1),
+        )
+        regular_hanging = [item for item in regular if regular_text[item["start"]:item["end"]] == "в"]
+        bold_hanging = [item for item in bold if bold_text[item["start"]:item["end"]] == "в"]
+        self.assertEqual(regular_hanging, [], (regular_text, regular_ends, regular))
+        self.assertEqual(len(bold_hanging), 1, (bold_text, bold_ends, bold))
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("текст в ", "доме")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_ABBR_URL, rels_xml)
+
+
+class TpgrDateMacroTests(TestCase):
+    """Блок 18 VBA TPGR(): TPGR-DT-00.00 — лишнее «г.» / «год(а)» после даты."""
+
+    MSG = "TPGR-DT-00.00: После даты, указанной в формате ДД.ММ.ГГГГ, слово «года» или сокращение «г.» не требуется"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TPGR-DT-00.00 Лишнее «г.» после даты",
+            code=tpgr_macro_code("TPGR-DT-00.00"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_date_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-DT-00.00"))
+        self.assertEqual(spec["name"], "TPGR-DT-00.00 Лишнее «г.» после даты")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_year_word_after_date(self):
+        for text in (
+            "от 12.05.2018 г. утверждён",
+            "от 12.05.2018 год утверждён",
+            "от 12.05.2018 года утверждён",
+            "от 12.05.2018 году утверждён",
+            "от 12.05.2018 годе утверждён",
+            "от 12.05.2018\u00a0г. утверждён",
+            "от 12.05.2018 ГОДА утверждён",
+            "от 12.05.18 г. утверждён",
+            "от 01.02.26 года",
+            "формат ДД.ММ.ГГ г. в шаблоне",
+            "формат ДД.ММ.ГГГГ года в шаблоне",
+            "формат дд.мм.гг г.",
+            "01.01.2010 год.",
+            "01.01.2010 году.",
+            "01.01.2010 года.",
+            "01.01.2010 годе.",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertNotIn("links", findings[0])
+            self.assertIn(text[findings[0]["start"]:findings[0]["end"]], (" ", "\u00a0"))
+
+    def test_flags_missing_or_extra_spaces_before_g(self):
+        for text, fragment in (
+            ("от 01.02.2026г. утверждён", "г."),
+            ("от 01.02.26г. утверждён", "г."),
+            ("от 01.02.2026   г. утверждён", " "),
+            ("от 12.05.2018г. утверждён", "г."),
+            ("от 12.05.2018  г. утверждён", " "),
+            ("в 2010г.", "г."),
+            ("текст 2010г. далее", "г."),
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], fragment)
+
+    def test_skips_when_year_word_is_not_extra(self):
+        for text in (
+            "от 12.05.2018 утверждён",
+            "от 12.05.2018 гг. утверждён",
+            "от 12.05.2018 годах",
+            "в 2018 г.",
+            "12.5.2018 г.",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_date_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <12.05.2018 г.>"), [])
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _report_docx_bytes("от 12.05.2018 г. утверждён")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class TpgrDigitGroupMacroTests(TestCase):
+    """Блок 19 VBA TPGR(): TPGR-CH-02.01 — разряды в числах."""
+
+    MSG = "TPGR-CH-02.01: Начиная с 4-значных чисел, рекомендуется разбивать число на группы разрядов, отделяя их неразрывным пробелом"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TPGR-CH-02.01 Разряды в числах",
+            code=tpgr_macro_code("TPGR-CH-02.01"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_digit_macro_with_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-CH-02.01"))
+        self.assertEqual(spec["name"], "TPGR-CH-02.01 Разряды в числах")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_NUM_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_ungrouped_numbers(self):
+        for text in (
+            "запасы 12345 т",
+            "запасы 1234 т",
+            "запасы 1234567 т",
+            "мощность 1234,5 кВт",
+            "значение 12345.",
+            "запасы 1 234 т",
+            "запасы 12 345 т",
+            "запасы 1 234 567 т",
+            "мощность 1 234,5 кВт",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_NUM_URL}],
+            )
+            self.assertTrue(text[findings[0]["start"]:findings[0]["end"]].isdigit())
+
+    def test_skips_years_codes_and_grouped_numbers(self):
+        for text in (
+            "в 2024 году",
+            "от 12.05.2018 утверждён",
+            "в 2018 г.",
+            "код 12345",
+            "ИНН 1234567890",
+            "№ 12345",
+            "ISO 12345",
+            "всего 123 т",
+            "значение 01234",
+            "уже 1\u00a0234 т",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_year_in_punctuation_contexts(self):
+        for text in (
+            "«Отчёт», 2003 далее",
+            "«Отчёт»,\u00a02003 далее",
+            "приказ — 2003.",
+            "Москва, 2003.",
+            "закон, 2003)",
+            "закон, 2003]",
+            "пункт, 2003;",
+            "строка, 2003",
+            "строка, 2003\nдалее",
+            "ячейка, 2003 ",
+            "см. 2003.",
+            "п.\u00a02003.",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_sole_year_in_table_cell(self):
+        def findings_docx(source):
+            text, _spans = extract_document_text(source)
+            cells = extract_table_cells(source)
+            return run_macro(
+                self.macro,
+                type("Ctx", (), {"text": text, "table_cells": cells})(),
+            )
+
+        for value in ("2000", "2003", "2060"):
+            self.assertEqual(findings_docx(_table_docx(value)), [], repr(value))
+        self.assertEqual(len(findings_docx(_table_docx("1999"))), 1)
+        self.assertEqual(len(findings_docx(_table_docx("2061"))), 1)
+        self.assertEqual(len(findings_docx(_table_docx("2003 т"))), 1)
+
+    def test_skips_postal_index_before_settlement(self):
+        for text in (
+            "адрес 123456 г. Москва",
+            "адрес 625000 пгт Излучинск",
+            "адрес 12345 пос. Лесной",
+            "адрес 123456 с. Ивановка",
+            "адрес 123456 р. п. Прогресс",
+            "адрес 123456 р.\u00a0п. Прогресс",
+            "адрес 123456 Москва",
+            "адрес 142000\u00a0г. Подольск",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_digits_split_by_line_break(self):
+        self.assertEqual(self._findings("запасы 12\n345 т"), [])
+        source = _docx_with_soft_break("запасы 12", "345 т")
+        text, _spans = extract_document_text(source)
+        self.assertIn("12\n345", text)
+        self.assertEqual(self._findings(text), [])
+
+    def test_skips_number_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <запасы 12345 т>"), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("запасы 12345 т")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_NUM_URL, rels_xml)
+
+
+class TpgrRepeatedQuotesMacroTests(TestCase):
+    """Блок 20 VBA TPGR(): TPGR-KV-01.03 — повтор кавычек-ёлочек."""
+
+    MSG = "TPGR-KV-01.03: Кавычки одного рисунка рядом не повторяются"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TPGR-KV-01.03 Повтор кавычек",
+            code=tpgr_macro_code("TPGR-KV-01.03"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_repeated_quotes_macro_with_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-KV-01.03"))
+        self.assertEqual(spec["name"], "TPGR-KV-01.03 Повтор кавычек")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_QUOTE_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_doubled_guillemets(self):
+        for text, mark in (
+            ("текст ««название»", "«"),
+            ("текст «название»» далее", "»"),
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_QUOTE_URL}],
+            )
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], mark)
+
+    def test_skips_single_pair_and_spaced_quotes(self):
+        for text in (
+            "текст «название» далее",
+            "текст « «название»",
+            "текст \"название\"",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_repeated_quotes_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <««название»>"), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("текст ««название»")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_QUOTE_URL, rels_xml)
+
+
+class TpgrGuillemetMacroTests(TestCase):
+    """Блок 21 VBA TPGR(): TPGR-KV-01.02 — только кавычки-ёлочки."""
+
+    MSG = "TPGR-KV-01.02: В технических текстах должны использоваться только кавычки «ёлочки»"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TPGR-KV-01.02 Кавычки-ёлочки",
+            code=tpgr_macro_code("TPGR-KV-01.02"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_guillemet_macro_with_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-KV-01.02"))
+        self.assertEqual(spec["name"], "TPGR-KV-01.02 Кавычки-ёлочки")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_QUOTE_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+        self.assertIn("chr(34)", spec["code"])
+        self.assertIn("chr(0x201C)", spec["code"])
+        self.assertIn("chr(0x201D)", spec["code"])
+
+    def test_flags_non_guillemet_quotes(self):
+        for text, mark in (
+            ('текст "название"', '"'),
+            ("текст \u201cназвание\u201d", "\u201c"),
+            ("текст название\u201d", "\u201d"),
+            ("текст название\u201e", "\u201e"),
+        ):
+            findings = self._findings(text)
+            self.assertGreaterEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertEqual(
+                findings[0]["links"],
+                [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_QUOTE_URL}],
+            )
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], mark)
+
+    def test_skips_guillemets(self):
+        self.assertEqual(self._findings("текст «название» далее"), [])
+
+    def test_skips_double_prime_used_for_coordinates(self):
+        for text in (
+            "координаты 55°45\u203221\u2033 с.ш.",
+            "21\u2033",
+            "длина 12\u2033",
+            "12\u2036",
+        ):
+            self.assertEqual(self._findings(text), [], text)
+
+    def test_skips_quotes_inside_angle_brackets(self):
+        self.assertEqual(self._findings('шаблон <"название">'), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes('текст "название"')
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_QUOTE_URL, rels_xml)
+
+    def test_flags_quotes_stored_as_word_sym(self):
+        from lxml import etree
+
+        w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        for code_hex, mark in (("0022", '"'), ("201C", "\u201c"), ("201D", "\u201d"), ("F022", '"')):
+            source = _report_docx_bytes("текст название")
+            with zipfile.ZipFile(BytesIO(source)) as archive:
+                parts = {info.filename: archive.read(info.filename) for info in archive.infolist()}
+            root = etree.fromstring(parts["word/document.xml"])
+            t_elem = next(root.iter(f"{{{w_ns}}}t"))
+            run = t_elem.getparent()
+            t_elem.text = "текст "
+            t_elem.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+            sym = etree.SubElement(run, f"{{{w_ns}}}sym")
+            sym.set(f"{{{w_ns}}}font", "Times New Roman")
+            sym.set(f"{{{w_ns}}}char", code_hex)
+            tail = etree.SubElement(run, f"{{{w_ns}}}t")
+            tail.text = "название"
+            parts["word/document.xml"] = etree.tostring(
+                root, xml_declaration=True, encoding="UTF-8", standalone=True
+            )
+            buffer = BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                for name, data in parts.items():
+                    archive.writestr(name, data)
+            materialized = materialize_symbols(buffer.getvalue())
+            text, _spans = extract_document_text(materialized)
+            self.assertIn(mark, text, code_hex)
+            findings = self._findings(text)
+            self.assertGreaterEqual(len(findings), 1, (code_hex, text))
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], mark)
+
+
+class TpgrUnclosedGuillemetMacroTests(TestCase):
+    """Блок 22 VBA TPGR(): TPGR-KV-01.05 — незакрытые кавычки-ёлочки."""
+
+    MSG = (
+        "TPGR-KV-01.05: В кавычки «ёлочки» заключаются названия проектной документации, "
+        "научных отчетов, законов и т. д.; отсутствует закрывающая кавычка"
+    )
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TPGR-KV-01.05 Незакрытые ёлочки",
+            code=tpgr_macro_code("TPGR-KV-01.05"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_unclosed_guillemet_macro_with_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-KV-01.05"))
+        self.assertEqual(spec["name"], "TPGR-KV-01.05 Незакрытые ёлочки")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_QUOTE_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_unclosed_opening(self):
+        text = "текст «название далее"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(
+            findings[0]["links"],
+            [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_QUOTE_URL}],
+        )
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "«")
+
+    def test_flags_previous_pair_after_sentence_then_new_opening(self):
+        text = "текст «Первый отчёт. «Второй»"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "«")
+        self.assertEqual(findings[0]["start"], text.index("«"))
+
+    def test_skips_balanced_and_nested_names(self):
+        for text in (
+            "текст «название» далее",
+            "договор «ООО «Ромашка»»",
+            "текст» далее",
+            "«один» и «два»",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_period_in_codes_abbreviations_and_initials(self):
+        for text in (
+            "по «СП 47.13330.2016 «Инженерные изыскания»»",
+            "см. «Методику» и «приложение»",
+            "«см. «Методику»»",
+            "«А. С. Пушкин «Евгений Онегин»»",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_quotes_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <«название>"), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _report_docx_bytes("текст «название далее")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_QUOTE_URL, rels_xml)
+
+
+class DocxBrokenRefMacroTests(TestCase):
+    """Блок 15 VBA TPGR(): DOCX-SS-00.00 — битая перекрёстная ссылка."""
+
+    MSG = "DOCX-SS-00.00: Перекрестная ссылка не работает"
+    NEEDLE = "Ошибка! Источник ссылки не найден."
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="DOCX-SS-00.00 Битая перекрёстная ссылка",
+            code=tpgr_macro_code("DOCX-SS-00.00 Битая"),
+        )
+
+    def _findings(self, text):
+        return run_macro(self.macro, type("Ctx", (), {"text": text})())
+
+    def test_catalog_has_broken_ref_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("DOCX-SS-00.00 Битая"))
+        self.assertEqual(spec["name"], "DOCX-SS-00.00 Битая перекрёстная ссылка")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"])
+
+    def test_flags_russian_and_english_error_text(self):
+        for text, mark in (
+            ("см. " + self.NEEDLE + " далее", self.NEEDLE),
+            ("см. ошибка! источник ссылки не найден. далее", "ошибка! источник ссылки не найден."),
+            ("см. Error! Reference source not found. next", "Error! Reference source not found."),
+            ("см. Ошибка! Источник ссылки не найден далее", "Ошибка! Источник ссылки не найден"),
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertNotIn("links", findings[0])
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], mark)
+
+    def test_skips_ordinary_cross_reference_text(self):
+        for text in (
+            "см. рисунок 3.1 далее",
+            "перекрёстная ссылка на таблицу 2",
+            "источник ссылки указан в тексте",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_error_inside_angle_brackets(self):
+        self.assertEqual(self._findings("шаблон <" + self.NEEDLE + ">"), [])
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _report_docx_bytes("см. " + self.NEEDLE + " далее")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+    def test_updates_stale_ref_result_when_bookmark_is_missing(self):
+        source = _docx_with_ref_field(result_text="3.1", bookmark="_Ref111", include_bookmark=False)
+        text_before, _ = extract_document_text(source)
+        self.assertIn("3.1", text_before)
+        self.assertNotIn(BROKEN_REF_RESULT, text_before)
+        self.assertEqual(self._findings(text_before), [])
+
+        updated = update_broken_ref_fields(source)
+        text, _ = extract_document_text(updated)
+        self.assertIn(BROKEN_REF_RESULT, text)
+        self.assertNotIn("3.1", text)
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], BROKEN_REF_RESULT)
+        result = insert_comments(updated, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+
+    def test_keeps_ref_result_when_bookmark_exists(self):
+        source = _docx_with_ref_field(result_text="3.1", bookmark="_Ref111", include_bookmark=True)
+        updated = update_broken_ref_fields(source)
+        text, _ = extract_document_text(updated)
+        self.assertIn("3.1", text)
+        self.assertNotIn(BROKEN_REF_RESULT, text)
+        self.assertEqual(self._findings(text), [])
+
+
+class TmplUnclosedAnglesMacroTests(TestCase):
+    """Блок 13 VBA TPGR(): TMPL-SS-00.00 — незакрытые угловые скобки."""
+
+    MSG = "TMPL-SS-00.00: Отсутствует закрывающая угловая скобка (>)"
+    MSG_OPEN = "TMPL-SS-00.00: Отсутствует открывающая угловая скобка (<)"
+    MSG_FN = "TMPL-SS-00.00: Отсутствует закрывающая угловая скобка (>) в тексте сноски внизу страницы"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TMPL-SS-00.00 Незакрытые угловые скобки",
+            code=tpgr_macro_code("TMPL-SS-00.00 Незакрытые"),
+        )
+
+    def _findings(self, text, notes=None):
+        return run_macro(self.macro, type("Ctx", (), {"text": text, "notes": notes or []})())
+
+    def test_catalog_has_unclosed_angles_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TMPL-SS-00.00"))
+        self.assertEqual(spec["name"], "TMPL-SS-00.00 Незакрытые угловые скобки")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(self.MSG_OPEN, spec["code"])
+        self.assertIn(self.MSG_FN, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_unclosed_opening_bracket(self):
+        for text in (
+            "шаблон <название месторождения",
+            "текст<1 далее",
+            "<один> и <два",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            self.assertNotIn("links", findings[0])
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+
+    def test_flags_each_unclosed_opening(self):
+        text = "<первый <второй"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 2)
+        self.assertEqual([text[item["start"]] for item in findings], ["<", "<"])
+
+    def test_flags_extra_closing_bracket(self):
+        text = "текст > далее"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_OPEN)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">")
+
+    def test_flags_double_closing_after_pair(self):
+        text = "Лишняя закрывающая угловая скобка <в тексте>> также отмечается как ошибка."
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_OPEN)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">>")
+
+    def test_balanced_brackets_span_paragraphs(self):
+        for text in (
+            "<технический текст\nпродолжается\nи заканчивается здесь>",
+            "начало <блок\nобычный абзац\nконец блока> дальше",
+            "<первый абзац>\n<второй абзац>",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_unclosed_opening_survives_later_paragraphs(self):
+        text = "<технический текст\nследующий абзац без закрытия\nещё абзац"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+
+    def test_extra_closing_after_earlier_paragraphs(self):
+        text = "первый абзац\nвторой абзац>\nтретий"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_OPEN)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">")
+
+    def test_docx_brackets_span_paragraphs(self):
+        source = _report_docx_bytes(
+            "Введение.",
+            "<технический",
+            "текст на несколько",
+            "абзацев>",
+            "После блока.",
+        )
+        text, _spans = extract_document_text(source)
+        self.assertIn("\n", text[text.find("<"):text.find(">")])
+        self.assertEqual(self._findings(text), [])
+
+    def test_docx_unclosed_opening_spans_paragraphs(self):
+        source = _report_docx_bytes("<технический", "текст", "без закрытия")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+
+    def test_quoted_bracket_chars_are_not_guillemet_pairs(self):
+        text = "У каждой открывающей «<» должна быть закрывающая «>»."
+        self.assertEqual(self._findings(text), [])
+
+    def test_flags_leading_double_closing(self):
+        text = ">> лишние в начале"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_OPEN)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">>")
+
+    def test_flags_trailing_unclosed_opening(self):
+        text = "шаблон <"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+
+    def test_skips_balanced_brackets(self):
+        for text in (
+            "шаблон <название> далее",
+            "текст<1>сноска",
+            "вложенные <a <b>>",
+            "пусто <> тут",
+            "кавычки «название» далее",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_comparison_operators(self):
+        for text in (
+            "при pH < 7 раствор кислый",
+            "содержание < 0,1 %",
+            "температура <= 20 °C",
+            "стрелка <- налево",
+            "при pH > 7 раствор щелочной",
+            "содержание > 0,1 %",
+            "температура >= 20 °C",
+            "стрелка –> направо",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_hyphen_before_closing_is_a_template_bracket(self):
+        lone = "стрелка -> направо"
+        findings = self._findings(lone)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_OPEN)
+        self.assertEqual(lone[findings[0]["start"]:findings[0]["end"]], ">")
+
+        before_number = "код -> 1"
+        findings = self._findings(before_number)
+        self.assertEqual(len(findings), 1, repr(before_number))
+        self.assertEqual(before_number[findings[0]["start"]:findings[0]["end"]], ">")
+
+        closed = "<шаблон\nстрелка -> дальше"
+        self.assertEqual(self._findings(closed), [])
+
+    def test_short_dash_arrow_does_not_close_template_bracket(self):
+        text = "<шаблон\nстрелка –> и текст"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+
+    def test_flags_unclosed_bracket_in_footnote_on_reference_mark(self):
+        source = _docx_with_footnote("см. источник", "<комментарий без закрытия")
+        notes = extract_notes(source)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("<комментарий", notes[0]["text"])
+        body, _ = extract_document_text(source)
+        self.assertNotIn("<комментарий", body)
+        findings = self._findings(body, notes=notes)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_FN)
+        self.assertEqual(findings[0]["note_id"], "1")
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("в тексте сноски внизу страницы", comments_xml)
+        self.assertIn("footnoteReference", document_xml)
+        ref_at = document_xml.find("footnoteReference")
+        start_at = document_xml.find("commentRangeStart")
+        self.assertNotEqual(ref_at, -1)
+        self.assertNotEqual(start_at, -1)
+        self.assertLess(start_at, ref_at)
+
+    def test_skips_balanced_footnote(self):
+        source = _docx_with_footnote("см. источник", "<комментарий>")
+        notes = extract_notes(source)
+        body, _ = extract_document_text(source)
+        self.assertEqual(self._findings(body, notes=notes), [])
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _report_docx_bytes("шаблон <название месторождения")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("TMPL-SS-00.00: Отсутствует закрывающая угловая скобка", comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+    def test_comment_covers_double_closing_in_docx(self):
+        source = _report_docx_bytes(
+            "Лишняя закрывающая угловая скобка <в тексте>> также отмечается как ошибка."
+        )
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">>")
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("Отсутствует открывающая угловая скобка", comments_xml)
+        start_at = document_xml.find("commentRangeStart")
+        end_at = document_xml.find("commentRangeEnd")
+        marked = document_xml[start_at:end_at]
+        self.assertGreaterEqual(marked.count("&gt;"), 2)
+
+    def test_course_sample_flags_extra_close_not_exceptions(self):
+        text = (
+            "У каждой открывающей «<» должна быть закрывающая «>».\n"
+            "Исключения:\n"
+            "сравнения вроде < 0,1 или > 0,1;\n"
+            "знаки меньше или равно и больше или равно: <= или >=;\n"
+            "стрелки: <– или –>.\n"
+            "У каждой открывающей «<» должна быть закрывающая «>», в т.\xa0ч. в тексте сноски<>.\n"
+            "Лишняя закрывающая угловая скобка <в тексте>> также отмечается как ошибка.\n"
+            "В техническом отчёте незакрытый угловой скобкой <текст считается ошибкой. <Новый текст в скобках>.\n"
+        )
+        notes = [{
+            "id": "1",
+            "kind": "footnote",
+            "text": " Пример незакрытой угловой скобки в <сноске.\n",
+        }]
+        findings = self._findings(text, notes=notes)
+        body = [item for item in findings if not item.get("note_id")]
+        notes_hit = [item for item in findings if item.get("note_id")]
+        slices = [text[item["start"]:item["end"]] for item in body]
+        self.assertEqual(slices.count(">>"), 1)
+        self.assertEqual(slices.count("<"), 1)
+        extra = next(item for item in body if text[item["start"]:item["end"]] == ">>")
+        unclosed = next(item for item in body if text[item["start"]:item["end"]] == "<")
+        self.assertEqual(extra["message"], self.MSG_OPEN)
+        self.assertEqual(unclosed["message"], self.MSG)
+        self.assertIn("<в тексте>>", text[extra["start"] - 10:extra["end"] + 1])
+        self.assertTrue(text[unclosed["start"]:].startswith("<текст считается ошибкой"))
+        self.assertEqual(len(notes_hit), 1)
+        self.assertEqual(notes_hit[0]["note_id"], "1")
+        self.assertEqual(notes_hit[0]["message"], self.MSG_FN)
+        self.assertEqual(len(findings), 3)
+
+    def test_course_sample_docx(self):
+        path = Path("/Users/sergei/Desktop/Workspace/Угловые скобки.docx")
+        if not path.is_file():
+            self.skipTest("нет локального образца «Угловые скобки.docx»")
+        source = path.read_bytes()
+        text, _spans = extract_document_text(source)
+        notes = extract_notes(source)
+        findings = self._findings(text, notes=notes)
+        body = [item for item in findings if not item.get("note_id")]
+        slices = [text[item["start"]:item["end"]] for item in body]
+        self.assertIn(">>", slices)
+        self.assertTrue(any(item.get("note_id") == "1" for item in findings))
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        para = document_xml.find("Лишняя закрывающая")
+        self.assertNotEqual(para, -1)
+        snippet = document_xml[para:para + 700]
+        self.assertIn("commentRangeStart", snippet)
+        self.assertIn("&gt;&gt;", snippet)
+
+
+class TmplPublicFootnoteBracketsMacroTests(TestCase):
+    """Блок 9 VBA TPGR(): публичные сноски без угловых скобок."""
+
+    MSG = "TMPL-SS-00.00: Для сносок на публичные источники знак сноски ставится без угловых скобок"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TMPL-SS-00.00 Сноски без угловых скобок",
+            code=tpgr_macro_code("TMPL-SS-00.00 Сноски"),
+        )
+
+    def _findings(self, notes, nextcloud_base_url=""):
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": "", "notes": notes, "nextcloud_base_url": nextcloud_base_url})(),
+        )
+
+    def test_catalog_has_public_footnote_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TMPL-SS-00.00 Сноски"))
+        self.assertEqual(spec["name"], "TMPL-SS-00.00 Сноски без угловых скобок")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_public_footnote_wrapped_in_angles(self):
+        source = _docx_with_footnote("см. источник", "Иванов, 2020.", wrap_brackets=True)
+        notes = extract_notes(source)
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        findings = self._findings(notes)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(findings[0]["note_id"], "1")
+        self.assertNotIn("links", findings[0])
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertLess(document_xml.find("commentRangeStart"), document_xml.find("footnoteReference"))
+
+    def test_skips_public_footnote_without_angles(self):
+        source = _docx_with_footnote("см. источник", "Иванов, 2020.", wrap_brackets=False)
+        notes = extract_notes(source)
+        self.assertFalse(notes[0]["wrapped_in_angles"])
+        self.assertEqual(self._findings(notes), [])
+
+    def test_skips_nextcloud_footnote_with_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://cloud.imcmontanai.ru/s/abc",
+            wrap_brackets=True,
+        )
+        notes = extract_notes(source)
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertEqual(self._findings(notes), [])
+        self.assertEqual(
+            self._findings(notes, nextcloud_base_url="https://cloud.example.com"),
+            [],
+        )
+
+
+class TpgrListPeriodMacroTests(TestCase):
+    """Блок 23 VBA TPGR(): TPGR-SP-02.04 — точка в конце списков."""
+
+    MSG = "TPGR-SP-02.04: В конце списка ставится точка, как и в конце любого предложения"
+    MARK = "Маркированный список"
+    MARK2 = "Маркированный список 2"
+    CONT = "Абзац списка"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TPGR-SP-02.04 Точка в конце списков",
+            code=tpgr_macro_code("TPGR-SP-02.04"),
+        )
+
+    def _findings(self, source):
+        text, _spans = extract_document_text(source)
+        paragraphs = extract_paragraphs(source)
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": text, "paragraphs": paragraphs})(),
+        )
+
+    def test_catalog_has_list_period_macro_with_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-SP-02.04"))
+        self.assertEqual(spec["name"], "TPGR-SP-02.04 Точка в конце списков")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_LIST_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_paragraph_offsets_match_document_text(self):
+        source = _list_style_docx(
+            [("первый пункт", self.MARK), ("второй пункт", self.MARK)],
+        )
+        text, _spans = extract_document_text(source)
+        paragraphs = extract_paragraphs(source)
+        rebuilt = "\n".join(item["text"] for item in paragraphs) + "\n"
+        self.assertEqual(rebuilt, text)
+        names = {item["style_name"] for item in paragraphs}
+        self.assertIn(self.MARK, names)
+
+    def test_flags_last_item_without_period(self):
+        source = _list_style_docx(
+            [("первый пункт", self.MARK), ("второй пункт", self.MARK)],
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(
+            findings[0]["links"],
+            [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_LIST_URL}],
+        )
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "т")
+
+    def test_skips_last_item_with_period(self):
+        source = _list_style_docx(
+            [("первый пункт", self.MARK), ("второй пункт.", self.MARK)],
+        )
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_single_item_list(self):
+        source = _list_style_docx([("единственный пункт", self.MARK)])
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_plain_paragraphs(self):
+        source = _report_docx_bytes("не список", "тоже не список")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_one_continuation_after_marked_item(self):
+        source = _list_style_docx(
+            [
+                ("первый пункт", self.MARK),
+                ("второй пункт", self.MARK),
+                ("продолжение последнего пункта", self.CONT),
+            ],
+        )
+        self.assertEqual(self._findings(source), [])
+
+    def test_flags_two_continuations_at_end(self):
+        source = _list_style_docx(
+            [
+                ("первый пункт", self.MARK),
+                ("продолжение", self.CONT),
+                ("ещё продолжение", self.CONT),
+            ],
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "е")
+
+    def test_flags_marked_list_2_without_period(self):
+        source = _list_style_docx(
+            [("первый пункт", self.MARK2), ("второй пункт", self.MARK2)],
+        )
+        self.assertEqual(len(self._findings(source)), 1)
+
+    def test_skips_list_inside_angle_brackets(self):
+        source = _list_style_docx(
+            [("<первый пункт", self.MARK), ("второй пункт>", self.MARK)],
+        )
+        self.assertEqual(self._findings(source), [])
+
+    def test_comment_includes_course_hyperlink(self):
+        source = _list_style_docx(
+            [("первый пункт", self.MARK), ("второй пункт", self.MARK)],
+        )
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_LIST_URL, rels_xml)
+
+    def test_flags_word_list_paragraph_without_period(self):
+        source = _word_list_paragraph_docx("раз;", "два;", "три;")
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ";")
+
+    def test_skips_word_list_paragraph_with_period(self):
+        source = _word_list_paragraph_docx("раз;", "два;", "три.")
+        self.assertEqual(self._findings(source), [])
+
+    def test_flags_only_incorrect_list_in_sample_layout(self):
+        document = Document()
+        document.add_paragraph("Правильное оформление списка:")
+        for text in ("раз;", "два;", "три."):
+            document.add_paragraph(text, style="List Paragraph")
+        document.add_paragraph("Новое предложение.")
+        document.add_paragraph("Неправильное оформление списка:")
+        for text in ("раз;", "два;", "три;"):
+            document.add_paragraph(text, style="List Paragraph")
+        document.add_paragraph("Новое предложение.")
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ";")
+        self.assertIn("три;\nНовое предложение.", text[findings[0]["start"] - 4:])
+
+
+class TpgrFootnoteSpaceMacroTests(TestCase):
+    """Блок 12 VBA TPGR(): TPGR-SN-02.06 — пробел перед знаком сноски."""
+
+    MSG = "TPGR-SN-02.06: Знак указателя сноски не отбивается пробелом от комментируемого текста"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TPGR-SN-02.06 Пробел перед знаком сноски",
+            code=tpgr_macro_code("TPGR-SN-02.06"),
+        )
+
+    def _findings(self, source):
+        notes = extract_notes(source)
+        return run_macro(self.macro, type("Ctx", (), {"text": "", "notes": notes})())
+
+    def test_catalog_has_footnote_space_macro_with_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-SN-02.06"))
+        self.assertEqual(spec["name"], "TPGR-SN-02.06 Пробел перед знаком сноски")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertIn(TPGR_COURSE_SN_URL, spec["code"])
+        self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
+
+    def test_flags_space_before_footnote(self):
+        source = _docx_with_footnote("текст ", "сноска")
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], " ")
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(findings[0]["note_id"], "1")
+        self.assertEqual(findings[0]["note_kind"], "footnote")
+        self.assertEqual(
+            findings[0]["links"],
+            [{"text": TPGR_COURSE_LINK_TEXT, "url": TPGR_COURSE_SN_URL}],
+        )
+
+    def test_flags_nbsp_before_footnote(self):
+        source = _docx_with_footnote("текст\u00a0", "сноска")
+        self.assertEqual(extract_notes(source)[0]["prev_char"], "\u00a0")
+        self.assertEqual(len(self._findings(source)), 1)
+
+    def test_skips_footnote_without_space(self):
+        source = _docx_with_footnote("текст", "сноска")
+        self.assertEqual(extract_notes(source)[0]["prev_char"], "т")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_footnote_wrapped_in_angles_without_space(self):
+        source = _docx_with_footnote("текст", "сноска", wrap_brackets=True)
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev2_char"], "т")
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_space_before_wrapped_footnote(self):
+        source = _docx_with_footnote("текст ", "сноска", wrap_brackets=True)
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev2_char"], " ")
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_nbsp_before_wrapped_footnote(self):
+        source = _docx_with_footnote("текст\u00a0", "сноска", wrap_brackets=True)
+        self.assertEqual(extract_notes(source)[0]["prev2_char"], "\u00a0")
+        self.assertEqual(self._findings(source), [])
+
+    def test_comment_on_footnote_mark_includes_course_hyperlink(self):
+        source = _docx_with_footnote("текст ", "сноска")
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
+        self.assertIn("w:hyperlink", comments_xml)
+        self.assertIn(TPGR_COURSE_SN_URL, rels_xml)
+        self.assertLess(document_xml.find("commentRangeStart"), document_xml.find("footnoteReference"))
+
+
+class TpgrTableCellPeriodMacroTests(TestCase):
+    """Блок 16 VBA TPGR(): TPGR-TB-00.00 — точка в конце ячейки таблицы."""
+
+    MSG = (
+        "TPGR-TB-00.00: В конце ячейки таблицы точка не ставится: "
+        "роль точки в конце последнего абзаца играет граница между ячейками"
+    )
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TPGR-TB-00.00 Точка в конце ячейки таблицы",
+            code=tpgr_macro_code("TPGR-TB-00.00"),
+        )
+
+    def _findings(self, source):
+        text, _spans = extract_document_text(source)
+        cells = extract_table_cells(source)
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": text, "table_cells": cells})(),
+        )
+
+    def test_catalog_has_table_period_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-TB-00.00"))
+        self.assertEqual(spec["name"], "TPGR-TB-00.00 Точка в конце ячейки таблицы")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_period_at_end_of_cell(self):
+        source = _table_docx("текст.")
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertNotIn("links", findings[0])
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "т.")
+
+    def test_skips_cell_without_trailing_period(self):
+        source = _table_docx("текст", "значение 3.14")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_abbreviation_exceptions(self):
+        for value in (
+            "1000 руб.",
+            "5 чел.",
+            "и т. д.",
+            "2024 г.",
+            "10 шт.",
+            "и др.",
+            "г.",
+            "Текст ячейки гг.",
+            "к. т. н.",
+            "д. э. н.",
+            "к. т.\u00a0н.",
+            "д.э. н.",
+        ):
+            source = _table_docx(value)
+            self.assertEqual(self._findings(source), [], repr(value))
+
+    def test_flags_sample_cell_ending_with_period(self):
+        source = _table_docx("Текст ячейки.")
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "и.")
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("commentRangeStart", document_xml)
+        self.assertIn(self.MSG, comments_xml)
+
+    def test_flags_both_adjacent_period_cells_when_another_table_follows(self):
+        source = _tables_with_body_between(
+            ("Текст ячейки гг.", "Текст ячейки.", "Текст ячейки."),
+            body_count=30,
+            second_cells=("Текст ячейки", "Текст ячейки"),
+        )
+        cells = extract_table_cells(source)
+        self.assertEqual(
+            [cell["text"] for cell in cells],
+            ["Текст ячейки гг.", "Текст ячейки.", "Текст ячейки.", "Текст ячейки", "Текст ячейки"],
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 2)
+        text, _spans = extract_document_text(source)
+        self.assertEqual(
+            [text[item["start"]:item["end"]] for item in findings],
+            ["и.", "и."],
+        )
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertEqual(document_xml.count("commentRangeStart"), 2)
+
+    def test_flags_period_in_separate_run_like_sample(self):
+        source = _split_trailing_period_into_own_run(_table_docx("Текст ячейки."))
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("commentRangeStart", document_xml)
+
+    def test_skips_abbreviations_with_nbsp(self):
+        nbsp = "\u00a0"
+        for value in (
+            f"и т.{nbsp}д.",
+            f"и т.{nbsp}п.",
+            f"т.{nbsp}д.",
+            f"т.{nbsp}п.",
+            f"и{nbsp}т.{nbsp}д.",
+            f"и{nbsp}др.",
+        ):
+            source = _table_docx(value)
+            self.assertEqual(self._findings(source), [], repr(value))
+
+    def test_skips_body_paragraph_with_period(self):
+        source = _report_docx_bytes("Обычный абзац.")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_period_inside_angle_brackets(self):
+        source = _table_docx("<название.>")
+        self.assertEqual(self._findings(source), [])
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _table_docx("текст.")
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class DocxNearestObjectRefMacroTests(TestCase):
+    """Блок 17 VBA TPGR(): DOCX-SS-00.00 — ссылка на ближайший объект."""
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="DOCX-SS-00.00 Ссылка на ближайший объект",
+            code=tpgr_macro_code("DOCX-SS-00.00 Ссылка"),
+        )
+
+    def _findings(self, source):
+        text, _spans = extract_document_text(source)
+        paragraphs = extract_paragraphs(source)
+        ref_fields = extract_ref_fields(source)
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": text, "paragraphs": paragraphs, "ref_fields": ref_fields})(),
+        )
+
+    def test_catalog_has_nearest_object_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("DOCX-SS-00.00 Ссылка"))
+        self.assertEqual(spec["name"], "DOCX-SS-00.00 Ссылка на ближайший объект")
+        self.assertIn("Перекрёстная ссылка должна указывать на ближайший объект", spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_ref_that_does_not_match_next_caption(self):
+        source = _docx_with_ref_field(
+            result_text="рисунок 3.1",
+            extra_paragraphs=("Рисунок 3.2 — Название",),
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("номером «3-1»", findings[0]["message"])
+        self.assertIn("номером «3-2»", findings[0]["message"])
+        self.assertNotIn("links", findings[0])
+
+    def test_keeps_hyphen_in_number_and_uses_guillemets(self):
+        source = _docx_with_ref_field(
+            result_text="рисунок 1-5",
+            extra_paragraphs=("Рисунок 1-4 — Название",),
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("номером «1-5»", findings[0]["message"])
+        self.assertIn("номером «1-4»", findings[0]["message"])
+        self.assertNotIn("«15»", findings[0]["message"])
+        self.assertNotIn("«14»", findings[0]["message"])
+
+    def test_keeps_word_nobreak_hyphen_element(self):
+        source = _docx_with_ref_field(
+            result_text="рисунок 1-5",
+            extra_paragraphs=("Рисунок 1-4 — Название",),
+            hyphen_as_nobreak=True,
+        )
+        fields = extract_ref_fields(source)
+        self.assertIn("-", fields[0]["result"])
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn(
+            "Перекрёстная ссылка должна указывать на ближайший объект. После данной ссылки с номером «1-5»",
+            findings[0]["message"],
+        )
+        self.assertIn("с номером «1-4»", findings[0]["message"])
+        self.assertNotIn("«15»", findings[0]["message"])
+
+    def test_keeps_nonbreaking_hyphen_in_number(self):
+        nbh = "\u2011"
+        source = _docx_with_ref_field(
+            result_text=f"рисунок 1{nbh}5",
+            extra_paragraphs=(f"Рисунок 1{nbh}4 — Название",),
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("номером «1-5»", findings[0]["message"])
+        self.assertIn("номером «1-4»", findings[0]["message"])
+
+    def test_skips_ref_matching_next_caption(self):
+        source = _docx_with_ref_field(
+            result_text="рисунок 3.1",
+            extra_paragraphs=("Рисунок 3.1 — Название",),
+        )
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_when_no_caption_follows(self):
+        source = _docx_with_ref_field(result_text="рисунок 3.1")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_two_figure_refs_in_one_paragraph(self):
+        source = _docx_with_ref_field(
+            result_text="рисунок 3.1",
+            second_result="рисунок 3.2",
+            extra_paragraphs=("Рисунок 4.1 — Название",),
+        )
+        self.assertEqual(self._findings(source), [])
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _docx_with_ref_field(
+            result_text="таблица 1",
+            extra_paragraphs=("Таблица 2 — Сводка",),
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("Перекрёстная ссылка должна указывать на ближайший объект", comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class DocxHeaderFooterWidthMacroTests(TestCase):
+    """Блок 24 VBA TPGR(): DOCX-KL-00.00 — ширина колонтитулов."""
+
+    MSG = "DOCX-KL-00.00: Колонтитулы страницы должны быть выровнены по ширине страницы"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="DOCX-KL-00.00 Ширина колонтитулов",
+            code=tpgr_macro_code("DOCX-KL-00.00"),
+        )
+
+    def _findings(self, source):
+        text, _spans = extract_document_text(source)
+        sections = extract_sections(source)
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": text, "sections": sections})(),
+        )
+
+    def test_catalog_has_header_width_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("DOCX-KL-00.00"))
+        self.assertEqual(spec["name"], "DOCX-KL-00.00 Ширина колонтитулов")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_skips_single_section_document(self):
+        self.assertEqual(self._findings(_report_docx_bytes("Один раздел.")), [])
+
+    def test_skips_linked_headers_when_page_width_matches(self):
+        self.assertEqual(self._findings(_two_section_docx()), [])
+
+    def test_flags_linked_header_when_section_is_landscape(self):
+        source = _two_section_docx(landscape=True)
+        sections = extract_sections(source)
+        self.assertEqual(len(sections), 2)
+        self.assertTrue(sections[1]["headers"]["default"]["linked"])
+        self.assertGreater(abs(sections[1]["content_width"] - sections[0]["content_width"]), 20)
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertNotIn("links", findings[0])
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "В")
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("commentRangeStart", document_xml)
+        self.assertIn(self.MSG, comments_xml)
+
+    def test_flags_linked_header_when_only_margin_changes(self):
+        source = _two_section_docx(left_margin=Cm(4))
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "В")
+
+    def test_skips_unlinked_headers_and_footers(self):
+        source = _two_section_docx(landscape=True, link_header=False, link_footer=False)
+        sections = extract_sections(source)
+        self.assertFalse(sections[1]["headers"]["default"]["linked"])
+        self.assertFalse(sections[1]["footers"]["default"]["linked"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_flags_when_only_footer_stays_linked(self):
+        source = _two_section_docx(landscape=True, link_header=False, link_footer=True)
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _two_section_docx(landscape=True)
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class TmplSourceTabMacroTests(TestCase):
+    """Блок 10 VBA TPGR(): TMPL-SS-00.00 — табуляция после «Источник:»."""
+
+    MSG = "TMPL-SS-00.00: После «Источник:» должны идти пробел и знак табуляции"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TMPL-SS-00.00 Табуляция после «Источник:»",
+            code=tpgr_macro_code("TMPL-SS-00.00 Табуляция"),
+        )
+
+    def _findings(self, source=None, text=None, tab_offsets=()):
+        if source is not None:
+            text, _spans = extract_document_text(source)
+            tab_offsets = extract_tab_offsets(source)
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": text or "", "tab_offsets": tab_offsets})(),
+        )
+
+    def test_catalog_has_source_tab_macro_without_course_link(self):
+        spec = next(
+            item for item in TPGR_MACROS if item["name"].startswith("TMPL-SS-00.00 Табуляция")
+        )
+        self.assertEqual(spec["name"], "TMPL-SS-00.00 Табуляция после «Источник:»")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_space_without_tab(self):
+        source = _istochnik_docx(tab=False)
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertNotIn("links", findings[0])
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ":")
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+
+    def test_flags_nbsp_without_tab(self):
+        source = _istochnik_docx(space="\u00a0", tab=False)
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ":")
+
+    def test_skips_space_and_tab(self):
+        source = _istochnik_docx(tab=True)
+        text, _spans = extract_document_text(source)
+        self.assertNotIn("\t", text)
+        self.assertTrue(extract_tab_offsets(source))
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_nbsp_and_tab(self):
+        self.assertEqual(self._findings(_istochnik_docx(space="\u00a0", tab=True)), [])
+
+    def test_skips_tab_in_plain_text(self):
+        self.assertEqual(self._findings(text="Источник: \tИванов"), [])
+
+    def test_skips_colon_without_space(self):
+        self.assertEqual(self._findings(_istochnik_docx(space="", tab=True)), [])
+
+    def test_skips_lowercase(self):
+        self.assertEqual(self._findings(text="источник: Иванов"), [])
+
+    def test_skips_inside_angle_brackets(self):
+        self.assertEqual(self._findings(text="<Источник: название>"), [])
+
+    def test_flags_each_occurrence(self):
+        text = "Источник: один\nИсточник: два"
+        findings = self._findings(text=text)
+        self.assertEqual(len(findings), 2)
+        self.assertEqual([text[item["start"]:item["end"]] for item in findings], [":", ":"])
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _istochnik_docx(tab=False)
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class TmplStyleCheckMacroTests(TestCase):
+    """Блок 6 VBA TPGR(): TMPL-ST-00.00 — проверка стилей."""
+
+    PARA_MSG = "TMPL-ST-00.00: К абзацу применен стиль, отсутствующий в шаблоне"
+    CHAR_PREFIX = "TMPL-ST-00.00: Обнаружен недопустимый стиль знака: '"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TMPL-ST-00.00 Проверка стилей",
+            code=tpgr_macro_code("TMPL-ST-00.00"),
+        )
+
+    def _findings(self, source):
+        text, _spans = extract_document_text(source)
+        paragraphs = extract_paragraphs(source)
+        char_runs = extract_char_runs(source)
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": text, "paragraphs": paragraphs, "char_runs": char_runs})(),
+        )
+
+    def test_catalog_has_style_check_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TMPL-ST-00.00"))
+        self.assertEqual(spec["name"], "TMPL-ST-00.00 Проверка стилей")
+        self.assertIn(self.PARA_MSG, spec["code"])
+        self.assertIn(self.CHAR_PREFIX, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_skips_default_normal_and_heading(self):
+        self.assertEqual(self._findings(_report_docx_bytes("Обычный абзац.")), [])
+        self.assertEqual(self._findings(_para_style_docx("Заголовок раздела", "Heading 1")), [])
+        self.assertEqual(self._findings(_para_style_docx("пункт списка", "List Paragraph")), [])
+
+    def test_skips_english_names_of_caption_note_and_bibliography(self):
+        self.assertEqual(self._findings(_para_style_docx("Иванов И. И.", "Signature")), [])
+        self.assertEqual(self._findings(_para_style_docx("примечание к тексту", "annotation text")), [])
+        self.assertEqual(self._findings(_para_style_docx("Иванов, 2020.", "Bibliography")), [])
+        self.assertEqual(self._findings(_para_style_docx("Подпись исполнителя", "Подпись")), [])
+        self.assertEqual(self._findings(_para_style_docx("текст примечания", "Текст примечания")), [])
+        self.assertEqual(self._findings(_para_style_docx("список", "Список литературы")), [])
+
+    def test_flags_unknown_paragraph_style(self):
+        source = _para_style_docx("Текст абзаца.", "Чужой стиль")
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0]["message"].startswith(self.PARA_MSG))
+        self.assertIn("Чужой стиль", findings[0]["message"])
+        self.assertNotIn("links", findings[0])
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ".")
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.PARA_MSG, comments_xml)
+
+    def test_flags_heading_six_not_in_template(self):
+        findings = self._findings(_para_style_docx("Шестой уровень", "Heading 6"))
+        self.assertEqual(len(findings), 1)
+        self.assertIn(self.PARA_MSG, findings[0]["message"])
+
+    def test_skips_empty_paragraph_with_unknown_style(self):
+        self.assertEqual(self._findings(_para_style_docx("", "Чужой стиль")), [])
+
+    def test_skips_allowed_character_styles(self):
+        self.assertEqual(self._findings(_char_style_docx(("важно", "Strong"))), [])
+        self.assertEqual(self._findings(_char_style_docx(("ссылка", "Hyperlink"))), [])
+
+    def test_flags_unknown_character_style(self):
+        source = _char_style_docx(("слово", "Emphasis"))
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0]["message"].startswith(self.CHAR_PREFIX))
+        self.assertIn("Emphasis", findings[0]["message"])
+        text, _spans = extract_document_text(source)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "слово")
+
+    def test_comments_same_bad_char_style_once_per_run_group(self):
+        source = _char_style_docx(("один два", "Emphasis"))
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+
+    def test_flags_bad_char_style_again_after_unstyled_gap(self):
+        source = _char_style_docx(("один", "Emphasis"), (" ", None), ("два", "Emphasis"))
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 2)
+
+    def test_flags_bad_char_style_again_after_allowed_run(self):
+        source = _char_style_docx(("один", "Emphasis"), (" ", None), ("важно", "Strong"), (" ", None), ("два", "Emphasis"))
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 2)
+
+    def test_skips_paragraph_style_applied_as_char(self):
+        source = _char_style_docx(("фрагмент", "Heading 1 Char"))
+        self.assertEqual(self._findings(source), [])
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _para_style_docx("Текст абзаца.", "Чужой стиль")
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.PARA_MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class TmplFootnoteTabMacroTests(TestCase):
+    """Блок 8 VBA TPGR(): TMPL-SN-00.00 — табуляция после знака сноски."""
+
+    MSG = "TMPL-SN-00.00: После знака сноски внизу страницы нужно добавить пробел и знак табуляции"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TMPL-SN-00.00 Табуляция после знака сноски",
+            code=tpgr_macro_code("TMPL-SN-00.00 Табуляция"),
+        )
+
+    def _findings(self, source):
+        notes = extract_notes(source)
+        return run_macro(self.macro, type("Ctx", (), {"text": "", "notes": notes})())
+
+    def test_catalog_has_footnote_tab_macro_without_course_link(self):
+        spec = next(
+            item for item in TPGR_MACROS if item["name"].startswith("TMPL-SN-00.00 Табуляция")
+        )
+        self.assertEqual(spec["name"], "TMPL-SN-00.00 Табуляция после знака сноски")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_footnote_without_space_and_tab(self):
+        source = _docx_with_footnote("текст", "сноска")
+        notes = extract_notes(source)
+        self.assertFalse(notes[0]["has_space_tab"])
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(findings[0]["note_id"], "1")
+        self.assertEqual(findings[0]["note_kind"], "footnote")
+        self.assertNotIn("links", findings[0])
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertLess(document_xml.find("commentRangeStart"), document_xml.find("footnoteReference"))
+
+    def test_flags_empty_footnote(self):
+        source = _docx_with_footnote("текст", "")
+        self.assertFalse(extract_notes(source)[0]["has_space_tab"])
+        self.assertEqual(len(self._findings(source)), 1)
+
+    def test_skips_tab_without_space(self):
+        source = _docx_with_footnote("текст", "сноска", leading_tab=True)
+        self.assertTrue(extract_notes(source)[0]["has_space_tab"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_space_then_tab(self):
+        source = _docx_with_footnote("текст", "сноска", leading_space=True, leading_tab=True)
+        self.assertTrue(extract_notes(source)[0]["has_space_tab"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_nbsp_then_tab(self):
+        source = _docx_with_footnote("текст", "сноска", leading_space="\u00a0", leading_tab=True)
+        self.assertTrue(extract_notes(source)[0]["has_space_tab"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_tab_after_footnote_ref_mark(self):
+        source = _docx_with_footnote(
+            "текст",
+            "сноска",
+            leading_tab=True,
+            footnote_ref_mark=True,
+        )
+        self.assertTrue(extract_notes(source)[0]["has_space_tab"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_space_tab_after_footnote_ref_mark(self):
+        source = _docx_with_footnote(
+            "текст",
+            "сноска",
+            leading_space=True,
+            leading_tab=True,
+            footnote_ref_mark=True,
+        )
+        self.assertTrue(extract_notes(source)[0]["has_space_tab"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_flags_text_after_footnote_ref_without_tab(self):
+        source = _docx_with_footnote("текст", "сноска", footnote_ref_mark=True)
+        self.assertFalse(extract_notes(source)[0]["has_space_tab"])
+        self.assertEqual(len(self._findings(source)), 1)
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _docx_with_footnote("текст", "сноска")
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
+    """Блок 9 VBA TPGR(): NextCloud-сноски в угловых скобках надстрочным шрифтом."""
+
+    NC_TEXT = "файл https://cloud.imcmontanai.ru/s/abc"
+    MSG_WRAP = (
+        "TMPL-SN-00.00: В угловые скобки (<>) должен заключаться знак сноски, "
+        "содержащий ссылку на облачное хранилище проекта NextCloud"
+    )
+    MSG_SUPER = (
+        "TMPL-SN-00.00: Угловые скобки (<>), в которые заключается знак сноски, "
+        "содержащий ссылку на облачное хранилище проекта NextCloud, должны быть "
+        "в надстрочном регистре"
+    )
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TMPL-SN-00.00 Скобки NextCloud-сноски",
+            code=tpgr_macro_code("TMPL-SN-00.00 Скобки"),
+        )
+
+    def _findings(self, source, nextcloud_base_url=""):
+        notes = extract_notes(source)
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": "", "notes": notes, "nextcloud_base_url": nextcloud_base_url})(),
+        )
+
+    def test_catalog_has_nextcloud_footnote_macro_without_course_link(self):
+        spec = next(
+            item for item in TPGR_MACROS if item["name"].startswith("TMPL-SN-00.00 Скобки")
+        )
+        self.assertEqual(spec["name"], "TMPL-SN-00.00 Скобки NextCloud-сноски")
+        self.assertIn(self.MSG_WRAP, spec["code"])
+        self.assertIn(self.MSG_SUPER, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_nextcloud_footnote_without_angles(self):
+        source = _docx_with_footnote("см. облако", self.NC_TEXT, wrap_brackets=False)
+        notes = extract_notes(source)
+        self.assertFalse(notes[0]["wrapped_in_angles"])
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_WRAP)
+        self.assertEqual(findings[0]["note_id"], "1")
+        self.assertEqual(findings[0]["note_kind"], "footnote")
+        self.assertNotIn("links", findings[0])
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("ссылку на облачное хранилище проекта NextCloud", comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertLess(document_xml.find("commentRangeStart"), document_xml.find("footnoteReference"))
+
+    def test_flags_nextcloud_footnote_with_non_superscript_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            self.NC_TEXT,
+            wrap_brackets=True,
+            bracket_superscript=False,
+        )
+        notes = extract_notes(source)
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertFalse(notes[0]["prev_superscript"])
+        self.assertFalse(notes[0]["next_superscript"])
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_SUPER)
+        self.assertEqual(findings[0]["note_id"], "1")
+        self.assertNotIn("links", findings[0])
+
+    def test_flags_when_only_one_bracket_is_superscript(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            self.NC_TEXT,
+            wrap_brackets=True,
+            left_bracket_superscript=True,
+            right_bracket_superscript=False,
+        )
+        notes = extract_notes(source)
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["prev_superscript"])
+        self.assertFalse(notes[0]["next_superscript"])
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_SUPER)
+
+    def test_skips_nextcloud_footnote_with_superscript_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            self.NC_TEXT,
+            wrap_brackets=True,
+            bracket_superscript=True,
+        )
+        notes = extract_notes(source)
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["prev_superscript"])
+        self.assertTrue(notes[0]["next_superscript"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_nextcloud_footnote_with_superscript_style(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            self.NC_TEXT,
+            wrap_brackets=True,
+            bracket_rstyle="FootnoteReference",
+        )
+        notes = extract_notes(source)
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["prev_superscript"])
+        self.assertTrue(notes[0]["next_superscript"])
+        self.assertEqual(self._findings(source), [])
+
+    def test_matches_configured_nextcloud_base_url(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://cloud.example.com/s/abc",
+            wrap_brackets=False,
+        )
+        findings = self._findings(source, nextcloud_base_url="https://cloud.example.com")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_WRAP)
+
+    def test_skips_public_footnote(self):
+        source = _docx_with_footnote("см. источник", "Иванов, 2020.", wrap_brackets=True)
+        self.assertEqual(self._findings(source), [])
+        self.assertEqual(
+            self._findings(source, nextcloud_base_url="https://cloud.example.com"),
+            [],
+        )
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _docx_with_footnote("см. облако", self.NC_TEXT)
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("ссылку на облачное хранилище проекта NextCloud", comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class TmplFootnoteBracketSpaceMacroTests(TestCase):
+    """Блок 11 VBA TPGR(): TMPL-SN-00.00 — пробел перед сноской в скобках."""
+
+    MSG = (
+        "TMPL-SN-00.00: Знак указателя сноски, заключенный в угловые скобки (<>), "
+        "не отбивается пробелом от комментируемого текста"
+    )
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="TMPL-SN-00.00 Пробел перед сноской в скобках",
+            code=tpgr_macro_code("TMPL-SN-00.00 Пробел"),
+        )
+
+    def _findings(self, source):
+        notes = extract_notes(source)
+        return run_macro(self.macro, type("Ctx", (), {"text": "", "notes": notes})())
+
+    def test_catalog_has_bracket_space_macro_without_course_link(self):
+        spec = next(
+            item for item in TPGR_MACROS if item["name"].startswith("TMPL-SN-00.00 Пробел")
+        )
+        self.assertEqual(spec["name"], "TMPL-SN-00.00 Пробел перед сноской в скобках")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_space_before_opening_bracket(self):
+        source = _docx_with_footnote("текст ", "сноска", wrap_brackets=True)
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev2_char"], " ")
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(findings[0]["note_id"], "1")
+        self.assertEqual(findings[0]["note_kind"], "footnote")
+        self.assertNotIn("links", findings[0])
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("не отбивается пробелом от комментируемого текста", comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertLess(document_xml.find("commentRangeStart"), document_xml.find("footnoteReference"))
+
+    def test_flags_nbsp_before_opening_bracket(self):
+        source = _docx_with_footnote("текст\u00a0", "сноска", wrap_brackets=True)
+        self.assertEqual(extract_notes(source)[0]["prev2_char"], "\u00a0")
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+
+    def test_flags_space_before_left_bracket_even_without_right(self):
+        source = _docx_with_footnote("текст ", "сноска", wrap_brackets="left")
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev2_char"], " ")
+        self.assertFalse(notes[0]["wrapped_in_angles"])
+        self.assertEqual(len(self._findings(source)), 1)
+
+    def test_skips_wrapped_footnote_without_space(self):
+        source = _docx_with_footnote("текст", "сноска", wrap_brackets=True)
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev2_char"], "т")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_space_before_unwrapped_footnote(self):
+        source = _docx_with_footnote("текст ", "сноска")
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], " ")
+        self.assertEqual(self._findings(source), [])
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _docx_with_footnote("текст ", "сноска", wrap_brackets=True)
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("не отбивается пробелом от комментируемого текста", comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
+
+class GrmmFootnotePeriodMacroTests(TestCase):
+    """Блок 14 VBA TPGR(): GRMM-PN-00.00 — точка в конце сноски."""
+
+    MSG = "GRMM-PN-00.00: В конце предложения (текста сноски) ставится точка"
+
+    def setUp(self):
+        self.macro = ReportMacro(
+            name="GRMM-PN-00.00 Точка в конце сноски",
+            code=tpgr_macro_code("GRMM-PN-00.00"),
+        )
+
+    def _findings(self, source, nextcloud_base_url=""):
+        notes = extract_notes(source)
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {"text": "", "notes": notes, "nextcloud_base_url": nextcloud_base_url})(),
+        )
+
+    def test_catalog_has_footnote_period_macro_without_course_link(self):
+        spec = next(item for item in TPGR_MACROS if item["name"].startswith("GRMM-PN-00.00"))
+        self.assertEqual(spec["name"], "GRMM-PN-00.00 Точка в конце сноски")
+        self.assertIn(self.MSG, spec["code"])
+        self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
+        self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
+
+    def test_flags_footnote_without_period(self):
+        source = _docx_with_footnote("см. источник", "Иванов, 2020")
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(findings[0]["note_id"], "1")
+        self.assertEqual(findings[0]["note_kind"], "footnote")
+        self.assertNotIn("links", findings[0])
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertLess(document_xml.find("commentRangeStart"), document_xml.find("footnoteReference"))
+
+    def test_flags_footnote_ending_with_question_or_exclamation(self):
+        self.assertEqual(len(self._findings(_docx_with_footnote("текст", "Вопрос?"))), 1)
+        self.assertEqual(len(self._findings(_docx_with_footnote("текст", "Восклицание!"))), 1)
+
+    def test_skips_footnote_ending_with_period(self):
+        source = _docx_with_footnote("см. источник", "Иванов, 2020.")
+        self.assertEqual(extract_notes(source)[0]["text"].rstrip(" \t\r\n")[-1:], ".")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_footnote_with_trailing_spaces_after_period(self):
+        source = _docx_with_footnote("см. источник", "Иванов, 2020.  ")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_empty_footnote(self):
+        source = _docx_with_footnote("см. источник", "")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_nextcloud_footnote_without_period(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://cloud.imcmontanai.ru/s/abc",
+        )
+        self.assertEqual(self._findings(source), [])
+        self.assertEqual(
+            self._findings(source, nextcloud_base_url="https://cloud.example.com"),
+            [],
+        )
+
+    def test_skips_configured_nextcloud_url_without_period(self):
+        source = _docx_with_footnote("см. облако", "файл https://cloud.example.com/s/abc")
+        self.assertEqual(
+            self._findings(source, nextcloud_base_url="https://cloud.example.com"),
+            [],
+        )
+        self.assertEqual(len(self._findings(source)), 1)
+
+    def test_comment_has_no_course_hyperlink(self):
+        source = _docx_with_footnote("см. источник", "Иванов, 2020")
+        findings = self._findings(source)
+        result = insert_comments(source, findings)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(self.MSG, comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("learn.imcmontanai.ru", comments_xml)
+
 

@@ -279,6 +279,23 @@ def download_file(user, path: str):
     return yadisk_download_file(user, path)
 
 
+def delete_file(user, path: str) -> bool:
+    if is_nextcloud_primary():
+        from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+
+        client = NextcloudApiClient()
+        if not client.is_configured:
+            raise CloudStorageNotReadyError("Nextcloud не настроен для удаления файлов из облачного хранилища.")
+        try:
+            return client.delete_file(client.username, path)
+        except NextcloudApiError:
+            return False
+
+    from yandexdisk_app.service import delete_file as yadisk_delete_file
+
+    return yadisk_delete_file(user, path)
+
+
 def publish_resource(user, path: str) -> str:
     if is_nextcloud_primary():
         from nextcloud_app.api import NextcloudApiClient, NextcloudApiError

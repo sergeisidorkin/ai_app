@@ -66,7 +66,7 @@ def mapped_cwd(host_cwd):
     return str(Path(container_root) / relative)
 
 
-def command_parts(host_cwd):
+def command_parts(host_cwd, *, profile=None):
     parts = _configured_command()
     if not parts:
         raise DshRunError(
@@ -84,7 +84,17 @@ def command_parts(host_cwd):
             "(например: docker compose ... exec -T -w {cwd} dsh dsh --profile headless)."
         )
     mapped = mapped_cwd(host_cwd)
-    return [part.replace("{cwd}", mapped) for part in parts]
+    resolved = [part.replace("{cwd}", mapped) for part in parts]
+    selected_profile = str(profile or "").strip()
+    if selected_profile:
+        try:
+            profile_index = resolved.index("--profile") + 1
+            resolved[profile_index] = selected_profile
+        except (ValueError, IndexError) as exc:
+            raise DshRunError(
+                "В DSH_HEADLESS_CMD отсутствует аргумент --profile."
+            ) from exc
+    return resolved
 
 
 def headless_env(parts):
@@ -141,11 +151,12 @@ def run_headless(
     prompt,
     *,
     cwd,
+    profile=None,
     timeout=None,
     heartbeat=None,
     heartbeat_interval=30,
 ):
-    parts = command_parts(cwd)
+    parts = command_parts(cwd, profile=profile)
     timeout_seconds = timeout
     if timeout_seconds is None:
         timeout_seconds = int(getattr(settings, "DSH_HEADLESS_TIMEOUT", 900) or 900)

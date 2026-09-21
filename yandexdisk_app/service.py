@@ -131,6 +131,25 @@ def upload_file(user, path: str, data: bytes, overwrite: bool = True) -> bool:
         return False
 
 
+def delete_file(user, path: str) -> bool:
+    """Удалить файл на Яндекс.Диске. Отсутствие файла считается успехом."""
+    token = _get_token(user)
+    if not token:
+        return False
+
+    headers = {"Authorization": f"OAuth {token}"}
+    try:
+        resp = requests.delete(
+            f"{YANDEX_DISK_API}/resources",
+            headers=headers,
+            params={"path": path, "permanently": "true"},
+            timeout=30,
+        )
+        return resp.status_code in (202, 204, 404)
+    except Exception:
+        return False
+
+
 def create_folder(user, path: str) -> bool:
     """Создать папку на Яндекс.Диске."""
     token = _get_token(user)
