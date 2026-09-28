@@ -28,6 +28,7 @@ from .models import (
     ProjectRegistrationProduct,
     RegistrationWorkspaceFolder,
     ReportCheckRule,
+    ReportReviewEntry,
     ReportMacro,
     WorkVolume,
     WorkVolumeItem,
@@ -36,11 +37,13 @@ from .models import (
 )
 from .report_access import (
     annotate_report_submission_rows,
+    can_adjust_report_findings,
     can_manage_report_checks,
     can_mutate_report_slot,
     can_mutate_report_upload,
     can_send_reports,
     can_view_report_upload,
+    show_finding_adjustment_columns,
     is_admin_user,
     is_expert_user,
     is_report_readonly_user,
@@ -52,13 +55,24 @@ from .report_submission import (
     annotate_performers_report_section_lock,
     annotate_performers_section_codes,
     annotate_work_volumes_for_projects_table,
+    FindingCorrectionError,
+    apply_finding_correction,
     build_report_history_row,
+    build_report_review_current_row,
     build_report_slot_current_row,
+    build_report_slot_rows,
     build_report_submission_rows,
     clear_report_check_result,
     delete_report_upload,
+    format_grouped_count,
     format_report_datetime,
     format_report_finding_count,
+    format_report_public_finding_count,
+    mark_corrected_workflow_status,
+    report_finding_edit_payload,
+    report_finding_context,
+    report_finding_groups,
+    report_upload_section_label,
     format_report_status_date,
     format_report_version,
     is_local_report_path,
@@ -67,6 +81,7 @@ from .report_submission import (
     locked_report_section_sequences,
     next_work_volume_asset_code,
     parse_local_report_path,
+    performer_has_report_uploads,
     performer_report_section_locked,
     performer_section_code_ids_by_asset,
     previous_report_upload,
@@ -75,10 +90,15 @@ from .report_submission import (
     report_workflow_status_class,
     report_section_number,
     report_slot_row_id,
+    recover_abandoned_report_checks,
     resolve_report_upload_source,
+    accept_report_review_without_remarks,
     send_report_upload,
+    submit_report_review_file,
+    withdraw_pending_report_remarks,
     upload_report_file,
     validate_workspace_folder_roles,
+    work_item_has_report_uploads,
     work_item_report_folder_locked,
     work_volume_asset_code,
 )
@@ -109,7 +129,6 @@ from types import SimpleNamespace
 from urllib.parse import quote
 
 from experts_app.models import ExpertProfile
-from core.dsh_catalog import dsh_model_labels
 from core.cloud_storage import (
     CloudStorageNotReadyError,
     build_workspace_folder_tree,
@@ -161,6 +180,8 @@ from notifications_app.services import (
     create_participation_notifications,
     create_payment_request_notifications,
     normalize_delivery_channels,
+    complete_report_remarks_for_upload,
+    send_report_remarks_notices,
     sync_payment_request_notifications_for_performers,
 )
 from proposals_app.document_generation import (
@@ -190,7 +211,25 @@ LEGAL_FORM_TEMPLATE     = "projects_app/legal_entity_form.html"
 REPORT_CHECK_FORM_TEMPLATE = "projects_app/report_check_form.html"
 REPORT_MACRO_FORM_TEMPLATE = "projects_app/report_macro_form.html"
 REPORT_MACROS_SECTION_TEMPLATE = "projects_app/report_macros_section.html"
-REPORT_MACRO_CSV_HEADERS = ["Курс", "Секция", "Название", "Описание", "Код"]
+REPORT_MACRO_CSV_HEADERS = [
+    "Курс",
+    "Секция",
+    "Раздел",
+    "Номер",
+    "Название",
+    "Описание",
+    "Код",
+    "Вид проверки",
+    "Наименование навыка DHS",
+    "Модель",
+    "Уровень рассуждений",
+    "Без инструментов",
+    "Режим обработки",
+    "Температура",
+]
+REPORT_MACRO_CSV_SKILL_COLUMNS = 10
+REPORT_MACRO_CSV_LEGACY_COLUMNS = 5
+REPORT_MACRO_CSV_MIN_COLUMNS = 7
 REPORT_MACRO_PAGE_SIZE = 25
 REPORT_MACRO_PAGE_SIZE_OPTIONS = (25, 50, 100)
 REPORT_SUBMISSION_TABLE_TEMPLATE = "projects_app/report_submission_table.html"
@@ -1520,7 +1559,7 @@ def _delete_related_performers_for_work_item(item: WorkVolume):
 def work_delete(request, pk: int):
     item = get_object_or_404(WorkVolume, pk=pk)
     pid = item.project_id
-    if work_item_report_folder_locked(item):
+    if work_item_has_report_uploads(item):
         return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
     _delete_related_performers_for_work_item(item)
     item.delete()
@@ -2363,15 +2402,12 @@ def _performers_context(user=None, request=None):
     report_macros = []
     report_macros_pagination = {}
     if manage_report_checks:
-        model_labels = dsh_model_labels()
         report_check_rules = list(
             ReportCheckRule.objects
             .select_related("product", "expertise_dir", "section", "section__product")
-            .prefetch_related("macros")
+            .prefetch_related("lines__macro")
             .order_by("position", "id")
         )
-        for rule in report_check_rules:
-            rule.model_display = model_labels.get(rule.model_id) or rule.model_id or "—"
         report_macros_pagination = _report_macros_table_context(request)
         report_macros = report_macros_pagination["report_macros"]
 
@@ -2403,6 +2439,7 @@ def _performers_context(user=None, request=None):
         "contract_request_sent_initial": request_sent_initial,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "user_is_direction_head": user_is_direction_head,
+        "show_finding_adjustment_columns": show_finding_adjustment_columns(user),
         "is_expert": is_expert,
         "is_admin": is_admin,
         "has_active_smtp_connection": has_active_smtp_connection,
@@ -3958,7 +3995,7 @@ def _performer_locked_section_order_changed(registration_id, current_ids, desire
 @require_POST
 def performer_delete(request, pk: int):
     p = get_object_or_404(Performer.objects.select_related("typical_section"), pk=pk)
-    if not performer_report_section_locked(p):
+    if not performer_report_section_locked(p) and not performer_has_report_uploads(p):
         p.delete()
     return _render_performers_updated(request)
 
@@ -4320,13 +4357,38 @@ def _render_report_submission_row(request, row):
                 "is_report_readonly": is_report_readonly_user(request.user),
                 "can_send_reports": can_send_reports(request.user),
                 "is_admin": is_admin_user(request.user),
+                "show_finding_adjustment_columns": show_finding_adjustment_columns(request.user),
             },
             request=request,
         )
     )
 
 
-def _report_upload_fallback_payload(upload, **extra):
+def _report_finding_groups_payload(upload, source="calculated"):
+    groups = report_finding_groups(upload, source=source)
+    groups["context"] = report_finding_context(
+        getattr(upload, "registration", None),
+        getattr(upload, "executor", ""),
+        getattr(upload, "asset_name", ""),
+        report_upload_section_label(upload),
+        format_report_version(getattr(upload, "version", 0)),
+    )
+    return groups
+
+
+def _report_public_finding_groups_payload(upload):
+    from .report_submission import finding_correction_active
+
+    source = "corrected" if finding_correction_active(upload) else "calculated"
+    return _report_finding_groups_payload(upload, source)
+
+
+def _report_finding_edit_groups_payload(upload):
+    groups = _report_finding_groups_payload(upload)
+    return report_finding_edit_payload(upload, groups)
+
+
+def _report_upload_fallback_payload(upload, viewer=None, **extra):
     payload = {
         "ok": True,
         "file_name": getattr(upload, "file_name", "") or "",
@@ -4338,21 +4400,147 @@ def _report_upload_fallback_payload(upload, **extra):
         "has_history": False,
         "previous_row_html": "",
         "check_status": getattr(upload, "check_status", "") or "",
+        "check_progress": getattr(upload, "check_progress_label", "") or "",
         "check_finding_count": getattr(upload, "check_finding_count", 0) or 0,
         "check_error": getattr(upload, "check_error", "") or "",
         "check_file_name": getattr(upload, "check_file_name", "") or "",
         "check_download_url": "",
+        "review_file_name": getattr(upload, "review_file_name", "") or "",
+        "review_download_url": "",
         "sent_at": format_report_datetime(getattr(upload, "sent_at", None)),
         "checked_at": format_report_datetime(getattr(upload, "checked_at", None)),
         "uploaded_at": format_report_datetime(getattr(upload, "uploaded_at", None)),
         "upload_id": getattr(upload, "pk", None) or "",
         "finding_threshold": report_acceptance_threshold(upload),
-        "finding_count_display": format_report_finding_count(upload),
+        "finding_count_display": format_report_public_finding_count(upload),
+        "calculated_count_display": format_report_finding_count(upload),
+        "corrected_count_display": format_report_public_finding_count(upload),
+        "finding_groups": _report_public_finding_groups_payload(upload),
+        "calculated_groups": _report_finding_groups_payload(upload),
+        "edit_groups": _report_finding_edit_groups_payload(upload),
     }
-    payload["workflow_status"] = report_workflow_status(upload, threshold=payload["finding_threshold"])
+    payload["workflow_status"] = mark_corrected_workflow_status(
+        upload,
+        report_workflow_status(upload, threshold=payload["finding_threshold"]),
+    )
     payload["workflow_status_class"] = report_workflow_status_class(payload["workflow_status"])
     payload["status_date"] = format_report_status_date(upload, payload["workflow_status"])
+    if not (viewer and can_adjust_report_findings(viewer, upload)):
+        payload.pop("calculated_groups", None)
+        payload.pop("edit_groups", None)
+        payload.pop("calculated_count_display", None)
+        payload.pop("corrected_count_display", None)
     payload.update(extra)
+    return payload
+
+
+def _review_step_row_html(request, upload):
+    """HTML новой строки шага, если автопроверка уже «Сдан» и шаг открыт."""
+    from .models import ReportReviewEntry
+
+    status = report_workflow_status(upload) or ""
+    if status.startswith("Сдан"):
+        phase = "review"
+    elif status == "Проверен ИИ":
+        phase = "rework"
+    else:
+        return ""
+    entries = ReportReviewEntry.objects.filter(upload=upload, phase=phase, settled=False)
+    if phase == "rework":
+        entries = entries.filter(step="ai")
+    entry = (
+        entries
+        .select_related("upload", "upload__registration", "upload__registration__type", "upload__performer", "upload__performer__typical_section", "basis_entry")
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    if entry is None:
+        return ""
+    return _render_report_submission_row(request, build_report_review_current_row(entry))
+
+
+def _review_file_upload_payload(request, upload):
+    """Ответ загрузки файла шага: число примечаний на строке файла и новая строка сверху."""
+    from .models import ReportReviewEntry
+    from .report_review import entry_status
+
+    payload = _report_upload_fallback_payload(upload)
+    payload["show_finding_info"] = False
+    payload["can_review_upload"] = False
+    newest = (
+        ReportReviewEntry.objects
+        .filter(upload=upload)
+        .select_related("upload", "upload__registration", "upload__performer", "upload__performer__typical_section", "basis_entry")
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    if newest is None:
+        return payload
+    file_entry = (
+        ReportReviewEntry.objects
+        .filter(upload=upload)
+        .exclude(review_file_name="", review_cloud_path="")
+        .order_by("-id")
+        .first()
+    )
+    if file_entry is not None:
+        payload["review_file_name"] = file_entry.review_file_name
+        payload["review_download_url"] = reverse("report_review_entry_download", args=[file_entry.pk])
+        payload["review_entry_id"] = file_entry.pk
+        payload["remarks_notice_pending"] = bool(file_entry.remarks_notice_pending)
+        payload["finding_count_display"] = format_grouped_count(int(file_entry.comment_count or 0))
+        payload["workflow_status"] = entry_status(file_entry)
+        payload["workflow_status_class"] = report_workflow_status_class(payload["workflow_status"])
+        payload["status_date"] = format_report_datetime(file_entry.created_at)
+        payload["comment_on_submitted_row"] = file_entry.pk != newest.pk
+        payload["check_file_name"] = ""
+        payload["check_download_url"] = ""
+        payload["check_status"] = ""
+    else:
+        payload["comment_on_submitted_row"] = False
+        payload["finding_count_display"] = "—"
+    if (
+        file_entry is not None
+        and newest.pk != file_entry.pk
+        and not file_entry.remarks_notice_pending
+    ):
+        payload["review_row_html"] = _render_report_submission_row(
+            request,
+            build_report_review_current_row(newest),
+        )
+    return payload
+
+
+def _review_accept_payload(request, upload, closed_entry):
+    """Ответ «Принять без замечаний»: статус той же строки и следующая, если она есть."""
+    from .models import ReportReviewEntry
+    from .report_review import entry_status
+
+    payload = _report_upload_fallback_payload(upload)
+    payload["show_finding_info"] = False
+    payload["can_review_upload"] = False
+    payload["check_file_name"] = ""
+    payload["check_download_url"] = ""
+    payload["check_status"] = ""
+    payload["review_file_name"] = ""
+    payload["review_download_url"] = ""
+    payload["finding_count_display"] = format_grouped_count(0)
+    payload["workflow_status"] = entry_status(closed_entry)
+    payload["workflow_status_class"] = report_workflow_status_class(payload["workflow_status"])
+    payload["status_date"] = format_report_datetime(closed_entry.created_at)
+    payload["comment_on_submitted_row"] = True
+    newest = (
+        ReportReviewEntry.objects
+        .filter(upload=upload)
+        .select_related("upload", "upload__registration", "upload__performer", "upload__performer__typical_section", "basis_entry")
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    if newest is not None and newest.pk != closed_entry.pk:
+        payload["review_row_html"] = _render_report_submission_row(
+            request,
+            build_report_review_current_row(newest),
+        )
     return payload
 
 
@@ -4372,6 +4560,11 @@ def _report_upload_response(request, upload):
                 payload["check_download_url"] = reverse("report_check_file_download", args=[upload.pk])
             except Exception:
                 logger.exception("Failed to build check download URL for upload %s", upload.pk)
+        if getattr(upload, "review_file_name", ""):
+            try:
+                payload["review_download_url"] = reverse("report_review_file_download", args=[upload.pk])
+            except Exception:
+                logger.exception("Failed to build review download URL for upload %s", upload.pk)
         previous = None
         try:
             previous = previous_report_upload(upload)
@@ -4524,6 +4717,11 @@ def report_file_upload(request):
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
     try:
+        complete_report_remarks_for_upload(upload=upload, actor=request.user)
+    except Exception:
+        logger.exception("Failed to complete report remarks notification for upload %s", upload.pk)
+
+    try:
         return _report_upload_response(request, upload)
     except Exception:
         logger.exception("Failed to return report upload JSON for upload %s", getattr(upload, "pk", None))
@@ -4555,10 +4753,205 @@ def report_file_send(request):
         upload = send_report_upload(user=request.user, upload=upload)
     except ReportUploadError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
-    payload = _report_upload_fallback_payload(upload)
+    payload = _report_upload_fallback_payload(upload, viewer=request.user)
     if upload.check_file_name:
         payload["check_download_url"] = reverse("report_check_file_download", args=[upload.pk])
+    if upload.check_status == PerformerReportUpload.CheckStatus.DONE:
+        payload["review_row_html"] = _review_step_row_html(request, upload)
+    if (upload.review_step or "") and (upload.review_phase or "") == "review":
+        from .report_review import user_matches_review_step
+
+        payload["can_review_upload"] = user_matches_review_step(request.user, upload, upload.review_step)
     return JsonResponse(payload)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_review_file_upload(request):
+    try:
+        upload_id = int(request.POST.get("upload_id") or "")
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректный отчёт."}, status=400)
+    upload = get_object_or_404(
+        PerformerReportUpload.objects.select_related(
+            "registration",
+            "performer",
+            "performer__typical_section",
+        ),
+        pk=upload_id,
+    )
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    if (request.POST.get("accept_without_remarks") or "") == "1":
+        from .report_review import latest_open_entry
+
+        closed = latest_open_entry(upload)
+        if closed is None:
+            return JsonResponse({"ok": False, "error": "Нет шага, который можно принять."}, status=400)
+        try:
+            upload = accept_report_review_without_remarks(user=request.user, upload=upload)
+        except ReportUploadError as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        closed.refresh_from_db()
+        return JsonResponse(_review_accept_payload(request, upload, closed))
+    try:
+        uploaded_file, local_folder_path = resolve_report_upload_source(request)
+        uploaded_file.seek(0)
+        file_bytes = uploaded_file.read()
+        upload = submit_report_review_file(
+            user=request.user,
+            upload=upload,
+            file_bytes=file_bytes,
+            original_name=getattr(uploaded_file, "name", "") or "",
+            local_folder_path=local_folder_path,
+        )
+    except ReportUploadError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    payload = _review_file_upload_payload(request, upload)
+    return JsonResponse(payload)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_remarks_send(request):
+    if not can_send_reports(request.user):
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    raw_ids = request.POST.getlist("entry_ids[]") or request.POST.getlist("entry_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Выберите строки с загруженными замечаниями."}, status=400)
+    try:
+        entry_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
+    if not entry_ids:
+        return JsonResponse({"ok": False, "error": "Выберите строки с загруженными замечаниями."}, status=400)
+    try:
+        sent_at = _parse_request_sent_at(request.POST.get("request_sent_at", "").strip())
+    except forms.ValidationError as exc:
+        return JsonResponse({"ok": False, "error": exc.message}, status=400)
+    raw_channels = request.POST.getlist("delivery_channels[]") or request.POST.getlist("delivery_channels")
+    try:
+        delivery_channels = normalize_delivery_channels(raw_channels)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    entries = list(
+        ReportReviewEntry.objects
+        .select_related(
+            "upload",
+            "upload__registration",
+            "upload__registration__type",
+            "upload__performer",
+            "upload__performer__employee",
+            "upload__performer__employee__user",
+            "upload__performer__typical_section",
+        )
+        .filter(pk__in=entry_ids, remarks_notice_pending=True)
+        .exclude(review_file_name="")
+    )
+    if len(entries) != len(entry_ids):
+        return JsonResponse({"ok": False, "error": "Часть выбранных замечаний уже отправлена или не найдена."}, status=400)
+    for entry in entries:
+        forbidden = _forbid_report_file_access(request, entry.upload)
+        if forbidden:
+            return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+
+    try:
+        result = send_report_remarks_notices(
+            entries=entries,
+            sender=request.user,
+            sent_at=sent_at,
+            delivery_channels=delivery_channels,
+        )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    sent_ids = set(result["sent_entry_ids"])
+    rows = []
+    for entry in entries:
+        if entry.pk not in sent_ids:
+            continue
+        row_payload = {
+            "review_entry_id": entry.pk,
+            "review_file_name": entry.review_file_name,
+            "review_download_url": reverse("report_review_entry_download", args=[entry.pk]),
+        }
+        rework = (
+            ReportReviewEntry.objects
+            .select_related(
+                "upload",
+                "upload__registration",
+                "upload__registration__type",
+                "upload__performer",
+                "upload__performer__typical_section",
+            )
+            .filter(
+                upload_id=entry.upload_id,
+                step=entry.step,
+                phase="rework",
+                pk__gt=entry.pk,
+            )
+            .order_by("pk")
+            .first()
+        )
+        if rework is not None:
+            row_payload["review_row_html"] = _render_report_submission_row(
+                request,
+                build_report_review_current_row(rework),
+            )
+        rows.append(row_payload)
+    payload = {
+        "ok": True,
+        "rows": rows,
+        "email_delivery": result["email_delivery"],
+    }
+    if result["errors"]:
+        payload["warning"] = "\n".join(result["errors"])
+    return JsonResponse(payload)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_remarks_discard(request):
+    try:
+        entry_id = int(request.POST.get("entry_id") or "")
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректная строка."}, status=400)
+    entry = get_object_or_404(
+        ReportReviewEntry.objects.select_related(
+            "upload",
+            "upload__registration",
+            "upload__registration__type",
+            "upload__performer",
+            "upload__performer__typical_section",
+        ),
+        pk=entry_id,
+    )
+    forbidden = _forbid_report_file_access(request, entry.upload)
+    if forbidden:
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    try:
+        entry = withdraw_pending_report_remarks(user=request.user, entry=entry)
+    except ReportUploadError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    current = next(
+        (
+            row for row in build_report_slot_rows(entry.upload)
+            if row.is_current and row.review_entry and row.review_entry.pk == entry.pk
+        ),
+        None,
+    )
+    if current is None:
+        return JsonResponse({"ok": False, "error": "Не удалось вернуть строку."}, status=400)
+    return JsonResponse({
+        "ok": True,
+        "review_entry_id": entry.pk,
+        "row_html": _render_report_submission_row(request, current),
+    })
 
 
 @login_required
@@ -4569,13 +4962,62 @@ def report_check_status(request, pk):
     forbidden = _forbid_report_file_access(request, upload)
     if forbidden:
         return forbidden
-    payload = _report_upload_fallback_payload(upload)
+    if upload.check_status == PerformerReportUpload.CheckStatus.RUNNING:
+        recover_abandoned_report_checks(upload_id=upload.pk)
+        upload.refresh_from_db()
+    payload = _report_upload_fallback_payload(upload, viewer=request.user)
     if upload.check_file_name:
         payload["check_download_url"] = reverse(
             "report_check_file_download",
             args=[upload.pk],
         )
+    if upload.check_status == PerformerReportUpload.CheckStatus.DONE:
+        payload["review_row_html"] = _review_step_row_html(request, upload)
     return JsonResponse(payload)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_finding_correction(request, pk):
+    upload = get_object_or_404(
+        PerformerReportUpload.objects.select_related(
+            "registration",
+            "registration__type",
+            "performer",
+            "performer__typical_section",
+        ),
+        pk=pk,
+    )
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    if not can_adjust_report_findings(request.user, upload):
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    if (upload.check_status or "") != PerformerReportUpload.CheckStatus.DONE:
+        return JsonResponse({"ok": False, "error": "Проверка ещё не завершена."}, status=400)
+    try:
+        body = json.loads(request.body.decode() or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"ok": False, "error": "Некорректные данные."}, status=400)
+    counts = body.get("counts") if isinstance(body, dict) else None
+    if not isinstance(counts, dict):
+        return JsonResponse({"ok": False, "error": "Некорректные данные."}, status=400)
+    try:
+        apply_finding_correction(upload, counts)
+    except FindingCorrectionError as exc:
+        return JsonResponse(
+            {"ok": False, "error": str(exc), "invalid_labels": exc.labels},
+            status=400,
+        )
+    upload.refresh_from_db()
+    rows = annotate_report_submission_rows(request.user, build_report_slot_rows(upload))
+    html = "".join(_render_report_submission_row(request, row) for row in rows)
+    return JsonResponse({
+        "ok": True,
+        "slot_rows_html": html,
+        "version_group": report_slot_row_id(upload),
+    })
 
 
 @login_required
@@ -4666,6 +5108,44 @@ def report_check_file_download(request, pk):
     )
 
 
+@login_required
+@user_passes_test(staff_required)
+@require_GET
+@login_required
+@user_passes_test(staff_required)
+@require_GET
+def report_review_entry_download(request, pk):
+    entry = get_object_or_404(ReportReviewEntry.objects.select_related("upload"), pk=pk)
+    forbidden = _forbid_report_file_access(request, entry.upload)
+    if forbidden:
+        return forbidden
+    if not (entry.review_file_name or entry.review_cloud_path or entry.review_file_link):
+        raise Http404("Файл не найден.")
+    return _serve_report_stored_file(
+        entry.upload,
+        file_name=entry.review_file_name,
+        cloud_path=entry.review_cloud_path,
+        file_link=entry.review_file_link,
+        user=request.user,
+    )
+
+
+def report_review_file_download(request, pk):
+    upload = get_object_or_404(PerformerReportUpload, pk=pk)
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    if not (upload.review_file_name or upload.review_cloud_path or upload.review_file_link):
+        raise Http404("Файл не найден.")
+    return _serve_report_stored_file(
+        upload,
+        file_name=upload.review_file_name,
+        cloud_path=upload.review_cloud_path,
+        file_link=upload.review_file_link,
+        user=request.user,
+    )
+
+
 def _forbid_report_file_access(request, upload):
     if not can_view_report_upload(request.user, upload):
         return HttpResponseForbidden("Недостаточно прав.")
@@ -4703,11 +5183,6 @@ def _serve_report_stored_file(upload, *, file_name, cloud_path, file_link, user)
 
 
 def _report_check_form_response(request, form, action, item=None, status=200):
-    selected_macro_ids = set()
-    if form.is_bound:
-        selected_macro_ids = {str(value) for value in request.POST.getlist("macros")}
-    elif item is not None:
-        selected_macro_ids = {str(pk) for pk in item.macros.values_list("pk", flat=True)}
     return render(
         request,
         REPORT_CHECK_FORM_TEMPLATE,
@@ -4716,9 +5191,9 @@ def _report_check_form_response(request, form, action, item=None, status=200):
             "action": action,
             "rule": item,
             "sections_payload": getattr(form, "sections_payload", []),
-            "skill_choices": getattr(form, "skill_choices", []),
-            "macros_list": getattr(form, "macros_list", []),
-            "selected_macro_ids": selected_macro_ids,
+            "catalog": getattr(form, "catalog", []),
+            "line_rows": getattr(form, "line_rows", []),
+            "review_order_rows": getattr(form, "review_order_rows", []),
         },
         status=status,
     )
@@ -4749,13 +5224,9 @@ def report_check_form_create(request):
     form = ReportCheckRuleForm(request.POST)
     if not form.is_valid():
         return _report_check_form_response(request, form, "create")
-    obj = form.save(commit=False)
-    if not getattr(obj, "position", 0):
-        obj.position = _next_position(ReportCheckRule)
-    obj.save()
-    form.save_m2m()
-    if obj.check_type != ReportCheckRule.CheckType.MACRO:
-        obj.macros.clear()
+    if not getattr(form.instance, "position", 0):
+        form.instance.position = _next_position(ReportCheckRule)
+    form.save()
     return _render_report_check_saved()
 
 
@@ -4767,7 +5238,7 @@ def report_check_form_edit(request, pk: int):
     if forbidden:
         return forbidden
     item = get_object_or_404(
-        ReportCheckRule.objects.select_related("product", "expertise_dir", "section", "section__product").prefetch_related("macros"),
+        ReportCheckRule.objects.select_related("product", "expertise_dir", "section", "section__product").prefetch_related("lines__macro"),
         pk=pk,
     )
     if request.method == "GET":
@@ -4855,6 +5326,71 @@ def _render_report_macro_saved():
     return resp
 
 
+def _parse_processing_mode(raw: str) -> str:
+    value = (raw or "").strip()
+    folded = value.casefold().rstrip(".")
+    labels = {
+        "chunks": ReportMacro.ProcessingMode.CHUNKS,
+        "фрагменты": ReportMacro.ProcessingMode.CHUNKS,
+        "agent": ReportMacro.ProcessingMode.AGENT,
+        "агент": ReportMacro.ProcessingMode.AGENT,
+    }
+    if not value:
+        return ReportMacro.ProcessingMode.CHUNKS
+    return labels.get(folded, value)
+
+
+def _disable_tools_label(enabled: bool) -> str:
+    return "да" if enabled else "нет"
+
+
+def _parse_disable_tools(raw: str) -> bool:
+    return (raw or "").strip().casefold() in {"1", "да", "yes", "true", "on", "+"}
+
+
+def _temperature_label(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return "По умолчанию"
+    return value
+
+
+def _canonical_temperature(raw: str) -> str:
+    value = (raw or "").strip().replace(",", ".")
+    if value.casefold() in {"", "по умолчанию", "default"}:
+        return ""
+    allowed = {code for code, _label in ReportMacro.TEMPERATURE_CHOICES if code}
+    if value in allowed:
+        return value
+    try:
+        number = float(value)
+    except ValueError:
+        return value
+    if number == int(number) and str(int(number)) in allowed:
+        return str(int(number))
+    text = f"{number:.1f}"
+    if text in allowed:
+        return text
+    return value
+
+
+def _reasoning_level_label(raw: str) -> str:
+    from core.dsh_catalog import REASONING_LEVEL_LABELS
+
+    value = (raw or "").strip()
+    return REASONING_LEVEL_LABELS.get(value, value)
+
+
+def _parse_report_macro_kind(raw: str) -> str:
+    value = (raw or "").strip()
+    lowered = value.casefold()
+    if lowered in {"macro", "макрос"}:
+        return ReportMacro.CheckKind.MACRO
+    if lowered in {"skill", "навык"}:
+        return ReportMacro.CheckKind.SKILL
+    return value
+
+
 def _report_macro_csv_error_text(form) -> str:
     parts = []
     for field, errors in form.errors.items():
@@ -4884,9 +5420,18 @@ def report_macro_csv_download(request):
             [
                 macro.course,
                 macro.section,
+                macro.part,
+                macro.number,
                 macro.name,
                 macro.description,
                 macro.code,
+                macro.get_check_kind_display(),
+                macro.skill_name,
+                macro.model_id,
+                _reasoning_level_label(macro.reasoning_effort),
+                _disable_tools_label(macro.disable_tools),
+                macro.get_processing_mode_display(),
+                _temperature_label(macro.temperature),
             ]
         )
     response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
@@ -4946,21 +5491,45 @@ def report_macro_csv_upload(request):
     for i, row in enumerate(rows[1:], start=2):
         if not any(cell.strip() for cell in row):
             continue
-        if len(row) < expected_cols:
+        if len(row) < REPORT_MACRO_CSV_MIN_COLUMNS or (
+            REPORT_MACRO_CSV_MIN_COLUMNS < len(row) < REPORT_MACRO_CSV_SKILL_COLUMNS
+        ):
             warnings.append(
                 f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается {expected_cols}: "
                 f"{', '.join(REPORT_MACRO_CSV_HEADERS)})."
             )
             continue
-        form = ReportMacroForm(
-            {
-                "course": row[0],
-                "section": row[1],
-                "name": row[2],
-                "description": row[3],
-                "code": row[4],
-            }
-        )
+        payload = {
+            "course": row[0],
+            "section": row[1],
+            "part": row[2],
+            "number": row[3],
+            "name": row[4],
+            "description": row[5],
+            "code": row[6],
+            "check_kind": ReportMacro.CheckKind.MACRO,
+            "skill_name": "",
+            "model_id": "",
+            "reasoning_effort": "",
+            "temperature": "",
+            "disable_tools": False,
+            "processing_mode": ReportMacro.ProcessingMode.CHUNKS,
+        }
+        if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS:
+            from core.dsh_catalog import parse_reasoning_level
+
+            payload["check_kind"] = _parse_report_macro_kind(row[7])
+            payload["skill_name"] = row[8]
+            payload["model_id"] = row[9]
+            if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS + 1:
+                payload["reasoning_effort"] = parse_reasoning_level(row[10])
+            if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS + 2:
+                payload["disable_tools"] = _parse_disable_tools(row[11])
+            if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS + 3:
+                payload["processing_mode"] = _parse_processing_mode(row[12])
+            if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS + 4:
+                payload["temperature"] = _canonical_temperature(row[13])
+        form = ReportMacroForm(payload)
         if not form.is_valid():
             warnings.append(f"Строка {i}: {_report_macro_csv_error_text(form)}")
             continue

@@ -17,7 +17,15 @@ from users_app.models import Employee
 
 from contracts_app.models import ContractProjectRegistration
 
-from .models import LegalEntity, Performer, ProjectRegistration, ReportCheckRule, ReportMacro, WorkVolume
+from .models import (
+    LegalEntity,
+    Performer,
+    ProjectRegistration,
+    ReportCheckLine,
+    ReportCheckRule,
+    ReportMacro,
+    WorkVolume,
+)
 
 _common_input = {"class": "form-control form-control-sm"}
 _common_select = {"class": "form-select form-select-sm"}
@@ -308,6 +316,12 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         choices=(),
         widget=forms.Select(),
     )
+    project_coordinator = forms.ChoiceField(
+        label="Координатор проекта",
+        required=False,
+        choices=(),
+        widget=forms.Select(),
+    )
     registration_date = forms.DateField(
         label="Дата регистр.",
         required=False,
@@ -464,7 +478,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             "number", "contract_project_registration", "group_member", "agreement_type", "agreement_number", "name",
             "status", "deadline", "year", "evaluation_date",
             "country", "customer", "identifier", "registration_number",
-            "registration_region", "registration_date", "project_manager",
+            "registration_region", "registration_date", "project_manager", "project_coordinator",
             "asset_owner", "asset_owner_matches_customer", "asset_owner_country", "asset_owner_identifier",
             "asset_owner_registration_number", "asset_owner_region",
             "asset_owner_registration_date",
@@ -501,9 +515,25 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
         self.fields["project_manager"].choices = _project_manager_choices(current_manager, show_prs_label=False)
+        if self.data:
+            current_coordinator = self.data.get("project_coordinator") or ""
+        else:
+            instance_coordinator = self.instance.project_coordinator if self.instance else ""
+            _coordinator_name, resolved_coordinator_prs_id = _resolve_project_manager_choice(instance_coordinator)
+            current_coordinator = (
+                (self.instance.project_coordinator_prs_id if self.instance else "")
+                or resolved_coordinator_prs_id
+                or instance_coordinator
+            )
+        self.fields["project_coordinator"].choices = _project_manager_choices(
+            current_coordinator,
+            show_prs_label=False,
+        )
         if not self.data:
             self.initial["project_manager"] = current_manager
             self.fields["project_manager"].initial = current_manager
+            self.initial["project_coordinator"] = current_coordinator
+            self.fields["project_coordinator"].initial = current_coordinator
 
         today = timezone.now().date()
         country_qs = OKSMCountry.objects.filter(
@@ -613,6 +643,13 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         self._cleaned_project_manager_prs_id = manager_prs_id
         return manager_name
 
+    def clean_project_coordinator(self):
+        coordinator_name, coordinator_prs_id = _resolve_project_manager_choice(
+            self.cleaned_data.get("project_coordinator")
+        )
+        self._cleaned_project_coordinator_prs_id = coordinator_prs_id
+        return coordinator_name
+
     def clean_input_data(self):
         return self.cleaned_data.get("input_data") or 0
 
@@ -634,6 +671,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     def save(self, commit=True):
         instance = super().save(commit=False)
         instance.project_manager_prs_id = getattr(self, "_cleaned_project_manager_prs_id", "") or ""
+        instance.project_coordinator_prs_id = getattr(self, "_cleaned_project_coordinator_prs_id", "") or ""
         if commit:
             instance.save()
             self.save_m2m()
@@ -1385,16 +1423,13 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
         choices=(),
         widget=ReportCheckSectionSelect(),
     )
-    check_value = forms.ChoiceField(label="Проверка", choices=())
-    model_id = forms.ChoiceField(label="Модель", choices=(), required=False)
-    macros = forms.ModelMultipleChoiceField(
-        label="Макросы",
-        queryset=ReportMacro.objects.none(),
-        required=False,
-        widget=forms.CheckboxSelectMultiple,
+    completion_mode = forms.ChoiceField(
+        label="Условия сдачи отчета при проверке ИИ",
+        choices=ReportCheckRule.CompletionMode.choices,
+        initial=ReportCheckRule.CompletionMode.SUM,
     )
     finding_threshold = forms.IntegerField(
-        label="Пороговое число замечаний",
+        label="Пороговое значение",
         min_value=0,
         required=False,
         initial=0,
@@ -1412,16 +1447,12 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
             "product",
             "expertise_dir",
             "section",
-            "check_type",
+            "completion_mode",
             "finding_threshold",
-            "check_value",
-            "model_id",
-            "macros",
             "clear_comments",
         ]
 
     def __init__(self, *args, **kwargs):
-        from core.dsh_catalog import list_dsh_model_groups, list_dsh_skills
         from .report_check import (
             ALL_DIRECTION_SECTIONS_LABEL,
             ALL_SECTIONS_LABEL,
@@ -1450,13 +1481,6 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
             )
             if extra_section:
                 sections.append(extra_section)
-        self.skill_choices = list(list_dsh_skills())
-        self.model_choice_groups = list(list_dsh_model_groups())
-        self.model_choices = [
-            (model_id, label)
-            for _provider, models in self.model_choice_groups
-            for model_id, label in models
-        ]
         self.sections_payload = [
             {
                 "id": section.pk,
@@ -1505,51 +1529,94 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
             for section in sections
             if section.expertise_dir_id
         }
-        self.fields["check_type"].label = "Тип проверки"
-        self.fields["finding_threshold"].label = "Пороговое число замечаний"
-        self.fields["macros"].queryset = ReportMacro.objects.order_by("position", "id")
-        self.macros_list = list(self.fields["macros"].queryset)
-
-        check_type = ""
-        if self.data:
-            check_type = (self.data.get("check_type") or "").strip()
-        elif getattr(self.instance, "check_type", ""):
-            check_type = self.instance.check_type
-        if check_type not in {ReportCheckRule.CheckType.SKILL, ReportCheckRule.CheckType.MACRO}:
-            check_type = ReportCheckRule.CheckType.SKILL
-
-        if check_type == ReportCheckRule.CheckType.MACRO:
-            self.fields["check_value"].required = False
-            self.fields["check_value"].choices = [("", "")]
-            self.fields["model_id"].required = False
-            self.fields["model_id"].choices = [("", "")]
-            self.fields["macros"].required = True
-        else:
-            skill_choices = list(self.skill_choices)
-            current_check = "" if self.data else (getattr(self.instance, "check_value", "") or "")
-            if current_check and current_check not in {item[0] for item in skill_choices}:
-                skill_choices.insert(0, (current_check, current_check))
-            self.fields["check_value"].choices = skill_choices or [("", "Нет доступных навыков")]
-            self.fields["check_value"].required = True
-            self.fields["macros"].required = False
-            if not self.data and current_check:
-                self.fields["check_value"].initial = current_check
-            elif not self.data and skill_choices:
-                self.fields["check_value"].initial = skill_choices[0][0]
-
-            model_choices = list(self.model_choice_groups)
-            current_model = "" if self.data else (getattr(self.instance, "model_id", "") or "")
-            known_ids = {item[0] for item in self.model_choices}
-            if current_model and current_model not in known_ids:
-                model_choices = [(current_model, current_model), *model_choices]
-            self.fields["model_id"].choices = model_choices or [("", "Нет доступных моделей")]
-            self.fields["model_id"].required = bool(self.model_choices)
-            if not self.data and current_model:
-                self.fields["model_id"].initial = current_model
-            elif not self.data and self.model_choices:
-                self.fields["model_id"].initial = self.model_choices[0][0]
+        self.fields["finding_threshold"].label = "Пороговое значение суммы"
+        self.fields["completion_mode"].label = "Условия сдачи отчета при проверке ИИ"
+        self.catalog = [
+            {
+                "id": macro.pk,
+                "kind": macro.check_kind,
+                "label": macro.display_label,
+            }
+            for macro in ReportMacro.objects.order_by("position", "id")
+        ]
+        self.catalog_by_id = {item["id"]: item for item in self.catalog}
+        self.line_rows = self._posted_line_rows() if self.data else self._stored_line_rows()
+        self.review_order_rows = self._review_order_rows()
         self._bootstrapify()
         self.fields["clear_comments"].widget.attrs["class"] = "form-check-input"
+
+    def _stored_line_rows(self):
+        if not getattr(self.instance, "pk", None):
+            return [{"check_type": ReportCheckRule.CheckType.MACRO, "macro_id": "", "threshold": "", "enabled": True}]
+        rows = []
+        for line in self.instance.lines.select_related("macro").order_by("position", "id"):
+            threshold = ""
+            if self.instance.completion_mode != ReportCheckRule.CompletionMode.SUM:
+                threshold = str(int(line.finding_threshold or 0))
+            rows.append({
+                "check_type": line.check_type,
+                "macro_id": str(line.macro_id),
+                "threshold": threshold,
+                "enabled": bool(line.is_enabled),
+            })
+        return rows or [{"check_type": ReportCheckRule.CheckType.MACRO, "macro_id": "", "threshold": "", "enabled": True}]
+
+    def _review_order_rows(self):
+        from .report_review import REVIEW_ORDER_CODES, REVIEW_ORDER_FORM_LABELS, normalize_review_order
+
+        if self.data:
+            posted = self._posted_values("review_order")
+        else:
+            posted = list(getattr(self.instance, "review_order", None) or ["ai"])
+        try:
+            selected = normalize_review_order(posted)
+        except Exception:
+            selected = [code for code in posted if code in REVIEW_ORDER_CODES]
+        if not selected and not self.data:
+            selected = ["ai"]
+        rank = {code: index for index, code in enumerate(selected)}
+        rows = [
+            {
+                "code": code,
+                "label": REVIEW_ORDER_FORM_LABELS[code],
+                "enabled": code in rank,
+            }
+            for code in REVIEW_ORDER_CODES
+        ]
+        rows.sort(key=lambda row: (0 if row["enabled"] else 1, rank.get(row["code"], 99)))
+        return rows
+
+    def _posted_values(self, key):
+        if hasattr(self.data, "getlist"):
+            return self.data.getlist(key)
+        value = self.data.get(key, [])
+        if value is None or value == "":
+            return []
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return [value]
+
+    def _posted_line_rows(self):
+        types = self._posted_values("line_check_type")
+        macros = self._posted_values("line_macro")
+        thresholds = self._posted_values("line_threshold")
+        has_enabled = "line_enabled" in self.data
+        enabled_values = self._posted_values("line_enabled") if has_enabled else []
+        count = max(len(types), len(macros), len(thresholds), len(enabled_values), 1)
+        rows = []
+        for index in range(count):
+            if not has_enabled:
+                enabled = True
+            else:
+                raw_enabled = enabled_values[index] if index < len(enabled_values) else "0"
+                enabled = str(raw_enabled).strip().lower() in {"1", "on", "true"}
+            rows.append({
+                "check_type": (types[index] if index < len(types) else "").strip(),
+                "macro_id": (macros[index] if index < len(macros) else "").strip(),
+                "threshold": (thresholds[index] if index < len(thresholds) else "").strip(),
+                "enabled": enabled,
+            })
+        return rows
 
     def clean_section(self):
         from .report_check import FULL_REPORT_SECTION_VALUE
@@ -1586,40 +1653,87 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
         cleaned["is_full_report"] = is_full_report
         if cleaned["is_full_report"]:
             cleaned["section"] = None
+        mode = cleaned.get("completion_mode") or ReportCheckRule.CompletionMode.SUM
+        if mode == ReportCheckRule.CompletionMode.PER_ITEM:
+            cleaned["finding_threshold"] = 0
+        elif cleaned.get("finding_threshold") is None:
+            cleaned["finding_threshold"] = 0
+        from .report_review import REVIEW_AI, ReviewOrderError, normalize_review_order
+
+        posted_order = self._posted_values("review_order")
+        if "review_order_present" not in self.data and not posted_order:
+            posted_order = ["ai"]
+        try:
+            order = normalize_review_order(posted_order)
+        except ReviewOrderError as exc:
+            self.add_error(None, str(exc))
+            order = []
+        cleaned["review_order"] = order
+        self._clean_lines(mode, require_lines=REVIEW_AI in order)
         return cleaned
-
-    def clean_check_value(self):
-        check_type = (self.cleaned_data.get("check_type") or self.data.get("check_type") or "").strip()
-        value = (self.cleaned_data.get("check_value") or "").strip()
-        if check_type == ReportCheckRule.CheckType.MACRO:
-            return ""
-        allowed = {item[0] for item in self.skill_choices}
-        if allowed and value not in allowed:
-            raise forms.ValidationError("Выберите навык из списка DSH.")
-        return value
-
-    def clean_model_id(self):
-        check_type = (self.cleaned_data.get("check_type") or self.data.get("check_type") or "").strip()
-        if check_type == ReportCheckRule.CheckType.MACRO:
-            return ""
-        value = (self.cleaned_data.get("model_id") or "").strip()
-        allowed = {item[0] for item in self.model_choices}
-        if allowed and value not in allowed:
-            raise forms.ValidationError("Выберите модель из списка DSH.")
-        return value
-
-    def clean_macros(self):
-        check_type = (self.cleaned_data.get("check_type") or self.data.get("check_type") or "").strip()
-        macros = self.cleaned_data.get("macros")
-        if check_type == ReportCheckRule.CheckType.MACRO:
-            if not macros:
-                raise forms.ValidationError("Выберите хотя бы один макрос.")
-            return macros
-        return ReportMacro.objects.none()
 
     def clean_finding_threshold(self):
         value = self.cleaned_data.get("finding_threshold")
-        return 0 if value is None else int(value)
+        if value in (None, ""):
+            return 0
+        return int(value)
+
+    def _clean_lines(self, mode, require_lines=True):
+        allowed_types = {ReportCheckRule.CheckType.SKILL, ReportCheckRule.CheckType.MACRO}
+        parsed = []
+        seen = set()
+        for row in self.line_rows:
+            enabled = bool(row.get("enabled", True))
+            check_type = row.get("check_type") or ""
+            macro_id = row.get("macro_id") or ""
+            if not macro_id and not enabled:
+                continue
+            if not check_type and not macro_id:
+                continue
+            if check_type not in allowed_types:
+                if enabled:
+                    self.add_error(None, "Выберите тип проверки.")
+                continue
+            try:
+                macro_pk = int(macro_id)
+            except (TypeError, ValueError):
+                if enabled:
+                    self.add_error(None, "Выберите название проверки.")
+                continue
+            catalog = self.catalog_by_id.get(macro_pk)
+            if not catalog or catalog["kind"] != check_type:
+                if enabled:
+                    self.add_error(None, "Название не соответствует типу проверки.")
+                continue
+            if macro_pk in seen:
+                self.add_error(None, "Одна и та же проверка указана дважды.")
+                continue
+            seen.add(macro_pk)
+            threshold = 0
+            if mode != ReportCheckRule.CompletionMode.SUM:
+                raw_threshold = (row.get("threshold") or "").strip()
+                if raw_threshold == "":
+                    threshold = 0
+                else:
+                    try:
+                        threshold = int(raw_threshold)
+                    except ValueError:
+                        if enabled:
+                            self.add_error(None, "Пороговое значение должно быть целым числом.")
+                        continue
+                    if threshold < 0:
+                        if enabled:
+                            self.add_error(None, "Пороговое значение не может быть отрицательным.")
+                        continue
+            parsed.append({
+                "check_type": check_type,
+                "macro_id": macro_pk,
+                "threshold": threshold,
+                "enabled": enabled,
+            })
+        if require_lines and not any(line["enabled"] for line in parsed) and not self.errors:
+            self.add_error(None, "Добавьте хотя бы одну проверку.")
+        self.cleaned_lines = parsed
 
     def save(self, commit=True):
         obj = super().save(commit=False)
@@ -1628,26 +1742,83 @@ class ReportCheckRuleForm(BootstrapMixin, forms.ModelForm):
             obj.is_full_report = False
         if obj.is_full_report:
             obj.section = None
-        macros = self.cleaned_data.get("macros")
-        if obj.check_type == ReportCheckRule.CheckType.MACRO:
-            names = [item.name for item in (macros or [])]
-            obj.check_value = ", ".join(names)[:255] or "Макрос"
-            obj.model_id = ""
+        if obj.completion_mode == ReportCheckRule.CompletionMode.PER_ITEM:
+            obj.finding_threshold = 0
+        obj.review_order = list(self.cleaned_data.get("review_order") or [])
         if commit:
             obj.save()
-            self.save_m2m()
-            if obj.check_type != ReportCheckRule.CheckType.MACRO:
-                obj.macros.clear()
+            obj.lines.all().delete()
+            ReportCheckLine.objects.bulk_create([
+                ReportCheckLine(
+                    rule=obj,
+                    position=index,
+                    check_type=line["check_type"],
+                    macro_id=line["macro_id"],
+                    finding_threshold=line["threshold"],
+                    is_enabled=line["enabled"],
+                )
+                for index, line in enumerate(getattr(self, "cleaned_lines", []), start=1)
+            ])
         return obj
 
 
 class ReportMacroForm(BootstrapMixin, forms.ModelForm):
+    check_kind = forms.ChoiceField(
+        label="Вид проверки",
+        choices=(
+            ("", ""),
+            (ReportMacro.CheckKind.MACRO, "Макрос"),
+            (ReportMacro.CheckKind.SKILL, "Навык"),
+        ),
+        required=True,
+        error_messages={"required": "Выберите вид проверки."},
+        widget=forms.Select(attrs={**_common_select}),
+    )
+    skill_name = forms.ChoiceField(
+        label="Наименование навыка DHS",
+        choices=(),
+        required=False,
+        error_messages={"invalid_choice": "Выберите навык из списка DSH."},
+        widget=forms.Select(attrs={**_common_select}),
+    )
+    model_id = forms.ChoiceField(
+        label="Модель",
+        choices=(),
+        required=False,
+        error_messages={"invalid_choice": "Выберите модель из списка DSH."},
+        widget=forms.Select(attrs={**_common_select}),
+    )
+    reasoning_effort = forms.ChoiceField(
+        label="Уровень рассуждений",
+        choices=(),
+        required=False,
+        error_messages={"invalid_choice": "Выберите уровень рассуждений."},
+        widget=forms.Select(attrs={**_common_select}),
+    )
+
     class Meta:
         model = ReportMacro
-        fields = ["course", "section", "name", "description", "code"]
+        fields = [
+            "course",
+            "section",
+            "part",
+            "number",
+            "name",
+            "description",
+            "check_kind",
+            "skill_name",
+            "model_id",
+            "reasoning_effort",
+            "temperature",
+            "disable_tools",
+            "processing_mode",
+            "code",
+        ]
         widgets = {
-            "course": forms.TextInput(attrs={**_common_input}),
-            "section": forms.TextInput(attrs={**_common_input}),
+            "course": forms.TextInput(attrs={**_common_input, "maxlength": "4"}),
+            "section": forms.TextInput(attrs={**_common_input, "maxlength": "2"}),
+            "part": forms.TextInput(attrs={**_common_input, "maxlength": "2", "inputmode": "numeric"}),
+            "number": forms.TextInput(attrs={**_common_input, "maxlength": "2", "inputmode": "numeric"}),
             "name": forms.TextInput(attrs={**_common_input}),
             "description": forms.TextInput(attrs={**_common_input}),
             "code": forms.Textarea(attrs={
@@ -1660,18 +1831,181 @@ class ReportMacroForm(BootstrapMixin, forms.ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
+        from core.dsh_catalog import (
+            REASONING_LEVEL_LABELS,
+            REASONING_LEVEL_ORDER,
+            list_dsh_model_groups,
+            list_dsh_skills,
+            reasoning_levels_by_model,
+        )
         from .report_macros import DEFAULT_MACRO_CODE
 
         super().__init__(*args, **kwargs)
         self.fields["course"].label = "Курс"
-        self.fields["course"].required = False
+        self.fields["course"].required = True
         self.fields["section"].label = "Секция"
-        self.fields["section"].required = False
+        self.fields["section"].required = True
+        self.fields["part"].label = "Раздел"
+        self.fields["part"].required = True
+        self.fields["number"].label = "Номер"
+        self.fields["number"].required = True
         self.fields["name"].label = "Название"
         self.fields["description"].label = "Описание"
         self.fields["description"].required = False
         self.fields["code"].label = "Код"
+        self.fields["code"].required = False
         if not getattr(self.instance, "pk", None) and not self.data:
+            self.initial["check_kind"] = ""
             self.fields["code"].initial = DEFAULT_MACRO_CODE
+
+        self.skill_choices = list(list_dsh_skills())
+        self.model_choice_groups = list(list_dsh_model_groups())
+        self.model_choices = [
+            (model_id, label)
+            for _provider, models in self.model_choice_groups
+            for model_id, label in models
+        ]
+        skill_choices = list(self.skill_choices)
+        current_skill = (self.data.get("skill_name") if self.data else "") or ""
+        if not self.data:
+            current_skill = getattr(self.instance, "skill_name", "") or ""
+        current_skill = current_skill.strip()
+        if current_skill and current_skill not in {item[0] for item in skill_choices}:
+            skill_choices.insert(0, (current_skill, current_skill))
+        self.fields["skill_name"].choices = skill_choices or [("", "Нет доступных навыков")]
+
+        model_choices = list(self.model_choice_groups)
+        current_model = (self.data.get("model_id") if self.data else "") or ""
+        if not self.data:
+            current_model = getattr(self.instance, "model_id", "") or ""
+        current_model = current_model.strip()
+        known_ids = {item[0] for item in self.model_choices}
+        if current_model and current_model not in known_ids:
+            model_choices = [(current_model, current_model), *model_choices]
+        self.fields["model_id"].choices = model_choices or [("", "Нет доступных моделей")]
+        self.reasoning_by_model = reasoning_levels_by_model()
+        if current_model and current_model not in self.reasoning_by_model:
+            self.reasoning_by_model[current_model] = ["off"]
+        self.reasoning_catalog = {
+            "labels": REASONING_LEVEL_LABELS,
+            "byModel": self.reasoning_by_model,
+        }
+        self.fields["reasoning_effort"].choices = [
+            (code, REASONING_LEVEL_LABELS[code]) for code in REASONING_LEVEL_ORDER
+        ]
+        if not self.data and not (getattr(self.instance, "reasoning_effort", "") or "").strip():
+            self.initial["reasoning_effort"] = "off"
+        self.fields["temperature"].label = "Температура"
+        self.fields["temperature"].required = False
+        self.fields["temperature"].error_messages["invalid_choice"] = "Выберите температуру."
+        self.fields["temperature"].help_text = ""
+        self.fields["disable_tools"].label = "Без инструментов"
+        self.fields["disable_tools"].required = False
+        self.fields["disable_tools"].help_text = (
+            "Модель работает в текстовом режиме вопрос-ответ и не может вызывать инструменты."
+        )
+        self.fields["processing_mode"].label = "Режим обработки"
+        self.fields["processing_mode"].required = False
+        self.fields["processing_mode"].help_text = ""
+        if not self.data and not (getattr(self.instance, "processing_mode", "") or "").strip():
+            self.initial["processing_mode"] = ReportMacro.ProcessingMode.CHUNKS
         self._bootstrapify()
+        self.fields["disable_tools"].widget.attrs["class"] = "form-check-input"
+
+    def _clean_code_part(self, field, pattern, message):
+        value = (self.cleaned_data.get(field) or "").strip()
+        if not pattern.fullmatch(value):
+            raise forms.ValidationError(message)
+        return value
+
+    def clean_course(self):
+        from .report_macro_code import COURSE_RE
+
+        return self._clean_code_part("course", COURSE_RE, "Курс — четыре заглавные латинские буквы.")
+
+    def clean_section(self):
+        from .report_macro_code import SECTION_RE
+
+        return self._clean_code_part("section", SECTION_RE, "Секция — две заглавные латинские буквы.")
+
+    def clean_part(self):
+        from .report_macro_code import PART_RE
+
+        return self._clean_code_part("part", PART_RE, "Раздел — две цифры от 00 до 99.")
+
+    def clean_number(self):
+        from .report_macro_code import PART_RE
+
+        return self._clean_code_part("number", PART_RE, "Номер — две цифры от 00 до 99.")
+
+    def clean(self):
+        cleaned = super().clean()
+        course = cleaned.get("course")
+        section = cleaned.get("section")
+        part = cleaned.get("part")
+        number = cleaned.get("number")
+        if course and section and part and number:
+            clash = ReportMacro.objects.filter(
+                course=course,
+                section=section,
+                part=part,
+                number=number,
+            )
+            if getattr(self.instance, "pk", None):
+                clash = clash.exclude(pk=self.instance.pk)
+            if clash.exists():
+                self.add_error("number", "Такой код уже есть.")
+        kind = (cleaned.get("check_kind") or "").strip()
+        if kind == ReportMacro.CheckKind.MACRO:
+            code = (cleaned.get("code") or "").strip()
+            if not code:
+                self.add_error("code", "Введите код макроса.")
+            cleaned["skill_name"] = ""
+            cleaned["model_id"] = ""
+            cleaned["reasoning_effort"] = ""
+            cleaned["temperature"] = ""
+            cleaned["disable_tools"] = False
+            cleaned["processing_mode"] = ReportMacro.ProcessingMode.CHUNKS
+        elif kind == ReportMacro.CheckKind.SKILL:
+            if "skill_name" not in self.errors:
+                skill = (cleaned.get("skill_name") or "").strip()
+                allowed_skills = {item[0] for item in self.skill_choices}
+                if not skill or (allowed_skills and skill not in allowed_skills) or not allowed_skills:
+                    self.add_error("skill_name", "Выберите навык из списка DSH.")
+            if "model_id" not in self.errors:
+                model = (cleaned.get("model_id") or "").strip()
+                allowed_models = {item[0] for item in self.model_choices}
+                if not model or (allowed_models and model not in allowed_models) or not allowed_models:
+                    self.add_error("model_id", "Выберите модель из списка DSH.")
+            if "reasoning_effort" not in self.errors and "model_id" not in self.errors:
+                model = (cleaned.get("model_id") or "").strip()
+                allowed_levels = list(self.reasoning_by_model.get(model) or ["off"])
+                effort = (cleaned.get("reasoning_effort") or "").strip() or "off"
+                if effort not in allowed_levels and "off" in allowed_levels and not (
+                    cleaned.get("reasoning_effort") or ""
+                ).strip():
+                    effort = "off"
+                if effort not in allowed_levels:
+                    self.add_error(
+                        "reasoning_effort",
+                        "Выберите уровень рассуждений, который поддерживает эта модель.",
+                    )
+                else:
+                    cleaned["reasoning_effort"] = effort
+            if "temperature" not in self.errors:
+                temperature = (cleaned.get("temperature") or "").strip()
+                allowed_temperatures = {code for code, _label in ReportMacro.TEMPERATURE_CHOICES}
+                if temperature not in allowed_temperatures:
+                    self.add_error("temperature", "Выберите температуру.")
+                else:
+                    cleaned["temperature"] = temperature
+            mode = (cleaned.get("processing_mode") or "").strip() or ReportMacro.ProcessingMode.CHUNKS
+            if mode not in set(ReportMacro.ProcessingMode.values):
+                self.add_error("processing_mode", "Выберите режим обработки.")
+            else:
+                cleaned["processing_mode"] = mode
+                if mode == ReportMacro.ProcessingMode.AGENT:
+                    cleaned["disable_tools"] = False
+            cleaned["code"] = ""
+        return cleaned
         

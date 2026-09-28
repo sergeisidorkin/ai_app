@@ -193,6 +193,10 @@
               </p>
               <p class="mb-0">С уважением,<br>IMC Montan AI</p>
               {% endif %}
+            {% elif notification.notification_type == "project_report_remarks" %}
+              {% if card.content_html %}
+                {{ card.content_html|safe }}
+              {% endif %}
             {% endif %}
           </div>
         </article>

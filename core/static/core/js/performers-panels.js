@@ -81,7 +81,8 @@
       '#participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap, #report-submission-section .report-submission-table-wrap, #report-check-section .report-check-table-wrap, #report-macros-section .report-macros-table-wrap',
       document
     ).forEach(function(wrap) {
-      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+      var clipped = getComputedStyle(wrap).overflowX === 'hidden';
+      wrap.classList.toggle('has-horizontal-scroll', !clipped && wrap.scrollWidth > wrap.clientWidth + 1);
     });
   }
   function schedulePaymentRequestScrollGapsUpdate() {
@@ -273,6 +274,9 @@
   function performerRowIsSectionLocked(tr) {
     return !!(tr && tr.dataset.reportSectionLocked === '1');
   }
+  function performerRowDeleteLocked(tr) {
+    return performerRowIsSectionLocked(tr) || !!(tr && tr.dataset.reportUploadLocked === '1');
+  }
   function padPerformerSectionCode(n) {
     return String(n).padStart(2, '0');
   }
@@ -333,6 +337,7 @@
     const deleteBtn = panel.querySelector('[data-panel-action="delete"]');
     const rows = getChecked('performer-select').map((box) => box.closest('tr')).filter(Boolean);
     const anyLocked = rows.some(performerRowIsSectionLocked);
+    const anyDeleteLocked = rows.some(performerRowDeleteLocked);
     if (upBtn) {
       upBtn.classList.toggle('d-none', anyLocked);
       upBtn.disabled = anyLocked;
@@ -342,8 +347,8 @@
       downBtn.disabled = anyLocked;
     }
     if (deleteBtn) {
-      deleteBtn.classList.toggle('d-none', anyLocked);
-      deleteBtn.disabled = anyLocked;
+      deleteBtn.classList.toggle('d-none', anyDeleteLocked);
+      deleteBtn.disabled = anyDeleteLocked;
     }
   }
   function movePerformerSelectionImmediately(action, checked) {
@@ -2304,9 +2309,334 @@
     applyFilter(window.__paymentRequestsProjectFilter);
   }
 
+  var REPORT_SUBMISSION_COLPICKER = {
+    prefKey: 'reports:hiddenCols',
+    wrapId: 'report-submission-colpicker-wrap',
+    btnId: 'report-submission-colpicker-btn',
+    menuId: 'report-submission-colpicker-menu',
+    allId: 'report-submission-col-all',
+    tableId: 'report-submission-table',
+    hidden: null,
+  };
+
   function getReportSubmissionSection() {
     return pane()?.querySelector('#report-submission-section') || null;
   }
+
+  function getReportSubmissionDefaultHiddenColumns() {
+    var menu = document.getElementById(REPORT_SUBMISSION_COLPICKER.menuId);
+    var hidden = {};
+    if (!menu) return hidden;
+    menu.querySelectorAll('input.form-check-input[data-default-hidden="true"]:not([value="all"])').forEach(function(cb) {
+      hidden[cb.value] = true;
+    });
+    return hidden;
+  }
+
+  function getReportSubmissionHiddenColumns() {
+    var cfg = REPORT_SUBMISSION_COLPICKER;
+    if (!cfg.hidden) {
+      var saved = window.UIPref ? UIPref.get(cfg.prefKey, null) : null;
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        cfg.hidden = saved;
+      } else if (document.getElementById(cfg.menuId)) {
+        cfg.hidden = getReportSubmissionDefaultHiddenColumns();
+      }
+    }
+    return cfg.hidden || {};
+  }
+
+  function saveReportSubmissionHiddenColumns() {
+    if (window.UIPref) UIPref.set(REPORT_SUBMISSION_COLPICKER.prefKey, getReportSubmissionHiddenColumns());
+  }
+
+  function updateReportSubmissionColPickerLabel(btn, menu) {
+    var cbs = qa('input.form-check-input:not([value="all"])', menu);
+    var checked = cbs.filter(function(cb) { return cb.checked; }).length;
+    btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
+  }
+
+  var REPORT_FIXED_COLUMN_WIDTHS = { checkbox: 30, stage: 105 };
+  var REPORT_CHECK_RESULT_FLOOR_REM = 40;
+  var reportColumnLayoutCache = null;
+  var reportColumnLayoutQueued = false;
+  var reportColumnLayoutNeedsMeasure = false;
+  var reportColumnLayoutObserver = null;
+  var reportColumnLayoutObserved = null;
+
+  function reportCheckResultFloorPx() {
+    var root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return Math.ceil(REPORT_CHECK_RESULT_FLOOR_REM * root);
+  }
+
+  function reportSubmissionColumnKey(col) {
+    if (!col) return '';
+    if (col.classList.contains('col-checkbox')) return 'checkbox';
+    return col.getAttribute('data-col') || '';
+  }
+
+  function reportSubmissionColumnElements(table, key) {
+    if (key === 'checkbox') {
+      return {
+        col: table.querySelector('col.col-checkbox'),
+        th: table.querySelector('thead th.col-checkbox'),
+      };
+    }
+    return {
+      col: table.querySelector('col[data-col="' + key + '"]'),
+      th: table.querySelector('thead th[data-col="' + key + '"]'),
+    };
+  }
+
+  function clearReportSubmissionAssignedWidths(table) {
+    table.style.removeProperty('width');
+    table.style.removeProperty('min-width');
+    table.style.removeProperty('table-layout');
+    table.querySelectorAll('col, thead th, tbody td').forEach(function(el) {
+      el.style.removeProperty('width');
+      el.style.removeProperty('min-width');
+      el.style.removeProperty('max-width');
+    });
+  }
+
+  function assignReportSubmissionColumnWidth(el, width, minWidth) {
+    if (!el) return;
+    var floor = minWidth == null ? width : minWidth;
+    el.style.setProperty('width', width + 'px', 'important');
+    el.style.setProperty('min-width', floor + 'px', 'important');
+    el.style.setProperty('max-width', width + 'px', 'important');
+  }
+
+  function reportSubmissionColumnHidden(th) {
+    if (!th) return true;
+    if (th.style.display === 'none') return true;
+    return getComputedStyle(th).display === 'none';
+  }
+
+  function measureReportSubmissionColumns(table) {
+    clearReportSubmissionAssignedWidths(table);
+    var floor = reportCheckResultFloorPx();
+    table.querySelectorAll(
+      'col.col-report-check-result, thead th.report-check-result-col, tbody td.report-check-result-cell'
+    ).forEach(function(el) {
+      assignReportSubmissionColumnWidth(el, floor);
+    });
+    table.style.setProperty('width', 'max-content', 'important');
+    table.style.setProperty('min-width', '0', 'important');
+    table.style.setProperty('table-layout', 'auto', 'important');
+    return Array.from(table.querySelectorAll('colgroup col')).map(function(col) {
+      var key = reportSubmissionColumnKey(col);
+      var nodes = reportSubmissionColumnElements(table, key);
+      var hidden = reportSubmissionColumnHidden(nodes.th);
+      var fixed = REPORT_FIXED_COLUMN_WIDTHS[key] || 0;
+      var min = 0;
+      if (!hidden) {
+        if (fixed) min = fixed;
+        else if (key === 'check-result') min = floor;
+        else min = Math.floor(nodes.th.getBoundingClientRect().width);
+      }
+      return { key: key, hidden: hidden, fixed: fixed, min: min };
+    });
+  }
+
+  function reportSubmissionColumnNodes(table, key) {
+    var nodes = reportSubmissionColumnElements(table, key);
+    var cells = key === 'checkbox'
+      ? table.querySelectorAll('tbody td.report-select-cell')
+      : table.querySelectorAll('tbody td[data-col="' + key + '"]');
+    return [nodes.col, nodes.th].concat(Array.from(cells));
+  }
+
+  var REPORT_FIT_SLACK_PX = 2;
+  var REPORT_FIT_SLOP_PX = 48;
+
+  function applyReportSubmissionColumnWidths(table, columns, available) {
+    var visible = columns.filter(function(column) { return !column.hidden && column.min > 0; });
+    var flex = visible.filter(function(column) { return !column.fixed; });
+    var fixedSum = 0;
+    var flexMin = 0;
+    visible.forEach(function(column) {
+      if (column.fixed) fixedSum += column.fixed;
+      else flexMin += column.min;
+    });
+    var delta = available - fixedSum - flexMin;
+    var fitting = delta >= -REPORT_FIT_SLOP_PX;
+    var target = fitting ? Math.max(fixedSum + flex.length, available - REPORT_FIT_SLACK_PX) : available;
+    var room = fitting ? target - fixedSum - flexMin : 0;
+    var count = flex.length;
+    var base = count ? Math.trunc(room / count) : 0;
+    var remainder = count ? Math.abs(room - base * count) : 0;
+    var flexIndex = 0;
+    var total = 0;
+    columns.forEach(function(column) {
+      var nodes = reportSubmissionColumnNodes(table, column.key);
+      if (column.hidden || column.min <= 0) {
+        nodes.forEach(function(el) {
+          if (!el) return;
+          el.style.removeProperty('width');
+          el.style.removeProperty('min-width');
+          el.style.removeProperty('max-width');
+        });
+        return;
+      }
+      var width = column.fixed ? column.fixed : column.min;
+      if (!column.fixed && count) {
+        width += base;
+        if (flexIndex < remainder) width += room >= 0 ? 1 : -1;
+        if (width < 1) width = 1;
+        flexIndex += 1;
+      }
+      var floor = column.fixed ? width : Math.min(column.min, width);
+      nodes.forEach(function(el) { assignReportSubmissionColumnWidth(el, width, floor); });
+      total += width;
+    });
+    table.style.setProperty('table-layout', 'fixed', 'important');
+    if (fitting) {
+      var fitted = 'calc(100% - ' + REPORT_FIT_SLACK_PX + 'px)';
+      table.style.setProperty('width', fitted, 'important');
+      table.style.setProperty('max-width', fitted, 'important');
+      table.style.setProperty('min-width', '0', 'important');
+    } else {
+      table.style.setProperty('width', total + 'px', 'important');
+      table.style.setProperty('min-width', total + 'px', 'important');
+      table.style.setProperty('max-width', 'none', 'important');
+    }
+    return fitting;
+  }
+
+  function reportSubmissionWrapOverflow(wrap) {
+    var overflow = wrap.scrollWidth - wrap.clientWidth;
+    if (overflow > 0) return Math.ceil(overflow);
+    var style = getComputedStyle(wrap);
+    var borderY = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    if (wrap.offsetHeight - wrap.clientHeight - borderY > 2) return 1;
+    return 0;
+  }
+
+  function suppressReportSubmissionPhantomScroll(wrap, fitting) {
+    if (!fitting) {
+      wrap.style.overflowX = '';
+      return;
+    }
+    var overflow = reportSubmissionWrapOverflow(wrap);
+    wrap.style.overflowX = overflow > 0 && overflow <= REPORT_FIT_SLOP_PX ? 'hidden' : '';
+  }
+
+  function reportSubmissionLayoutSignature(table) {
+    var hiddenKey = Object.keys(getReportSubmissionHiddenColumns()).sort().join(',');
+    var fontSize = getComputedStyle(document.documentElement).fontSize;
+    var body = table.tBodies && table.tBodies[0];
+    var content = body ? body.textContent.length : 0;
+    var zoom = Math.round((window.devicePixelRatio || 1) * 100);
+    return table.id + '|' + fontSize + '|' + zoom + '|' + hiddenKey + '|' + content;
+  }
+
+  function ensureReportSubmissionColumnLayoutObserver() {
+    var wrap = document.querySelector('#report-submission-section .report-submission-table-wrap');
+    if (!wrap || typeof ResizeObserver === 'undefined') return;
+    if (reportColumnLayoutObserved === wrap) return;
+    if (reportColumnLayoutObserver) reportColumnLayoutObserver.disconnect();
+    reportColumnLayoutObserver = new ResizeObserver(function() {
+      scheduleReportSubmissionColumnLayout(false);
+    });
+    reportColumnLayoutObserver.observe(wrap);
+    reportColumnLayoutObserved = wrap;
+  }
+
+  function layoutReportSubmissionColumns(forceMeasure) {
+    var table = document.getElementById(REPORT_SUBMISSION_COLPICKER.tableId);
+    var wrap = table && table.closest('.report-submission-table-wrap');
+    if (!table || !wrap) return;
+    ensureReportSubmissionColumnLayoutObserver();
+    var available = wrap.clientWidth;
+    if (available < 1) return;
+    var signature = reportSubmissionLayoutSignature(table);
+    var cache = reportColumnLayoutCache;
+    var canReuse = !forceMeasure && cache && cache.signature === signature && cache.table === table;
+    if (canReuse && cache.available === available && reportSubmissionWrapOverflow(wrap) <= 0) return;
+    var columns = canReuse ? cache.columns : measureReportSubmissionColumns(table);
+    var fitting = applyReportSubmissionColumnWidths(table, columns, available);
+    suppressReportSubmissionPhantomScroll(wrap, fitting);
+    reportColumnLayoutCache = {
+      table: table,
+      signature: signature,
+      columns: columns,
+      available: available,
+    };
+    schedulePaymentRequestScrollGapsUpdate();
+  }
+
+  function scheduleReportSubmissionColumnLayout(forceMeasure) {
+    if (forceMeasure) reportColumnLayoutNeedsMeasure = true;
+    if (reportColumnLayoutQueued) return;
+    reportColumnLayoutQueued = true;
+    window.requestAnimationFrame(function() {
+      reportColumnLayoutQueued = false;
+      var measure = reportColumnLayoutNeedsMeasure;
+      reportColumnLayoutNeedsMeasure = false;
+      layoutReportSubmissionColumns(measure);
+    });
+  }
+
+  function applyReportSubmissionColumnVisibility() {
+    var table = document.getElementById(REPORT_SUBMISSION_COLPICKER.tableId);
+    if (!table) return;
+    var hidden = Object.keys(getReportSubmissionHiddenColumns());
+    table.querySelectorAll('[data-col]').forEach(function(cell) {
+      cell.style.display = hidden.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
+    });
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  function initReportSubmissionColPicker() {
+    var cfg = REPORT_SUBMISSION_COLPICKER;
+    var wrap = document.getElementById(cfg.wrapId);
+    var btn = document.getElementById(cfg.btnId);
+    var menu = document.getElementById(cfg.menuId);
+    if (!wrap || !btn || !menu) return;
+
+    btn.onclick = function(event) {
+      event.stopPropagation();
+      menu.classList.toggle('show');
+    };
+
+    var cbs = qa('input.form-check-input:not([value="all"])', menu);
+    var hiddenState = getReportSubmissionHiddenColumns();
+    cbs.forEach(function(cb) {
+      cb.checked = !hiddenState[cb.value];
+    });
+
+    var allCb = document.getElementById(cfg.allId);
+    if (allCb) allCb.checked = cbs.every(function(cb) { return cb.checked; });
+
+    updateReportSubmissionColPickerLabel(btn, menu);
+    applyReportSubmissionColumnVisibility();
+
+    menu.onchange = function(event) {
+      var cb = event.target;
+      if (!cb.classList || !cb.classList.contains('form-check-input')) return;
+      var items = qa('input.form-check-input:not([value="all"])', menu);
+      if (cb.value === 'all') {
+        items.forEach(function(item) { item.checked = cb.checked; });
+      } else {
+        var ac = document.getElementById(cfg.allId);
+        if (ac) ac.checked = items.every(function(item) { return item.checked; });
+      }
+      cfg.hidden = {};
+      items.forEach(function(item) {
+        if (!item.checked) cfg.hidden[item.value] = true;
+      });
+      saveReportSubmissionHiddenColumns();
+      updateReportSubmissionColPickerLabel(btn, menu);
+      applyReportSubmissionColumnVisibility();
+    };
+  }
+
+  document.addEventListener('click', function(event) {
+    var wrap = document.getElementById(REPORT_SUBMISSION_COLPICKER.wrapId);
+    var menu = document.getElementById(REPORT_SUBMISSION_COLPICKER.menuId);
+    if (wrap && menu && !wrap.contains(event.target)) menu.classList.remove('show');
+  });
 
   function getReportSubmissionRows() {
     const section = getReportSubmissionSection();
@@ -2337,13 +2667,33 @@
     updateRowHighlight('report-select');
   }
 
+  function reportRowIsRemarksPending(row) {
+    return Boolean(row && row.dataset.remarksPending === '1');
+  }
+
   function updateReportSendButtonState() {
     const section = getReportSubmissionSection();
     if (!section) return;
     const btn = section.querySelector('#report-submission-send-btn');
     if (!btn) return;
     const checked = getVisibleReportSelectChecks().filter(function(checkbox) { return checkbox.checked; });
-    const selectedRow = checked.length === 1 ? checked[0].closest('tr') : null;
+    const pending = checked.filter(function(checkbox) {
+      return reportRowIsRemarksPending(checkbox.closest('tr'));
+    });
+    const regular = checked.filter(function(checkbox) {
+      return !reportRowIsRemarksPending(checkbox.closest('tr'));
+    });
+    if (!checked.length || (pending.length && regular.length)) {
+      btn.disabled = true;
+      return;
+    }
+    if (pending.length) {
+      btn.disabled = pending.some(function(checkbox) {
+        return !(checkbox.closest('tr').dataset.reviewEntryId || '').trim();
+      });
+      return;
+    }
+    const selectedRow = regular.length === 1 ? regular[0].closest('tr') : null;
     const uploadId = selectedRow && (selectedRow.dataset.uploadId || '').trim();
     btn.disabled = !uploadId;
   }
@@ -2693,6 +3043,7 @@
             applyReportUploadVersionUpdate(row, data);
           }
           updateReportSendButtonState();
+          document.body.dispatchEvent(new Event('notifications-updated'));
         } catch (err) {
           console.error(err);
         }
@@ -2794,6 +3145,56 @@
     row.dataset.hasHistory = '1';
   }
 
+  function insertReviewStepRow(settledRow, html) {
+    if (!settledRow || !html) return;
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var nextRow = wrap.querySelector('tr');
+    if (!nextRow) return;
+    var nextId = nextRow.dataset.rowId || '';
+    var table = settledRow.closest('table');
+    if (nextId && table && settledRow.dataset.rowId !== nextId && table.querySelector('tr[data-row-id="' + nextId + '"]')) {
+      return;
+    }
+    if (settledRow.dataset.rowId === nextId) {
+      var versionCell = settledRow.querySelector('.report-version-cell');
+      var version = versionCell ? versionCell.textContent.trim() : '';
+      settledRow.dataset.rowId = nextId + (version ? '-v' + version : '-accepted');
+      settledRow.dataset.isCurrent = '0';
+      settledRow.dataset.parentId = nextRow.dataset.versionGroup || nextId;
+      settledRow.dataset.hasHistory = '';
+      settledRow.classList.add('report-row-history');
+      var toggle = settledRow.querySelector('.js-report-version-toggle');
+      if (toggle) toggle.remove();
+      var oldBox = settledRow.querySelector('input[name="report-select"]');
+      if (oldBox) {
+        oldBox.checked = false;
+        oldBox.disabled = true;
+      }
+    }
+    if (settledRow.classList.contains('d-none')) nextRow.classList.add('d-none');
+    settledRow.before(nextRow);
+    applyReportSubmissionColumnVisibility();
+    applyReportVersionCollapsedState();
+    applyRowGrouping(getReportSubmissionSection());
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  function replaceReportSubmissionRow(row, html) {
+    if (!row || !html) return null;
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var next = wrap.querySelector('tr');
+    if (!next) return null;
+    row.replaceWith(next);
+    applyReportSubmissionColumnVisibility();
+    applyReportVersionCollapsedState();
+    applyRowGrouping(getReportSubmissionSection());
+    updateReportSubmissionMasterState();
+    scheduleReportSubmissionColumnLayout(true);
+    return next;
+  }
+
   function insertPreviousReportVersionRow(currentRow, html) {
     if (!currentRow || !html) return;
     var wrap = document.createElement('tbody');
@@ -2815,6 +3216,7 @@
     }
     if (currentRow.classList.contains('d-none')) histRow.classList.add('d-none');
     currentRow.after(histRow);
+    applyReportSubmissionColumnVisibility();
   }
 
   function ensureReportSelectCheckbox(row) {
@@ -2850,25 +3252,761 @@
     return findings < limit;
   }
 
+  function reportFindingCountText(data) {
+    if (data && data.finding_count_display) return String(data.finding_count_display);
+    if (data && data.check_status === 'done') return formatFindingCount(data.check_finding_count);
+    return '—';
+  }
+
+  function reportFindingCountValue(text) {
+    if (!text || text === '—') return 0;
+    var digits = String(text).replace(/[\s\u00a0\u202f]/g, '');
+    if (!/^\d+$/.test(digits)) return 0;
+    return Number(digits);
+  }
+
+  function findingThresholdText(value) {
+    if (value === null || value === undefined || value === '') return '';
+    return String(value);
+  }
+
+  function findingMeetsThreshold(count, threshold) {
+    if (threshold === null || threshold === undefined || threshold === '') return null;
+    var findings = Number(count) || 0;
+    var limit = Number(threshold);
+    if (!isFinite(limit)) return null;
+    if (findings < 0) findings = 0;
+    if (limit < 0) limit = 0;
+    return findings < limit || (limit === 0 && findings === 0);
+  }
+
+  function appendFindingTextCell(row, className, text) {
+    var cell = document.createElement('td');
+    if (className) cell.className = className;
+    cell.textContent = text || '';
+    row.appendChild(cell);
+    return cell;
+  }
+
+  function formatFindingCount(value) {
+    var amount = Math.round(Number(value) || 0);
+    if (amount < 0) amount = 0;
+    return String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+  }
+
+  function appendFindingCountCell(row, value, threshold) {
+    var cell = document.createElement('td');
+    cell.className = 'report-finding-count';
+    var meets = findingMeetsThreshold(value, threshold);
+    if (meets === true) cell.classList.add('report-finding-count--ok');
+    if (meets === false) cell.classList.add('report-finding-count--over');
+    cell.textContent = formatFindingCount(value);
+    row.appendChild(cell);
+  }
+
+  function appendFindingThresholdCell(row, value) {
+    var cell = document.createElement('td');
+    cell.className = 'report-finding-threshold';
+    cell.textContent = findingThresholdText(value);
+    row.appendChild(cell);
+  }
+
+  function findingHistogramScale(groups) {
+    return (groups && groups.courses || []).reduce(function(sum, course) {
+      return sum + (Number(course.total) || 0);
+    }, 0);
+  }
+
+  function appendFindingHistogramCell(row, value, scale, tone) {
+    var cell = document.createElement('td');
+    cell.className = 'report-finding-hist';
+    var track = document.createElement('div');
+    track.className = 'report-finding-hist-track' + (tone === 'item' ? ' report-finding-hist-track-item' : '');
+    var bar = document.createElement('div');
+    bar.className = 'report-finding-hist-bar' + (tone === 'item' ? ' report-finding-hist-bar-item' : '');
+    var amount = Number(value) || 0;
+    var width = 0;
+    if (tone === 'total') width = scale > 0 ? 100 : 0;
+    else if (scale > 0) width = amount / scale * 100;
+    bar.style.width = width + '%';
+    track.appendChild(bar);
+    cell.appendChild(track);
+    row.appendChild(cell);
+  }
+
+  function findingKindText(item) {
+    var kind = (item && item.kind_label) || '';
+    return kind === 'Макрос' || kind === 'Навык' ? kind : '';
+  }
+
+  function appendCourseToggle(cell, course) {
+    var label = document.createElement('span');
+    label.className = 'report-finding-course-label';
+    var toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'col-task-toggle js-report-finding-course-toggle';
+    toggle.setAttribute('aria-expanded', 'true');
+    toggle.setAttribute('aria-label', 'Свернуть/развернуть курс');
+    var caret = document.createElement('i');
+    caret.className = 'bi bi-caret-down-fill';
+    caret.setAttribute('aria-hidden', 'true');
+    toggle.appendChild(caret);
+    var courseName = document.createElement('span');
+    var code = course || '';
+    courseName.textContent = /^[A-Z]{4}$/.test(code) ? code : (code || '—');
+    label.appendChild(toggle);
+    label.appendChild(courseName);
+    cell.appendChild(label);
+  }
+
+  function findingHeaderSpecs(editable) {
+    var specs = [
+      ['Курс', 'report-finding-course'],
+      ['Вид', 'report-finding-kind'],
+      ['Название', 'report-finding-name'],
+      ['Порог', 'report-finding-threshold'],
+      ['Замеч.', 'report-finding-count']
+    ];
+    if (editable) specs.push(['Корр.', 'report-finding-corrected']);
+    specs.push(['', 'report-finding-hist']);
+    return specs;
+  }
+
+  function tagFindingHistogram(row, role, key) {
+    var bar = row.querySelector('.report-finding-hist-bar');
+    if (!bar) return;
+    bar.dataset.histRole = role;
+    if (key) bar.dataset.histKey = key;
+  }
+
+  function appendFindingCorrectedCell(row, value, options) {
+    options = options || {};
+    var cell = document.createElement('td');
+    cell.className = 'report-finding-count report-finding-corrected';
+    if (options.editable) {
+      cell.dataset.label = options.label || '';
+      cell.dataset.calculated = String(options.calculated == null ? 0 : options.calculated);
+      cell.dataset.value = String(value == null ? 0 : value);
+      if (options.threshold != null && options.threshold !== '') cell.dataset.threshold = String(options.threshold);
+      cell.tabIndex = 0;
+    } else if (options.sum) {
+      cell.classList.add('report-finding-corrected-sum');
+    } else if (options.total) {
+      cell.classList.add('report-finding-corrected-total');
+    }
+    setCorrectedCellText(cell, formatFindingCount(value));
+    var meets = findingMeetsThreshold(value, options.threshold);
+    if (meets === true) cell.classList.add('report-finding-count--ok');
+    if (meets === false) cell.classList.add('report-finding-count--over');
+    row.appendChild(cell);
+    return cell;
+  }
+
+  function correctionRulesAccepted(rules, counts, total) {
+    if (!rules || !rules.length) return findingMeetsThreshold(total, 0);
+    return rules.every(function(rule) {
+      var hasSum = rule.sum_threshold !== null && rule.sum_threshold !== undefined && rule.sum_threshold !== '';
+      var sumOk = hasSum ? findingMeetsThreshold(total, rule.sum_threshold) : true;
+      var items = rule.items || {};
+      var labels = Object.keys(items);
+      var itemsOk = true;
+      if (rule.mode === 'per_item' || rule.mode === 'sum_and_per_item') {
+        if (!labels.length) itemsOk = false;
+        labels.forEach(function(label) {
+          if (!findingMeetsThreshold(Number(counts[label]) || 0, items[label])) itemsOk = false;
+        });
+      }
+      if (rule.mode === 'per_item') return itemsOk;
+      if (rule.mode === 'sum_and_per_item') return !!(sumOk && itemsOk);
+      return !!sumOk;
+    });
+  }
+
+  function correctedCellState(cell) {
+    var raw = String(cell.dataset.value == null ? '' : cell.dataset.value).trim();
+    if (!/^\d+$/.test(raw)) return 'format';
+    if (Number(raw) > Number(cell.dataset.calculated || 0)) return 'high';
+    return '';
+  }
+
+  function readCorrectedCounts(table) {
+    var counts = {};
+    var byCourse = {};
+    table.querySelectorAll('td.report-finding-corrected[data-label]').forEach(function(cell) {
+      var row = cell.closest('tr');
+      var key = row ? row.dataset.courseKey || '' : '';
+      var raw = String(cell.dataset.value == null ? '' : cell.dataset.value).trim();
+      var amount = /^\d+$/.test(raw) ? Number(raw) : 0;
+      counts[cell.dataset.label] = amount;
+      byCourse[key] = (byCourse[key] || 0) + amount;
+    });
+    return { counts: counts, byCourse: byCourse };
+  }
+
+  function refreshFindingCorrectionTable(table) {
+    if (!table) return;
+    var parsed = readCorrectedCounts(table);
+    var total = 0;
+    Object.keys(parsed.byCourse).forEach(function(key) { total += parsed.byCourse[key]; });
+    table.querySelectorAll('tr.report-finding-course-row').forEach(function(row) {
+      var sumCell = row.querySelector('.report-finding-corrected-sum');
+      var amount = parsed.byCourse[row.dataset.courseKey] || 0;
+      if (sumCell) setCorrectedCellText(sumCell, formatFindingCount(amount));
+    });
+    var totalCell = table.querySelector('.report-finding-corrected-total');
+    if (totalCell) {
+      setCorrectedCellText(totalCell, formatFindingCount(total));
+      totalCell.classList.remove('report-finding-count--ok', 'report-finding-count--over');
+    }
+    table.querySelectorAll('td.report-finding-corrected[data-label]').forEach(function(cell) {
+      var state = correctedCellState(cell);
+      cell.classList.toggle('report-finding-corrected--invalid', !!state);
+      setCorrectedCellText(cell, state ? (cell.dataset.value || '') : formatFindingCount(cell.dataset.value || 0));
+      var meets = state ? null : findingMeetsThreshold(Number(cell.dataset.value), cell.dataset.threshold);
+      cell.classList.toggle('report-finding-count--ok', meets === true);
+      cell.classList.toggle('report-finding-count--over', meets === false);
+    });
+    var rules = [];
+    try { rules = JSON.parse(table.dataset.rules || '[]'); } catch (_) { rules = []; }
+    var accepted = correctionRulesAccepted(rules, parsed.counts, total);
+    var totalRow = table.querySelector('.report-finding-total-row');
+    var statusCell = table.querySelector('.report-finding-status');
+    if (totalRow) {
+      totalRow.classList.toggle('report-finding-total-row--ok', accepted === true);
+      totalRow.classList.toggle('report-finding-total-row--over', accepted === false);
+    }
+    if (statusCell) {
+      statusCell.textContent = accepted === true ? 'Отчет сдан' : (accepted === false ? 'Отчет не сдан' : '');
+    }
+    if (totalCell && accepted === true) totalCell.classList.add('report-finding-count--ok');
+    if (totalCell && accepted === false) totalCell.classList.add('report-finding-count--over');
+    table.querySelectorAll('.report-finding-hist-bar').forEach(function(bar) {
+      var role = bar.dataset.histRole || '';
+      var amount = 0;
+      if (role === 'total') amount = total;
+      else if (role === 'course') amount = parsed.byCourse[bar.dataset.histKey] || 0;
+      else amount = Number(parsed.counts[bar.dataset.histKey]) || 0;
+      var width = 0;
+      if (role === 'total') width = total > 0 ? 100 : 0;
+      else if (total > 0) width = amount / total * 100;
+      bar.style.width = width + '%';
+    });
+  }
+
+  function findingCorrectionSelectionClasses() {
+    return ['inline-cell-selected', 'inline-cell-sel-t', 'inline-cell-sel-r', 'inline-cell-sel-b', 'inline-cell-sel-l'];
+  }
+
+  function selectFindingCorrectionCell(cell) {
+    var modal = document.getElementById('report-finding-modal');
+    if (modal) {
+      modal.querySelectorAll('td.inline-cell-selected').forEach(function(other) {
+        if (other !== cell) other.classList.remove.apply(other.classList, findingCorrectionSelectionClasses());
+      });
+    }
+    if (!cell) return;
+    cell.classList.add.apply(cell.classList, findingCorrectionSelectionClasses());
+    if (!cell.querySelector('input') && document.activeElement !== cell) {
+      try { cell.focus({ preventScroll: true }); } catch (_) { cell.focus(); }
+    }
+  }
+
+  function lockCorrectionSpinner(input, cell) {
+    var calculated = Number(cell.dataset.calculated || 0);
+    if (calculated < 0) calculated = 0;
+    input.min = '0';
+    input.max = String(calculated);
+    var raw = String(input.value == null ? '' : input.value).trim();
+    var current = /^\d+$/.test(raw) ? Number(raw) : 0;
+    var line = input.closest('.report-corr-line');
+    var lock = line && line.querySelector('.report-corr-up-lock');
+    if (lock) lock.hidden = current < calculated;
+  }
+
+  function setCorrectedCellText(cell, text) {
+    if (!cell) return;
+    var live = cell.querySelector('.report-corr-value');
+    if (cell.querySelector('input')) {
+      if (live) live.textContent = text;
+      return;
+    }
+    cell.textContent = '';
+    var line = document.createElement('div');
+    line.className = 'report-corr-line';
+    var value = document.createElement('span');
+    value.className = 'report-corr-value';
+    value.textContent = text;
+    var slot = document.createElement('span');
+    slot.className = 'report-corr-slot';
+    slot.setAttribute('aria-hidden', 'true');
+    line.appendChild(value);
+    line.appendChild(slot);
+    cell.appendChild(line);
+  }
+
+  function closeCorrectedEditor(cell, revert) {
+    var input = cell.querySelector('input');
+    if (!input) return;
+    if (revert) cell.dataset.value = cell.dataset.editStart || '0';
+    else cell.dataset.value = input.value;
+    input.remove();
+    cell.classList.remove('inline-cell-editing');
+    refreshFindingCorrectionTable(cell.closest('table'));
+  }
+
+  function commitFindingCorrectionEditors(revert) {
+    var modal = document.getElementById('report-finding-modal');
+    if (!modal) return;
+    modal.querySelectorAll('td.report-finding-corrected[data-label] input').forEach(function(input) {
+      closeCorrectedEditor(input.closest('td'), !!revert);
+    });
+  }
+
+  function focusAdjacentCorrectedCell(cell, step, openEditor) {
+    var cells = Array.from(cell.closest('table').querySelectorAll('td.report-finding-corrected[data-label]'));
+    var index = cells.indexOf(cell);
+    var next = cells[index + step];
+    if (!next) return;
+    if (openEditor) openCorrectedEditor(next);
+    else selectFindingCorrectionCell(next);
+  }
+
+  function openCorrectedEditor(cell, seed) {
+    if (!cell || cell.querySelector('input')) return;
+    commitFindingCorrectionEditors(false);
+    selectFindingCorrectionCell(cell);
+    cell.dataset.editStart = cell.dataset.value || '0';
+    if (!cell.querySelector('.report-corr-line')) {
+      setCorrectedCellText(cell, formatFindingCount(cell.dataset.value || 0));
+    }
+    var line = cell.querySelector('.report-corr-line');
+    var valueEl = cell.querySelector('.report-corr-value');
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.step = '1';
+    input.inputMode = 'numeric';
+    input.className = 'inline-table-number-input report-finding-corrected-input';
+    input.value = seed != null ? String(seed) : (cell.dataset.value || '0');
+    if (seed != null) cell.dataset.value = String(seed);
+    input.lang = document.documentElement.getAttribute('lang') || 'ru';
+    input.setAttribute('aria-label', 'Корректировка замечаний');
+    if (valueEl) valueEl.textContent = input.value;
+    lockCorrectionSpinner(input, cell);
+    input.addEventListener('wheel', function(event) { event.preventDefault(); }, { passive: false });
+    line.appendChild(input);
+    var lock = document.createElement('span');
+    lock.className = 'report-corr-up-lock';
+    lock.setAttribute('aria-hidden', 'true');
+    line.appendChild(lock);
+    lockCorrectionSpinner(input, cell);
+    var spinnerPointer = false;
+    input.addEventListener('input', function() {
+      cell.dataset.value = input.value;
+      lockCorrectionSpinner(input, cell);
+      refreshFindingCorrectionTable(cell.closest('table'));
+    });
+    input.addEventListener('pointerdown', function(event) {
+      var box = input.getBoundingClientRect();
+      if (event.clientX >= box.right - 24) spinnerPointer = true;
+    });
+    input.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCorrectedEditor(cell, true);
+        selectFindingCorrectionCell(cell);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        closeCorrectedEditor(cell, false);
+        focusAdjacentCorrectedCell(cell, event.shiftKey ? -1 : 1, false);
+      }
+    });
+    input.addEventListener('blur', function() {
+      window.setTimeout(function() {
+        if (spinnerPointer) {
+          spinnerPointer = false;
+          if (cell.querySelector('input') === input && document.activeElement !== input) input.focus();
+          return;
+        }
+        if (cell.querySelector('input') === input) closeCorrectedEditor(cell, false);
+      }, 0);
+    });
+    input.focus();
+    if (seed != null) refreshFindingCorrectionTable(cell.closest('table'));
+  }
+
+  function renderReportFindingGroups(groups, editable) {
+    var table = document.createElement('table');
+    table.className = 'table table-sm align-middle report-finding-groups-table';
+    if (editable) table.dataset.rules = JSON.stringify((groups && groups.rules) || []);
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    findingHeaderSpecs(!!editable).forEach(function(spec) {
+      var cell = document.createElement('th');
+      cell.className = spec[1];
+      if (spec[1] === 'report-finding-hist') cell.setAttribute('aria-label', 'Гистограмма');
+      if (spec[1] === 'report-finding-course') {
+        var wrap = document.createElement('span');
+        wrap.className = 'report-finding-course-label';
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'clf-wrap-btn report-finding-courses-toggle js-report-finding-courses-toggle';
+        toggle.setAttribute('aria-expanded', 'true');
+        toggle.setAttribute('aria-label', 'Свернуть курсы');
+        toggle.title = 'Свернуть/развернуть курсы';
+        var icon = document.createElement('i');
+        icon.className = 'bi bi-arrows-collapse';
+        icon.setAttribute('aria-hidden', 'true');
+        toggle.appendChild(icon);
+        var title = document.createElement('span');
+        title.textContent = 'Курс';
+        wrap.appendChild(toggle);
+        wrap.appendChild(title);
+        cell.appendChild(wrap);
+      } else {
+        cell.textContent = spec[0];
+      }
+      headRow.appendChild(cell);
+    });
+    thead.appendChild(headRow);
+    var tbody = document.createElement('tbody');
+    var histogramScale = editable
+      ? (groups.courses || []).reduce(function(sum, course) {
+          var amount = course.corrected_total != null ? Number(course.corrected_total) : Number(course.total);
+          return sum + (amount || 0);
+        }, 0)
+      : findingHistogramScale(groups);
+    (groups.courses || []).slice().sort(function(a, b) {
+      return (Number(b.total) || 0) - (Number(a.total) || 0);
+    }).forEach(function(course, index) {
+      var key = String(index);
+      var courseCorrected = course.corrected_total != null ? course.corrected_total : course.total;
+      var courseRow = document.createElement('tr');
+      courseRow.className = 'report-finding-course-row';
+      courseRow.dataset.courseKey = key;
+      var courseCell = document.createElement('td');
+      courseCell.className = 'report-finding-course';
+      appendCourseToggle(courseCell, course.course);
+      courseRow.appendChild(courseCell);
+      appendFindingTextCell(courseRow, 'report-finding-kind', '');
+      appendFindingTextCell(courseRow, 'report-finding-name', '');
+      appendFindingThresholdCell(courseRow, null);
+      appendFindingCountCell(courseRow, course.total, null);
+      if (editable) appendFindingCorrectedCell(courseRow, courseCorrected, { sum: true });
+      appendFindingHistogramCell(courseRow, editable ? courseCorrected : course.total, histogramScale, 'course');
+      if (editable) tagFindingHistogram(courseRow, 'course', key);
+      tbody.appendChild(courseRow);
+      (course.items || []).slice().sort(function(a, b) {
+        return (Number(b.count) || 0) - (Number(a.count) || 0);
+      }).forEach(function(item) {
+        var itemCorrected = item.corrected != null ? item.corrected : item.count;
+        var itemRow = document.createElement('tr');
+        itemRow.className = 'report-finding-item-row';
+        itemRow.dataset.courseKey = key;
+        appendFindingTextCell(itemRow, 'report-finding-course', '');
+        appendFindingTextCell(itemRow, 'report-finding-kind', findingKindText(item));
+        appendFindingTextCell(itemRow, 'report-finding-name', item.label || item.name || '');
+        appendFindingThresholdCell(itemRow, item.threshold);
+        appendFindingCountCell(itemRow, item.count, item.threshold);
+        if (editable) {
+          appendFindingCorrectedCell(itemRow, itemCorrected, {
+            editable: true,
+            label: item.label || item.name || '',
+            calculated: item.count,
+            threshold: item.threshold,
+          });
+        }
+        appendFindingHistogramCell(itemRow, editable ? itemCorrected : item.count, histogramScale, 'item');
+        if (editable) tagFindingHistogram(itemRow, 'item', item.label || item.name || '');
+        tbody.appendChild(itemRow);
+      });
+    });
+    var correctedTotal = groups.corrected_total != null ? groups.corrected_total : groups.total;
+    var totalMeets = editable
+      ? correctionRulesAccepted(groups.rules || [], (function() {
+          var counts = {};
+          (groups.courses || []).forEach(function(course) {
+            (course.items || []).forEach(function(item) {
+              counts[item.label] = item.corrected != null ? Number(item.corrected) : Number(item.count) || 0;
+            });
+          });
+          return counts;
+        })(), correctedTotal)
+      : findingMeetsThreshold(groups.total, groups.total_threshold);
+    var totalRow = document.createElement('tr');
+    totalRow.className = 'report-finding-total-row';
+    if (totalMeets === true) totalRow.classList.add('report-finding-total-row--ok');
+    if (totalMeets === false) totalRow.classList.add('report-finding-total-row--over');
+    var totalLabel = document.createElement('td');
+    totalLabel.colSpan = 2;
+    totalLabel.className = 'report-finding-total-label';
+    totalLabel.textContent = 'Итого';
+    totalRow.appendChild(totalLabel);
+    var status = '';
+    if (totalMeets === true) status = 'Отчет сдан';
+    if (totalMeets === false) status = 'Отчет не сдан';
+    appendFindingTextCell(totalRow, 'report-finding-name report-finding-status', status);
+    appendFindingThresholdCell(totalRow, groups.total_threshold);
+    appendFindingCountCell(totalRow, groups.total, groups.total_threshold);
+    if (editable) appendFindingCorrectedCell(totalRow, correctedTotal, { total: true, threshold: groups.total_threshold });
+    appendFindingHistogramCell(totalRow, editable ? correctedTotal : groups.total, histogramScale, 'total');
+    if (editable) tagFindingHistogram(totalRow, 'total', '');
+    tbody.appendChild(totalRow);
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    if (editable) refreshFindingCorrectionTable(table);
+    return table;
+  }
+
+  function fillReportFindingHeading(groups) {
+    var ctx = (groups && groups.context) || {};
+    var projectEl = document.getElementById('report-finding-project');
+    var executorEl = document.getElementById('report-finding-executor');
+    var reportEl = document.getElementById('report-finding-report');
+    if (projectEl) {
+      projectEl.textContent = [ctx.stage, ctx.product, ctx.name].filter(Boolean).join(' ');
+    }
+    if (executorEl) executorEl.textContent = ctx.executor || '';
+    if (reportEl) {
+      reportEl.textContent = ((ctx.section || '') + ' по активу ' + (ctx.asset || '')).trim();
+    }
+    var versionEl = document.getElementById('report-finding-version');
+    if (versionEl) versionEl.textContent = ctx.version || '';
+  }
+
+  function setReportFindingModalMode(mode) {
+    var editing = mode === 'edit';
+    var closeBtn = document.getElementById('report-finding-close');
+    var cancelBtn = document.getElementById('report-finding-cancel');
+    var saveBtn = document.getElementById('report-finding-save');
+    var errorEl = document.getElementById('report-finding-correction-error');
+    if (closeBtn) closeBtn.classList.toggle('d-none', editing);
+    if (cancelBtn) cancelBtn.classList.toggle('d-none', !editing);
+    if (saveBtn) {
+      saveBtn.classList.toggle('d-none', !editing);
+      saveBtn.disabled = false;
+    }
+    if (errorEl) {
+      errorEl.textContent = '';
+      errorEl.classList.add('d-none');
+    }
+  }
+
+  function showFindingCorrectionError(message) {
+    var errorEl = document.getElementById('report-finding-correction-error');
+    if (!errorEl) return;
+    errorEl.textContent = message || '';
+    errorEl.classList.toggle('d-none', !message);
+  }
+
+  function openReportFindingModal(btn, mode) {
+    var modalEl = document.getElementById('report-finding-modal');
+    if (!modalEl || !window.bootstrap) return;
+    mode = mode || 'info';
+    var groups = {};
+    try {
+      groups = JSON.parse(btn.dataset.findings || '{}');
+    } catch (_) {
+      groups = {};
+    }
+    setReportFindingModalMode(mode);
+    fillReportFindingHeading(groups);
+    var host = document.getElementById('report-finding-groups');
+    if (host) {
+      host.textContent = '';
+      host.appendChild(renderReportFindingGroups(groups, mode === 'edit'));
+    }
+    modalEl.dataset.correctionUploadId = btn.dataset.uploadId || '';
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  function reportFindingCorrectionUrl(section, uploadId) {
+    var template = (section && section.dataset.reportFindingCorrectionUrl) || '';
+    if (!template || !uploadId) return '';
+    return template.replace(/\/0\/finding-correction\/?$/, '/' + uploadId + '/finding-correction/');
+  }
+
+  function replaceReportSlotRows(section, versionGroup, html) {
+    var table = document.getElementById('report-submission-table');
+    if (!table || !versionGroup || !html) return;
+    var rows = Array.from(table.querySelectorAll('tr[data-version-group="' + versionGroup + '"]'));
+    if (!rows.length) return;
+    var anchor = rows[0];
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var nextRows = Array.from(wrap.querySelectorAll('tr'));
+    if (!nextRows.length) return;
+    nextRows.forEach(function(row) { anchor.parentNode.insertBefore(row, anchor); });
+    rows.forEach(function(row) { row.remove(); });
+    applyReportSubmissionColumnVisibility();
+    if (typeof applyReportVersionCollapsedState === 'function') applyReportVersionCollapsedState();
+    if (typeof applyRowGrouping === 'function') applyRowGrouping(section);
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  function saveFindingCorrection() {
+    var modalEl = document.getElementById('report-finding-modal');
+    var table = modalEl && modalEl.querySelector('.report-finding-groups-table');
+    var section = getReportSubmissionSection();
+    if (!table || !modalEl) return;
+    var counts = {};
+    var increased = false;
+    var invalid = false;
+    var labels = [];
+    table.querySelectorAll('td.report-finding-corrected[data-label]').forEach(function(cell) {
+      if (cell.querySelector('input')) closeCorrectedEditor(cell, false);
+      var state = correctedCellState(cell);
+      cell.classList.toggle('report-finding-corrected--invalid', !!state);
+      if (state === 'high') increased = true;
+      if (state === 'format') invalid = true;
+      if (state) labels.push(cell.dataset.label);
+      counts[cell.dataset.label] = Number(cell.dataset.value);
+    });
+    if (increased || invalid) {
+      showFindingCorrectionError(increased
+        ? 'Число замечаний нельзя увеличить выше расчётного.'
+        : 'Укажите целое число от 0 до расчётного.');
+      var first = table.querySelector('td.report-finding-corrected--invalid');
+      if (first) first.focus();
+      return;
+    }
+    var uploadId = modalEl.dataset.correctionUploadId || '';
+    var url = reportFindingCorrectionUrl(section, uploadId);
+    var saveBtn = document.getElementById('report-finding-save');
+    if (!url) {
+      showFindingCorrectionError('Не удалось сохранить корректировку.');
+      return;
+    }
+    if (saveBtn) saveBtn.disabled = true;
+    showFindingCorrectionError('');
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': csrftoken,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ counts: counts }),
+    }).then(function(response) {
+      return response.json().then(function(data) {
+        if (!response.ok || !data || !data.ok) {
+          var error = new Error((data && data.error) || 'Не удалось сохранить корректировку.');
+          error.labels = (data && data.invalid_labels) || [];
+          throw error;
+        }
+        return data;
+      });
+    }).then(function(data) {
+      replaceReportSlotRows(section, data.version_group || '', data.slot_rows_html || '');
+      window.bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    }).catch(function(err) {
+      if (saveBtn) saveBtn.disabled = false;
+      (err.labels || labels).forEach(function(label) {
+        table.querySelectorAll('td.report-finding-corrected[data-label]').forEach(function(cell) {
+          if (cell.dataset.label === label) cell.classList.add('report-finding-corrected--invalid');
+        });
+      });
+      showFindingCorrectionError(err.message || 'Не удалось сохранить корректировку.');
+    });
+  }
+
+  function reportCountIsPositive(text) {
+    var digits = String(text || '').replace(/[\s\u00a0\u202f]/g, '');
+    return /^\d+$/.test(digits) && Number(digits) > 0;
+  }
+
+  function appendReportInfoControl(parent, active, findings, label) {
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-info-circle';
+    icon.setAttribute('aria-hidden', 'true');
+    if (!active) {
+      var mark = document.createElement('span');
+      mark.className = 'report-finding-info-btn report-finding-info-btn--disabled';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.appendChild(icon);
+      parent.appendChild(mark);
+      return;
+    }
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'report-finding-info-btn js-report-finding-info';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    if (findings) btn.dataset.findings = JSON.stringify(findings);
+    btn.appendChild(icon);
+    parent.appendChild(btn);
+  }
+
   function updateReportFindingCountCell(row, data) {
     if (!row) return;
     var cell = row.querySelector('.report-finding-count-cell');
     if (!cell) return;
-    if (data && data.finding_count_display) {
-      cell.textContent = data.finding_count_display;
-      return;
+    var text = reportFindingCountText(data);
+    cell.textContent = '';
+    var inner = document.createElement('span');
+    inner.className = 'report-finding-count-inner';
+    inner.appendChild(document.createTextNode(text));
+    if (text !== '—') {
+      var active = reportCountIsPositive(text) && (!data || data.finding_info_active !== false);
+      appendReportInfoControl(
+        inner,
+        active,
+        data && data.finding_groups,
+        'Результаты проверки'
+      );
     }
-    if (data && data.check_status === 'done') {
-      cell.textContent = String(Number(data.check_finding_count) || 0);
-      return;
+    cell.appendChild(inner);
+  }
+
+  function updateReportCalculatedCell(row, data) {
+    var cell = row && row.querySelector('.report-calculated-count-cell');
+    if (!cell || !cell.querySelector('.report-finding-count-inner') || !data) return;
+    var text = data.calculated_count_display || data.finding_count_display;
+    if (!text) return;
+    var inner = cell.querySelector('.report-finding-count-inner');
+    inner.textContent = '';
+    inner.appendChild(document.createTextNode(text));
+    if (text === '—') return;
+    appendReportInfoControl(
+      inner,
+      reportCountIsPositive(text) && !!data.calculated_groups,
+      data.calculated_groups,
+      'Расчётные замечания'
+    );
+  }
+
+  function updateReportCorrectedCell(row, data) {
+    var cell = row && row.querySelector('.report-corrected-count-cell');
+    if (!cell || !cell.querySelector('.report-corrected-count-inner') || !data) return;
+    var text = data.corrected_count_display || data.finding_count_display;
+    if (!text) return;
+    var inner = cell.querySelector('.report-corrected-count-inner');
+    inner.textContent = '';
+    if (reportCountIsPositive(text) && data.edit_groups) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'report-finding-edit-btn js-report-finding-edit';
+      btn.dataset.findings = JSON.stringify(data.edit_groups);
+      btn.dataset.uploadId = String(data.upload_id || row.dataset.uploadId || '');
+      btn.setAttribute('aria-label', 'Скорректировать замечания');
+      btn.title = 'Скорректировать замечания';
+      var icon = document.createElement('i');
+      icon.className = 'bi bi-pencil-square';
+      icon.setAttribute('aria-hidden', 'true');
+      btn.appendChild(icon);
+      inner.appendChild(btn);
     }
-    cell.textContent = '—';
+    var value = document.createElement('span');
+    value.className = 'report-corrected-count-value';
+    value.textContent = text;
+    inner.appendChild(value);
   }
 
   function reportWorkflowStatusClass(status) {
-    if (status === 'Сдан') return 'report-status--accepted';
-    if (status === 'Проверен') return 'report-status--checked';
-    if (status === 'Отправлен') return 'report-status--sent';
+    if ((status || '').indexOf('Сдан') === 0 || (status || '').indexOf('Согласован') === 0) return 'report-status--accepted';
+    if ((status || '').indexOf('Проверен') === 0 || (status || '').indexOf('В работе после ') === 0) return 'report-status--checked';
+    if (status === 'На проверке ИИ' || (status || '').indexOf('На проверке ') === 0) return 'report-status--sent';
     if (status === 'Загружен') return 'report-status--uploaded';
     return 'report-status--idle';
   }
@@ -2879,9 +4017,9 @@
     var status = (data && data.workflow_status) || '';
     if (!status) {
       if (data && data.check_status === 'done') {
-        status = reportFindingsMeetThreshold(data.check_finding_count, data.finding_threshold) ? 'Сдан' : 'Проверен';
+        status = reportFindingsMeetThreshold(data.check_finding_count, data.finding_threshold) ? 'Согласован ИИ' : 'Проверен ИИ';
       } else if (data && data.sent_at && data.sent_at !== '—') {
-        status = 'Отправлен';
+        status = 'На проверке ИИ';
       } else if (data && data.file_name) {
         status = 'Загружен';
       } else {
@@ -2899,7 +4037,7 @@
     icon.setAttribute('aria-hidden', 'true');
     var label = document.createElement('span');
     label.className = 'report-workflow-status-label';
-    if (status === 'Сдан' || status === 'Загружен') {
+    if ((status || '').indexOf('Сдан') === 0 || (status || '').indexOf('Согласован') === 0 || status === 'Загружен') {
       label.classList.add('report-workflow-status-label--inset');
       label.style.paddingLeft = '1px';
     }
@@ -2910,12 +4048,12 @@
   }
 
   function reportStatusDateDisplay(data) {
-    if (data && data.status_date) return data.status_date;
+    if (data && data.status_date && data.status_date !== '—') return data.status_date;
     var status = (data && data.workflow_status) || '';
     if (status === 'Загружен') return (data && data.uploaded_at) || '—';
-    if (status === 'Отправлен') return (data && data.sent_at) || '—';
-    if (status === 'Проверен' || status === 'Сдан') {
-      return (data && (data.checked_at || data.sent_at)) || '—';
+    if (status === 'Отправлен' || status === 'На проверке ИИ') return (data && data.sent_at) || '—';
+    if ((status || '').indexOf('Проверен') === 0 || (status || '').indexOf('Сдан') === 0 || (status || '').indexOf('Согласован') === 0 || (status || '').indexOf('На проверке ') === 0 || (status || '').indexOf('В работе после ') === 0) {
+      return (data && (data.checked_at || data.sent_at || data.uploaded_at)) || '—';
     }
     return '—';
   }
@@ -2948,6 +4086,9 @@
       check_status: '',
       finding_count_display: '—'
     }));
+    if ((data.workflow_status || 'Загружен') === 'Загружен') {
+      row.dataset.canSend = '1';
+    }
     ensureReportSelectCheckbox(row);
     if (data.previous_row_html) {
       insertPreviousReportVersionRow(row, data.previous_row_html);
@@ -2958,6 +4099,106 @@
     }
     applyRowGrouping(getReportSubmissionSection());
     applyReportVersionCollapsedState();
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  function statusWantsVersionDownload(status) {
+    status = status || '';
+    return status.indexOf('Проверен') === 0 || status.indexOf('Сдан') === 0 || status.indexOf('Согласован') === 0;
+  }
+
+  function replaceUploadIconWithDownload(row, data) {
+    if (!row) return;
+    var uploadCell = row.querySelector('.report-upload-cell');
+    var downloadUrl = (data && data.download_url) || '';
+    if (!uploadCell || !downloadUrl) return;
+    var uploadLabel = uploadCell.querySelector('label.ct-upload-link');
+    if (uploadCell.querySelector('a.ct-upload-link i.bi-download')) {
+      if (uploadLabel) uploadLabel.remove();
+      return;
+    }
+    var iconLink = document.createElement('a');
+    iconLink.href = downloadUrl;
+    iconLink.className = 'ct-upload-link';
+    iconLink.setAttribute('download', '');
+    iconLink.title = 'Скачать файл';
+    var glyph = document.createElement('i');
+    glyph.className = 'bi bi-download';
+    iconLink.appendChild(glyph);
+    var spacer = uploadCell.querySelector('.report-upload-icon-spacer');
+    if (uploadLabel) uploadLabel.replaceWith(iconLink);
+    else if (spacer) spacer.replaceWith(iconLink);
+    else uploadCell.insertBefore(iconLink, uploadCell.firstChild);
+  }
+
+  function fillReviewDecisionControls(inner, uploadId) {
+    var label = document.createElement('label');
+    label.className = 'report-review-upload-action';
+    var up = document.createElement('i');
+    up.className = 'bi bi-upload';
+    up.setAttribute('aria-hidden', 'true');
+    var uploadText = document.createElement('span');
+    uploadText.className = 'report-review-action-text';
+    uploadText.textContent = 'Загрузить замечания';
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.className = 'd-none js-report-review-upload';
+    input.accept = '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    input.dataset.uploadId = String(uploadId || '');
+    label.appendChild(up);
+    label.appendChild(uploadText);
+    label.appendChild(input);
+    var rule = document.createElement('span');
+    rule.className = 'report-review-action-rule';
+    rule.setAttribute('aria-hidden', 'true');
+    var accept = document.createElement('button');
+    accept.type = 'button';
+    accept.className = 'report-review-accept-action js-report-review-accept';
+    accept.dataset.uploadId = String(uploadId || '');
+    var check = document.createElement('i');
+    check.className = 'bi bi-check2-square';
+    check.setAttribute('aria-hidden', 'true');
+    var acceptText = document.createElement('span');
+    acceptText.className = 'report-review-action-text';
+    acceptText.textContent = 'Принять без замечаний';
+    accept.appendChild(check);
+    accept.appendChild(acceptText);
+    inner.appendChild(label);
+    inner.appendChild(rule);
+    inner.appendChild(accept);
+  }
+
+  function appendRemarksDiscardAction(inner, entryId) {
+    var rule = document.createElement('span');
+    rule.className = 'report-review-action-rule';
+    rule.setAttribute('aria-hidden', 'true');
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'report-review-discard-action js-report-remarks-discard';
+    button.dataset.reviewEntryId = String(entryId || '');
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-x-square';
+    icon.setAttribute('aria-hidden', 'true');
+    var text = document.createElement('span');
+    text.className = 'report-review-action-text';
+    text.textContent = 'Удалить файл';
+    button.appendChild(icon);
+    button.appendChild(text);
+    inner.appendChild(rule);
+    inner.appendChild(button);
+  }
+
+  function applyManualReviewRowControls(row, data) {
+    if (!row) return;
+    replaceUploadIconWithDownload(row, data);
+    if (!data || !data.can_review_upload) return;
+    var resultCell = row.querySelector('.report-check-result-cell');
+    if (!resultCell || resultCell.querySelector('.js-report-review-upload')) return;
+    resultCell.textContent = '';
+    var inner = document.createElement('span');
+    inner.className = 'report-check-result-inner';
+    fillReviewDecisionControls(inner, (data && data.upload_id) || row.dataset.uploadId || '');
+    resultCell.appendChild(inner);
   }
 
   function applyReportSendResult(row, data) {
@@ -2967,19 +4208,30 @@
     }
     updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), data);
     updateReportWorkflowStatusCell(row, data);
+    if ((data.workflow_status || '').indexOf('На проверке ') === 0 && data.workflow_status !== 'На проверке ИИ') {
+      applyManualReviewRowControls(row, data);
+    }
+    if (statusWantsVersionDownload(data.workflow_status)) {
+      replaceUploadIconWithDownload(row, data);
+    }
     updateReportStatusDateCell(row, data);
     updateReportFindingCountCell(row, data);
+    updateReportCalculatedCell(row, data);
+    updateReportCorrectedCell(row, data);
+    if (data.review_row_html) insertReviewStepRow(row, data.review_row_html);
     var checkbox = row.querySelector('input[name="report-select"]');
-    if (data.check_status === 'done' || data.check_status === 'running') {
+    if (data.check_status === 'done' || data.check_status === 'running' || (data.workflow_status || '').indexOf('На проверке') === 0) {
       if (checkbox) {
         checkbox.checked = false;
         checkbox.disabled = true;
       }
+      row.dataset.canSend = '0';
       row.classList.remove('table-active');
     } else if (checkbox && row.dataset.isCurrent === '1') {
       checkbox.disabled = false;
     }
     updateReportSubmissionMasterState();
+    scheduleReportSubmissionColumnLayout(true);
   }
 
   var reportCheckPollingRows = new WeakSet();
@@ -2996,7 +4248,7 @@
     });
   }
 
-  async function pollReportCheck(row) {
+  async function pollReportCheck(row, gate) {
     if (!row || reportCheckPollingRows.has(row)) return;
     var uploadId = (row.dataset.uploadId || '').trim();
     var section = getReportSubmissionSection();
@@ -3005,8 +4257,6 @@
     reportCheckPollingRows.add(row);
     try {
       while (row.isConnected && row.dataset.checkStatus === 'running') {
-        await reportPollDelay(2000);
-        if (!row.isConnected || row.dataset.checkStatus !== 'running') break;
         try {
           var response = await fetch(url, {
             method: 'GET',
@@ -3017,11 +4267,16 @@
           if (!response.ok || !data || !data.ok) {
             throw new Error((data && data.error) || 'Не удалось получить статус проверки.');
           }
-          applyReportSendResult(row, data);
+          var stillStarting = gate && gate.allowFinish === false;
+          if (data.check_status === 'running' || !stillStarting) {
+            applyReportSendResult(row, data);
+          }
         } catch (err) {
           console.warn('report check status error', err);
           await reportPollDelay(3000);
         }
+        if (!row.isConnected || row.dataset.checkStatus !== 'running') break;
+        await reportPollDelay(1000);
       }
     } finally {
       reportCheckPollingRows.delete(row);
@@ -3034,10 +4289,50 @@
     });
   }
 
+  function reportCheckPendingText(data) {
+    var progress = data && data.check_progress ? String(data.check_progress).trim() : '';
+    return progress ? 'Идет проверка... ' + progress : 'Идет проверка...';
+  }
+
   function updateReportCheckResultCell(cell, data) {
     if (!cell) return;
-    cell.innerHTML = '';
-    if (data.check_file_name && data.check_download_url) {
+    cell.textContent = '';
+    if (!data.check_file_name && !data.review_file_name && data.check_status !== 'error' && data.check_status !== 'running') {
+      cell.textContent = '';
+      var empty = document.createElement('span');
+      empty.className = 'report-check-result-inner';
+      var mark = document.createElement('span');
+      mark.className = 'report-check-result-empty';
+      mark.textContent = '—';
+      empty.appendChild(mark);
+      cell.appendChild(empty);
+      return;
+    }
+    var inner = document.createElement('span');
+    inner.className = 'report-check-result-inner';
+    if (data.review_file_name && data.review_download_url) {
+      var reviewIcon = document.createElement('a');
+      reviewIcon.href = data.review_download_url;
+      reviewIcon.className = 'ct-upload-link report-check-download-icon';
+      reviewIcon.setAttribute('download', '');
+      reviewIcon.title = 'Скачать файл замечаний';
+      var reviewGlyph = document.createElement('i');
+      reviewGlyph.className = 'bi bi-download';
+      reviewIcon.appendChild(reviewGlyph);
+      inner.appendChild(reviewIcon);
+      var reviewLink = document.createElement('a');
+      reviewLink.href = data.review_download_url;
+      reviewLink.className = 'report-file-name-link';
+      reviewLink.setAttribute('download', '');
+      if (!data.remarks_notice_pending) reviewLink.title = data.review_file_name;
+      else reviewLink.classList.add('report-remarks-loaded-link');
+      var reviewName = document.createElement('span');
+      reviewName.className = 'report-file-name-text';
+      reviewName.textContent = data.remarks_notice_pending ? 'Загружен' : data.review_file_name;
+      reviewLink.appendChild(reviewName);
+      inner.appendChild(reviewLink);
+      if (data.remarks_notice_pending) appendRemarksDiscardAction(inner, data.review_entry_id);
+    } else if (data.check_file_name && data.check_download_url) {
       var iconLink = document.createElement('a');
       iconLink.href = data.check_download_url;
       iconLink.className = 'ct-upload-link report-check-download-icon';
@@ -3046,7 +4341,7 @@
       var icon = document.createElement('i');
       icon.className = 'bi bi-download';
       iconLink.appendChild(icon);
-      cell.appendChild(iconLink);
+      inner.appendChild(iconLink);
       var link = document.createElement('a');
       link.href = data.check_download_url;
       link.className = 'report-file-name-link js-report-check-file-link';
@@ -3056,26 +4351,25 @@
       nameSpan.className = 'report-file-name-text';
       nameSpan.textContent = data.check_file_name;
       link.appendChild(nameSpan);
-      cell.appendChild(link);
+      inner.appendChild(link);
     }
     if (data.check_status === 'error') {
       var badge = document.createElement('span');
       badge.className = 'text-danger small js-report-check-badge';
       badge.textContent = 'ошибка проверки';
       if (data.check_error) badge.title = data.check_error;
-      cell.appendChild(badge);
+      inner.appendChild(badge);
     } else if (data.check_status === 'running') {
       var spacer = document.createElement('span');
       spacer.className = 'report-upload-icon-spacer';
       spacer.setAttribute('aria-hidden', 'true');
-      cell.appendChild(spacer);
+      inner.appendChild(spacer);
       var pending = document.createElement('span');
       pending.className = 'text-muted js-report-check-badge report-check-pending-text';
-      pending.textContent = 'Идет проверка...';
-      cell.appendChild(pending);
-    } else if (!data.check_file_name) {
-      cell.textContent = '—';
+      pending.textContent = reportCheckPendingText(data);
+      inner.appendChild(pending);
     }
+    cell.appendChild(inner);
   }
 
   function syncReportLocalSourceUi() {
@@ -3148,6 +4442,7 @@
     var next = wrap.querySelector('tr');
     if (!next) return null;
     current.replaceWith(next);
+    applyReportSubmissionColumnVisibility();
     return next;
   }
 
@@ -3264,6 +4559,225 @@
     handleReportUpload(inputEl);
   });
 
+  function applyReviewDecisionResult(row, data) {
+    if (!row || !data) return;
+    if (data.workflow_status) {
+      updateReportWorkflowStatusCell(row, data);
+      updateReportStatusDateCell(row, data);
+      updateReportFindingCountCell(row, data);
+      updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), data);
+      if (statusWantsVersionDownload(data.workflow_status)) {
+        replaceUploadIconWithDownload(row, data);
+        row.dataset.canSend = '0';
+      }
+      var checkbox = row.querySelector('input[name="report-select"]');
+      if (data.remarks_notice_pending) {
+        row.dataset.remarksPending = '1';
+        row.dataset.reviewEntryId = String(data.review_entry_id || '');
+        if (checkbox) {
+          checkbox.disabled = false;
+          checkbox.checked = true;
+        }
+        updateReportSubmissionMasterState();
+      } else if (statusWantsVersionDownload(data.workflow_status) && checkbox) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+      }
+    }
+    var uploadLabel = row.querySelector('.js-report-review-upload');
+    if (uploadLabel) {
+      var label = uploadLabel.closest('label');
+      if (label) {
+        var uploadRule = label.nextElementSibling;
+        if (uploadRule && uploadRule.classList.contains('report-review-action-rule')) uploadRule.remove();
+        label.remove();
+      }
+    }
+    var acceptBtn = row.querySelector('.js-report-review-accept');
+    if (acceptBtn) acceptBtn.remove();
+    if (data.review_row_html && !data.remarks_notice_pending) insertReviewStepRow(row, data.review_row_html);
+  }
+
+  document.addEventListener('change', function(e) {
+    var inputEl = e.target.closest('.js-report-review-upload');
+    var section = getReportSubmissionSection();
+    if (!inputEl || !section || !section.contains(inputEl)) return;
+    var url = section.dataset.reportReviewUrl;
+    var file = inputEl.files && inputEl.files[0];
+    var uploadId = inputEl.dataset.uploadId || '';
+    inputEl.value = '';
+    if (!url || !file || !uploadId) return;
+    var row = inputEl.closest('tr');
+    var body = new FormData();
+    body.append('upload_id', uploadId);
+    body.append('file', file);
+    var sourceSel = section.querySelector('#report-submission-source');
+    if (sourceSel && sourceSel.value === 'local') {
+      body.append('source_kind', 'local');
+      var pathInput = section.querySelector('#report-submission-local-path');
+      body.append('local_folder_path', pathInput ? pathInput.value.trim() : '');
+    }
+    fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+      body: body,
+    }).then(function(response) {
+      return response.json().then(function(data) {
+        if (!response.ok || !data.ok) throw new Error((data && data.error) || 'Не удалось загрузить файл.');
+        return data;
+      });
+    }).then(function(data) {
+      applyReviewDecisionResult(row, data);
+    }).catch(function(err) {
+      window.alert(err.message || 'Не удалось загрузить файл.');
+    });
+  });
+
+  document.addEventListener('click', function(e) {
+    var acceptBtn = e.target.closest('.js-report-review-accept');
+    var section = getReportSubmissionSection();
+    if (!acceptBtn || !section || !section.contains(acceptBtn)) return;
+    e.preventDefault();
+    var url = section.dataset.reportReviewUrl;
+    var uploadId = acceptBtn.dataset.uploadId || '';
+    var row = acceptBtn.closest('tr');
+    if (!url || !uploadId || !row || acceptBtn.disabled) return;
+    acceptBtn.disabled = true;
+    var body = new FormData();
+    body.append('upload_id', uploadId);
+    body.append('accept_without_remarks', '1');
+    fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+      body: body,
+    }).then(function(response) {
+      return response.json().then(function(data) {
+        if (!response.ok || !data.ok) throw new Error((data && data.error) || 'Не удалось принять отчёт.');
+        return data;
+      });
+    }).then(function(data) {
+      applyReviewDecisionResult(row, data);
+    }).catch(function(err) {
+      acceptBtn.disabled = false;
+      window.alert(err.message || 'Не удалось принять отчёт.');
+    });
+  });
+
+  document.addEventListener('click', function(e) {
+    var editBtn = e.target.closest('.js-report-finding-edit');
+    if (editBtn) {
+      var editSection = getReportSubmissionSection();
+      if (!editSection || !editSection.contains(editBtn)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openReportFindingModal(editBtn, 'edit');
+      return;
+    }
+    var correctedCell = e.target.closest('#report-finding-modal td.report-finding-corrected[data-label]');
+    if (correctedCell) {
+      if (e.target.closest('input, .inline-table-number-wrap')) return;
+      e.preventDefault();
+      if (correctedCell.classList.contains('inline-cell-selected') && !correctedCell.querySelector('input')) {
+        openCorrectedEditor(correctedCell);
+      } else if (!correctedCell.querySelector('input')) {
+        commitFindingCorrectionEditors(false);
+        selectFindingCorrectionCell(correctedCell);
+      }
+      return;
+    }
+    if (e.target.closest('#report-finding-cancel, #report-finding-close, #report-finding-modal .btn-close')) {
+      commitFindingCorrectionEditors(true);
+      selectFindingCorrectionCell(null);
+    } else if (e.target.closest('#report-finding-modal') && !e.target.closest('#report-finding-save')) {
+      commitFindingCorrectionEditors(false);
+      selectFindingCorrectionCell(null);
+    }
+    if (e.target.closest('#report-finding-save')) {
+      e.preventDefault();
+      saveFindingCorrection();
+      return;
+    }
+    var btn = e.target.closest('.js-report-finding-info');
+    if (!btn) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(btn)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openReportFindingModal(btn, 'info');
+  });
+
+  document.addEventListener('keydown', function(e) {
+    var modal = document.getElementById('report-finding-modal');
+    if (!modal || !modal.classList.contains('show')) return;
+    if (e.target.closest && e.target.closest('input, textarea, button')) return;
+    var cell = e.target.closest && e.target.closest('#report-finding-modal td.report-finding-corrected[data-label]');
+    if (!cell) return;
+    if (e.key === 'Enter' || e.key === 'F2') {
+      e.preventDefault();
+      openCorrectedEditor(cell);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      focusAdjacentCorrectedCell(cell, (e.key === 'ArrowUp' || e.key === 'ArrowLeft') ? -1 : 1, false);
+      return;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && /^[0-9]$/.test(e.key)) {
+      e.preventDefault();
+      openCorrectedEditor(cell, e.key);
+    }
+  });
+
+  function setFindingCourseExpanded(modal, courseBtn, expanded) {
+    courseBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    var courseRow = courseBtn.closest('tr');
+    var key = courseRow && courseRow.dataset.courseKey;
+    if (!key) return;
+    modal.querySelectorAll('.report-finding-item-row[data-course-key="' + key + '"]').forEach(function(row) {
+      row.classList.toggle('report-finding-item-collapsed', !expanded);
+    });
+  }
+
+  function syncFindingCoursesToggle(modal) {
+    var master = modal.querySelector('.js-report-finding-courses-toggle');
+    if (!master) return;
+    var buttons = modal.querySelectorAll('.js-report-finding-course-toggle');
+    var allCollapsed = buttons.length > 0 && Array.prototype.every.call(buttons, function(button) {
+      return button.getAttribute('aria-expanded') === 'false';
+    });
+    master.setAttribute('aria-expanded', allCollapsed ? 'false' : 'true');
+    master.classList.toggle('active', allCollapsed);
+    master.title = allCollapsed ? 'Развернуть курсы' : 'Свернуть курсы';
+    master.setAttribute('aria-label', allCollapsed ? 'Развернуть курсы' : 'Свернуть курсы');
+    var icon = master.querySelector('i');
+    if (icon) icon.className = allCollapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+  }
+
+  document.addEventListener('click', function(e) {
+    var master = e.target.closest('.js-report-finding-courses-toggle');
+    if (!master) return;
+    var modal = document.getElementById('report-finding-modal');
+    if (!modal || !modal.contains(master)) return;
+    e.preventDefault();
+    var buttons = modal.querySelectorAll('.js-report-finding-course-toggle');
+    var expand = master.getAttribute('aria-expanded') === 'false';
+    buttons.forEach(function(button) {
+      setFindingCourseExpanded(modal, button, expand);
+    });
+    syncFindingCoursesToggle(modal);
+  });
+
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.js-report-finding-course-toggle');
+    if (!btn) return;
+    var modal = document.getElementById('report-finding-modal');
+    if (!modal || !modal.contains(btn)) return;
+    e.preventDefault();
+    var expanded = btn.getAttribute('aria-expanded') === 'false';
+    setFindingCourseExpanded(modal, btn, expanded);
+    syncFindingCoursesToggle(modal);
+  });
+
   document.addEventListener('click', function(e) {
     var btn = e.target.closest('.js-report-version-toggle');
     if (!btn) return;
@@ -3280,6 +4794,148 @@
     applyReportVersionCollapsedState();
   });
 
+  function revealReportRemarksFile(rowPayload) {
+    var section = getReportSubmissionSection();
+    var entryId = String((rowPayload && rowPayload.review_entry_id) || '');
+    if (!section || !entryId) return;
+    var row = section.querySelector('tr[data-review-entry-id="' + entryId + '"]');
+    if (!row) return;
+    delete row.dataset.remarksPending;
+    updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), {
+      review_file_name: rowPayload.review_file_name,
+      review_download_url: rowPayload.review_download_url,
+    });
+    var checkbox = row.querySelector('input[name="report-select"]');
+    if (checkbox) {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+    }
+    row.classList.remove('table-active');
+    if (rowPayload.review_row_html) insertReviewStepRow(row, rowPayload.review_row_html);
+  }
+
+  document.addEventListener('click', function(e) {
+    var discardBtn = e.target.closest('.js-report-remarks-discard');
+    var section = getReportSubmissionSection();
+    if (!discardBtn || !section || !section.contains(discardBtn) || discardBtn.disabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var row = discardBtn.closest('tr');
+    var entryId = discardBtn.dataset.reviewEntryId || (row && row.dataset.reviewEntryId) || '';
+    var url = section.dataset.reportRemarksDiscardUrl || '';
+    if (!row || !entryId || !url) return;
+    discardBtn.disabled = true;
+    var body = new FormData();
+    body.append('entry_id', entryId);
+    fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+      body: body,
+    }).then(function(response) {
+      return response.json().then(function(data) {
+        if (!response.ok || !data || !data.ok) {
+          throw new Error((data && data.error) || 'Не удалось удалить файл.');
+        }
+        return data;
+      });
+    }).then(function(data) {
+      replaceReportSubmissionRow(row, data.row_html);
+    }).catch(function(err) {
+      discardBtn.disabled = false;
+      window.alert(err.message || 'Не удалось удалить файл.');
+    });
+  });
+
+  var REPORT_REMARKS_CHANNELS_PREF_KEY = 'reports:remarksChannels';
+
+  function getReportRemarksChannels() {
+    var modal = document.getElementById('report-remarks-modal');
+    if (!modal) return [];
+    return Array.from(modal.querySelectorAll('.js-report-remarks-channel'));
+  }
+
+  function saveReportRemarksChannels() {
+    if (!window.UIPref) return;
+    UIPref.set(REPORT_REMARKS_CHANNELS_PREF_KEY, getReportRemarksChannels()
+      .filter(function(box) { return box.checked && !box.disabled; })
+      .map(function(box) { return box.value; }));
+  }
+
+  function restoreReportRemarksChannels() {
+    var channels = getReportRemarksChannels();
+    if (!channels.length || !window.UIPref) return;
+    var saved = UIPref.get(REPORT_REMARKS_CHANNELS_PREF_KEY, null);
+    if (!Array.isArray(saved)) return;
+    var savedValues = new Set(saved);
+    channels.forEach(function(box) {
+      box.checked = !box.disabled && savedValues.has(box.value);
+    });
+  }
+
+  function reportRemarksDeliveryAlert(emailDelivery) {
+    if (!emailDelivery || !emailDelivery.requested || !(emailDelivery.failed > 0)) return;
+    var errorLines = (emailDelivery.errors || []).slice(0, 5).map(function(item) {
+      var channelPrefix = item.channel_label ? '[' + item.channel_label + '] ' : '';
+      return '- ' + channelPrefix + item.recipient + ': ' + item.error;
+    });
+    var moreCount = Math.max((emailDelivery.errors || []).length - errorLines.length, 0);
+    var details = [
+      'Не удалось отправить ' + emailDelivery.failed + ' из ' + emailDelivery.attempted + ' email-писем.',
+    ].concat(errorLines);
+    if (moreCount > 0) details.push('- И еще ' + moreCount + ' ошибок.');
+    window.alert(details.join('\n'));
+  }
+
+  async function sendReportRemarks(section, btn, pendingBoxes) {
+    var modal = document.getElementById('report-remarks-modal');
+    var channels = modal
+      ? Array.from(modal.querySelectorAll('.js-report-remarks-channel')).filter(function(box) { return box.checked; })
+      : [];
+    if (!channels.length) {
+      window.alert('Выберите хотя бы один способ отправки.');
+      return;
+    }
+    var url = section.dataset.reportRemarksSendUrl || '';
+    if (!url) return;
+    var sentAtInput = modal ? modal.querySelector('.js-report-remarks-sent-at') : null;
+    var formData = new FormData();
+    pendingBoxes.forEach(function(checkbox) {
+      formData.append('entry_ids[]', checkbox.closest('tr').dataset.reviewEntryId || '');
+    });
+    formData.append('request_sent_at', sentAtInput ? sentAtInput.value : '');
+    channels.forEach(function(box) { formData.append('delivery_channels[]', box.value); });
+    btn.disabled = true;
+    try {
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = null;
+      try { data = await response.json(); } catch (_) {}
+      if (!response.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || 'Не удалось отправить замечания.');
+      }
+      (data.rows || []).forEach(revealReportRemarksFile);
+      if (data.warning) window.alert(data.warning);
+      reportRemarksDeliveryAlert(data.email_delivery);
+      var modalInstance = modal && window.bootstrap ? window.bootstrap.Modal.getInstance(modal) : null;
+      if (modalInstance) modalInstance.hide();
+      document.body.dispatchEvent(new Event('notifications-updated'));
+    } catch (err) {
+      window.alert(err.message || 'Не удалось отправить замечания.');
+    }
+    updateReportSubmissionMasterState();
+  }
+
+  document.addEventListener('change', function(event) {
+    var box = event.target.closest('.js-report-remarks-channel');
+    if (!box) return;
+    var modal = document.getElementById('report-remarks-modal');
+    if (!modal || !modal.contains(box)) return;
+    saveReportRemarksChannels();
+  });
+
   document.addEventListener('click', async function(e) {
     var btn = e.target.closest('#report-submission-send-btn');
     if (!btn) return;
@@ -3287,6 +4943,17 @@
     if (!section || !section.contains(btn) || btn.disabled) return;
     e.preventDefault();
     var checked = getVisibleReportSelectChecks().filter(function(checkbox) { return checkbox.checked; });
+    var pendingBoxes = checked.filter(function(checkbox) {
+      return reportRowIsRemarksPending(checkbox.closest('tr'));
+    });
+    if (pendingBoxes.length) {
+      if (pendingBoxes.length !== checked.length) {
+        updateReportSendButtonState();
+        return;
+      }
+      sendReportRemarks(section, btn, pendingBoxes);
+      return;
+    }
     if (checked.length !== 1) {
       updateReportSendButtonState();
       return;
@@ -3312,10 +4979,13 @@
       resultCell.appendChild(spacer);
       var pending = document.createElement('span');
       pending.className = 'text-muted js-report-check-badge report-check-pending-text';
-      pending.textContent = 'Идет проверка...';
+      pending.textContent = reportCheckPendingText(null);
       resultCell.appendChild(pending);
     }
     updateReportFindingCountCell(row, { check_status: 'running' });
+    row.dataset.checkStatus = 'running';
+    var checkPollGate = { allowFinish: false };
+    pollReportCheck(row, checkPollGate);
     btn.disabled = true;
     try {
       var fd = new FormData();
@@ -3330,15 +5000,24 @@
       if (!response.ok || !data || !data.ok) {
         throw new Error((data && data.error) || 'Не удалось отправить файл.');
       }
+      checkPollGate.allowFinish = true;
       applyReportSendResult(row, data);
-      if (data.check_status === 'running') pollReportCheck(row);
+      if (data.check_status === 'running') pollReportCheck(row, checkPollGate);
     } catch (err) {
       alert(err.message || 'Не удалось отправить файл.');
+      row.dataset.checkStatus = '';
       if (selectedCheckbox && row.dataset.isCurrent === '1') {
         selectedCheckbox.disabled = false;
       }
       if (resultCell && resultCell.querySelector('.js-report-check-badge')) {
-        resultCell.textContent = '—';
+        resultCell.textContent = '';
+        var emptyMark = document.createElement('span');
+        emptyMark.className = 'report-check-result-inner';
+        var emptyDash = document.createElement('span');
+        emptyDash.className = 'report-check-result-empty';
+        emptyDash.textContent = '—';
+        emptyMark.appendChild(emptyDash);
+        resultCell.appendChild(emptyMark);
       }
     } finally {
       updateReportSendButtonState();
@@ -4279,7 +5958,7 @@
     }
 
     if (action === 'delete') {
-      const deletable = checked.filter((box) => !performerRowIsSectionLocked(box.closest('tr')));
+      const deletable = checked.filter((box) => !performerRowDeleteLocked(box.closest('tr')));
       if (!deletable.length) return;
       if (!confirm(`Удалить ${deletable.length} строк(у/и)?`)) return;
       const urls = deletable.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
@@ -4746,6 +6425,8 @@
     var reportSet = new Set(reportIds || []);
     getRowChecks('report-select').forEach(function(b) { b.checked = reportSet.has(String(b.value)); });
     initReportSubmissionProjectFilter();
+    initReportSubmissionColPicker();
+    restoreReportRemarksChannels();
     initReportLocalSource();
     applyRowGrouping(root.querySelector('#report-submission-section'));
     applyReportVersionCollapsedState();
@@ -4836,6 +6517,7 @@
     ensureReportMacrosActionsVisibility();
     syncPerformerSectionOrder();
     schedulePaymentRequestScrollGapsUpdate();
+    scheduleReportSubmissionColumnLayout(true);
     if (typeof window.__perfScrollY === 'number') {
       window.scrollTo(0, window.__perfScrollY);
       delete window.__perfScrollY;
@@ -5084,6 +6766,8 @@
     initInfoRequestProjectFilter();
     initPaymentRequestProjectFilter();
     initReportSubmissionProjectFilter();
+    initReportSubmissionColPicker();
+    restoreReportRemarksChannels();
     initReportLocalSource();
     initReportCheckPolling();
     var root = pane();
@@ -5122,11 +6806,20 @@
     }
   });
 
-  window.addEventListener('resize', schedulePaymentRequestScrollGapsUpdate);
-  window.addEventListener('load', schedulePaymentRequestScrollGapsUpdate);
+  window.addEventListener('resize', function() {
+    schedulePaymentRequestScrollGapsUpdate();
+    scheduleReportSubmissionColumnLayout(false);
+  });
+  window.addEventListener('load', function() {
+    schedulePaymentRequestScrollGapsUpdate();
+    scheduleReportSubmissionColumnLayout(true);
+  });
   window.addEventListener('projects:section-shown', function(e) {
     if (e.detail && (e.detail.section === 'team' || e.detail.section === 'performer-payments' || e.detail.section === 'info-request' || e.detail.section === 'report-submission')) {
       schedulePaymentRequestScrollGapsUpdate();
+    }
+    if (e.detail && e.detail.section === 'report-submission') {
+      scheduleReportSubmissionColumnLayout(true);
     }
   });
   window.addEventListener('contracts:payment-request-shown', function() {

@@ -36,6 +36,10 @@ class Notification(models.Model):
             "project_payment_request",
             "Заявка на оплату",
         )
+        PROJECT_REPORT_REMARKS = (
+            "project_report_remarks",
+            "Замечания по отчёту",
+        )
 
     class RelatedSection(models.TextChoices):
         NONE = "none", "Не указан"

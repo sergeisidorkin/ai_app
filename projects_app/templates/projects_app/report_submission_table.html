@@ -7,18 +7,22 @@
     <table id="report-submission-table" class="table table-sm align-middle performers-table">
       <colgroup>
         <col class="col-checkbox">
-        <col class="col-number">
-        <col class="col-type">
-        <col class="col-name">
-        <col class="col-executor">
-        <col class="col-active">
-        <col class="col-typical">
-        <col class="col-report-status">
-        <col class="col-report-upload">
-        <col class="col-report-version">
-        <col>
-        <col class="col-report-check-result">
-        <col class="col-report-finding-count">
+        <col class="col-number" data-col="stage">
+        <col class="col-type" data-col="product">
+        <col class="col-name" data-col="name">
+        <col class="col-executor" data-col="executor">
+        <col class="col-active" data-col="asset">
+        <col class="col-typical" data-col="section">
+        <col class="col-report-status" data-col="status">
+        <col class="col-report-status-date" data-col="status-date">
+        <col class="col-report-upload" data-col="upload">
+        <col class="col-report-version" data-col="version">
+        <col class="col-report-check-result" data-col="check-result">
+        {% if show_finding_adjustment_columns %}
+        <col class="col-report-calculated-count" data-col="calculated-count">
+        <col class="col-report-corrected-count" data-col="corrected-count">
+        {% endif %}
+        <col class="col-report-finding-count" data-col="finding-count">
       </colgroup>
       <thead>
       <tr>
@@ -33,25 +37,29 @@
             </div>
           {% endif %}
         </th>
-        <th class="text-nowrap">Этап</th>
-        <th class="text-nowrap">Продукт</th>
-        <th class="text-nowrap">Название</th>
-        <th>Исполнитель</th>
-        <th class="text-nowrap">Наименование актива</th>
-        <th class="text-nowrap report-section-col">Раздел</th>
-        <th class="text-nowrap">Статус</th>
-        <th class="text-nowrap">Загрузить</th>
-        <th class="text-nowrap">Версия</th>
-        <th class="text-nowrap">Дата статуса</th>
-        <th class="text-nowrap">Результаты проверки</th>
-        <th class="text-nowrap">Число замечаний</th>
+        <th class="text-nowrap" data-col="stage">Этап</th>
+        <th class="text-nowrap" data-col="product">Продукт</th>
+        <th class="text-nowrap" data-col="name">Название</th>
+        <th data-col="executor">Исполнитель</th>
+        <th class="text-nowrap" data-col="asset">Наименование актива</th>
+        <th class="text-nowrap report-section-col" data-col="section">Раздел</th>
+        <th class="text-nowrap" data-col="status">Статус</th>
+        <th class="text-nowrap" data-col="status-date">Дата статуса</th>
+        <th class="text-nowrap" data-col="upload">Загрузить</th>
+        <th class="text-nowrap" data-col="version">Верс.</th>
+        <th class="text-nowrap report-check-result-col" data-col="check-result">Результаты проверки</th>
+        {% if show_finding_adjustment_columns %}
+        <th class="text-nowrap text-end" data-col="calculated-count">Расч.</th>
+        <th class="text-nowrap text-end" data-col="corrected-count">Корр.</th>
+        {% endif %}
+        <th class="text-nowrap text-end" data-col="finding-count">Число замеч.</th>
       </tr>
       </thead>
       <tbody>
       {% for row in report_submission_rows %}
         {% include "projects_app/report_submission_row.html" %}
       {% empty %}
-        <tr><td colspan="13" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="{% if show_finding_adjustment_columns %}15{% else %}13{% endif %}" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -60,12 +68,80 @@
   <div class="policy-table-footer">
     {% if can_send_reports %}
       <div class="policy-table-footer-actions products-actions-row" id="report-submission-actions">
-        <button type="button"
-                class="btn btn-primary btn-sm d-flex align-items-center"
-                id="report-submission-send-btn"
-                disabled>
-          <i class="bi bi-envelope-at me-2"></i>Отправить
-        </button>
+        <div class="btn-group">
+          <button type="button"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  id="report-submission-send-btn"
+                  disabled>
+            <i class="bi bi-envelope-at me-2"></i>Отправить
+          </button>
+          <button type="button"
+                  class="btn btn-primary btn-sm js-report-remarks-settings-btn"
+                  data-bs-toggle="modal"
+                  data-bs-target="#report-remarks-modal"
+                  title="Настройки отправки замечаний">
+            <i class="bi bi-gear"></i>
+          </button>
+        </div>
+      </div>
+      <div class="modal fade" id="report-remarks-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Настройки отправки замечаний</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-4">
+                <div class="fw-semibold mb-2">Способ отправки</div>
+                <div class="form-check">
+                  <input class="form-check-input js-report-remarks-channel"
+                         type="checkbox"
+                         id="report-remarks-channel-system"
+                         value="system"
+                         checked>
+                  <label class="form-check-label" for="report-remarks-channel-system">
+                    Системные уведомления
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input js-report-remarks-channel"
+                         type="checkbox"
+                         id="report-remarks-channel-system-email"
+                         value="system_email">
+                  <label class="form-check-label" for="report-remarks-channel-system-email">
+                    Системная электронная почта
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input js-report-remarks-channel"
+                         type="checkbox"
+                         id="report-remarks-channel-connected-email"
+                         value="connected_email"
+                         {% if not has_active_smtp_connection %}disabled{% endif %}>
+                  <label class="form-check-label" for="report-remarks-channel-connected-email">
+                    Подключенная электронная почта
+                  </label>
+                </div>
+                {% if not has_active_smtp_connection %}
+                  <div class="form-text mt-1">
+                    Сначала настройте активное внешнее SMTP-подключение в разделе «Подключения».
+                  </div>
+                {% endif %}
+              </div>
+              <div class="mb-0">
+                <label for="report-remarks-sent-at" class="form-label">Дата отправки замечаний</label>
+                <input type="datetime-local"
+                       id="report-remarks-sent-at"
+                       class="form-control js-report-remarks-sent-at"
+                       value="{{ payment_request_sent_initial }}">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+          </div>
+        </div>
       </div>
     {% else %}
       <div class="policy-table-footer-actions" id="report-submission-actions"></div>

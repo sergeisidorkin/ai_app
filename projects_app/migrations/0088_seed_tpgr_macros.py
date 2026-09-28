@@ -10,9 +10,12 @@ def seed_tpgr_macros(apps, schema_editor):
 
 def unseed_tpgr_macros(apps, schema_editor):
     ReportMacro = apps.get_model("projects_app", "ReportMacro")
-    from projects_app.report_macros import TPGR_MACROS
+    from projects_app.report_macros import TPGR_MACROS, _tpgr_spec_label
 
-    names = [item["name"] for item in TPGR_MACROS]
+    names = []
+    for item in TPGR_MACROS:
+        names.append(item["name"])
+        names.append(_tpgr_spec_label(item))
     ReportMacro.objects.filter(name__in=names).delete()
 
 

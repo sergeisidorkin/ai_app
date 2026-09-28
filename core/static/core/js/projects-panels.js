@@ -102,9 +102,10 @@
     const downBtn = panel.querySelector('[data-panel-action="down"]');
     const deleteBtn = panel.querySelector('[data-panel-action="delete"]');
     const rows = getCheckedByName('work-select').map((box) => box.closest('tr')).filter(Boolean);
-    const anyLocked = rows.some((tr) => tr.dataset.reportFolderLocked === '1');
-    const blockUp = anyLocked || rows.some((tr) => visibleWorkRowSibling(tr, 'up')?.dataset?.reportFolderLocked === '1');
-    const blockDown = anyLocked || rows.some((tr) => visibleWorkRowSibling(tr, 'down')?.dataset?.reportFolderLocked === '1');
+    const anyFolderLocked = rows.some((tr) => tr.dataset.reportFolderLocked === '1');
+    const anyUploadLocked = rows.some((tr) => tr.dataset.reportUploadLocked === '1');
+    const blockUp = anyFolderLocked || rows.some((tr) => visibleWorkRowSibling(tr, 'up')?.dataset?.reportFolderLocked === '1');
+    const blockDown = anyFolderLocked || rows.some((tr) => visibleWorkRowSibling(tr, 'down')?.dataset?.reportFolderLocked === '1');
     if (upBtn) {
       upBtn.classList.toggle('d-none', blockUp);
       upBtn.disabled = blockUp;
@@ -114,8 +115,8 @@
       downBtn.disabled = blockDown;
     }
     if (deleteBtn) {
-      deleteBtn.classList.toggle('d-none', anyLocked);
-      deleteBtn.disabled = anyLocked;
+      deleteBtn.classList.toggle('d-none', anyUploadLocked);
+      deleteBtn.disabled = anyUploadLocked;
     }
   }
   function clearHiddenSelections(name) {
@@ -1197,7 +1198,7 @@
 
     if (action === 'delete') {
       const deletable = name === 'work-select'
-        ? checked.filter((box) => box.closest('tr')?.dataset?.reportFolderLocked !== '1')
+        ? checked.filter((box) => box.closest('tr')?.dataset?.reportUploadLocked !== '1')
         : checked;
       if (!deletable.length) return;
       if (!confirm(getDeleteConfirmationMessage(name, deletable.length))) return;

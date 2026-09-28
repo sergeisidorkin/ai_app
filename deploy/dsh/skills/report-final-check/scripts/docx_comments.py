@@ -64,15 +64,17 @@ def document_root(parts: dict[str, bytes]) -> ET.Element:
 
 
 def walk_text(root: ET.Element):
+    """Read visible text once. The parent map is built a single time for the tree."""
     body = root.find(w("body"))
+    parents = parent_map(root)
     if body is None:
-        return "", []
+        return "", [], parents
     chunks = []
     spans = []
     offset = 0
     for paragraph in body.iter(w("p")):
         for node in paragraph.iter(w("t")):
-            if any(parent.tag == w("del") for parent in _ancestors(root, node)):
+            if _inside_deleted(parents, node):
                 continue
             value = node.text or ""
             if not value:
@@ -83,19 +85,20 @@ def walk_text(root: ET.Element):
         chunks.append("\n")
         spans.append((None, offset, offset + 1))
         offset += 1
-    return "".join(chunks), spans
+    return "".join(chunks), spans, parents
 
 
-def _ancestors(root: ET.Element, target: ET.Element):
-    parent_map = {child: parent for parent in root.iter() for child in parent}
-    current = parent_map.get(target)
+def _inside_deleted(parents: dict[ET.Element, ET.Element], node: ET.Element) -> bool:
+    current = parents.get(node)
     while current is not None:
-        yield current
-        current = parent_map.get(current)
+        if current.tag == w("del"):
+            return True
+        current = parents.get(current)
+    return False
 
 
 def extract(source: Path, destination: Path) -> None:
-    text, _spans = walk_text(document_root(read_package(source)))
+    text, _spans, _parents = walk_text(document_root(read_package(source)))
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(text, encoding="utf-8")
 
@@ -113,7 +116,7 @@ def load_findings(path: Path, text: str) -> list[dict]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        quote = str(item.get("quote") or "").strip()
+        quote = str(item.get("quote") or "")
         message = str(item.get("message") or "").strip()
         if not quote or not message:
             continue
@@ -150,7 +153,7 @@ def load_findings(path: Path, text: str) -> list[dict]:
 def annotate(source: Path, destination: Path, findings_path: Path) -> None:
     parts = read_package(source)
     root = document_root(parts)
-    text, _spans = walk_text(root)
+    text, spans, parents = walk_text(root)
     findings = load_findings(findings_path, text)
     if not findings:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -163,7 +166,7 @@ def annotate(source: Path, destination: Path, findings_path: Path) -> None:
         key=lambda row: (row["start"], -row["end"]),
         reverse=True,
     ):
-        insert_comment_range(root, item["start"], item["end"], next_id)
+        insert_comment_range(parents, spans, item["start"], item["end"], next_id)
         comments_root.append(comment_element(
             next_id,
             item["author"],
@@ -173,7 +176,15 @@ def annotate(source: Path, destination: Path, findings_path: Path) -> None:
 
     preserve_edge_spaces(root)
     ET.register_namespace("w", W_NS)
-    parts[DOCUMENT_XML] = serialize_document(parts[DOCUMENT_XML], root)
+    document_xml = serialize_document(parts[DOCUMENT_XML], root)
+    try:
+        ET.fromstring(document_xml)
+    except ET.ParseError as exc:
+        raise SystemExit(
+            "Собранный word/document.xml повреждён: потеряны объявления "
+            "пространств имён, Word такой файл не откроет."
+        ) from exc
+    parts[DOCUMENT_XML] = document_xml
     parts[COMMENTS_XML] = ET.tostring(
         comments_root,
         encoding="utf-8",
@@ -198,8 +209,36 @@ def register_document_namespaces(xml: bytes) -> None:
         return
 
 
+_XMLNS_ATTR = re.compile(
+    rb"""xmlns(?::([A-Za-z_][\w.-]*))?=(["'])(.*?)\2"""
+)
+
+
+def _xmlns_prefixes(open_tag: bytes) -> set[bytes]:
+    return {match.group(1) or b"" for match in _XMLNS_ATTR.finditer(open_tag)}
+
+
+def _hoisted_namespace_attributes(serialized_open: bytes, original_open: bytes) -> bytes:
+    """ElementTree moves nested xmlns onto the root and drops them from children.
+
+    Restoring Word's original root tag then leaves prefixes such as a: and pic:
+    unbound. Copy the declarations that exist only on the serialized root.
+    """
+    present = _xmlns_prefixes(original_open)
+    extra = []
+    for match in _XMLNS_ATTR.finditer(serialized_open):
+        prefix = match.group(1) or b""
+        if prefix in present:
+            continue
+        extra.append(match.group(0))
+        present.add(prefix)
+    if not extra:
+        return b""
+    return b" " + b" ".join(extra)
+
+
 def serialize_document(original_xml: bytes, root: ET.Element) -> bytes:
-    """Preserve Word's root tag and all mc:Ignorable namespace declarations."""
+    """Preserve Word's root tag, mc:Ignorable, and nested namespace declarations."""
     serialized = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     original_match = re.search(rb"<([A-Za-z_][\w.-]*:)?document\b", original_xml)
     serialized_match = re.search(rb"<([A-Za-z_][\w.-]*:)?document\b", serialized)
@@ -220,8 +259,14 @@ def serialize_document(original_xml: bytes, root: ET.Element) -> bytes:
     if original_close_start < 0 or serialized_close_start < 0:
         return serialized
 
+    extra = _hoisted_namespace_attributes(
+        serialized[serialized_match.start():serialized_open_end + 1],
+        original_xml[original_match.start():original_open_end + 1],
+    )
     return (
-        original_xml[:original_open_end + 1]
+        original_xml[:original_open_end]
+        + extra
+        + b">"
         + serialized[serialized_open_end + 1:serialized_close_start]
         + original_xml[original_close_start:]
     )
@@ -275,52 +320,88 @@ def preserve_edge_spaces(root: ET.Element) -> None:
         _ensure_xml_space_preserve(node)
 
 
-def split_run_text(root: ET.Element, text_node: ET.Element, index: int) -> None:
+def split_run_text(
+    parents: dict[ET.Element, ET.Element],
+    spans: list,
+    text_node: ET.Element,
+    index: int,
+) -> ET.Element | None:
+    """Split one w:t. A leading w:tab stays in the original run and is not copied."""
     value = text_node.text or ""
-    parents = parent_map(root)
     run = parents.get(text_node)
     parent = parents.get(run) if run is not None else None
     if parent is None or index <= 0 or index >= len(value):
-        return
-    right = copy.deepcopy(run)
+        return None
+    right = ET.Element(w("r"))
+    for key, attr in run.attrib.items():
+        right.set(key, attr)
+    properties = run.find(w("rPr"))
+    if properties is not None:
+        right.append(copy.deepcopy(properties))
     text_node.text = value[:index]
-    right_nodes = list(right.iter(w("t")))
-    if not right_nodes:
-        return
-    right_nodes[0].text = value[index:]
     _ensure_xml_space_preserve(text_node)
-    _ensure_xml_space_preserve(right_nodes[0])
-    for extra in right_nodes[1:]:
-        extra.text = ""
-    position = list(parent).index(run)
-    parent.insert(position + 1, right)
+    right_text = ET.Element(w("t"))
+    right_text.text = value[index:]
+    _ensure_xml_space_preserve(right_text)
+    right.append(right_text)
+    followers = list(run)[list(run).index(text_node) + 1:]
+    for follower in followers:
+        run.remove(follower)
+        right.append(follower)
+        parents[follower] = right
+    parent.insert(list(parent).index(run) + 1, right)
+    parents[right] = parent
+    parents[right_text] = right
+    _split_span(spans, text_node, index, right_text)
+    return right_text
+
+
+def _split_span(spans: list, text_node: ET.Element, index: int, right_text: ET.Element) -> None:
+    for position, (node, span_start, span_end) in enumerate(spans):
+        if node is not text_node:
+            continue
+        split_at = span_start + index
+        spans[position] = (node, span_start, split_at)
+        spans.insert(position + 1, (right_text, split_at, span_end))
+        return
 
 
 def insert_comment_range(
-    root: ET.Element,
+    parents: dict[ET.Element, ET.Element],
+    spans: list,
     start: int,
     end: int,
     comment_id: int,
 ) -> None:
-    text, spans = walk_text(root)
-    if not (0 <= start < end <= len(text)):
+    """Place one comment using the spans from the single text walk.
+
+    Callers pass findings from the end of the document toward the start, so a
+    split only changes text that has already been annotated.
+    """
+    if not spans or start < 0 or start >= end or end > spans[-1][2]:
         raise SystemExit("Некорректный диапазон комментария.")
     start_node, start_local = locate(spans, start, for_end=False)
-    if start_node is None:
-        raise SystemExit("Не удалось найти начало комментария.")
-    split_run_text(root, start_node, start_local)
-
-    _text, spans = walk_text(root)
     end_node, end_local = locate(spans, end, for_end=True)
-    if end_node is not None:
-        split_run_text(root, end_node, end_local)
-
-    _text, spans = walk_text(root)
-    start_node, _ = locate(spans, start, for_end=False)
-    end_node, _ = locate(spans, end, for_end=True)
     if start_node is None or end_node is None:
         raise SystemExit("Не удалось привязать комментарий к тексту.")
-    parents = parent_map(root)
+
+    if start_node is end_node:
+        if 0 < end_local < len(end_node.text or ""):
+            split_run_text(parents, spans, end_node, end_local)
+        if 0 < start_local < len(start_node.text or ""):
+            comment_text = split_run_text(parents, spans, start_node, start_local)
+            if comment_text is None:
+                raise SystemExit("Не удалось найти начало комментария.")
+            start_node = end_node = comment_text
+    else:
+        if 0 < end_local < len(end_node.text or ""):
+            split_run_text(parents, spans, end_node, end_local)
+        if 0 < start_local < len(start_node.text or ""):
+            comment_text = split_run_text(parents, spans, start_node, start_local)
+            if comment_text is None:
+                raise SystemExit("Не удалось найти начало комментария.")
+            start_node = comment_text
+
     start_run = parents.get(start_node)
     end_run = parents.get(end_node)
     start_parent = parents.get(start_run) if start_run is not None else None

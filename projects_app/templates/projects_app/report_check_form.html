@@ -6,6 +6,7 @@
 </div>
 
 <form
+    class="report-check-form"
     method="post"
     {% if action == "create" %}
       hx-post="{% url 'report_check_form_create' %}"
@@ -16,62 +17,99 @@
     hx-swap="innerHTML"
     hx-on::after-request="if (event.detail.xhr.status === 204) { window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('performers-modal'))?.hide(); }">
   {% csrf_token %}
-  <div class="modal-body">
-    <div class="row">
-      <div class="col-md-4 mb-3">
+  <div class="modal-body report-check-modal-body">
+    <div class="report-check-scope">
+      <div>
         <label class="form-label" for="{{ form.product.id_for_label }}">Продукты</label>
         {{ form.product }}
       </div>
-      <div class="col-md-4 mb-3">
+      <div>
         <label class="form-label" for="{{ form.expertise_dir.id_for_label }}">Экспертиза</label>
         {{ form.expertise_dir }}
       </div>
-      <div class="col-md-4 mb-3">
+      <div>
         <label class="form-label" for="{{ form.section.id_for_label }}">Разделы</label>
         {{ form.section }}
       </div>
+      <div class="report-check-scope-spacer" aria-hidden="true"></div>
     </div>
-    <div class="row">
-      <div class="col-md-4 mb-3">
-        <label class="form-label" for="{{ form.check_type.id_for_label }}">Тип проверки</label>
-        {{ form.check_type }}
+
+    <div class="report-check-order-block">
+      <div class="form-label">Порядок проверки</div>
+      <input type="hidden" name="review_order_present" value="1">
+      <div id="report-check-order">
+        {% for row in review_order_rows %}
+        <div class="align-items-center gap-2 mb-2 report-check-order-row{% if row.code == 'ai' %} report-check-order-row--ai{% endif %}">
+          <input type="checkbox" class="form-check-input report-check-order-enabled" {% if row.enabled %}checked{% endif %} aria-label="{{ row.label }}">
+          <span class="report-check-order-label">{{ row.label }}</span>
+          <input type="hidden" name="review_order" value="{{ row.code }}" {% if not row.enabled %}disabled{% endif %}>
+          <span class="report-check-line-tools">
+            <button type="button" class="inline-specialty-btn" data-order-move="up" title="Выше" aria-label="Выше"{% if row.code == 'ai' %} disabled{% endif %}>
+              <i class="bi bi-arrow-up"></i>
+            </button>
+            <button type="button" class="inline-specialty-btn" data-order-move="down" title="Ниже" aria-label="Ниже"{% if row.code == 'ai' %} disabled{% endif %}>
+              <i class="bi bi-arrow-down"></i>
+            </button>
+          </span>
+        </div>
+        {% endfor %}
       </div>
-      <div class="col-md-4 mb-3">
-        <label class="form-label" for="{{ form.finding_threshold.id_for_label }}">Пороговое число замечаний</label>
+    </div>
+
+    <div class="report-check-ai-divider"></div>
+    <div class="report-check-ai-heading">Проверка ИИ</div>
+
+    <div id="report-check-lines">
+      {% for row in line_rows %}
+      <div class="d-flex align-items-center gap-2 mb-2 report-check-line">
+        <span class="badge rounded-circle d-flex align-items-center justify-content-center report-check-line-rank"
+              style="width:18px; height:18px; font-size:.6rem; letter-spacing:-0.08em; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif;">{{ forloop.counter }}</span>
+        <input type="hidden" name="line_enabled" value="{% if row.enabled %}1{% else %}0{% endif %}" class="report-check-line-enabled">
+        <input class="form-check-input report-check-line-select" type="checkbox" aria-label="Включить в запуск"{% if row.enabled %} checked{% endif %}>
+        <select name="line_check_type" class="form-select report-check-line-type" aria-label="Тип проверки">
+          <option value="macro" {% if row.check_type != "skill" %}selected{% endif %}>Макрос</option>
+          <option value="skill" {% if row.check_type == "skill" %}selected{% endif %}>Навык</option>
+        </select>
+        <select name="line_macro" class="form-select report-check-line-macro" aria-label="Название">
+          <option value="">---------</option>
+        </select>
+        <input name="line_threshold" class="form-control report-check-line-threshold" type="number" min="0" step="1" inputmode="numeric"
+               aria-label="Пороговое значение" placeholder="Пороговое значение"
+               value="{{ row.threshold }}">
+        <span class="report-check-line-tools">
+          <button type="button" class="inline-specialty-btn" data-line-move="up" title="Выше" aria-label="Выше">
+            <i class="bi bi-arrow-up"></i>
+          </button>
+          <button type="button" class="inline-specialty-btn" data-line-move="down" title="Ниже" aria-label="Ниже">
+            <i class="bi bi-arrow-down"></i>
+          </button>
+          <button type="button" class="inline-specialty-btn report-check-line-remove" title="Удалить" aria-label="Удалить">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="d-flex align-items-center gap-2">
+      <button type="button" id="report-check-add-line" class="btn btn-sm mt-1"
+              style="border:1px solid #ced4da; background-color:#f8f9fa; color:#495057; font-size:1rem; padding:.375rem .75rem; margin-left:26px;">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+    </div>
+
+    <div class="row mt-3">
+      <div class="col-md-6 mb-3">
+        <label class="form-label report-check-field-label" for="{{ form.completion_mode.id_for_label }}">Условия сдачи отчета при проверке ИИ</label>
+        {{ form.completion_mode }}
+      </div>
+      <div class="col-md-6 mb-3 js-launch-threshold">
+        <label class="form-label report-check-field-label" for="{{ form.finding_threshold.id_for_label }}">Пороговое значение суммы</label>
         {{ form.finding_threshold }}
         {{ form.finding_threshold.errors }}
       </div>
     </div>
-    <div class="row">
-      <div class="col-md-4 mb-3 js-report-check-skill-fields">
-        <label class="form-label" for="{{ form.check_value.id_for_label }}">Проверка</label>
-        {{ form.check_value }}
-      </div>
-      <div class="col-md-4 mb-3 js-report-check-skill-fields">
-        <label class="form-label" for="{{ form.model_id.id_for_label }}">Модель</label>
-        {{ form.model_id }}
-      </div>
-    </div>
-    <div class="mb-3 js-report-check-macro-fields">
-      <label class="form-label">Макросы</label>
-      {% for macro in macros_list %}
-        <div class="form-check">
-          <input class="form-check-input"
-                 type="checkbox"
-                 name="macros"
-                 value="{{ macro.pk }}"
-                 id="report-check-form-macro-{{ macro.pk }}"
-                 data-report-check-macro="1"
-                 {% if macro.pk|stringformat:"s" in selected_macro_ids %}checked{% endif %}>
-          <label class="form-check-label" for="report-check-form-macro-{{ macro.pk }}">
-            {{ macro.name }}
-          </label>
-        </div>
-      {% empty %}
-        <div class="text-muted">Сначала добавьте макросы в таблицу «Макросы».</div>
-      {% endfor %}
-      {{ form.macros.errors }}
-    </div>
+
     <div class="mb-3">
       <div class="form-check">
         {{ form.clear_comments }}
@@ -81,7 +119,16 @@
       </div>
     </div>
     {% if form.errors %}
-      <div class="alert alert-danger mb-0">Проверьте введённые данные.</div>
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+        {% if form.non_field_errors %}
+          <ul class="mb-0 mt-2">
+            {% for error in form.non_field_errors %}
+              <li>{{ error }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </div>
     {% endif %}
   </div>
   <div class="modal-footer">
@@ -90,20 +137,15 @@
   </div>
 </form>
 {{ sections_payload|json_script:"report-check-sections-json" }}
-{{ skill_choices|json_script:"report-check-skills-json" }}
+{{ catalog|json_script:"report-check-catalog-json" }}
+{{ line_rows|json_script:"report-check-lines-json" }}
 <script>
 (function(){
   const modal = document.currentScript.closest('.modal-content');
   const form = modal?.querySelector('form');
   if (!form) return;
-  form.addEventListener('change', function(e) {
-    e.stopPropagation();
-  });
-  form.addEventListener('click', function(e) {
-    if (e.target && e.target.closest('input[data-report-check-macro], label[for^="report-check-form-macro-"]')) {
-      e.stopPropagation();
-    }
-  });
+  form.addEventListener('change', function(e) { e.stopPropagation(); });
+  form.addEventListener('click', function(e) { e.stopPropagation(); });
 
   function readJson(id, fallback) {
     const el = modal.querySelector(id);
@@ -113,30 +155,25 @@
   }
 
   const sections = readJson('#report-check-sections-json', []);
-  const skills = readJson('#report-check-skills-json', []);
+  const catalog = readJson('#report-check-catalog-json', []);
+  const storedLines = readJson('#report-check-lines-json', []);
   const productSel = form.querySelector('select[name="product"]');
   const expertiseSel = form.querySelector('select[name="expertise_dir"]');
   const sectionSel = form.querySelector('select[name="section"]');
-  const typeSel = form.querySelector('select[name="check_type"]');
-  const checkSel = form.querySelector('select[name="check_value"]');
-  const skillFields = form.querySelectorAll('.js-report-check-skill-fields');
-  const macroFields = form.querySelector('.js-report-check-macro-fields');
+  const modeSel = form.querySelector('select[name="completion_mode"]');
+  const linesBox = form.querySelector('#report-check-lines');
+  const addBtn = form.querySelector('#report-check-add-line');
+  const launchThreshold = form.querySelector('.js-launch-threshold');
+  const FULL_REPORT = '__full__';
 
-  function fillSelect(select, items, current, emptyLabel) {
+  function fillSelect(select, items, current) {
     if (!select) return;
     const value = current == null ? select.value : String(current);
     select.innerHTML = '';
-    if (emptyLabel != null) {
-      const all = document.createElement('option');
-      all.value = '';
-      all.textContent = emptyLabel;
-      select.appendChild(all);
-    }
     items.forEach(function(item) {
       const opt = document.createElement('option');
       opt.value = String(item.value);
       opt.textContent = item.label;
-      if (item.productId) opt.dataset.productId = String(item.productId);
       select.appendChild(opt);
     });
     const exists = Array.from(select.options).some(function(opt) { return opt.value === value; });
@@ -151,12 +188,10 @@
       if (expertiseId && String(section.expertise_dir_id || '') !== String(expertiseId)) return false;
       return true;
     }).map(function(section) {
-      return { value: section.id, label: section.label, productId: section.product_id };
+      return { value: section.id, label: section.label };
     });
     const sentinels = [];
-    if (!expertiseId) {
-      sentinels.push({ value: '__full__', label: 'Весь отчет' });
-    }
+    if (!expertiseId) sentinels.push({ value: FULL_REPORT, label: 'Весь отчет' });
     sentinels.push({
       value: '',
       label: expertiseId ? 'Все разделы направления' : 'Все разделы'
@@ -164,32 +199,218 @@
     fillSelect(sectionSel, sentinels.concat(filtered), null);
   }
 
-  function syncCheckValue() {
-    const type = typeSel?.value || 'skill';
-    const isMacro = type === 'macro';
-    skillFields.forEach(function(el) {
-      el.classList.toggle('d-none', isMacro);
-      el.querySelectorAll('select, input, textarea').forEach(function(input) {
-        input.disabled = isMacro;
-      });
+  function fillMacroSelect(select, kind, selectedId) {
+    const current = selectedId || select.value;
+    select.innerHTML = '<option value="">---------</option>';
+    catalog.filter(function(item) { return item.kind === kind; }).forEach(function(item) {
+      const option = document.createElement('option');
+      option.value = String(item.id);
+      option.textContent = item.label;
+      if (String(item.id) === String(current)) option.selected = true;
+      select.appendChild(option);
     });
-    if (macroFields) {
-      macroFields.classList.toggle('d-none', !isMacro);
-      macroFields.querySelectorAll('input').forEach(function(input) {
-        input.disabled = !isMacro;
-      });
-    }
-    if (isMacro) return;
-    const items = (skills || []).map(function(pair) {
-      return { value: pair[0], label: pair[1] };
-    });
-    fillSelect(checkSel, items, null);
   }
 
-  productSel?.addEventListener('change', syncSections);
-  expertiseSel?.addEventListener('change', syncSections);
-  typeSel?.addEventListener('change', syncCheckValue);
+  function lineKind(row) {
+    const typeSel = row.querySelector('.report-check-line-type');
+    return typeSel ? typeSel.value : 'macro';
+  }
+
+  function syncLine(row, selectedId) {
+    const macroSel = row.querySelector('.report-check-line-macro');
+    if (macroSel) fillMacroSelect(macroSel, lineKind(row), selectedId);
+  }
+
+  function renumber() {
+    linesBox.querySelectorAll('.report-check-line').forEach(function(row, index) {
+      const badge = row.querySelector('.report-check-line-rank');
+      if (badge) badge.textContent = String(index + 1);
+    });
+  }
+
+  function syncMode() {
+    const mode = modeSel ? modeSel.value : 'sum';
+    const lockLines = mode === 'sum';
+    const showLaunch = mode !== 'per_item';
+    if (launchThreshold) launchThreshold.classList.toggle('d-none', !showLaunch);
+    linesBox.querySelectorAll('.report-check-line-threshold').forEach(function(input) {
+      input.disabled = lockLines;
+      input.classList.toggle('d-none', lockLines);
+      if (lockLines) input.value = '';
+    });
+  }
+
+  function syncEnabled(row) {
+    const box = row.querySelector('.report-check-line-select');
+    const hidden = row.querySelector('.report-check-line-enabled');
+    if (box && hidden) hidden.value = box.checked ? '1' : '0';
+  }
+
+  function bindRow(row, selectedId) {
+    syncLine(row, selectedId);
+    const typeSel = row.querySelector('.report-check-line-type');
+    if (typeSel) {
+      typeSel.addEventListener('change', function() {
+        syncLine(row, '');
+      });
+    }
+    const box = row.querySelector('.report-check-line-select');
+    if (box) box.addEventListener('change', function() { syncEnabled(row); });
+    syncEnabled(row);
+    const macroSel = row.querySelector('.report-check-line-macro');
+    if (macroSel) {
+      macroSel.addEventListener('change', function() {
+        macroSel.blur();
+      });
+    }
+  }
+
+  linesBox.querySelectorAll('.report-check-line').forEach(function(row, index) {
+    const stored = storedLines[index] || {};
+    bindRow(row, stored.macro_id || '');
+  });
+  syncMode();
+  syncMoveButtons();
   syncSections();
-  syncCheckValue();
+
+  if (productSel) productSel.addEventListener('change', syncSections);
+  if (expertiseSel) expertiseSel.addEventListener('change', syncSections);
+  if (modeSel) modeSel.addEventListener('change', syncMode);
+
+  function rowHtml() {
+    return ''
+      + '<span class="badge rounded-circle d-flex align-items-center justify-content-center report-check-line-rank" '
+      + 'style="width:18px; height:18px; font-size:.6rem; letter-spacing:-0.08em; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:\'SF Pro Text\',system-ui,-apple-system,sans-serif;"></span>'
+      + '<input type="hidden" name="line_enabled" value="1" class="report-check-line-enabled">'
+      + '<input class="form-check-input report-check-line-select" type="checkbox" aria-label="Включить в запуск" checked>'
+      + '<select name="line_check_type" class="form-select report-check-line-type" aria-label="Тип проверки">'
+      + '<option value="macro" selected>Макрос</option><option value="skill">Навык</option></select>'
+      + '<select name="line_macro" class="form-select report-check-line-macro" aria-label="Название"><option value="">---------</option></select>'
+      + '<input name="line_threshold" class="form-control report-check-line-threshold" type="number" min="0" step="1" inputmode="numeric" aria-label="Пороговое значение" placeholder="Пороговое значение">'
+      + '<span class="report-check-line-tools">'
+      + '<button type="button" class="inline-specialty-btn" data-line-move="up" title="Выше" aria-label="Выше"><i class="bi bi-arrow-up"></i></button>'
+      + '<button type="button" class="inline-specialty-btn" data-line-move="down" title="Ниже" aria-label="Ниже"><i class="bi bi-arrow-down"></i></button>'
+      + '<button type="button" class="inline-specialty-btn report-check-line-remove" title="Удалить" aria-label="Удалить"><i class="bi bi-x-lg"></i></button>'
+      + '</span>';
+  }
+
+  if (addBtn) {
+    addBtn.addEventListener('click', function() {
+      const row = document.createElement('div');
+      row.className = 'd-flex align-items-center gap-2 mb-2 report-check-line';
+      row.innerHTML = rowHtml();
+      linesBox.appendChild(row);
+      bindRow(row, '');
+      renumber();
+      syncMoveButtons();
+      syncMode();
+    });
+  }
+
+  function syncMoveButtons() {
+    const rows = linesBox.querySelectorAll('.report-check-line');
+    rows.forEach(function(row, index) {
+      const up = row.querySelector('[data-line-move="up"]');
+      const down = row.querySelector('[data-line-move="down"]');
+      if (up) up.disabled = index === 0;
+      if (down) down.disabled = index === rows.length - 1;
+    });
+  }
+
+  function moveRow(row, direction) {
+    if (!row) return;
+    if (direction === 'up') {
+      const prev = row.previousElementSibling;
+      if (!prev) return;
+      linesBox.insertBefore(row, prev);
+    } else {
+      const next = row.nextElementSibling;
+      if (!next) return;
+      linesBox.insertBefore(next, row);
+    }
+    renumber();
+    syncMoveButtons();
+  }
+
+  linesBox.addEventListener('click', function(e) {
+    const moveBtn = e.target.closest('[data-line-move]');
+    if (moveBtn) {
+      moveRow(moveBtn.closest('.report-check-line'), moveBtn.getAttribute('data-line-move'));
+      return;
+    }
+    const btn = e.target.closest('.report-check-line-remove');
+    if (!btn) return;
+    const rows = linesBox.querySelectorAll('.report-check-line');
+    if (rows.length <= 1) {
+      const only = rows[0];
+      const typeSel = only.querySelector('.report-check-line-type');
+      const macroSel = only.querySelector('.report-check-line-macro');
+      const threshold = only.querySelector('.report-check-line-threshold');
+      const box = only.querySelector('.report-check-line-select');
+      if (typeSel) typeSel.value = 'macro';
+      if (macroSel) macroSel.value = '';
+      if (threshold) threshold.value = '';
+      if (box) box.checked = true;
+      syncEnabled(only);
+      syncLine(only, '');
+      syncMoveButtons();
+      return;
+    }
+    btn.closest('.report-check-line').remove();
+    renumber();
+    syncMoveButtons();
+  });
+
+  const orderBox = form.querySelector('#report-check-order');
+  function syncOrderRow(row) {
+    const box = row.querySelector('.report-check-order-enabled');
+    const hidden = row.querySelector('input[name="review_order"]');
+    if (hidden) hidden.disabled = !(box && box.checked);
+    const label = row.querySelector('.report-check-order-label');
+    const isAi = hidden && hidden.value === 'ai';
+    if (isAi && box && box.checked) {
+      orderBox.insertBefore(row, orderBox.firstElementChild);
+    }
+  }
+  function syncOrderMoves() {
+    if (!orderBox) return;
+    const rows = orderBox.querySelectorAll('.report-check-order-row');
+    rows.forEach(function(row, index) {
+      const hidden = row.querySelector('input[name="review_order"]');
+      const isAi = hidden && hidden.value === 'ai';
+      const up = row.querySelector('[data-order-move="up"]');
+      const down = row.querySelector('[data-order-move="down"]');
+      if (up) up.disabled = isAi || index === 0;
+      if (down) down.disabled = isAi || index === rows.length - 1;
+    });
+  }
+  if (orderBox) {
+    orderBox.querySelectorAll('.report-check-order-row').forEach(syncOrderRow);
+    syncOrderMoves();
+    orderBox.addEventListener('change', function(e) {
+      const row = e.target.closest('.report-check-order-row');
+      if (!row) return;
+      syncOrderRow(row);
+      syncOrderMoves();
+    });
+    orderBox.addEventListener('click', function(e) {
+      const moveBtn = e.target.closest('[data-order-move]');
+      if (!moveBtn) return;
+      const row = moveBtn.closest('.report-check-order-row');
+      const hidden = row && row.querySelector('input[name="review_order"]');
+      if (!row || (hidden && hidden.value === 'ai')) return;
+      if (moveBtn.getAttribute('data-order-move') === 'up') {
+        const prev = row.previousElementSibling;
+        const prevHidden = prev && prev.querySelector('input[name="review_order"]');
+        if (!prev || (prevHidden && prevHidden.value === 'ai' && prev.querySelector('.report-check-order-enabled')?.checked)) return;
+        orderBox.insertBefore(row, prev);
+      } else {
+        const next = row.nextElementSibling;
+        if (!next) return;
+        orderBox.insertBefore(next, row);
+      }
+      syncOrderMoves();
+    });
+  }
 })();
 </script>

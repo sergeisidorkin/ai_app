@@ -3,8 +3,12 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
+import time
+import uuid
 from types import SimpleNamespace
 
+from django.db import connection
 from django.utils import timezone
 
 from policy_app.models import TypicalSection
@@ -12,6 +16,7 @@ from policy_app.models import TypicalSection
 from .docx_comments import (
     DocxCommentError,
     count_comments,
+    count_comments_by_author,
     extract_char_runs,
     extract_document_text,
     extract_notes,
@@ -21,14 +26,23 @@ from .docx_comments import (
     extract_tab_offsets,
     extract_table_cells,
     insert_comments,
-    materialize_symbols,
     strip_comments,
-    update_broken_ref_fields,
 )
 from .docx_layout import extract_line_end_spaces
-from .models import Performer, PerformerReportUpload, ProjectRegistrationProduct, ReportCheckRule, ReportMacro
+from .models import (
+    Performer,
+    PerformerReportUpload,
+    ProjectRegistrationProduct,
+    ReportCheckRule,
+    ReportMacro,
+    report_line_participates,
+)
 
 log = logging.getLogger(__name__)
+
+
+class ReportCheckAborted(Exception):
+    """This process no longer owns the check and must not write its file."""
 
 SAFE_BUILTINS = {
     "abs": abs,
@@ -67,7 +81,9 @@ class MacroRunError(RuntimeError):
 
 def matching_check_rules(upload, rules=None) -> list[ReportCheckRule]:
     if rules is None:
-        rules = list(ReportCheckRule.objects.order_by("position", "id"))
+        rules = list(
+            ReportCheckRule.objects.prefetch_related("lines__macro").order_by("position", "id")
+        )
     else:
         rules = list(rules)
     product_ids = _registration_product_ids(upload)
@@ -91,28 +107,37 @@ def report_acceptance_threshold(upload, rules=None) -> int:
     if not upload or not getattr(upload, "pk", None):
         return 0
     matched = matching_check_rules(upload, rules)
-    if not matched:
-        return 0
-    macro_matched = [
+    sums = [
         rule
         for rule in matched
-        if getattr(rule, "check_type", "") == ReportCheckRule.CheckType.MACRO
+        if getattr(rule, "completion_mode", "") != ReportCheckRule.CompletionMode.PER_ITEM
     ]
-    chosen = macro_matched or matched
+    chosen = sums or matched
+    if not chosen:
+        return 0
     return min(int(getattr(rule, "finding_threshold", 0) or 0) for rule in chosen)
+
+
+def _line_is_kind(line, kind: str) -> bool:
+    return getattr(line, "check_type", "") == kind and getattr(line, "macro_id", None)
 
 
 def list_macros_for_upload(upload: PerformerReportUpload) -> list[ReportMacro]:
     rules = (
         ReportCheckRule.objects
-        .filter(check_type=ReportCheckRule.CheckType.MACRO)
-        .prefetch_related("macros")
+        .prefetch_related("lines__macro")
         .order_by("position", "id")
     )
     seen: set[int] = set()
     macros: list[ReportMacro] = []
     for rule in matching_check_rules(upload, rules):
-        for macro in rule.macros.all().order_by("position", "id"):
+        lines = sorted(rule.lines.all(), key=lambda item: (item.position, item.pk))
+        for line in lines:
+            if not report_line_participates(line):
+                continue
+            if not _line_is_kind(line, ReportCheckRule.CheckType.MACRO):
+                continue
+            macro = line.macro
             if macro.pk in seen:
                 continue
             seen.add(macro.pk)
@@ -123,10 +148,18 @@ def list_macros_for_upload(upload: PerformerReportUpload) -> list[ReportMacro]:
 def matching_macro_rules_clear_comments(upload: PerformerReportUpload) -> bool:
     rules = (
         ReportCheckRule.objects
-        .filter(check_type=ReportCheckRule.CheckType.MACRO)
+        .prefetch_related("lines")
         .order_by("position", "id")
     )
-    return any(rule.clear_comments for rule in matching_check_rules(upload, rules))
+    for rule in matching_check_rules(upload, rules):
+        if not rule.clear_comments:
+            continue
+        if any(
+            report_line_participates(line) and _line_is_kind(line, ReportCheckRule.CheckType.MACRO)
+            for line in rule.lines.all()
+        ):
+            return True
+    return False
 
 
 def _rule_matches_upload(rule, upload, product_ids, section_ids, section_expertise) -> bool:
@@ -150,6 +183,48 @@ def _rule_matches_upload(rule, upload, product_ids, section_ids, section_experti
     return True
 
 
+def _claim_report_check_if_unbound(upload: PerformerReportUpload) -> None:
+    """Own a synchronous check before it becomes visible as running.
+
+    Recovery treats a running check with an empty heartbeat as abandoned and
+    starts a second process. That process strips comments, then loses the race
+    and used to overwrite the finished file with the stripped document.
+    """
+    token = getattr(_report_check_claim, "token", "") or ""
+    upload_id = getattr(_report_check_claim, "upload_id", None)
+    if token and upload_id == upload.pk:
+        return
+    token = uuid.uuid4().hex
+    now = timezone.now()
+    attempts = max(int(upload.check_attempts or 0), 1)
+    updated = PerformerReportUpload.objects.filter(pk=upload.pk, check_claim="").update(
+        check_claim=token,
+        check_heartbeat_at=now,
+        check_status=PerformerReportUpload.CheckStatus.RUNNING,
+        check_error="",
+        check_finding_count=0,
+        check_attempts=attempts,
+        check_macro_index=0,
+        check_macro_total=0,
+        check_macro_name="",
+    )
+    if not updated:
+        raise ReportCheckAborted()
+    bind_report_check_claim(upload.pk, token)
+    upload.check_claim = token
+    upload.check_heartbeat_at = now
+    upload.check_attempts = attempts
+    upload.check_status = PerformerReportUpload.CheckStatus.RUNNING
+    upload.check_macro_index = 0
+    upload.check_macro_total = 0
+    upload.check_macro_name = ""
+
+
+def _require_report_check_owner(upload: PerformerReportUpload) -> None:
+    if not touch_report_check_heartbeat(upload):
+        raise ReportCheckAborted()
+
+
 def apply_report_macro_checks(upload: PerformerReportUpload, file_bytes: bytes) -> bytes:
     macros = list_macros_for_upload(upload)
     if not macros:
@@ -157,11 +232,15 @@ def apply_report_macro_checks(upload: PerformerReportUpload, file_bytes: bytes) 
     ext = os.path.splitext(upload.file_name or "")[1].lower()
     if ext != ".docx":
         return file_bytes
+    _claim_report_check_if_unbound(upload)
+    _require_report_check_owner(upload)
 
     upload.check_status = PerformerReportUpload.CheckStatus.RUNNING
     upload.check_error = ""
     upload.check_finding_count = 0
     upload.save(update_fields=["check_status", "check_error", "check_finding_count"])
+    total = len(macros)
+    _publish_check_progress(upload, 0, total, "Подготовка документа")
 
     if matching_macro_rules_clear_comments(upload):
         try:
@@ -170,17 +249,10 @@ def apply_report_macro_checks(upload: PerformerReportUpload, file_bytes: bytes) 
             store_report_check_status(upload, PerformerReportUpload.CheckStatus.ERROR, 0, str(exc))
             return file_bytes
 
+    # Analysis and rendering must use the same immutable coordinate system.
+    # Materialising w:sym or rewriting REF results in the output used to alter
+    # report text; comment-only checks intentionally never do that.
     source_bytes = file_bytes
-    try:
-        file_bytes = materialize_symbols(file_bytes)
-    except Exception:
-        log.exception("Failed to materialize Word symbols for upload %s", upload.pk)
-        file_bytes = source_bytes
-
-    try:
-        file_bytes = update_broken_ref_fields(file_bytes)
-    except Exception:
-        log.exception("Failed to update broken REF fields for upload %s", upload.pk)
 
     try:
         text, _spans = extract_document_text(file_bytes)
@@ -198,7 +270,12 @@ def apply_report_macro_checks(upload: PerformerReportUpload, file_bytes: bytes) 
         return file_bytes
 
     try:
-        line_end_spaces = extract_line_end_spaces(file_bytes)
+        line_end_spaces = extract_line_end_spaces(
+            file_bytes,
+            progress=_layout_progress(upload, total),
+        )
+    except ReportCheckAborted:
+        raise
     except Exception:
         log.exception("Failed to estimate visual line wraps for upload %s", upload.pk)
         line_end_spaces = frozenset()
@@ -247,36 +324,52 @@ def apply_report_macro_checks(upload: PerformerReportUpload, file_bytes: bytes) 
 
     findings: list[dict] = []
     errors: list[str] = []
-    for macro in macros:
+    for index, macro in enumerate(macros, start=1):
+        label = macro.display_label
+        if not store_report_macro_progress(upload, index, total, label):
+            raise ReportCheckAborted()
         try:
             for item in run_macro(macro, _build_ctx(upload, text, macro, line_end_spaces, notes, paragraphs, table_cells, ref_fields, sections, tab_offsets, char_runs)):
-                item["author"] = macro.name
+                item["author"] = label
                 findings.append(item)
         except Exception as exc:
             log.exception("Report macro %s failed for upload %s", macro.pk, upload.pk)
             errors.append(f"{macro.name}: {exc}")
 
     result = source_bytes
+    unplaced: list[str] = []
     if findings:
+        _publish_check_progress(upload, total, total, "Примечания")
         try:
-            result = insert_comments(file_bytes, findings)
+            result = insert_comments(
+                source_bytes,
+                findings,
+                unplaced=unplaced,
+                progress=lambda: touch_report_check_heartbeat(upload),
+            )
         except Exception as exc:
             log.exception("Failed to insert report comments for upload %s", upload.pk)
             errors.append(f"Комментарии: {exc}")
             result = source_bytes
+        else:
+            errors.extend(unplaced)
+    _require_report_check_owner(upload)
 
     if errors and not findings:
         status = PerformerReportUpload.CheckStatus.ERROR
     else:
         status = PerformerReportUpload.CheckStatus.DONE
     finding_count = len(findings)
+    by_author: dict[str, int] = {}
     if status == PerformerReportUpload.CheckStatus.DONE:
         try:
-            finding_count = count_comments(result)
+            finding_count, by_author = recount_report_findings(result)
         except DocxCommentError as exc:
             errors.append(f"Не удалось посчитать комментарии: {exc}")
             status = PerformerReportUpload.CheckStatus.ERROR
-    store_report_check_status(upload, status, finding_count, "\n".join(errors))
+            finding_count = 0
+            by_author = {}
+    store_report_check_status(upload, status, finding_count, "\n".join(errors), by_author)
     return result
 
 
@@ -416,14 +509,137 @@ def _section_expertise_map(section_ids) -> dict[int, int | None]:
     )
 
 
+_report_check_claim = threading.local()
+
+
+def bind_report_check_claim(upload_id, token: str) -> None:
+    _report_check_claim.upload_id = upload_id
+    _report_check_claim.token = token or ""
+
+
+def clear_report_check_claim() -> None:
+    _report_check_claim.upload_id = None
+    _report_check_claim.token = ""
+
+
+def touch_report_check_heartbeat(upload) -> bool:
+    """Refresh the lease. False when this thread no longer owns the check."""
+    token = getattr(_report_check_claim, "token", "") or ""
+    upload_id = getattr(_report_check_claim, "upload_id", None)
+    if not token or upload_id != getattr(upload, "pk", None):
+        return True
+    if connection.connection is not None and not connection.is_usable():
+        connection.close()
+    updated = PerformerReportUpload.objects.filter(
+        pk=upload.pk,
+        check_claim=token,
+        check_status=PerformerReportUpload.CheckStatus.RUNNING,
+    ).update(check_heartbeat_at=timezone.now())
+    return bool(updated)
+
+
+def report_check_claim_lost(upload) -> bool:
+    """True when this thread no longer owns the background report check."""
+    token = getattr(_report_check_claim, "token", "") or ""
+    upload_id = getattr(_report_check_claim, "upload_id", None)
+    if not token or upload_id != getattr(upload, "pk", None):
+        return False
+    return not PerformerReportUpload.objects.filter(pk=upload.pk, check_claim=token).exists()
+
+
+def recount_report_findings(file_bytes: bytes) -> tuple[int, dict[str, int]]:
+    """Count comments in the finished docx, including a breakdown by author."""
+    if not file_bytes:
+        return 0, {}
+    total = count_comments(file_bytes)
+    return total, count_comments_by_author(file_bytes)
+
+
 def store_report_check_status(
     upload: PerformerReportUpload,
     status: str,
     finding_count: int,
     error: str,
-) -> None:
+    by_author: dict | None = None,
+) -> bool:
+    if report_check_claim_lost(upload):
+        return False
     upload.check_status = status
     upload.check_finding_count = finding_count
     upload.check_error = error or ""
     upload.checked_at = timezone.now()
-    upload.save(update_fields=["check_status", "check_finding_count", "check_error", "checked_at"])
+    upload.check_macro_index = 0
+    upload.check_macro_total = 0
+    upload.check_macro_name = ""
+    upload.check_finding_by_author = by_author or {}
+    upload.check_finding_correction = None
+    upload.status_changed_at = upload.checked_at
+    upload.save(update_fields=[
+        "check_status",
+        "check_finding_count",
+        "check_error",
+        "checked_at",
+        "check_macro_index",
+        "check_macro_total",
+        "check_macro_name",
+        "check_finding_by_author",
+        "check_finding_correction",
+        "status_changed_at",
+    ])
+    if status == PerformerReportUpload.CheckStatus.DONE:
+        from .report_review import sync_review_after_check
+
+        sync_review_after_check(upload)
+    return True
+
+
+def _publish_check_progress(upload, index: int, total: int, name: str) -> None:
+    if not store_report_macro_progress(upload, index, total, name):
+        raise ReportCheckAborted()
+
+
+def _layout_progress(upload, total: int):
+    """Доля разобранных абзацев. Запись в базу не чаще нескольких раз в секунду."""
+    state = {"mark": 0.0, "label": ""}
+
+    def report(done: int, count: int) -> None:
+        percent = 0 if not count else (int(done) * 100) // int(count)
+        label = f"Подготовка документа {percent}%"
+        now = time.monotonic()
+        finished = count and int(done) >= int(count)
+        if label == state["label"]:
+            return
+        if not finished and state["mark"] and now - state["mark"] < 0.4:
+            return
+        state["mark"] = now
+        state["label"] = label
+        _publish_check_progress(upload, 0, total, label)
+
+    return report
+
+
+def store_report_macro_progress(upload, index: int, total: int, name: str) -> bool:
+    """Записать текущий макрос. False, если эта проверка уже не принадлежит потоку."""
+    token = getattr(_report_check_claim, "token", "") or ""
+    upload_id = getattr(_report_check_claim, "upload_id", None)
+    if not token or upload_id != getattr(upload, "pk", None):
+        return True
+    if connection.connection is not None and not connection.is_usable():
+        connection.close()
+    label = (name or "")[:255]
+    updated = PerformerReportUpload.objects.filter(
+        pk=upload.pk,
+        check_claim=token,
+        check_status=PerformerReportUpload.CheckStatus.RUNNING,
+    ).update(
+        check_heartbeat_at=timezone.now(),
+        check_macro_index=index,
+        check_macro_total=total,
+        check_macro_name=label,
+    )
+    if not updated:
+        return False
+    upload.check_macro_index = index
+    upload.check_macro_total = total
+    upload.check_macro_name = label
+    return True

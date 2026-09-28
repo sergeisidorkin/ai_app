@@ -259,6 +259,10 @@ def report_visible_registration_ids(user):
     return ids
 
 
+def show_finding_adjustment_columns(user) -> bool:
+    return is_admin_user(user) or is_direction_head_user(user)
+
+
 def can_view_report_upload(user, upload) -> bool:
     if not upload:
         return False
@@ -268,6 +272,53 @@ def can_view_report_upload(user, upload) -> bool:
     if visible is None:
         return True
     return upload.registration_id in visible
+
+
+def can_adjust_report_findings(user, upload) -> bool:
+    """Администратор правит любую автопроверку, руководитель направления — строки своего направления."""
+    if not upload:
+        return False
+    if is_admin_user(user):
+        return True
+    if not is_direction_head_user(user):
+        return False
+    employee = _employee_of(user)
+    department_id = getattr(employee, "department_id", None)
+    if not department_id:
+        return False
+    from .report_review import upload_org_direction_ids
+
+    return int(department_id) in upload_org_direction_ids(upload)
+
+
+def _row_direction_ids(row) -> set[int]:
+    ids = set()
+    performer = getattr(row, "performer", None)
+    section = getattr(performer, "typical_section", None) if performer is not None else getattr(row, "typical_section", None)
+    direction_id = getattr(section, "expertise_direction_id", None)
+    if direction_id:
+        ids.add(int(direction_id))
+    if ids and not getattr(row, "is_all_sections", False) and not getattr(row, "is_full_report", False):
+        return ids
+    performer_ids = list(getattr(row, "performer_ids", None) or [])
+    if performer_ids:
+        ids.update(
+            Performer.objects.filter(pk__in=performer_ids)
+            .exclude(typical_section__expertise_direction_id=None)
+            .values_list("typical_section__expertise_direction_id", flat=True)
+        )
+    return {int(item) for item in ids if item}
+
+
+def _direction_head_sees_row(user, row) -> bool:
+    employee = _employee_of(user)
+    department_id = getattr(employee, "department_id", None)
+    if not department_id:
+        return False
+    upload = getattr(row, "upload", None)
+    if upload is not None:
+        return can_adjust_report_findings(user, upload)
+    return int(department_id) in _row_direction_ids(row)
 
 
 def annotate_report_submission_rows(user, rows):
@@ -280,6 +331,58 @@ def annotate_report_submission_rows(user, rows):
             is_all_sections=bool(getattr(row, "is_all_sections", False)),
             is_full_report=bool(getattr(row, "is_full_report", False)),
         )
-        row.can_upload = bool(allowed and getattr(row, "is_current", False))
-        row.can_send = bool(allowed and getattr(row, "is_current", False))
+        upload = getattr(row, "upload", None)
+        entry = getattr(row, "review_entry", None)
+        current = bool(getattr(row, "is_current", False))
+        from .report_review import (
+            REVIEW_PHASE_REVIEW,
+            REVIEW_PHASE_REWORK,
+            entry_status,
+            manual_status_label,
+            user_matches_review_step,
+        )
+        from .report_submission import report_workflow_status_class
+
+        row.conceal_pending_remarks = False
+        if entry is not None:
+            if entry.remarks_notice_pending and not entry.settled:
+                if user_matches_review_step(user, entry.upload, entry.step):
+                    row.workflow_status = entry_status(entry)
+                else:
+                    row.conceal_pending_remarks = True
+                    row.workflow_status = manual_status_label(entry.step, REVIEW_PHASE_REVIEW)
+                    row.finding_count_display = "—"
+                    row.finding_info_disabled = False
+                row.workflow_status_class = report_workflow_status_class(row.workflow_status)
+            row.can_upload = bool(
+                allowed and current and entry.phase == REVIEW_PHASE_REWORK and not entry.settled
+            )
+            row.can_send = False
+            row.can_review_upload = bool(
+                current
+                and entry.phase == REVIEW_PHASE_REVIEW
+                and not entry.settled
+                and not (entry.review_file_name or entry.review_cloud_path)
+                and user_matches_review_step(user, entry.upload, entry.step)
+            )
+            row.can_discard_remarks = bool(
+                current
+                and entry.remarks_notice_pending
+                and not entry.settled
+                and user_matches_review_step(user, entry.upload, entry.step)
+            )
+        else:
+            row.can_upload = bool(allowed and current)
+            row.can_send = bool(allowed and current and not (getattr(upload, "review_step", "") or ""))
+            row.can_review_upload = False
+            row.can_discard_remarks = False
+        if is_admin_user(user):
+            row.finding_adjustment_visible = True
+        elif is_direction_head_user(user):
+            row.finding_adjustment_visible = _direction_head_sees_row(user, row)
+        else:
+            row.finding_adjustment_visible = False
+        row.can_correct_findings = bool(
+            row.finding_adjustment_visible and getattr(row, "show_finding_info", False) and upload
+        )
     return rows

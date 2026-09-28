@@ -241,6 +241,7 @@ class HomePagePermissionsTests(TestCase):
         self.assertContains(response, 'data-projects-section="team"', html=False)
         self.assertContains(response, 'data-projects-section="info-request"', html=False)
         self.assertContains(response, 'data-projects-section="report-submission"', html=False)
+        self.assertContains(response, 'data-notification-counter-subsection="report_submission"', html=False)
         self.assertContains(response, 'id="projects-section-title">Проекты</h5>', html=False)
         self.assertContains(response, 'id="projects-content-launch" class="projects-section-content"', html=False)
         self.assertContains(response, 'id="projects-content-scope" class="projects-section-content d-none"', html=False)
@@ -1000,6 +1001,52 @@ class DshBrandingTests(SimpleTestCase):
         default_model = next(model for model in models if model["id"] == "Qwen/Qwen3.5-27B")
         self.assertIn("off", default_model["reasoningEfforts"])
         self.assertNotIn(False, default_model["reasoningEfforts"])
+
+    def test_reasoning_levels_follow_installed_model_scale(self):
+        from unittest.mock import patch
+
+        from core import dsh_catalog
+        from core.dsh_catalog import catalog_reasoning_levels, reasoning_levels_for_entry
+
+        payload = {
+            "models": [
+                {
+                    "id": "qwen3.8-max",
+                    "thinkingLevelMap": {
+                        "off": None,
+                        "minimal": None,
+                        "low": "low",
+                        "medium": "medium",
+                        "high": None,
+                        "xhigh": "xhigh",
+                        "max": None,
+                    },
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            catalog_dir = Path(raw)
+            (catalog_dir / "qwen-token-plan.json").write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            dsh_catalog._catalog_reasoning_index.cache_clear()
+            try:
+                with patch("core.dsh_catalog._pi_ai_catalog_dir", return_value=catalog_dir):
+                    catalog = [level for level, _wire in catalog_reasoning_levels("qwen3.8-max")]
+                    self.assertEqual(catalog, ["low", "medium", "xhigh"])
+                    offered = reasoning_levels_for_entry(
+                        {"compat": {"thinkingFormat": "qwen"}},
+                        {"id": "qwen3.8-max"},
+                    )
+                    self.assertEqual(offered, ["off", "low", "medium", "xhigh"])
+            finally:
+                dsh_catalog._catalog_reasoning_index.cache_clear()
+        declared = reasoning_levels_for_entry(
+            {"compat": {"thinkingFormat": "qwen"}},
+            {"id": "Qwen/Qwen3.5-27B", "reasoningEfforts": {"off": None, "low": "low"}},
+        )
+        self.assertEqual(declared, ["off", "low"])
 
     def test_local_dsh_registers_alibaba_payg_catalog(self):
         import yaml

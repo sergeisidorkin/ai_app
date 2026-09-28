@@ -422,9 +422,11 @@
                  data-projects-section="info-request">
                 Запрос информации
               </a>
-              <a href="#" class="list-group-item list-group-item-action"
+              <a href="#" class="list-group-item list-group-item-action d-flex align-items-center"
                  data-projects-section="report-submission">
-                Сдача отчетов
+                <span>Сдача отчетов</span>
+                <span class="badge rounded-pill text-bg-danger ms-2 {% if NOTIFICATION_SUBSECTION_COUNTS.report_submission|default:0 <= 0 %}d-none{% endif %}"
+                      data-notification-counter-subsection="report_submission">{{ NOTIFICATION_SUBSECTION_COUNTS.report_submission|default:0 }}</span>
               </a>
               <a href="#" class="list-group-item list-group-item-action"
                  data-projects-section="performer-payments">
@@ -873,6 +875,10 @@
                 Согласование запроса
               </a>
               <a href="#" class="list-group-item list-group-item-action"
+                 data-letters-section="report-remarks">
+                Отправка замечаний
+              </a>
+              <a href="#" class="list-group-item list-group-item-action"
                  data-letters-section="payment-request">
                 Заявка на оплату
               </a>
@@ -916,6 +922,9 @@
               </div>
               <div id="letters-content-request-approval" class="letters-section-content d-none"
                    data-letters-url="{% url 'letter_template_partial' 'request_approval' %}">
+              </div>
+              <div id="letters-content-report-remarks" class="letters-section-content d-none"
+                   data-letters-url="{% url 'letter_template_partial' 'report_remarks' %}">
               </div>
               <div id="letters-content-payment-request" class="letters-section-content d-none"
                    data-letters-url="{% url 'letter_template_partial' 'payment_request' %}">
@@ -2518,6 +2527,7 @@
             'scan-sending': 'Отправка скана сотрудника',
             'project-start': 'Начало проекта',
             'request-approval': 'Согласование запроса',
+            'report-remarks': 'Отправка замечаний',
             'payment-request': 'Заявка на оплату',
           };
 
