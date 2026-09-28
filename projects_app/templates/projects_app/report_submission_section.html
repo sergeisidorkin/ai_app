@@ -1,10 +1,14 @@
 {% load projects_extras %}
 <div id="report-submission-section"{% if is_report_readonly %} data-report-readonly="1"{% endif %}
      data-report-upload-url="{% url 'report_file_upload' %}"
+     data-report-review-url="{% url 'report_review_file_upload' %}"
      data-report-send-url="{% url 'report_file_send' %}"
+     data-report-remarks-send-url="{% url 'report_remarks_send' %}"
+     data-report-remarks-discard-url="{% url 'report_remarks_discard' %}"
      data-report-check-status-url="{% url 'report_check_status' 0 %}"
+     data-report-finding-correction-url="{% url 'report_finding_correction' 0 %}"
      data-report-delete-url="{% url 'report_file_delete' 0 %}">
-  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <h5 class="table-section-title mb-0">
         <i class="bi bi-table me-2"></i> Отчеты
@@ -45,6 +49,38 @@
       </div>
       {% endif %}
     </div>
+    <div class="d-flex align-items-center gap-2 ms-auto">
+      <span class="small text-muted text-nowrap">Отображаемые поля:</span>
+      <div class="tkp-colpicker" id="report-submission-colpicker-wrap">
+        <button type="button" class="form-select form-select-sm text-start tkp-colpicker-btn" id="report-submission-colpicker-btn">
+          Все поля
+        </button>
+        <div class="tkp-colpicker-menu" id="report-submission-colpicker-menu">
+          <div class="tkp-colpicker-item">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="all" id="report-submission-col-all" checked>
+              <label class="form-check-label" for="report-submission-col-all">Все поля</label>
+            </div>
+          </div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="stage" id="report-submission-col-stage" checked><label class="form-check-label" for="report-submission-col-stage">Этап</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="product" id="report-submission-col-product" checked><label class="form-check-label" for="report-submission-col-product">Продукт</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="report-submission-col-name" checked><label class="form-check-label" for="report-submission-col-name">Название</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="executor" id="report-submission-col-executor" checked><label class="form-check-label" for="report-submission-col-executor">Исполнитель</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="asset" id="report-submission-col-asset" checked><label class="form-check-label" for="report-submission-col-asset">Наименование актива</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="section" id="report-submission-col-section" checked><label class="form-check-label" for="report-submission-col-section">Раздел</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="report-submission-col-status" checked><label class="form-check-label" for="report-submission-col-status">Статус</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status-date" id="report-submission-col-status-date" checked><label class="form-check-label" for="report-submission-col-status-date">Дата статуса</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="upload" id="report-submission-col-upload" checked><label class="form-check-label" for="report-submission-col-upload">Загрузить</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="version" id="report-submission-col-version" checked><label class="form-check-label" for="report-submission-col-version">Верс.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="check-result" id="report-submission-col-check-result" checked><label class="form-check-label" for="report-submission-col-check-result">Результаты проверки</label></div></div>
+          {% if show_finding_adjustment_columns %}
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="calculated-count" id="report-submission-col-calculated-count" checked><label class="form-check-label" for="report-submission-col-calculated-count">Расч.</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="corrected-count" id="report-submission-col-corrected-count" checked><label class="form-check-label" for="report-submission-col-corrected-count">Корр.</label></div></div>
+          {% endif %}
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="finding-count" id="report-submission-col-finding-count" checked><label class="form-check-label" for="report-submission-col-finding-count">Число замеч.</label></div></div>
+        </div>
+      </div>
+    </div>
   </div>
   {% if allow_local_report_folder %}
   <div id="report-submission-local-wrap" class="mb-3 d-none">
@@ -68,7 +104,7 @@
   <div id="report-check-section">
     <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
       <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
-        <i class="bi bi-table"></i> Проверка
+        <i class="bi bi-table"></i> Параметры проверки
       </h5>
     </div>
 
@@ -103,11 +139,11 @@
           <th class="text-nowrap">Продукты</th>
           <th class="text-nowrap">Экспертиза</th>
           <th class="text-nowrap">Разделы</th>
-          <th class="text-nowrap">Тип проверки</th>
-          <th class="text-nowrap">Число замечаний</th>
-          <th class="text-nowrap">Проверка</th>
-          <th class="text-nowrap">Модель</th>
+          <th class="text-nowrap">Состав проверки</th>
+          <th class="text-nowrap">Условия сдачи отчета</th>
+          <th class="text-nowrap">Пороговое значение</th>
           <th class="text-nowrap">Очистка</th>
+          <th class="text-nowrap">Порядок</th>
         </tr>
         </thead>
         <tbody>
@@ -133,11 +169,11 @@
             <td class="text-nowrap">{{ rule.product_label }}</td>
             <td class="text-nowrap">{{ rule.expertise_label }}</td>
             <td class="text-nowrap">{{ rule.section_label }}</td>
-            <td class="text-nowrap">{{ rule.get_check_type_display }}</td>
-            <td class="text-nowrap">{{ rule.finding_threshold }}</td>
-            <td class="text-nowrap">{{ rule.check_label }}</td>
-            <td class="text-nowrap">{{ rule.model_display }}</td>
+            <td class="text-nowrap">{{ rule.composition_label }}</td>
+            <td class="text-nowrap">{{ rule.get_completion_mode_display }}</td>
+            <td class="text-nowrap">{{ rule.threshold_label }}</td>
             <td class="text-nowrap">{{ rule.clear_comments_label }}</td>
+            <td class="text-nowrap">{{ rule.review_order_label }}</td>
           </tr>
         {% empty %}
           <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
@@ -177,6 +213,34 @@
 
   {% include "projects_app/report_macros_section.html" %}
   {% endif %}
+
+  <div class="modal fade" id="report-finding-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header align-items-start">
+          <div>
+            <h5 class="modal-title">Результаты проверки</h5>
+            <div class="report-finding-heading">
+              <div>Проект: <span id="report-finding-project"></span></div>
+              <div>Исполнитель: <span id="report-finding-executor"></span></div>
+              <div>Отчет: <span id="report-finding-report"></span></div>
+              <div>Версия: <span id="report-finding-version"></span></div>
+            </div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body">
+          <div id="report-finding-groups"></div>
+        </div>
+        <div class="modal-footer">
+          <div id="report-finding-correction-error" class="text-danger small me-auto d-none" role="alert"></div>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal" id="report-finding-close">Закрыть</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm d-none" data-bs-dismiss="modal" id="report-finding-cancel">Отмена</button>
+          <button type="button" class="btn btn-primary btn-sm d-none" id="report-finding-save">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   {% if is_admin %}
   <div class="modal fade" id="report-file-delete-modal" tabindex="-1" aria-hidden="true">

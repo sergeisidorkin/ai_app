@@ -44,6 +44,7 @@ COMMENT_PART_NAMES = {
     "/word/commentsIds.xml",
     "/word/commentsExtensible.xml",
 }
+_COMMENT_PROGRESS_BATCH = 50
 COMMENT_ZIP_NAMES = {
     "word/comments.xml",
     "word/commentsExtended.xml",
@@ -749,7 +750,7 @@ def _sym_char(sym: etree._Element) -> str:
     return ""
 
 
-def insert_comments(docx_bytes: bytes, findings: list[dict]) -> bytes:
+def insert_comments(docx_bytes: bytes, findings: list[dict], unplaced=None, progress=None) -> bytes:
     if not findings:
         return docx_bytes
     parts = _read_zip(docx_bytes)
@@ -757,6 +758,8 @@ def insert_comments(docx_bytes: bytes, findings: list[dict]) -> bytes:
         raise DocxCommentError("В файле нет word/document.xml.")
 
     doc_root = etree.fromstring(parts[DOCUMENT_XML])
+    _text, spans = _walk_text(doc_root)
+    spans = list(spans)
     comments_root, next_id = _load_comments_root(parts.get(COMMENTS_XML))
     rels_root, used_rids, url_to_rid = _load_comments_rels(parts.get(COMMENTS_RELS))
     ordered = sorted(
@@ -765,11 +768,32 @@ def insert_comments(docx_bytes: bytes, findings: list[dict]) -> bytes:
         reverse=True,
     )
     added_hyperlinks = False
-    for item in ordered:
-        start = int(item.get("start") or 0)
-        end = int(item.get("end") or 0)
+    placed_count = 0
+    for index, item in enumerate(ordered):
+        if progress is not None and index % _COMMENT_PROGRESS_BATCH == 0:
+            if progress() is False:
+                return docx_bytes
         message = str(item.get("message") or "").strip()
         author = str(item.get("author") or "Проверка").strip() or "Проверка"
+        note_id = str(item.get("note_id") or "").strip()
+        if note_id:
+            placed = _insert_comment_on_note_ref(
+                doc_root,
+                note_id,
+                str(item.get("note_kind") or "footnote").strip() or "footnote",
+                next_id,
+            )
+        else:
+            placed = _place_comment_range(
+                spans,
+                int(item.get("start") or 0),
+                int(item.get("end") or 0),
+                next_id,
+            )
+        if not placed:
+            if unplaced is not None:
+                unplaced.append(_unplaced_comment_message(item))
+            continue
         links = _finding_links(item)
         for link in links:
             if link["url"] not in url_to_rid:
@@ -778,39 +802,52 @@ def insert_comments(docx_bytes: bytes, findings: list[dict]) -> bytes:
                 url_to_rid[link["url"]] = rid
                 _add_hyperlink_rel(rels_root, rid, link["url"])
                 added_hyperlinks = True
-        if str(item.get("note_id") or "").strip():
-            _insert_comment_on_note_ref(
-                doc_root,
-                str(item.get("note_id")).strip(),
-                str(item.get("note_kind") or "footnote").strip() or "footnote",
-                next_id,
-            )
-        else:
-            _insert_one_comment(doc_root, start, end, next_id)
         comments_root.append(_comment_element(next_id, author, message, links, url_to_rid))
         next_id += 1
+        placed_count += 1
 
-    _preserve_edge_spaces(doc_root)
-    parts[DOCUMENT_XML] = etree.tostring(doc_root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    if not placed_count:
+        return docx_bytes
+    parts[DOCUMENT_XML] = _serialize_document(parts[DOCUMENT_XML], doc_root)
     parts[COMMENTS_XML] = etree.tostring(comments_root, xml_declaration=True, encoding="UTF-8", standalone=True)
     if added_hyperlinks or COMMENTS_RELS in parts:
         parts[COMMENTS_RELS] = etree.tostring(rels_root, xml_declaration=True, encoding="UTF-8", standalone=True)
     parts[DOCUMENT_RELS] = _ensure_comments_rel(parts.get(DOCUMENT_RELS))
     parts[CONTENT_TYPES] = _ensure_comments_content_type(parts.get(CONTENT_TYPES))
-    return _write_zip(parts)
+    result = _write_zip(parts, source=docx_bytes)
+    validate_comment_only_change(docx_bytes, result)
+    return result
+
+
+def _comments_root(docx_bytes: bytes):
+    parts = _read_zip(docx_bytes)
+    xml = parts.get(COMMENTS_XML)
+    if not xml:
+        return None
+    try:
+        return etree.fromstring(xml)
+    except etree.XMLSyntaxError as exc:
+        raise DocxCommentError("Некорректный word/comments.xml.") from exc
 
 
 def count_comments(docx_bytes: bytes) -> int:
     """Return the number of Word comments stored in a DOCX package."""
-    parts = _read_zip(docx_bytes)
-    xml = parts.get(COMMENTS_XML)
-    if not xml:
+    root = _comments_root(docx_bytes)
+    if root is None:
         return 0
-    try:
-        root = etree.fromstring(xml)
-    except etree.XMLSyntaxError as exc:
-        raise DocxCommentError("Некорректный word/comments.xml.") from exc
     return len(root.findall(w("comment")))
+
+
+def count_comments_by_author(docx_bytes: bytes) -> dict[str, int]:
+    """Group Word comments by the author stored on each comment."""
+    root = _comments_root(docx_bytes)
+    if root is None:
+        return {}
+    counts: dict[str, int] = {}
+    for comment in root.findall(w("comment")):
+        author = (comment.get(w("author")) or "").strip() or "Проверка"
+        counts[author] = counts.get(author, 0) + 1
+    return counts
 
 
 def strip_comments(docx_bytes: bytes) -> bytes:
@@ -847,7 +884,105 @@ def strip_comments(docx_bytes: bytes) -> bytes:
 
     if not changed:
         return docx_bytes
-    return _write_zip(parts)
+    return _write_zip(parts, source=docx_bytes)
+
+
+COMMENT_WRITE_PARTS = frozenset({
+    DOCUMENT_XML,
+    COMMENTS_XML,
+    COMMENTS_RELS,
+    DOCUMENT_RELS,
+    CONTENT_TYPES,
+})
+
+
+def validate_comment_only_change(source: bytes, result: bytes) -> None:
+    """Reject a rendered DOCX if anything except comment plumbing changed."""
+    source_parts = _read_zip(source)
+    result_parts = _read_zip(result)
+    for name, value in source_parts.items():
+        if name not in COMMENT_WRITE_PARTS and result_parts.get(name) != value:
+            raise DocxCommentError(
+                f"При вставке примечаний изменилась недопустимая часть DOCX: {name}."
+            )
+    unexpected = set(result_parts) - set(source_parts) - COMMENT_WRITE_PARTS
+    if unexpected:
+        raise DocxCommentError(
+            "При вставке примечаний добавлены недопустимые части DOCX: "
+            + ", ".join(sorted(unexpected))
+        )
+    source_text, _ = extract_document_text(source)
+    result_text, _ = extract_document_text(result)
+    if result_text != source_text:
+        raise DocxCommentError(
+            "Вставка примечаний изменила текст, пробелы или переносы документа."
+        )
+    if _document_tab_count(source_parts.get(DOCUMENT_XML)) != _document_tab_count(
+        result_parts.get(DOCUMENT_XML)
+    ):
+        raise DocxCommentError("Вставка примечаний изменила табуляцию документа.")
+    source_xml = source_parts.get(DOCUMENT_XML)
+    result_xml = result_parts.get(DOCUMENT_XML)
+    if _formatted_character_stream(source_xml) != _formatted_character_stream(result_xml):
+        raise DocxCommentError("Вставка примечаний изменила форматирование текста.")
+    if _document_structure_inventory(source_xml) != _document_structure_inventory(result_xml):
+        raise DocxCommentError("Вставка примечаний изменила структуру документа.")
+
+
+def _document_tab_count(xml: bytes | None) -> int:
+    if not xml:
+        return 0
+    try:
+        return sum(1 for _node in etree.fromstring(xml).iter(w("tab")))
+    except etree.XMLSyntaxError as exc:
+        raise DocxCommentError("Некорректный word/document.xml.") from exc
+
+
+def _formatted_character_stream(xml: bytes | None) -> tuple:
+    if not xml:
+        return ()
+    try:
+        root = etree.fromstring(xml)
+    except etree.XMLSyntaxError as exc:
+        raise DocxCommentError("Некорректный word/document.xml.") from exc
+    stream = []
+    for run in root.iter(w("r")):
+        if run.find(w("commentReference")) is not None:
+            continue
+        r_pr = run.find(w("rPr"))
+        formatting = (
+            etree.tostring(r_pr, method="c14n") if r_pr is not None else b""
+        )
+        for node in run.iter():
+            if _is_deleted(node):
+                continue
+            if node.tag == w("t"):
+                stream.extend((char, formatting) for char in (node.text or ""))
+            elif node.tag == w("tab"):
+                stream.append(("\t", formatting))
+            elif node.tag in (w("br"), w("cr")):
+                stream.append(("\n", formatting))
+            elif node.tag == w("sym"):
+                stream.append((
+                    f"sym:{node.get(w('font')) or ''}:{node.get(w('char')) or ''}",
+                    formatting,
+                ))
+    return tuple(stream)
+
+
+def _document_structure_inventory(xml: bytes | None) -> tuple:
+    if not xml:
+        return ()
+    try:
+        root = etree.fromstring(xml)
+    except etree.XMLSyntaxError as exc:
+        raise DocxCommentError("Некорректный word/document.xml.") from exc
+    names = (
+        "body", "sectPr", "tbl", "tr", "tc", "p", "hyperlink", "drawing",
+        "object", "footnoteReference", "endnoteReference", "fldChar",
+        "instrText", "bookmarkStart", "bookmarkEnd",
+    )
+    return tuple((name, sum(1 for _node in root.iter(w(name)))) for name in names)
 
 
 def _valid_finding(item: dict) -> bool:
@@ -1101,52 +1236,80 @@ def _is_deleted(node: etree._Element) -> bool:
     return False
 
 
-def _insert_one_comment(doc_root: etree._Element, start: int, end: int, comment_id: int) -> None:
-    text, spans = _walk_text(doc_root)
-    if start >= len(text):
-        return
-    end = min(end, len(text))
+def _unplaced_comment_message(item: dict) -> str:
+    message = str(item.get("message") or "").strip()
+    if len(message) > 120:
+        message = message[:117] + "..."
+    note_id = str(item.get("note_id") or "").strip()
+    if note_id:
+        return f"Не удалось привязать замечание к сноске {note_id}: {message}"
+    return f"Не удалось привязать замечание ({item.get('start')}:{item.get('end')}): {message}"
+
+
+def _place_comment_range(spans: list, start: int, end: int, comment_id: int) -> bool:
+    text_len = spans[-1][2] if spans else 0
+    if start >= text_len:
+        return False
+    end = min(end, text_len)
     if start >= end:
-        return
+        return False
 
     start_node, start_local = _locate(spans, start, for_end=False)
     if start_node is None:
-        return
+        return False
     if 0 < start_local < len(start_node.text or ""):
-        _split_run_text(start_node, start_local)
+        _split_tracked_text(spans, start_node, start_local)
 
-    _text, spans = _walk_text(doc_root)
     end_node, end_local = _locate(spans, end, for_end=True)
     if end_node is not None and 0 < end_local < len(end_node.text or ""):
-        _split_run_text(end_node, end_local)
+        _split_tracked_text(spans, end_node, end_local)
 
-    _text, spans = _walk_text(doc_root)
     start_node, _start_local = _locate(spans, start, for_end=False)
     end_node, _end_local = _locate(spans, end, for_end=True)
     if start_node is None:
-        return
+        return False
     if end_node is None:
         end_node = start_node
 
     start_run = start_node.getparent()
     end_run = end_node.getparent()
     if start_run is None or end_run is None:
-        return
-
+        return False
     start_parent = start_run.getparent()
     end_parent = end_run.getparent()
+    if start_parent is None or end_parent is None:
+        return False
+
     start_idx = list(start_parent).index(start_run)
     start_parent.insert(start_idx, _comment_marker("commentRangeStart", comment_id))
-
     end_idx = list(end_parent).index(end_run)
     end_parent.insert(end_idx + 1, _comment_marker("commentRangeEnd", comment_id))
     end_parent.insert(end_idx + 2, _comment_reference_run(comment_id))
+    return True
 
 
-def _insert_comment_on_note_ref(doc_root: etree._Element, note_id: str, note_kind: str, comment_id: int) -> None:
+def _split_tracked_text(spans: list, node: etree._Element, local_index: int) -> None:
+    right = _split_run_text(node, local_index)
+    if right is node:
+        return
+    updated = []
+    for span_node, start, end in spans:
+        if span_node is not node:
+            updated.append((span_node, start, end))
+            continue
+        cut = start + local_index
+        if cut <= start or cut >= end:
+            updated.append((span_node, start, end))
+            continue
+        updated.append((node, start, cut))
+        updated.append((right, cut, end))
+    spans[:] = updated
+
+
+def _insert_comment_on_note_ref(doc_root: etree._Element, note_id: str, note_kind: str, comment_id: int) -> bool:
     body = doc_root.find(w("body"))
     if body is None:
-        return
+        return False
     tag = w("endnoteReference") if note_kind == "endnote" else w("footnoteReference")
     for node in body.iter(tag):
         if (node.get(w("id")) or "") != note_id:
@@ -1154,13 +1317,14 @@ def _insert_comment_on_note_ref(doc_root: etree._Element, note_id: str, note_kin
         run = node.getparent()
         parent = run.getparent() if run is not None else None
         if parent is None:
-            return
+            return False
         idx = list(parent).index(run)
         parent.insert(idx, _comment_marker("commentRangeStart", comment_id))
         idx = list(parent).index(run)
         parent.insert(idx + 1, _comment_marker("commentRangeEnd", comment_id))
         parent.insert(idx + 2, _comment_reference_run(comment_id))
-        return
+        return True
+    return False
 
 
 def _locate(spans, index: int, *, for_end: bool):
@@ -1180,29 +1344,33 @@ def _locate(spans, index: int, *, for_end: bool):
 
 
 def _split_run_text(t_elem: etree._Element, local_index: int) -> etree._Element:
+    """Split one w:t. Tabs, breaks and other marks stay in the piece they belonged to.
+
+    Copying the whole run would duplicate a leading w:tab into every comment slice
+    and insert tab characters into the paragraph.
+    """
     text = t_elem.text or ""
     run = t_elem.getparent()
     parent = run.getparent() if run is not None else None
     if parent is None or local_index <= 0 or local_index >= len(text):
         return t_elem
     idx = list(parent).index(run)
-    right = deepcopy(run)
+    right = etree.Element(w("r"))
+    for key, value in run.attrib.items():
+        right.set(key, value)
+    r_pr = run.find(w("rPr"))
+    if r_pr is not None:
+        right.append(deepcopy(r_pr))
     t_elem.text = text[:local_index]
     _ensure_xml_space_preserve(t_elem)
-    right_t = None
-    for node in right.iter(w("t")):
-        if right_t is None:
-            node.text = text[local_index:]
-            _ensure_xml_space_preserve(node)
-            right_t = node
-        else:
-            node_parent = node.getparent()
-            if node_parent is not None:
-                node_parent.remove(node)
-    if right_t is None:
-        right_t = etree.SubElement(right, w("t"))
-        right_t.text = text[local_index:]
-        _ensure_xml_space_preserve(right_t)
+    right_t = etree.Element(w("t"))
+    right_t.text = text[local_index:]
+    _ensure_xml_space_preserve(right_t)
+    right.append(right_t)
+    followers = list(run)[list(run).index(t_elem) + 1:]
+    for follower in followers:
+        run.remove(follower)
+        right.append(follower)
     parent.insert(idx + 1, right)
     return right_t
 
@@ -1467,6 +1635,52 @@ def _strip_comment_content_types(xml_bytes: bytes) -> bytes:
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def _serialize_document(original_xml: bytes, root: etree._Element) -> bytes:
+    """Keep the original document root envelope and namespace declarations."""
+    serialized = etree.tostring(
+        root,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
+    original_match = re.search(rb"<([A-Za-z_][\w.-]*:)?document\b", original_xml)
+    serialized_match = re.search(rb"<([A-Za-z_][\w.-]*:)?document\b", serialized)
+    if not original_match or not serialized_match:
+        return serialized
+    original_open_end = _xml_tag_end(original_xml, original_match.start())
+    serialized_open_end = _xml_tag_end(serialized, serialized_match.start())
+    if original_open_end < 0 or serialized_open_end < 0:
+        return serialized
+    original_qname = original_match.group(0)[1:].split(None, 1)[0]
+    serialized_qname = serialized_match.group(0)[1:].split(None, 1)[0]
+    original_close = b"</" + original_qname + b">"
+    serialized_close = b"</" + serialized_qname + b">"
+    original_close_start = original_xml.rfind(original_close)
+    serialized_close_start = serialized.rfind(serialized_close)
+    if original_close_start < 0 or serialized_close_start < 0:
+        return serialized
+    return (
+        original_xml[:original_open_end + 1]
+        + serialized[serialized_open_end + 1:serialized_close_start]
+        + original_xml[original_close_start:]
+    )
+
+
+def _xml_tag_end(xml: bytes, start: int) -> int:
+    quote = None
+    for index in range(start, len(xml)):
+        byte = xml[index]
+        if quote is not None:
+            if byte == quote:
+                quote = None
+            continue
+        if byte in (ord('"'), ord("'")):
+            quote = byte
+        elif byte == ord(">"):
+            return index
+    return -1
+
+
 def _read_zip(data: bytes) -> dict[str, bytes]:
     try:
         with zipfile.ZipFile(BytesIO(data)) as zin:
@@ -1475,9 +1689,29 @@ def _read_zip(data: bytes) -> dict[str, bytes]:
         raise DocxCommentError("Файл не является корректным DOCX.") from exc
 
 
-def _write_zip(parts: dict[str, bytes]) -> bytes:
+def _write_zip(parts: dict[str, bytes], *, source: bytes | None = None) -> bytes:
+    source_info: dict[str, zipfile.ZipInfo] = {}
+    order: list[str] = []
+    if source:
+        try:
+            with zipfile.ZipFile(BytesIO(source)) as zin:
+                for info in zin.infolist():
+                    if info.is_dir():
+                        continue
+                    source_info[info.filename] = info
+                    order.append(info.filename)
+        except zipfile.BadZipFile:
+            source_info = {}
+            order = []
+    order.extend(name for name in parts if name not in source_info)
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zout:
-        for name, data in parts.items():
-            zout.writestr(name, data)
+        for name in order or list(parts):
+            if name not in parts:
+                continue
+            info = source_info.get(name)
+            if info is None:
+                zout.writestr(name, parts[name])
+            else:
+                zout.writestr(info, parts[name])
     return buffer.getvalue()

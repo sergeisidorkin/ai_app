@@ -132,7 +132,8 @@
         data-move-up-url="{% url 'performer_move_up' p.pk %}"
         data-move-down-url="{% url 'performer_move_down' p.pk %}"
         data-accounting-type="{% if p.typical_section %}{{ p.typical_section.accounting_type }}{% endif %}"
-        data-report-section-locked="{% if p.report_section_locked %}1{% else %}0{% endif %}">
+        data-report-section-locked="{% if p.report_section_locked %}1{% else %}0{% endif %}"
+        data-report-upload-locked="{% if p.report_upload_locked %}1{% else %}0{% endif %}">
         <td class="text-nowrap">
           {% if request.user.is_authenticated and request.user.is_staff %}
             <div class="form-check m-0">

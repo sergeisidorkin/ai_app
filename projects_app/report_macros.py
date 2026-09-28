@@ -19,15 +19,71 @@ TPGR_COURSE_SN_URL = "https://learn.imcmontanai.ru/course/section.php?id=13"
 TPGR_COURSE_LINK_TEXT = "Ссылка на страницу курса TPGR"
 
 _HELPERS = """
+def _is_lt_op(text, i):
+    # Сравнение, не скобка шаблона: <=, <-, <~, <–, <— и «< 0,1».
+    n = len(text)
+    nxt = text[i + 1] if i + 1 < n else ""
+    if nxt in "=-~\u2013\u2014":
+        return True
+    j = i + 1
+    while j < n and text[j] in " \\t\\r\\n\\xa0":
+        j += 1
+    return j > i + 1 and j < n and (text[j].isdigit() or text[j] in "+.")
+
+def _is_gt_op(text, i):
+    # Сравнение или стрелка «–>», не скобка шаблона. Дефис «->» скобку закрывает.
+    n = len(text)
+    prev = text[i - 1] if i else ""
+    nxt = text[i + 1] if i + 1 < n else ""
+    if nxt == ">" or prev == ">":
+        return False
+    if prev == "-":
+        return False
+    if prev == "\u2013":
+        return True
+    if nxt == "=":
+        return True
+    j = i + 1
+    while j < n and text[j] in " \\t\\r\\n\\xa0":
+        j += 1
+    return j > i + 1 and j < n and (text[j].isdigit() or text[j] in "+.")
+
+def _angle_mask(text):
+    # Внутри только закрытой пары «<...>». Незакрытая «<» не прячет хвост документа.
+    # Лишняя «>» гасит следующую «<», поэтому баланс по-прежнему может уйти ниже нуля.
+    cached = getattr(_angle_mask, "_text", None)
+    mask = getattr(_angle_mask, "_mask", None)
+    if cached is text and mask is not None:
+        return mask
+    n = len(text)
+    built = [False] * (n + 1)
+    stack = []
+    debt = 0
+    for i, ch in enumerate(text):
+        if ch == "<" and not _is_lt_op(text, i):
+            if debt:
+                debt -= 1
+            else:
+                stack.append(i)
+        elif ch == ">" and not _is_gt_op(text, i):
+            if stack:
+                start = stack.pop()
+                for j in range(start + 1, i + 1):
+                    built[j] = True
+            else:
+                debt += 1
+    _angle_mask._text = text
+    _angle_mask._mask = built
+    return built
+
 def in_angles(text, i):
-    # VBA IsInAngleBrackets: баланс «<»/«>» в тексте до позиции.
-    balance = 0
-    for ch in text[:i]:
-        if ch == "<":
-            balance += 1
-        elif ch == ">":
-            balance -= 1
-    return balance > 0
+    # Позиция внутри закрытой пары «<...>». Сравнения (< 0,1, <=, >=, –>) не скобки.
+    if not text or i <= 0:
+        return False
+    mask = _angle_mask(text)
+    if i >= len(mask):
+        return mask[-1]
+    return mask[i]
 
 def is_num_ch(ch):
     # VBA IsNumeric для одного символа: цифра или десятичный разделитель.
@@ -58,7 +114,11 @@ def _code(body: str) -> str:
 
 TPGR_MACROS = [
     {
-        "name": "TPGR-ZN-01.03 Знак %",
+        "course": "TPGR",
+        "section": "ZN",
+        "part": "01",
+        "number": "03",
+        "name": "Знак %",
         "description": "Знак % набирается слитно с числом, без пробела.",
         "code": _code(
             r"""
@@ -90,7 +150,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-ZN-01.01 Знаки №, §, °C",
+        "course": "TPGR",
+        "section": "ZN",
+        "part": "01",
+        "number": "01",
+        "name": "Знаки №, §, °C",
         "description": "№, § и °C отделяются от числа неразрывным пробелом.",
         "code": _code(
             r"""
@@ -146,24 +210,37 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-TR-01.15 Длинное тире",
-        "description": "Для разделения слов и предложений — длинное тире с пробелами, не дефис и не короткое тире.",
+        "course": "TPGR",
+        "section": "TR",
+        "part": "01",
+        "number": "15",
+        "name": "Длинное тире",
+        "description": "Для разделения слов, слова и числа, сокращения с точкой и числа — длинное тире с пробелами, не дефис и не короткое тире.",
         "code": _code(
             r"""
 def check(ctx):
-    # Между словами нужно длинное тире с пробелами/nbsp с обеих сторон.
-    # Дефис, короткое тире и минус между словами — ошибка, если есть отбивка.
+    # Между словами, между словом и числом и после «буква.» перед числом
+    # нужно длинное тире с пробелами/nbsp с обеих сторон.
+    # Дефис и короткое тире вплотную к цифре справа — это минус, не ошибка.
+    # Знак минус вплотную к цифре — минус, только если слева есть пробел.
+    # «минус−100» без пробелов и «г. - не» — ошибка.
+    # Длинное тире вплотную к цифре справа — ошибка: нужны пробелы с обеих сторон.
     # «буква-буква» без пробелов — дефис в сложном слове, не ошибка.
+    # Слитый дефис в коде (COVID-19, А-Д-12131231, TPGR-TR-01.15) — не ошибка.
     text = ctx.text or ""
     findings = []
     msg = "TPGR-TR-01.15: Для разделения слов и предложений используется длинное тире с отбивкой пробелами"
     marks = set("-{endash}{minus}{emdash}")
     emdash = "{emdash}"
+    minus = "{minus}"
+    minus_marks = set("-{endash}{minus}")
     spaces = set(" {nbsp}")
     roman = set("IVXLCDMivxlcdm")
 
     def num_or_roman(ch):
         return bool(ch) and (ch.isdigit() or ch in roman)
+
+    cyr = set("АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя")
 
     def neighbor(i, step):
         j = i + step
@@ -172,6 +249,51 @@ def check(ctx):
         if 0 <= j < len(text):
             return text[j]
         return ""
+
+    def quantity_kind(i):
+        # «буква - цифра» или «буква. - цифра», пробелы вокруг тире необязательны.
+        j = i - 1
+        while j >= 0 and text[j] in spaces:
+            j -= 1
+        k = i + 1
+        while k < len(text) and text[k] in spaces:
+            k += 1
+        if j < 0 or k >= len(text) or not text[k].isdigit():
+            return ""
+        if text[j].isalpha():
+            return "word"
+        if text[j] == "." and j > 0 and text[j - 1].isalpha():
+            return "abbr"
+        return ""
+
+    def period_word(i):
+        # «буква. - слово»: после сокращения с точкой стоит слово, не число.
+        j = i - 1
+        while j >= 0 and text[j] in spaces:
+            j -= 1
+        k = i + 1
+        while k < len(text) and text[k] in spaces:
+            k += 1
+        if j <= 0 or k >= len(text):
+            return False
+        return text[j] == "." and text[j - 1].isalpha() and text[k].isalpha()
+
+    def glued_code(i):
+        # Слитый дефис латинского кода или однобуквенного шифра, не «золота-100».
+        if text[i] != "-" or i == 0 or i + 1 >= len(text):
+            return False
+        if text[i - 1] in spaces or text[i + 1] in spaces:
+            return False
+        j = i - 1
+        if not text[j].isalpha():
+            return False
+        end = j
+        while j >= 0 and text[j].isalpha():
+            j -= 1
+        run = text[j + 1:end + 1]
+        if any(c in cyr for c in run):
+            return len(run) == 1 and run.isupper()
+        return True
 
     def add(i):
         if in_angles(text, i):
@@ -196,15 +318,24 @@ def check(ctx):
         if num_or_roman(left) and num_or_roman(right):
             i += 1
             continue
-        if not (left.isalpha() and right.isalpha()):
+        words = left.isalpha() and right.isalpha()
+        kind = quantity_kind(i)
+        period = period_word(i)
+        if not words and not kind and not period:
             i += 1
             continue
         left_sp = before in spaces
         right_sp = after in spaces
+        if kind and ch in minus_marks and after.isdigit() and (ch != minus or left_sp):
+            i += 1
+            continue
         if ch == emdash and left_sp and right_sp:
             i += 1
             continue
-        if ch == "-" and not left_sp and not right_sp:
+        if words and ch == "-" and not left_sp and not right_sp:
+            i += 1
+            continue
+        if kind == "word" and glued_code(i):
             i += 1
             continue
         add(i)
@@ -214,7 +345,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-TR-01.13 Короткое тире в диапазонах",
+        "course": "TPGR",
+        "section": "TR",
+        "part": "01",
+        "number": "13",
+        "name": "Короткое тире в диапазонах",
         "description": "В цифровых и римских диапазонах — короткое тире без пробелов.",
         "code": _code(
             r"""
@@ -316,7 +451,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-PR-01.01 Неразрывный пробел в сокращениях",
+        "course": "TPGR",
+        "section": "PR",
+        "part": "01",
+        "number": "01",
+        "name": "Неразрывный пробел в сокращениях",
         "description": "Между частями графических сокращений с точкой и между инициалами ставится неразрывный пробел (т. д., А. С.). Шаблон ДД.ММ.ГГ и сайты *.рф пропускаются.",
         "code": _code(
             r"""
@@ -399,7 +538,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-PR-01.08 Висячие предлоги",
+        "course": "TPGR",
+        "section": "PR",
+        "part": "01",
+        "number": "08",
+        "name": "Висячие предлоги",
         "description": "После частиц, предлогов и аббревиатур в конце визуальной строки — неразрывный пробел.",
         "code": _code(
             r"""
@@ -423,17 +566,8 @@ def check(ctx):
     prev_ok = set(" {nbsp}(«")
     n = len(text)
     i = 0
-    balance = 0
     while i < n:
         ch = text[i]
-        if ch == "<":
-            balance += 1
-            i += 1
-            continue
-        if ch == ">":
-            balance -= 1
-            i += 1
-            continue
         if not ch.isalpha():
             i += 1
             continue
@@ -449,7 +583,7 @@ def check(ctx):
             else:
                 visual_end = after in ("\n", "\r")
             if prev in prev_ok and nxt in spaces and visual_end:
-                if balance <= 0:
+                if not in_angles(text, i):
                     findings.append({
                         "start": i,
                         "end": j,
@@ -462,7 +596,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TMPL-SS-00.00 Незакрытые угловые скобки",
+        "course": "TMPL",
+        "section": "SS",
+        "part": "00",
+        "number": "00",
+        "name": "Незакрытые угловые скобки",
         "description": "Баланс «<»/«>» по всему документу: технический текст внутри скобок может занимать несколько абзацев. Лишняя «>» тоже ошибка. Сравнения (< 0,1, <=) не скобки. Сноски — комментарий на знаке сноски.",
         "code": _code(
             r"""
@@ -568,7 +706,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TMPL-SS-00.00 Сноски без угловых скобок",
+        "course": "TMPL",
+        "section": "SS",
+        "part": "00",
+        "number": "01",
+        "name": "Сноски без угловых скобок",
         "description": "Для сносок на публичные источники знак сноски ставится без угловых скобок.",
         "code": _code(
             r'''
@@ -602,7 +744,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "DOCX-SS-00.00 Битая перекрёстная ссылка",
+        "course": "DOCX",
+        "section": "SS",
+        "part": "00",
+        "number": "00",
+        "name": "Битая перекрёстная ссылка",
         "description": "Текст «Ошибка! Источник ссылки не найден.» вместо рабочей перекрёстной ссылки.",
         "code": _code(
             r"""
@@ -628,7 +774,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-DT-00.00 Лишнее «г.» после даты",
+        "course": "TPGR",
+        "section": "DT",
+        "part": "00",
+        "number": "00",
+        "name": "Лишнее «г.» после даты",
         "description": "После даты ДД.ММ.ГГ / ДД.ММ.ГГГГ не нужны «г.», «год» и склонения, в том числе в конце предложения. Слитное «2010г.» тоже ошибка.",
         "code": _code(
             r"""
@@ -697,7 +847,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-CH-02.01 Разряды в числах",
+        "course": "TPGR",
+        "section": "CH",
+        "part": "02",
+        "number": "01",
+        "name": "Разряды в числах",
         "description": "С 4-значных чисел группы разрядов отделяются неразрывным пробелом (годы, коды и почтовые индексы пропускаются).",
         "code": _code(
             r"""
@@ -907,7 +1061,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-KV-01.03 Повтор кавычек",
+        "course": "TPGR",
+        "section": "KV",
+        "part": "01",
+        "number": "03",
+        "name": "Повтор кавычек",
         "description": "Кавычки одного рисунка рядом не повторяются (««, »»).",
         "code": _code(
             r"""
@@ -940,7 +1098,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-KV-01.02 Кавычки-ёлочки",
+        "course": "TPGR",
+        "section": "KV",
+        "part": "01",
+        "number": "02",
+        "name": "Кавычки-ёлочки",
         "description": "В технических текстах только кавычки «ёлочки», не прямые и не английские. Двойной штрих ″ для координат допустим.",
         "code": _code(
             r'''
@@ -974,7 +1136,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-KV-01.05 Незакрытые ёлочки",
+        "course": "TPGR",
+        "section": "KV",
+        "part": "01",
+        "number": "05",
+        "name": "Незакрытые ёлочки",
         "description": "У открывающей « должна быть закрывающая »; новая « после конца предложения — незакрытая предыдущая пара.",
         "code": _code(
             r'''
@@ -1054,7 +1220,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-SP-02.04 Точка в конце списков",
+        "course": "TPGR",
+        "section": "SP",
+        "part": "02",
+        "number": "04",
+        "name": "Точка в конце списков",
         "description": "В конце списка ставится точка, как и в конце любого предложения.",
         "code": _code(
             r'''
@@ -1148,7 +1318,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-SN-02.06 Пробел перед знаком сноски",
+        "course": "TPGR",
+        "section": "SN",
+        "part": "02",
+        "number": "06",
+        "name": "Пробел перед знаком сноски",
         "description": "Знак указателя сноски не отбивается пробелом от комментируемого текста.",
         "code": _code(
             r'''
@@ -1180,7 +1354,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TPGR-TB-00.00 Точка в конце ячейки таблицы",
+        "course": "TPGR",
+        "section": "TB",
+        "part": "00",
+        "number": "00",
+        "name": "Точка в конце ячейки таблицы",
         "description": "В конце ячейки таблицы точка не ставится: роль точки играет граница между ячейками.",
         "code": _code(
             r'''
@@ -1228,7 +1406,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "DOCX-SS-00.00 Ссылка на ближайший объект",
+        "course": "DOCX",
+        "section": "SS",
+        "part": "00",
+        "number": "01",
+        "name": "Ссылка на ближайший объект",
         "description": "Перекрёстная ссылка на рисунок или таблицу должна указывать на ближайший по тексту объект.",
         "code": _code(
             r'''
@@ -1329,7 +1511,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "DOCX-KL-00.00 Ширина колонтитулов",
+        "course": "DOCX",
+        "section": "KL",
+        "part": "00",
+        "number": "00",
+        "name": "Ширина колонтитулов",
         "description": "Колонтитул, связанный с предыдущим разделом, не должен наследовать чужую ширину страницы.",
         "code": _code(
             r'''
@@ -1393,7 +1579,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TMPL-SS-00.00 Табуляция после «Источник:»",
+        "course": "TMPL",
+        "section": "SS",
+        "part": "00",
+        "number": "02",
+        "name": "Табуляция после «Источник:»",
         "description": "После «Источник:» должны идти пробел и знак табуляции.",
         "code": _code(
             r'''
@@ -1432,7 +1622,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TMPL-ST-00.00 Проверка стилей",
+        "course": "TMPL",
+        "section": "ST",
+        "part": "00",
+        "number": "00",
+        "name": "Проверка стилей",
         "description": "В отчёте допускаются только стили абзаца и знака из шаблона.",
         "code": _code(
             r'''
@@ -1586,7 +1780,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TMPL-SN-00.00 Табуляция после знака сноски",
+        "course": "TMPL",
+        "section": "SN",
+        "part": "00",
+        "number": "00",
+        "name": "Табуляция после знака сноски",
         "description": "После знака сноски внизу страницы нужны пробел и знак табуляции.",
         "code": _code(
             r'''
@@ -1614,7 +1812,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TMPL-SN-00.00 Скобки NextCloud-сноски",
+        "course": "TMPL",
+        "section": "SN",
+        "part": "00",
+        "number": "01",
+        "name": "Скобки NextCloud-сноски",
         "description": "Сноска на NextCloud заключается в угловые скобки, скобки в надстрочном регистре.",
         "code": _code(
             r'''
@@ -1660,7 +1862,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "TMPL-SN-00.00 Пробел перед сноской в скобках",
+        "course": "TMPL",
+        "section": "SN",
+        "part": "00",
+        "number": "02",
+        "name": "Пробел перед сноской в скобках",
         "description": "Знак сноски в угловых скобках не отбивается пробелом от комментируемого текста.",
         "code": _code(
             r'''
@@ -1691,7 +1897,11 @@ def check(ctx):
         ),
     },
     {
-        "name": "GRMM-PN-00.00 Точка в конце сноски",
+        "course": "GRMM",
+        "section": "PN",
+        "part": "00",
+        "number": "00",
+        "name": "Точка в конце сноски",
         "description": "В конце предложения (текста сноски) ставится точка.",
         "code": _code(
             r'''
@@ -1730,38 +1940,85 @@ def check(ctx):
 ]
 
 
+def _tpgr_spec_label(spec: dict) -> str:
+    return (
+        f"{spec['course']}-{spec['section']}-{spec['part']}.{spec['number']} {spec['name']}"
+    )
+
+
+def _model_field_names(model) -> set[str]:
+    return {field.name for field in model._meta.fields}
+
+
 def sync_tpgr_macros(model) -> tuple[int, int]:
-    """Create or refresh TPGR macros by name. Other macros are left untouched."""
+    """Create or refresh catalog macros by code. Other macros are left untouched.
+
+    Older migrations call this with a historical model that does not yet have
+    Раздел and Номер. Those rows keep the full «код название» in the name so
+    the later split migration can parse it.
+    """
+    fields = _model_field_names(model)
+    has_parts = "part" in fields and "number" in fields
+    has_course = "course" in fields and "section" in fields
     created = 0
     updated = 0
     next_pos = int(model.objects.aggregate(m=Max("position")).get("m") or 0)
     for spec in TPGR_MACROS:
-        obj = model.objects.filter(name=spec["name"]).first()
+        label = _tpgr_spec_label(spec)
+        if has_parts:
+            obj = model.objects.filter(
+                course=spec["course"],
+                section=spec["section"],
+                part=spec["part"],
+                number=spec["number"],
+            ).first()
+            if obj is None:
+                obj = model.objects.filter(name=spec["name"]).first()
+            if obj is None:
+                obj = model.objects.filter(name=label).first()
+            values = {
+                "course": spec["course"],
+                "section": spec["section"],
+                "part": spec["part"],
+                "number": spec["number"],
+                "name": spec["name"],
+                "description": spec["description"],
+                "code": spec["code"],
+            }
+        else:
+            obj = model.objects.filter(name=label).first()
+            if obj is None:
+                obj = model.objects.filter(name=spec["name"]).first()
+            values = {
+                "name": label,
+                "description": spec["description"],
+                "code": spec["code"],
+            }
+            if has_course:
+                values["course"] = spec["course"]
+                values["section"] = spec["section"]
         if obj is None:
             next_pos += 1
-            model.objects.create(
-                name=spec["name"],
-                description=spec["description"],
-                code=spec["code"],
-                position=next_pos,
-            )
+            model.objects.create(**values, position=next_pos)
             created += 1
             continue
-        fields = []
-        if obj.description != spec["description"]:
-            obj.description = spec["description"]
-            fields.append("description")
-        if obj.code != spec["code"]:
-            obj.code = spec["code"]
-            fields.append("code")
-        if fields:
-            obj.save(update_fields=fields)
+        changed = []
+        for field, value in values.items():
+            if field not in fields:
+                continue
+            if getattr(obj, field) != value:
+                setattr(obj, field, value)
+                changed.append(field)
+        if changed:
+            obj.save(update_fields=changed)
             updated += 1
     return created, updated
 
 
 def tpgr_macro_code(name_prefix: str) -> str:
+    prefix = (name_prefix or "").strip()
     for item in TPGR_MACROS:
-        if item["name"].startswith(name_prefix):
+        label = _tpgr_spec_label(item)
+        if label.startswith(prefix) or item["name"].startswith(prefix):
             return item["code"]
     raise KeyError(name_prefix)

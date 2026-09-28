@@ -175,6 +175,13 @@ class ProjectRegistration(models.Model):
     asset_owner_registration_date = models.DateField("Дата регистрации владельца активов", null=True, blank=True)
     project_manager = models.CharField("Руководитель проекта", max_length=255, blank=True)
     project_manager_prs_id = models.CharField("ID-PRS руководителя проекта", max_length=32, blank=True, default="")
+    project_coordinator = models.CharField("Координатор проекта", max_length=255, blank=True, default="")
+    project_coordinator_prs_id = models.CharField(
+        "ID-PRS координатора проекта",
+        max_length=32,
+        blank=True,
+        default="",
+    )
     contract_subject = models.TextField("Предмет договора", blank=True)
 
     class Meta:
@@ -1630,6 +1637,40 @@ class PerformerReportUpload(models.Model):
     check_finding_count = models.PositiveIntegerField("Замечаний", default=0)
     check_error = models.TextField("Ошибка проверки", blank=True, default="")
     checked_at = models.DateTimeField("Дата проверки", null=True, blank=True)
+    check_claim = models.CharField(
+        "Владелец проверки",
+        max_length=64,
+        blank=True,
+        default="",
+    )
+    check_heartbeat_at = models.DateTimeField("Пульс проверки", null=True, blank=True)
+    check_attempts = models.PositiveIntegerField("Попытки проверки", default=0)
+    check_macro_index = models.PositiveIntegerField("Текущий макрос", default=0)
+    check_macro_total = models.PositiveIntegerField("Макросов в проверке", default=0)
+    check_macro_name = models.CharField(
+        "Текущий макрос",
+        max_length=255,
+        blank=True,
+        default="",
+    )
+    check_finding_by_author = models.JSONField(
+        "Замечания по авторам",
+        default=dict,
+        blank=True,
+    )
+    check_finding_correction = models.JSONField(
+        "Корректировка замечаний",
+        null=True,
+        blank=True,
+        default=None,
+    )
+    review_step = models.CharField("Шаг проверки", max_length=8, blank=True, default="")
+    review_phase = models.CharField("Фаза шага", max_length=8, blank=True, default="")
+    status_changed_at = models.DateTimeField("Дата статуса", null=True, blank=True)
+    review_file_name = models.CharField("Имя файла замечаний", max_length=500, blank=True, default="")
+    review_file_link = models.URLField("Ссылка на файл замечаний", max_length=2000, blank=True, default="")
+    review_cloud_path = models.CharField("Путь файла замечаний", max_length=2048, blank=True, default="")
+    step_revision = models.BooleanField("Файл шага проверки", default=False)
 
     class Meta:
         verbose_name = "Загрузка отчёта исполнителя"
@@ -1656,6 +1697,14 @@ class PerformerReportUpload(models.Model):
     def version_label(self):
         return f"{int(self.version):02d}"
 
+    @property
+    def check_progress_label(self) -> str:
+        return format_report_check_progress(
+            self.check_macro_index,
+            self.check_macro_total,
+            self.check_macro_name,
+        )
+
     def __str__(self):
         if self.is_full_report:
             scope = f"весь отчет / {self.asset_name}"
@@ -1666,31 +1715,172 @@ class PerformerReportUpload(models.Model):
         return f"Отчёт {self.registration_id}: {scope} v{self.version_label}"
 
 
-class ReportMacro(models.Model):
-    """Редактируемый Python-макрос проверки отчёта."""
+def format_report_check_progress(index, total, name) -> str:
+    """«12/24 (50%) Название»: доля — номер текущего шага к числу макросов проверки.
 
-    course = models.CharField("Курс", max_length=255, blank=True, default="")
-    section = models.CharField("Секция", max_length=255, blank=True, default="")
+    Номер 0 — подготовка до первого макроса. Без общего числа остаётся только подпись этапа.
+    """
+    name = (name or "").strip()
+    if not name:
+        return ""
+    index = int(index or 0)
+    total = int(total or 0)
+    if total <= 0:
+        return name
+    percent = (index * 100 + total // 2) // total
+    return f"{index}/{total} ({percent}%) {name}"
+
+
+class ReportMacro(models.Model):
+    """Строка каталога проверки отчёта: Python-макрос или навык DHS."""
+
+    class CheckKind(models.TextChoices):
+        MACRO = "macro", "Макрос"
+        SKILL = "skill", "Навык"
+
+    class ProcessingMode(models.TextChoices):
+        CHUNKS = "chunks", "Фрагменты"
+        AGENT = "agent", "Агент"
+
+    TEMPERATURE_CHOICES = (
+        ("", "По умолчанию"),
+        ("0", "0"),
+        ("0.1", "0.1"),
+        ("0.2", "0.2"),
+        ("0.3", "0.3"),
+        ("0.5", "0.5"),
+        ("0.7", "0.7"),
+        ("1", "1"),
+    )
+
+    course = models.CharField("Курс", max_length=4, blank=True, default="")
+    section = models.CharField("Секция", max_length=2, blank=True, default="")
+    part = models.CharField("Раздел", max_length=2, blank=True, default="")
+    number = models.CharField("Номер", max_length=2, blank=True, default="")
     name = models.CharField("Название", max_length=255)
     description = models.CharField("Описание", max_length=500, blank=True, default="")
-    code = models.TextField("Код")
+    check_kind = models.CharField(
+        "Вид проверки",
+        max_length=16,
+        choices=CheckKind.choices,
+        default=CheckKind.MACRO,
+        db_index=True,
+    )
+    skill_name = models.CharField("Наименование навыка DHS", max_length=255, blank=True, default="")
+    model_id = models.CharField("Модель", max_length=255, blank=True, default="")
+    reasoning_effort = models.CharField(
+        "Уровень рассуждений",
+        max_length=16,
+        blank=True,
+        default="",
+    )
+    temperature = models.CharField(
+        "Температура",
+        max_length=8,
+        blank=True,
+        default="",
+        choices=TEMPERATURE_CHOICES,
+    )
+    disable_tools = models.BooleanField(
+        "Без инструментов",
+        default=False,
+    )
+    processing_mode = models.CharField(
+        "Режим обработки",
+        max_length=32,
+        choices=ProcessingMode.choices,
+        default=ProcessingMode.CHUNKS,
+    )
+    code = models.TextField("Код", blank=True, default="")
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
 
     class Meta:
         ordering = ["position", "id"]
         verbose_name = "Макрос проверки отчёта"
         verbose_name_plural = "Макросы проверки отчётов"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["course", "section", "part", "number"],
+                condition=(
+                    ~models.Q(course="")
+                    & ~models.Q(section="")
+                    & ~models.Q(part="")
+                    & ~models.Q(number="")
+                ),
+                name="uniq_report_macro_code",
+            ),
+        ]
 
     def __str__(self):
-        return self.name
+        return self.display_label or self.name
+
+    @property
+    def display_code(self) -> str:
+        from .report_macro_code import format_macro_code
+
+        return format_macro_code(self.course, self.section, self.part, self.number)
+
+    @property
+    def display_label(self) -> str:
+        from .report_macro_code import format_macro_label
+
+        return format_macro_label(
+            self.course,
+            self.section,
+            self.part,
+            self.number,
+            self.name,
+        )
+
+
+def default_report_review_order():
+    return ["ai"]
+
+
+class ReportReviewEntry(models.Model):
+    """Отдельная строка ручного шага над строкой файла."""
+
+    upload = models.ForeignKey(
+        PerformerReportUpload,
+        on_delete=models.CASCADE,
+        related_name="review_entries",
+        verbose_name="Файл",
+    )
+    basis_entry = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="next_entries",
+        verbose_name="Файл предыдущего шага",
+    )
+    step = models.CharField("Шаг", max_length=8, blank=True, default="")
+    phase = models.CharField("Фаза", max_length=8, blank=True, default="")
+    settled = models.BooleanField("Шаг закрыт файлом", default=False)
+    review_file_name = models.CharField("Имя файла замечаний", max_length=500, blank=True, default="")
+    review_file_link = models.URLField("Ссылка на файл замечаний", max_length=2000, blank=True, default="")
+    review_cloud_path = models.CharField("Путь файла замечаний", max_length=2048, blank=True, default="")
+    comment_count = models.PositiveIntegerField("Примечаний", default=0)
+    remarks_notice_pending = models.BooleanField("Замечания ещё не отправлены", default=False)
+    created_at = models.DateTimeField("Дата статуса", auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        verbose_name = "Строка шага проверки"
+        verbose_name_plural = "Строки шагов проверки"
 
 
 class ReportCheckRule(models.Model):
-    """Правило проверки отчёта: продукт/раздел, навык или макрос, модель DSH."""
+    """Запуск проверки отчёта: продукт, экспертиза, разделы и условие завершения."""
 
     class CheckType(models.TextChoices):
         SKILL = "skill", "Навык"
         MACRO = "macro", "Макрос"
+
+    class CompletionMode(models.TextChoices):
+        SUM = "sum", "Сумма замечаний"
+        PER_ITEM = "per_item", "Контроль порога макросов и навыков"
+        SUM_AND_PER_ITEM = "sum_and_per_item", "Сумма замечаний с контролем порогов"
 
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
     product = models.ForeignKey(
@@ -1718,31 +1908,24 @@ class ReportCheckRule(models.Model):
         blank=True,
     )
     is_full_report = models.BooleanField("Весь отчет", default=False, db_index=True)
-    check_type = models.CharField(
-        "Тип проверки",
-        max_length=16,
-        choices=CheckType.choices,
-        default=CheckType.SKILL,
+    completion_mode = models.CharField(
+        "Условия завершения",
+        max_length=32,
+        choices=CompletionMode.choices,
+        default=CompletionMode.SUM,
         db_index=True,
     )
-    finding_threshold = models.PositiveIntegerField("Число замечаний", default=0)
-    check_value = models.CharField("Проверка", max_length=255)
-    model_id = models.CharField("Модель", max_length=255, blank=True, default="")
-    macros = models.ManyToManyField(
-        ReportMacro,
-        blank=True,
-        related_name="check_rules",
-        verbose_name="Макросы",
-    )
+    finding_threshold = models.PositiveIntegerField("Пороговое значение", default=0)
     clear_comments = models.BooleanField("Очистка", default=False)
+    review_order = models.JSONField("Порядок", default=default_report_review_order, blank=True)
 
     class Meta:
         ordering = ["position", "id"]
-        verbose_name = "Правило проверки отчёта"
-        verbose_name_plural = "Правила проверки отчётов"
+        verbose_name = "Запуск проверки отчёта"
+        verbose_name_plural = "Запуски проверки отчётов"
 
     def __str__(self):
-        return f"{self.get_check_type_display()}: {self.check_value}"
+        return f"{self.get_completion_mode_display()}: {self.product_label}"
 
     @property
     def product_label(self) -> str:
@@ -1768,15 +1951,219 @@ class ReportCheckRule(models.Model):
         return typical_section_short(self.section) or str(self.section)
 
     @property
-    def check_label(self) -> str:
-        if self.check_type == self.CheckType.MACRO:
-            from .report_submission import format_macro_check_label
-            return format_macro_check_label(self.macros.all()) or (self.check_value or "Макрос")
-        return self.check_value or ""
+    def threshold_label(self) -> str:
+        if self.completion_mode == self.CompletionMode.PER_ITEM:
+            return ""
+        return str(int(self.finding_threshold or 0))
+
+    @property
+    def composition_label(self) -> str:
+        from .report_submission import format_check_composition_label
+
+        return format_check_composition_label(self.lines.all())
 
     @property
     def clear_comments_label(self) -> str:
         return "Да" if self.clear_comments else "Нет"
+
+    @property
+    def review_order_label(self) -> str:
+        from .report_review import format_review_order
+
+        return format_review_order(self.review_order)
+
+
+class ReportCheckLine(models.Model):
+    """Одна проверка внутри запуска: макрос или навык и её порог."""
+
+    rule = models.ForeignKey(
+        ReportCheckRule,
+        on_delete=models.CASCADE,
+        related_name="lines",
+        verbose_name="Запуск",
+    )
+    position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
+    check_type = models.CharField(
+        "Тип проверки",
+        max_length=16,
+        choices=ReportCheckRule.CheckType.choices,
+        default=ReportCheckRule.CheckType.MACRO,
+        db_index=True,
+    )
+    macro = models.ForeignKey(
+        ReportMacro,
+        on_delete=models.CASCADE,
+        related_name="check_lines",
+        verbose_name="Название",
+    )
+    finding_threshold = models.PositiveIntegerField("Пороговое значение", default=0)
+    is_enabled = models.BooleanField("Участвует в запуске", default=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Строка запуска проверки"
+        verbose_name_plural = "Строки запуска проверки"
+
+    def __str__(self):
+        return self.macro.display_label if self.macro_id else ""
+
+
+def report_line_participates(line) -> bool:
+    """Строка входит в запуск, пока напротив неё стоит галочка."""
+    return bool(getattr(line, "is_enabled", True))
+
+
+class ReportCheckRun(models.Model):
+    """Durable execution state for a resumable report check."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "В очереди"
+        EXTRACTING = "extracting", "Чтение документа"
+        RUNNING = "running", "Проверка"
+        VALIDATING = "validating", "Проверка результатов"
+        RENDERING = "rendering", "Вставка примечаний"
+        DONE = "done", "Завершено"
+        PARTIAL = "partial", "Частично"
+        ERROR = "error", "Ошибка"
+        CANCELLED = "cancelled", "Отменено"
+
+    upload = models.ForeignKey(
+        PerformerReportUpload,
+        on_delete=models.CASCADE,
+        related_name="check_runs",
+    )
+    source_sha256 = models.CharField(max_length=64, db_index=True)
+    config_sha256 = models.CharField(max_length=64, blank=True, default="")
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.QUEUED,
+        db_index=True,
+    )
+    strategy = models.CharField(max_length=64, blank=True, default="")
+    clear_comments = models.BooleanField(default=False)
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(
+                fields=["upload", "source_sha256", "status"],
+                name="projects_ap_upload__98f13e_idx",
+            ),
+        ]
+
+
+class ReportCheckChunk(models.Model):
+    """One idempotent model request within a report check run."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает"
+        RUNNING = "running", "Выполняется"
+        RETRY = "retry", "Повтор"
+        DONE = "done", "Готово"
+        ERROR = "error", "Ошибка"
+        CANCELLED = "cancelled", "Отменено"
+
+    run = models.ForeignKey(
+        ReportCheckRun,
+        on_delete=models.CASCADE,
+        related_name="chunks",
+    )
+    line = models.ForeignKey(
+        ReportCheckLine,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="check_chunks",
+    )
+    skill_name = models.CharField(max_length=255)
+    skill_version = models.CharField(max_length=64, blank=True, default="")
+    model_id = models.CharField(max_length=255, blank=True, default="")
+    chunk_id = models.CharField(max_length=96)
+    ordinal = models.PositiveIntegerField(default=0)
+    total = models.PositiveIntegerField(default=0)
+    payload_sha256 = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict)
+    response = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    attempts = models.PositiveIntegerField(default=0)
+    retry_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["ordinal", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "line", "chunk_id"],
+                name="uniq_report_check_chunk",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["status", "retry_at"],
+                name="projects_ap_status_2b34b5_idx",
+            ),
+        ]
+
+
+class ReportCheckFinding(models.Model):
+    """Validated or rejected finding returned by a chunk."""
+
+    class Status(models.TextChoices):
+        ACCEPTED = "accepted", "Принято"
+        REJECTED = "rejected", "Отклонено"
+        SUPPRESSED = "suppressed", "Подавлено"
+        PLACED = "placed", "Вставлено"
+
+    chunk = models.ForeignKey(
+        ReportCheckChunk,
+        on_delete=models.CASCADE,
+        related_name="findings",
+    )
+    fingerprint = models.CharField(max_length=64, db_index=True)
+    status = models.CharField(max_length=16, choices=Status.choices)
+    rule_id = models.CharField(max_length=128, blank=True, default="")
+    anchor_id = models.CharField(max_length=255, blank=True, default="")
+    start = models.PositiveIntegerField(default=0)
+    end = models.PositiveIntegerField(default=0)
+    quote = models.TextField(blank=True, default="")
+    message = models.TextField(blank=True, default="")
+    replacement = models.TextField(blank=True, default="")
+    reason = models.TextField(blank=True, default="")
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["start", "end", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chunk", "fingerprint"],
+                name="uniq_report_check_finding",
+            ),
+        ]
+
+
+class ReportModelThrottle(models.Model):
+    """Cross-process single-slot throttle and cooldown per model route."""
+
+    route_key = models.CharField(max_length=320, unique=True)
+    active_token = models.CharField(max_length=64, blank=True, default="")
+    active_until = models.DateTimeField(null=True, blank=True)
+    cooldown_until = models.DateTimeField(null=True, blank=True)
+    last_started_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 
 class SourceDataTargetFolder(models.Model):

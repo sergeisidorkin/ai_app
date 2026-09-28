@@ -1,7 +1,11 @@
 {% load projects_extras %}
 <div id="projects-pane">
-  <!-- Индикатор, чтобы наследование hx-indicator не ругалось -->
-  <div id="projects-loading" class="text-muted htmx-indicator d-none">Загрузка…</div>
+  {# Пустой индикатор для наследования hx-indicator. Он внутри отдельной скрытой #}
+  {# обёртки: при swap HTMX на время settle копирует class с видимого скелета #}
+  {# «Загрузка проектов…», и текст на самом #projects-loading вспыхивал сверху. #}
+  <div class="d-none">
+    <div id="projects-loading" class="htmx-indicator"></div>
+  </div>
   <div id="projects-content-launch" class="projects-section-content">
     <div class="card shadow-sm">
       <div class="card-body">
@@ -1015,7 +1019,8 @@
           data-delete-url="{% url 'work_delete' w.pk %}"
           data-move-up-url="{% url 'work_move_up' w.pk %}"
           data-move-down-url="{% url 'work_move_down' w.pk %}"
-          data-report-folder-locked="{% if w.report_folder_locked %}1{% else %}0{% endif %}">
+          data-report-folder-locked="{% if w.report_folder_locked %}1{% else %}0{% endif %}"
+          data-report-upload-locked="{% if w.report_upload_locked %}1{% else %}0{% endif %}">
           <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">

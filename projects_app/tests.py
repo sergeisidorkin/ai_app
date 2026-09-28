@@ -67,6 +67,7 @@ from projects_app.models import (
     ProjectRegistration,
     ProjectRegistrationProduct,
     RegistrationWorkspaceFolder,
+    ReportCheckLine,
     ReportCheckRule,
     ReportMacro,
     SourceDataTargetFolder,
@@ -78,10 +79,13 @@ from projects_app.report_submission import (
     build_check_filename,
     build_report_asset_folder_name,
     build_report_filename,
+    build_report_history_row,
     build_report_submission_rows,
+    format_check_composition_label,
     format_macro_check_label,
     format_report_file_date,
     format_report_finding_count,
+    report_finding_groups,
     format_report_status_date,
     encode_local_report_path,
     format_report_version,
@@ -90,6 +94,7 @@ from projects_app.report_submission import (
     plural_sections,
     report_asset_code,
     report_findings_meet_threshold,
+    report_slot_row_id,
     report_section_number,
     report_scope_label,
     report_workflow_status,
@@ -110,6 +115,7 @@ from projects_app.report_macros import (
     TPGR_COURSE_SN_URL,
     TPGR_COURSE_URL,
     TPGR_MACROS,
+    _tpgr_spec_label,
     sync_tpgr_macros,
     tpgr_macro_code,
 )
@@ -136,6 +142,49 @@ from group_app.models import GroupMember, OrgUnit
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
 from unittest.mock import call, patch
+
+_skill_catalog_seq = {"n": 0}
+
+
+def make_skill_catalog(skill_name, model_id, *, name=""):
+    _skill_catalog_seq["n"] += 1
+    n = _skill_catalog_seq["n"]
+    return ReportMacro.objects.create(
+        name=name or skill_name,
+        check_kind=ReportMacro.CheckKind.SKILL,
+        skill_name=skill_name,
+        model_id=model_id,
+        course="DSKL",
+        section="SK",
+        part=f"{n // 100:02d}",
+        number=f"{n % 100:02d}",
+    )
+
+
+def add_check_line(rule, macro, *, position=1, threshold=0):
+    return ReportCheckLine.objects.create(
+        rule=rule,
+        macro=macro,
+        position=position,
+        check_type=macro.check_kind,
+        finding_threshold=threshold,
+    )
+
+
+def report_check_catalog_labels(html):
+    marker = 'id="report-check-catalog-json"'
+    start = html.find(marker)
+    if start < 0:
+        return []
+    start = html.find(">", start) + 1
+    end = html.find("</script>", start)
+    return [item["label"] for item in json.loads(html[start:end])]
+
+
+def make_skill_launch(skill_name, model_id, **rule_kwargs):
+    rule = ReportCheckRule.objects.create(**rule_kwargs)
+    add_check_line(rule, make_skill_catalog(skill_name, model_id))
+    return rule
 
 
 TEST_CONTRACT_IMAGE_PNG_BYTES = base64.b64decode(
@@ -3184,6 +3233,57 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertEqual(allowed_delete.status_code, 200)
         self.assertTrue(WorkVolume.objects.filter(pk=first.pk).exists())
         self.assertFalse(WorkVolume.objects.filter(pk=second.pk).exists())
+
+    def test_work_delete_is_blocked_when_asset_has_upload_without_folder_marker(self):
+        first = WorkVolume.objects.create(
+            project=self.project,
+            name="Карьер",
+            asset_name="Карьер",
+            manager=self.first_manager_name,
+            position=1,
+        )
+        self.assertEqual(report_asset_code(self.project, "Карьер"), "")
+        performer = Performer.objects.filter(work_item=first).first()
+        self.assertIsNotNone(performer)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name="Карьер",
+            file_name="report.docx",
+            cloud_path="/Corporate Root/06 Отчеты/report.docx",
+        )
+        page = self.client.get(reverse("projects_partial"))
+        html = page.content.decode()
+        marker = f'data-delete-url="{reverse("work_delete", args=[first.pk])}"'
+        row_start = html.rfind("<tr", 0, html.find(marker))
+        row = html[row_start:html.find(">", html.find(marker))]
+        self.assertIn('data-report-folder-locked="0"', row)
+        self.assertIn('data-report-upload-locked="1"', row)
+
+        blocked_delete = self.client.post(reverse("work_delete", args=[first.pk]))
+        self.assertEqual(blocked_delete.status_code, 200)
+        self.assertTrue(WorkVolume.objects.filter(pk=first.pk).exists())
+        self.assertTrue(Performer.objects.filter(pk=performer.pk).exists())
+        self.assertTrue(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
+
+        second = WorkVolume.objects.create(
+            project=self.project,
+            name="Фабрика",
+            asset_name="Фабрика",
+            manager=self.second_manager_name,
+            position=2,
+        )
+        moved = self.client.post(reverse("work_move_down", args=[first.pk]))
+        self.assertEqual(moved.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertGreater(first.position, second.position)
+        self.assertTrue(WorkVolume.objects.filter(pk=first.pk).exists())
+        allowed_delete = self.client.post(reverse("work_delete", args=[second.pk]))
+        self.assertEqual(allowed_delete.status_code, 200)
+        self.assertFalse(WorkVolume.objects.filter(pk=second.pk).exists())
+        self.assertTrue(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
 
     def test_equal_project_manager_and_manager_skips_prj_and_assigns_prd_to_project_manager(self):
         work_item = WorkVolume.objects.create(
@@ -6759,6 +6859,44 @@ class ReportSubmissionTests(TestCase):
         self.assertFalse(rows[1].is_full_report)
         self.assertEqual(rows[1].section_label, "MRK Маркетинг")
 
+    def test_full_report_history_row_uses_the_same_slot_id_as_the_table(self):
+        Performer.objects.create(
+            registration=self.project,
+            executor="",
+            asset_name=self.asset_name,
+            typical_section=self.mrk,
+            position=1,
+        )
+        named = Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name=self.asset_name,
+            typical_section=self.ecn,
+            position=2,
+        )
+        older = PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=self.project.project_manager,
+            asset_name=self.asset_name,
+            is_full_report=True,
+            version=0,
+            file_name="full-old.docx",
+        )
+        current_upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=self.project.project_manager,
+            asset_name=self.asset_name,
+            is_full_report=True,
+            version=1,
+            file_name="full.docx",
+        )
+        rows = build_report_submission_rows([named], [older, current_upload])
+        current = next(row for row in rows if row.is_full_report and row.is_current)
+        history = next(row for row in rows if row.is_full_report and not row.is_current)
+        self.assertEqual(report_slot_row_id(current_upload), current.row_id)
+        self.assertEqual(history.row_id, f"{current.row_id}-v00")
+        self.assertEqual(build_report_history_row(current_upload, older).row_id, history.row_id)
+
     def test_each_asset_gets_full_report_row_on_top(self):
         first = Performer.objects.create(
             registration=self.project,
@@ -6821,20 +6959,25 @@ class ReportSubmissionTests(TestCase):
         self.assertIn("report-row-full", section)
         self.assertIn("report-row-section", section)
         self.assertIn("report-row-all", section)
+        self.assertIn('id="report-submission-colpicker-wrap"', section)
+        self.assertIn("Отображаемые поля:", section)
+        self.assertIn('id="report-submission-col-finding-count"', section)
+        self.assertIn('data-col="stage"', section)
         self.assertIn('id="report-submission-send-btn"', section)
         self.assertIn("disabled", section[section.find('id="report-submission-send-btn"'):section.find('id="report-submission-send-btn"') + 120])
         self.assertIn("js-report-upload", section)
         self.assertIn("bi-upload", section)
         self.assertIn("Результаты проверки", section)
         self.assertNotIn("Дата проверки", section)
-        self.assertNotIn(">Номер</th>", section)
-        self.assertIn(">Версия</th>", section)
+        reports_table = section[section.find('id="report-submission-table"'):section.find('id="report-check-section"')]
+        self.assertNotIn(">Номер</th>", reports_table)
+        self.assertIn(">Верс.</th>", section)
         self.assertLess(section.find(">Раздел</th>"), section.find(">Статус</th>"))
-        self.assertLess(section.find(">Статус</th>"), section.find(">Загрузить</th>"))
-        self.assertLess(section.find(">Загрузить</th>"), section.find(">Версия</th>"))
-        self.assertLess(section.find(">Версия</th>"), section.find(">Дата статуса</th>"))
-        self.assertLess(section.find(">Дата статуса</th>"), section.find(">Результаты проверки</th>"))
-        self.assertLess(section.find(">Результаты проверки</th>"), section.find(">Число замечаний</th>"))
+        self.assertLess(section.find(">Статус</th>"), section.find(">Дата статуса</th>"))
+        self.assertLess(section.find(">Дата статуса</th>"), section.find(">Загрузить</th>"))
+        self.assertLess(section.find(">Загрузить</th>"), section.find(">Верс.</th>"))
+        self.assertLess(section.find(">Верс.</th>"), section.find(">Результаты проверки</th>"))
+        self.assertLess(section.find(">Результаты проверки</th>"), section.find(">Число замеч.</th>"))
         self.assertNotIn(">Дата отправки</th>", section)
         self.assertNotIn("зам.", section)
         self.assertGreaterEqual(section.count("report-finding-count-cell"), 4)
@@ -7603,7 +7746,7 @@ class ReportSubmissionTests(TestCase):
         self.assertIn("_01 MRK-ECN_", summary_name)
         self.assertNotIn("все_разделы", summary_name)
         self.assertIn("_00 весь_отчет_", full_name)
-        self.assertEqual(build_check_filename(section_name), section_name.replace(".docx", "_check.docx"))
+        self.assertEqual(build_check_filename(section_name), section_name.replace(".docx", "_ИИ1.docx"))
 
     def test_report_section_rows_are_locked_after_report_file_exists(self):
         first, second = self._create_section_performers()
@@ -7682,6 +7825,51 @@ class ReportSubmissionTests(TestCase):
             list(Performer.objects.filter(registration=self.project).order_by("position", "id").values_list("pk", flat=True)),
             [first.pk, second.pk],
         )
+
+    def test_service_performer_with_report_upload_is_not_deleted(self):
+        service = self.product.sections.create(
+            code="PRD",
+            short_name="Project Director",
+            short_name_ru="Руководитель проекта",
+            name_en="Project Director",
+            name_ru="Руководитель проекта",
+            accounting_type="Услуги",
+            position=0,
+        )
+        service_row = Performer.objects.create(
+            registration=self.project,
+            executor="Сидоров Сидор Сидорович",
+            asset_name=self.asset_name,
+            typical_section=service,
+            position=0,
+        )
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=service_row,
+            executor=service_row.executor,
+            asset_name=service_row.asset_name,
+            file_name="service-report.docx",
+            cloud_path="/reports/service-report.docx",
+        )
+        html = self.client.get(reverse("performers_partial")).content.decode()
+        row_at = html.find(f'data-row-order-id="{service_row.pk}"')
+        service_html = html[row_at:html.find("</tr>", row_at)]
+        self.assertIn('data-report-section-locked="0"', service_html)
+        self.assertIn('data-report-upload-locked="1"', service_html)
+        js = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "performers-panels.js"
+        ).read_text()
+        self.assertIn("function performerRowDeleteLocked(tr)", js)
+
+        blocked = self.client.post(reverse("performer_delete", args=[service_row.pk]))
+        self.assertEqual(blocked.status_code, 200)
+        self.assertTrue(Performer.objects.filter(pk=service_row.pk).exists())
+        self.assertTrue(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
 
     def test_performers_table_and_form_show_readonly_section_code(self):
         first, second = self._create_section_performers()
@@ -7913,7 +8101,7 @@ class ReportSubmissionTests(TestCase):
                 check_status="running",
                 check_finding_count=0,
             )),
-            "Отправлен",
+            "На проверке ИИ",
         )
         self.assertEqual(
             report_workflow_status(SimpleNamespace(
@@ -7923,7 +8111,7 @@ class ReportSubmissionTests(TestCase):
                 check_status=PerformerReportUpload.CheckStatus.DONE,
                 check_finding_count=2,
             )),
-            "Проверен",
+            "Проверен ИИ",
         )
         self.assertEqual(
             report_workflow_status(SimpleNamespace(
@@ -7933,13 +8121,21 @@ class ReportSubmissionTests(TestCase):
                 check_status=PerformerReportUpload.CheckStatus.DONE,
                 check_finding_count=0,
             )),
-            "Сдан",
+            "Согласован ИИ",
         )
         self.assertEqual(report_workflow_status_class("В работе"), "report-status--idle")
         self.assertEqual(report_workflow_status_class("Загружен"), "report-status--uploaded")
-        self.assertEqual(report_workflow_status_class("Отправлен"), "report-status--sent")
-        self.assertEqual(report_workflow_status_class("Проверен"), "report-status--checked")
+        self.assertEqual(report_workflow_status_class("На проверке ИИ"), "report-status--sent")
+        self.assertEqual(report_workflow_status_class("Проверен ИИ"), "report-status--checked")
+        self.assertEqual(report_workflow_status_class("Проверен РН"), "report-status--checked")
+        self.assertEqual(report_workflow_status_class("Проверен КП"), "report-status--checked")
+        self.assertEqual(report_workflow_status_class("Проверен РП"), "report-status--checked")
+        self.assertEqual(report_workflow_status_class("На проверке РН"), "report-status--sent")
+        self.assertEqual(report_workflow_status_class("В работе после РН"), "report-status--checked")
+        self.assertEqual(report_workflow_status_class("Согласован"), "report-status--accepted")
         self.assertEqual(report_workflow_status_class("Сдан"), "report-status--accepted")
+        self.assertEqual(report_workflow_status_class("Сдан ИИ"), "report-status--accepted")
+        self.assertEqual(report_workflow_status_class("Согласован РП"), "report-status--accepted")
         uploaded_at = timezone.now().replace(microsecond=0)
         sent_at = uploaded_at + timedelta(hours=1)
         checked_at = sent_at + timedelta(hours=1)
@@ -7975,12 +8171,17 @@ class ReportSubmissionTests(TestCase):
         self.assertFalse(report_findings_meet_threshold(1, 0))
         self.assertTrue(report_findings_meet_threshold(4, 5))
         self.assertFalse(report_findings_meet_threshold(5, 5))
-        self.assertEqual(report_workflow_status(checked, threshold=5), "Сдан")
-        self.assertEqual(report_workflow_status(checked, threshold=2), "Проверен")
-        self.assertEqual(report_workflow_status(accepted, threshold=0), "Сдан")
+        self.assertEqual(report_workflow_status(checked, threshold=5), "Согласован ИИ")
+        self.assertEqual(report_workflow_status(checked, threshold=2), "Проверен ИИ")
+        self.assertEqual(report_workflow_status(accepted, threshold=0), "Согласован ИИ")
         self.assertEqual(format_report_finding_count(idle), "—")
         self.assertEqual(format_report_finding_count(checked), "2")
         self.assertEqual(format_report_finding_count(accepted), "0")
+        grouped = SimpleNamespace(
+            file_name="a.docx", cloud_path="x", check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=1234567,
+        )
+        self.assertEqual(format_report_finding_count(grouped), "1\u00a0234\u00a0567")
 
     @patch("projects_app.report_submission.cloud_publish_resource", return_value="https://cloud.example/v1")
     @patch("projects_app.report_submission.cloud_upload_file", return_value=True)
@@ -8050,8 +8251,8 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(len(self._enabled_report_selects(section)), 1)
         self.assertGreater(section.count('data-is-current="0"'), 0)
         self.assertLess(section.find('data-is-current="1"'), section.find('data-parent-id="'))
-        current_pos = section.find('report-version-cell">01')
-        history_pos = section.find('report-version-cell">00')
+        current_pos = section.find('data-col="version">01')
+        history_pos = section.find('data-col="version">00')
         self.assertGreaterEqual(current_pos, 0)
         self.assertGreaterEqual(history_pos, 0)
         self.assertLess(current_pos, history_pos)
@@ -8154,6 +8355,151 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.json()["ok"])
 
+    def test_finding_groups_by_course_and_info_icon(self):
+        from types import SimpleNamespace
+
+        first, second = self._create_section_performers()
+        skill = ReportMacro.objects.create(
+            course="TPGR",
+            section="SK",
+            part="91",
+            number="91",
+            name="Стиль",
+            check_kind=ReportMacro.CheckKind.SKILL,
+            position=1,
+        )
+        macro = ReportMacro.objects.create(
+            course="TPGR",
+            section="SS",
+            part="91",
+            number="92",
+            name="Проценты",
+            check_kind=ReportMacro.CheckKind.MACRO,
+            position=2,
+        )
+        other = ReportMacro.objects.create(
+            course="DOCX",
+            section="SS",
+            part="91",
+            number="91",
+            name="Поля",
+            check_kind=ReportMacro.CheckKind.MACRO,
+            position=3,
+        )
+        upload = SimpleNamespace(
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=8,
+            check_finding_by_author={
+                skill.display_label: 2,
+                macro.display_label: 5,
+                other.display_label: 0,
+                "ZZZZ-SS-00.01 Чужой": 1,
+                "просто текст": 3,
+            },
+        )
+        groups = report_finding_groups(upload)
+        self.assertEqual(groups["total"], 8)
+        self.assertIsNone(groups["total_threshold"])
+        self.assertIsNone(groups["courses"][0]["items"][0]["threshold"])
+        self.assertEqual([item["course"] for item in groups["courses"]], ["TPGR", "—", "ZZZZ"])
+        self.assertEqual(groups["courses"][0]["total"], 7)
+        self.assertEqual(
+            [(item["kind_label"], item["name"], item["count"]) for item in groups["courses"][0]["items"]],
+            [("Макрос", "Проценты", 5), ("Навык", "Стиль", 2)],
+        )
+        self.assertEqual(groups["courses"][0]["items"][0]["label"], macro.display_label)
+        self.assertEqual(groups["courses"][0]["items"][1]["label"], skill.display_label)
+        self.assertEqual(groups["courses"][1]["items"][0]["kind_label"], "—")
+        self.assertEqual(groups["courses"][1]["total"], 3)
+        self.assertEqual(groups["courses"][2]["total"], 1)
+
+        rule = ReportCheckRule.objects.create(
+            product=self.product,
+            section=self.mrk,
+            completion_mode=ReportCheckRule.CompletionMode.SUM_AND_PER_ITEM,
+            finding_threshold=10,
+        )
+        ReportCheckLine.objects.create(
+            rule=rule,
+            macro=skill,
+            check_type=ReportCheckRule.CheckType.SKILL,
+            finding_threshold=4,
+            position=1,
+        )
+        ReportCheckLine.objects.create(
+            rule=rule,
+            macro=macro,
+            check_type=ReportCheckRule.CheckType.MACRO,
+            finding_threshold=0,
+            position=2,
+        )
+        saved = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="report_findings.docx",
+            version=0,
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=8,
+            check_finding_by_author={
+                skill.display_label: 2,
+                macro.display_label: 5,
+                "ZZZZ-SS-00.01 Чужой": 1,
+            },
+        )
+        saved_groups = report_finding_groups(saved)
+        self.assertEqual(saved_groups["total_threshold"], 10)
+        self.assertEqual(saved_groups["courses"][0]["items"][0]["threshold"], 0)
+        self.assertEqual(saved_groups["courses"][0]["items"][1]["threshold"], 4)
+        self.assertIsNone(saved_groups["courses"][1]["items"][0]["threshold"])
+        PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=second,
+            executor=second.executor,
+            asset_name=second.asset_name,
+            file_name="report_zero.docx",
+            version=0,
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+        )
+        section = self._report_section_html(self.client.get(reverse("performers_partial")))
+        self.assertEqual(section.count("js-report-finding-info"), 2)
+        self.assertIn("TPGR", section)
+        self.assertIn("Навык", section)
+        self.assertIn("Макрос", section)
+        self.assertIn('id="report-finding-modal"', section)
+        self.assertIn("modal-xl", section)
+        self.assertIn('id="report-finding-project"', section)
+        self.assertIn('id="report-finding-executor"', section)
+        self.assertIn('id="report-finding-report"', section)
+        self.assertNotIn("Итого:", section)
+        zero_marker = section.find(f'data-performer-id="{second.pk}"')
+        zero_row = section[section.rfind("<tr", 0, zero_marker):section.find("</tr>", zero_marker)]
+        self.assertIn("report-finding-count-cell", zero_row)
+        self.assertNotIn("js-report-finding-info", zero_row)
+        self.assertRegex(
+            zero_row,
+            r'report-calculated-count-cell"[^>]*>\s*<span class="report-finding-count-inner">0',
+        )
+        self.assertRegex(
+            zero_row,
+            r'report-finding-count-cell"[^>]*>\s*<span class="report-finding-count-inner">0',
+        )
+        status = self.client.get(reverse("report_check_status", args=[saved.pk]))
+        self.assertEqual(status.status_code, 200)
+        payload_groups = status.json()["finding_groups"]
+        self.assertEqual(payload_groups["total"], 8)
+        self.assertEqual(payload_groups["total_threshold"], 10)
+        self.assertEqual(payload_groups["courses"][0]["course"], "TPGR")
+        self.assertEqual(payload_groups["courses"][0]["total"], 7)
+        self.assertEqual(payload_groups["context"]["executor"], "Петров П.П.")
+        self.assertEqual(payload_groups["context"]["asset"], self.asset_name)
+        self.assertEqual(payload_groups["context"]["section"], "MRK Маркетинг")
+        self.assertEqual(payload_groups["context"]["name"], self.project.name)
+        self.assertEqual(payload_groups["context"]["version"], "00")
+        self.assertIn('id="report-finding-version"', section)
+
     def test_checked_current_version_disables_checkbox_until_new_upload(self):
         first, second = self._create_section_performers()
         PerformerReportUpload.objects.create(
@@ -8170,7 +8516,10 @@ class ReportSubmissionTests(TestCase):
         current_marker = section.find(f'data-performer-id="{first.pk}"')
         current_row = section[section.rfind("<tr", 0, current_marker):section.find("</tr>", current_marker)]
         self.assertIn('data-is-current="1"', current_row)
-        self.assertRegex(current_row, r'report-finding-count-cell">\s*3\s*<')
+        self.assertRegex(
+            current_row,
+            r'report-finding-count-cell"[^>]*>\s*<span class="report-finding-count-inner">3<button[^>]*class="report-finding-info-btn js-report-finding-info"',
+        )
         self.assertNotIn("зам.", current_row)
         self.assertEqual(len(self._enabled_report_selects(current_row)), 0)
         self.assertEqual(self._enabled_report_selects(section), [])
@@ -8227,8 +8576,9 @@ class ReportSubmissionTests(TestCase):
             / "css"
             / "site.css"
         ).read_text()
-        self.assertIn("#report-submission-table td.report-check-result-cell {\n  display: flex;", css)
+        self.assertIn("#report-submission-table .report-check-result-inner {\n  display: flex;", css)
         self.assertNotIn("#report-submission-table .report-check-pending-text {", css)
+        self.assertNotIn("col.col-report-check-result {\n  width: 100% !important;", css)
         js = (
             Path(__file__).resolve().parents[1]
             / "core"
@@ -8238,7 +8588,29 @@ class ReportSubmissionTests(TestCase):
             / "performers-panels.js"
         ).read_text()
         self.assertIn("function updateReportCheckResultCell(cell, data)", js)
+        self.assertIn("function layoutReportSubmissionColumns(", js)
+        self.assertIn("function reportCheckPendingText(data)", js)
         self.assertNotIn("text-danger small ms-1 js-report-check-badge", js)
+
+    def test_running_check_row_shows_macro_progress(self):
+        first, _second = self._create_section_performers()
+        PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="report_00.docx",
+            version=0,
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            check_macro_index=12,
+            check_macro_total=24,
+            check_macro_name="TPGR-SP-02.04 Точка в конце списков",
+        )
+        section = self._report_section_html(self.client.get(reverse("performers_partial")))
+        self.assertIn(
+            "Идет проверка... 12/24 (50%) TPGR-SP-02.04 Точка в конце списков",
+            section,
+        )
 
     def test_same_slot_can_store_two_versions(self):
         first, _second = self._create_section_performers()
@@ -8406,7 +8778,7 @@ class ReportSubmissionTests(TestCase):
                 payload = response.json()
                 self.assertEqual(payload["kind"], "check")
                 self.assertEqual(payload["check_file_name"], "")
-                self.assertEqual(payload["workflow_status"], "Отправлен")
+                self.assertEqual(payload["workflow_status"], "На проверке ИИ")
                 self.assertEqual(payload["finding_count_display"], "—")
                 upload.refresh_from_db()
                 self.assertEqual(upload.file_name, report_path.name)
@@ -8465,6 +8837,309 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertTrue(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
         mocked_delete.assert_called_once_with(self.user, "/Corporate Root/06 Отчеты/cloud-report.docx")
+
+    @patch("projects_app.report_submission.cloud_delete_file")
+    @patch("projects_app.report_submission._cloud_upload_user")
+    def test_cloud_report_delete_clears_report_path_when_check_delete_fails(self, mocked_user, mocked_delete):
+        mocked_user.return_value = self.user
+
+        def delete_side_effect(_user, path):
+            return not str(path).endswith("_check.docx")
+
+        mocked_delete.side_effect = delete_side_effect
+        first, _second = self._create_section_performers()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            performer=first,
+            version=0,
+            file_name="cloud-report.docx",
+            file_link="https://cloud.example/report",
+            cloud_path="/Corporate Root/06 Отчеты/cloud-report.docx",
+            check_file_name="cloud-report_check.docx",
+            check_file_link="https://cloud.example/report-check",
+            check_cloud_path="/Corporate Root/06 Отчеты/cloud-report_check.docx",
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            uploaded_at=timezone.now(),
+        )
+        response = self.client.post(
+            reverse("report_file_delete", args=[upload.pk]),
+            {"kind": "upload"},
+        )
+        self.assertEqual(response.status_code, 400)
+        upload.refresh_from_db()
+        self.assertEqual(upload.cloud_path, "")
+        self.assertEqual(upload.file_link, "")
+        self.assertEqual(upload.check_cloud_path, "/Corporate Root/06 Отчеты/cloud-report_check.docx")
+        self.assertEqual(upload.check_file_link, "https://cloud.example/report-check")
+
+        mocked_delete.side_effect = None
+        mocked_delete.return_value = True
+        retry = self.client.post(
+            reverse("report_file_delete", args=[upload.pk]),
+            {"kind": "upload"},
+        )
+        self.assertEqual(retry.status_code, 200)
+        self.assertFalse(PerformerReportUpload.objects.filter(pk=upload.pk).exists())
+        mocked_delete.assert_any_call(self.user, "/Corporate Root/06 Отчеты/cloud-report_check.docx")
+
+    def _direction_org(self, company, name, short_name):
+        return OrgUnit.objects.create(
+            company=company,
+            level=2,
+            department_name=name,
+            short_name=short_name,
+            unit_type="expertise",
+        )
+
+    def test_adjustment_columns_follow_role_and_direction(self):
+        first, second = self._create_section_performers()
+        company = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=81,
+        )
+        direction = self._direction_org(company, "Маркетинг", "MRK")
+        other = self._direction_org(company, "Экономика", "ECN")
+        self.mrk.expertise_direction = direction
+        self.mrk.save(update_fields=["expertise_direction"])
+        self.ecn.expertise_direction = other
+        self.ecn.save(update_fields=["expertise_direction"])
+        expert_user = get_user_model().objects.create_user(
+            username="report-adjust-expert",
+            password="secret",
+            is_staff=True,
+        )
+        expert_employee = Employee.objects.create(user=expert_user, role=EXPERT_GROUP)
+        ExpertProfile.objects.create(employee=expert_employee, expertise_direction=direction)
+        first.employee = expert_employee
+        first.save(update_fields=["employee"])
+        PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="mrk.docx",
+            cloud_path="x",
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=3,
+            check_finding_by_author={"Проверка": 3},
+            checked_at=timezone.now(),
+        )
+        PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=second,
+            executor=second.executor,
+            asset_name=second.asset_name,
+            file_name="ecn.docx",
+            cloud_path="y",
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=2,
+            check_finding_by_author={"Проверка": 2},
+            checked_at=timezone.now(),
+        )
+        admin_section = self._report_section_html(self.client.get(reverse("performers_partial")))
+        self.assertLess(admin_section.find(">Расч.</th>"), admin_section.find(">Корр.</th>"))
+        self.assertLess(admin_section.find(">Корр.</th>"), admin_section.find(">Число замеч.</th>"))
+        self.assertEqual(admin_section.count("js-report-finding-edit"), 2)
+
+        head_user = get_user_model().objects.create_user(
+            username="report-adjust-head",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(
+            user=head_user,
+            role=DEPARTMENT_HEAD_GROUP,
+            department=direction,
+        )
+        self.client.force_login(head_user)
+        head_section = self._report_section_html(self.client.get(reverse("performers_partial")))
+        self.assertIn(">Расч.</th>", head_section)
+        self.assertEqual(head_section.count("js-report-finding-edit"), 1)
+        own_marker = head_section.find(f'data-performer-id="{first.pk}"')
+        own_row = head_section[head_section.rfind("<tr", 0, own_marker):head_section.find("</tr>", own_marker)]
+        other_marker = head_section.find(f'data-performer-id="{second.pk}"')
+        other_row = head_section[head_section.rfind("<tr", 0, other_marker):head_section.find("</tr>", other_marker)]
+        self.assertIn("js-report-finding-edit", own_row)
+        self.assertNotIn("js-report-finding-edit", other_row)
+        self.assertNotIn("js-report-finding-info", other_row.split('data-col="finding-count"')[0])
+
+        self.client.force_login(expert_user)
+        expert_section = self._report_section_html(self.client.get(reverse("performers_partial")))
+        self.assertNotIn(">Расч.</th>", expert_section)
+        self.assertNotIn(">Корр.</th>", expert_section)
+        self.assertIn(">Число замеч.</th>", expert_section)
+
+    def test_finding_correction_updates_latest_version_chain(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_review import sync_review_after_check
+
+        first, _second = self._create_section_performers()
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            finding_threshold=1,
+            review_order=["ai", "rn"],
+        )
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="report.docx",
+            cloud_path="x",
+            version=0,
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=3,
+            check_finding_by_author={"Проверка": 3},
+            checked_at=timezone.now(),
+        )
+        sync_review_after_check(upload)
+        increased = self.client.post(
+            reverse("report_finding_correction", args=[upload.pk]),
+            data=json.dumps({"counts": {"Проверка": 4}}),
+            content_type="application/json",
+        )
+        self.assertEqual(increased.status_code, 400)
+        self.assertIn("нельзя увеличить", increased.json()["error"])
+        upload.refresh_from_db()
+        self.assertIsNone(upload.check_finding_correction)
+
+        saved = self.client.post(
+            reverse("report_finding_correction", args=[upload.pk]),
+            data=json.dumps({"counts": {"Проверка": 0}}),
+            content_type="application/json",
+        )
+        self.assertEqual(saved.status_code, 200)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_finding_correction, {"Проверка": 0})
+        self.assertEqual(upload.check_finding_count, 3)
+        rows = [
+            row for row in build_report_submission_rows(
+                Performer.objects.filter(pk=first.pk).select_related("registration"),
+                [upload],
+            )
+            if row.upload and row.upload.pk == upload.pk
+        ]
+        self.assertEqual(rows[0].workflow_status, "На проверке РН")
+        self.assertEqual(rows[1].workflow_status, "Сдан ИИ*")
+        self.assertEqual(rows[1].finding_count_display, "0")
+        self.assertEqual(rows[1].calculated_count_display, "3")
+        self.assertFalse(ReportReviewEntry.objects.filter(upload=upload, step="ai", phase="rework").exists())
+        self.assertTrue(ReportReviewEntry.objects.filter(upload=upload, step="rn", phase="review").exists())
+
+        restored = self.client.post(
+            reverse("report_finding_correction", args=[upload.pk]),
+            data=json.dumps({"counts": {"Проверка": 3}}),
+            content_type="application/json",
+        )
+        self.assertEqual(restored.status_code, 200)
+        upload.refresh_from_db()
+        self.assertIsNone(upload.check_finding_correction)
+        rows = build_report_submission_rows(
+            Performer.objects.filter(pk=first.pk).select_related("registration"),
+            [upload],
+        )
+        statuses = [
+            row.workflow_status
+            for row in rows
+            if row.upload and row.upload.pk == upload.pk
+        ]
+        self.assertEqual(statuses[0], "В работе после ИИ")
+        self.assertEqual(statuses[1], "Проверен ИИ")
+
+    def test_old_version_correction_does_not_move_later_chain(self):
+        first, _second = self._create_section_performers()
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            finding_threshold=5,
+            review_order=["ai", "rn"],
+        )
+        older = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="old.docx",
+            cloud_path="x",
+            version=0,
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=2,
+            check_finding_by_author={"Проверка": 2},
+            checked_at=timezone.now(),
+        )
+        latest = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="new.docx",
+            cloud_path="y",
+            version=1,
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+            check_finding_by_author={},
+            checked_at=timezone.now(),
+        )
+        response = self.client.post(
+            reverse("report_finding_correction", args=[older.pk]),
+            data=json.dumps({"counts": {"Проверка": 1}}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        older.refresh_from_db()
+        latest.refresh_from_db()
+        rows = build_report_submission_rows(
+            Performer.objects.filter(pk=first.pk).select_related("registration"),
+            [older, latest],
+        )
+        by_version = {}
+        for row in rows:
+            if row.review_entry is not None or not row.upload:
+                continue
+            by_version[row.upload.version] = row
+        self.assertEqual(by_version[0].workflow_status, "Сдан ИИ*")
+        self.assertEqual(by_version[0].calculated_count_display, "2")
+        self.assertEqual(by_version[0].finding_count_display, "1")
+        self.assertEqual(by_version[1].workflow_status, "Сдан ИИ")
+        from projects_app.models import ReportReviewEntry
+        self.assertFalse(ReportReviewEntry.objects.exists())
+
+    def test_recheck_clears_finding_correction(self):
+        from projects_app.report_macro_runner import store_report_check_status
+
+        first, _second = self._create_section_performers()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="report.docx",
+            cloud_path="x",
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=3,
+            check_finding_by_author={"Проверка": 3},
+            check_finding_correction={"Проверка": 1},
+            checked_at=timezone.now(),
+        )
+        store_report_check_status(
+            upload,
+            PerformerReportUpload.CheckStatus.DONE,
+            4,
+            "",
+            {"Проверка": 4},
+        )
+        upload.refresh_from_db()
+        self.assertIsNone(upload.check_finding_correction)
+        self.assertEqual(upload.check_finding_count, 4)
 
 
 class ReportSubmissionAccessTests(TestCase):
@@ -8864,8 +9539,13 @@ class ReportSubmissionAccessTests(TestCase):
         created = self.client.post(
             reverse("report_macro_form_create"),
             {
+                "course": "TEST",
+                "section": "AD",
+                "part": "00",
+                "number": "01",
                 "name": "Админский макрос",
                 "description": "",
+                "check_kind": "macro",
                 "code": DEFAULT_MACRO_CODE,
             },
         )
@@ -8951,25 +9631,29 @@ class ReportCheckTests(TestCase):
         self.assertTrue(self.models)
         self.skill = self.skills[0][0]
         self.model_id = self.models[0][0]
+        self.skill_macro = make_skill_catalog(self.skill, self.model_id, name="Навык проверки")
 
     def test_performers_partial_renders_check_table_and_add_row(self):
         response = self.client.get(reverse("performers_partial"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
-        self.assertIn("Проверка", html)
+        self.assertIn("Параметры проверки", html)
         self.assertIn('id="report-check-table"', html)
         self.assertIn("Добавить строку", html)
         self.assertIn('id="report-check-actions"', html)
         self.assertIn("Продукты", html)
         self.assertIn("Экспертиза", html)
         self.assertIn("Разделы", html)
-        self.assertIn("Тип проверки", html)
+        self.assertIn("Условия сдачи отчета", html)
         check_html = html[html.find('id="report-check-table"'):]
         self.assertLess(check_html.find(">Продукты</th>"), check_html.find(">Экспертиза</th>"))
         self.assertLess(check_html.find(">Экспертиза</th>"), check_html.find(">Разделы</th>"))
-        self.assertLess(check_html.find(">Тип проверки</th>"), check_html.find(">Число замечаний</th>"))
-        self.assertLess(check_html.find(">Число замечаний</th>"), check_html.find(">Проверка</th>"))
-        self.assertLess(check_html.find(">Модель</th>"), check_html.find(">Очистка</th>"))
+        self.assertLess(check_html.find(">Разделы</th>"), check_html.find(">Состав проверки</th>"))
+        self.assertLess(check_html.find(">Состав проверки</th>"), check_html.find(">Условия сдачи отчета</th>"))
+        self.assertLess(check_html.find(">Условия сдачи отчета</th>"), check_html.find(">Пороговое значение</th>"))
+        self.assertLess(check_html.find(">Пороговое значение</th>"), check_html.find(">Очистка</th>"))
+        self.assertNotIn(">Тип проверки</th>", check_html)
+        self.assertNotIn(">Модель</th>", check_html)
         self.assertIn(reverse("report_check_form_create"), html)
 
     def test_create_form_lists_all_products_sections_skills_and_models(self):
@@ -8982,13 +9666,24 @@ class ReportCheckTests(TestCase):
         self.assertIn("Все разделы", html)
         self.assertIn("Навык", html)
         self.assertIn("Макрос", html)
-        self.assertIn("Пороговое число замечаний", html)
+        self.assertIn("Условия сдачи отчета при проверке ИИ", html)
+        self.assertIn("Порядок проверки", html)
+        self.assertIn("Проверка ИИ", html)
+        self.assertNotIn("ИИ всегда первый, если включён.", html)
+        self.assertLess(html.find("Разделы"), html.find("Порядок проверки"))
+        self.assertLess(html.find("Порядок проверки"), html.find("Проверка ИИ"))
+        self.assertLess(html.find("Проверка ИИ"), html.find('name="completion_mode"'))
+        self.assertIn("Сумма замечаний", html)
+        self.assertIn("Контроль порога макросов и навыков", html)
+        self.assertIn("Сумма замечаний с контролем порогов", html)
+        self.assertIn("Пороговое значение суммы", html)
         self.assertIn('name="finding_threshold"', html)
-        self.assertLess(html.find('name="check_type"'), html.find('name="finding_threshold"'))
-        self.assertNotIn(
-            '<div class="row">',
-            html[html.find('name="check_type"'): html.find('name="finding_threshold"')],
-        )
+        self.assertIn('name="line_enabled"', html)
+        self.assertIn('aria-label="Включить в запуск"', html)
+        self.assertNotIn('id="report-check-line-actions"', html)
+        self.assertIn('name="line_check_type"', html)
+        self.assertIn('id="report-check-add-line"', html)
+        self.assertLess(html.find('name="completion_mode"'), html.find('name="finding_threshold"'))
         self.assertIn("Удалить все примечания перед проверкой", html)
         self.assertIn('name="clear_comments"', html)
         self.assertIn('type="number"', html)
@@ -8999,13 +9694,8 @@ class ReportCheckTests(TestCase):
         self.assertLess(html.find("Все направления"), html.find("ЭКОН"))
         self.assertLess(html.find("Весь отчет"), html.find("Все разделы"))
         self.assertLess(html.find("Все разделы"), html.find("MRK Маркетинг"))
-        self.assertIn(self.skill, html)
-        self.assertIn(self.model_id, html)
-        self.assertIn("<optgroup", html)
-        from core.dsh_catalog import list_dsh_model_groups
-        groups = list_dsh_model_groups()
-        self.assertTrue(groups)
-        self.assertIn(f'label="{groups[0][0]}"', html)
+        self.assertIn("Навык проверки", " ".join(report_check_catalog_labels(html)))
+        self.assertNotIn('name="model_id"', html)
 
     def test_create_saves_all_products_skill_rule(self):
         response = self.client.post(
@@ -9013,9 +9703,9 @@ class ReportCheckTests(TestCase):
             {
                 "product": "",
                 "section": "",
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             },
         )
         self.assertEqual(response.status_code, 204)
@@ -9023,9 +9713,11 @@ class ReportCheckTests(TestCase):
         self.assertIsNone(rule.product_id)
         self.assertIsNone(rule.expertise_dir_id)
         self.assertIsNone(rule.section_id)
-        self.assertEqual(rule.check_type, ReportCheckRule.CheckType.SKILL)
-        self.assertEqual(rule.check_value, self.skill)
-        self.assertEqual(rule.model_id, self.model_id)
+        self.assertEqual(rule.completion_mode, ReportCheckRule.CompletionMode.SUM)
+        line = rule.lines.get()
+        self.assertEqual(line.check_type, ReportCheckRule.CheckType.SKILL)
+        self.assertEqual(line.macro_id, self.skill_macro.pk)
+        self.assertEqual(line.finding_threshold, 0)
         self.assertEqual(rule.finding_threshold, 0)
         self.assertFalse(rule.clear_comments)
         self.assertEqual(rule.clear_comments_label, "Нет")
@@ -9039,8 +9731,7 @@ class ReportCheckTests(TestCase):
         self.assertIn("Все продукты", html)
         self.assertIn("Все направления", html)
         self.assertIn("Все разделы", html)
-        self.assertIn("Навык", html)
-        self.assertIn(self.skill, html)
+        self.assertIn("Сумма замечаний", html)
         check_html = html[html.find('id="report-check-table"'):]
         self.assertIn(">Нет</td>", check_html)
 
@@ -9050,10 +9741,10 @@ class ReportCheckTests(TestCase):
             {
                 "product": "",
                 "section": "",
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
                 "finding_threshold": "4",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             },
         )
         self.assertEqual(response.status_code, 204)
@@ -9063,15 +9754,38 @@ class ReportCheckTests(TestCase):
         check_html = listing[listing.find('id="report-check-table"'):]
         self.assertIn(">4</td>", check_html)
 
+    def test_sum_mode_clears_line_thresholds(self):
+        response = self.client.post(
+            reverse("report_check_form_create"),
+            {
+                "product": "",
+                "section": "",
+                "completion_mode": "sum",
+                "finding_threshold": "3",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
+                "line_threshold": "9",
+            },
+        )
+        self.assertEqual(response.status_code, 204)
+        rule = ReportCheckRule.objects.get()
+        self.assertEqual(rule.finding_threshold, 3)
+        self.assertEqual(rule.lines.get().finding_threshold, 0)
+        form_html = self.client.get(reverse("report_check_form_create")).content.decode()
+        self.assertIn("const lockLines = mode === 'sum';", form_html)
+        self.assertIn("input.disabled = lockLines;", form_html)
+        self.assertIn("input.classList.toggle('d-none', lockLines);", form_html)
+        self.assertIn("if (lockLines) input.value = '';", form_html)
+
     def test_create_saves_clear_comments(self):
         response = self.client.post(
             reverse("report_check_form_create"),
             {
                 "product": "",
                 "section": "",
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
                 "clear_comments": "on",
             },
         )
@@ -9082,6 +9796,1239 @@ class ReportCheckTests(TestCase):
         listing = self.client.get(reverse("performers_partial")).content.decode()
         check_html = listing[listing.find('id="report-check-table"'):]
         self.assertIn(">Да</td>", check_html)
+        self.assertIn("ИИ", check_html)
+
+    def test_review_order_field_and_manual_file(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_review import ReviewOrderError, entry_status, most_specific_check_rule, normalize_review_order
+        from projects_app.report_submission import build_report_submission_rows, submit_report_review_file
+
+        with self.assertRaises(ReviewOrderError):
+            normalize_review_order(["rn", "ai"])
+        self.assertEqual(normalize_review_order(["ai", "rp", "rn"]), ["ai", "rp", "rn"])
+
+        broad = ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            review_order=["ai", "rn"],
+        )
+        specific = ReportCheckRule.objects.create(
+            position=2,
+            product=self.product,
+            section=self.mrk,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            review_order=["ai", "rp"],
+        )
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+        )
+        open_step = ReportReviewEntry.objects.create(upload=upload, step="rp", phase="review")
+        self.assertEqual(most_specific_check_rule(upload).pk, specific.pk)
+        self.user.last_name = "Иванов"
+        self.user.first_name = "Иван"
+        self.user.save(update_fields=["last_name", "first_name"])
+        employee = self.user.employee_profile
+        employee.patronymic = "Иванович"
+        employee.save(update_fields=["patronymic"])
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = _report_docx_bytes("Текст без замечаний.")
+            commented = insert_comments(plain, [{
+                "start": 0,
+                "end": 5,
+                "message": "Поправьте",
+                "author": "РП",
+            }])
+            commented_upload = submit_report_review_file(
+                user=self.user,
+                upload=upload,
+                file_bytes=commented,
+                original_name="remarks.docx",
+                local_folder_path=tmp,
+            )
+            upload.refresh_from_db()
+            open_step.refresh_from_db()
+            self.assertEqual(report_workflow_status(upload), "Сдан ИИ")
+            self.assertFalse(open_step.settled)
+            self.assertTrue(open_step.remarks_notice_pending)
+            self.assertFalse(ReportReviewEntry.objects.filter(upload=upload, phase="rework").exists())
+            rows = [
+                row for row in build_report_submission_rows(
+                    Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                    [upload],
+                )
+                if row.upload and row.upload.pk == upload.pk or (row.review_entry and row.review_entry.upload_id == upload.pk)
+            ]
+            self.assertEqual(rows[0].workflow_status, "Проверен РП")
+            self.assertEqual(rows[0].finding_count_display, "1")
+            self.assertTrue(rows[0].review_entry.remarks_notice_pending)
+            self.assertTrue(rows[0].review_entry.review_file_name.endswith("_РП1.docx"))
+            premature = ReportReviewEntry.objects.create(
+                upload=upload,
+                step=open_step.step,
+                phase="rework",
+            )
+            held = [
+                row.workflow_status
+                for row in build_report_submission_rows(
+                    Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                    [upload],
+                )
+                if row.upload and row.upload.pk == upload.pk or (row.review_entry and row.review_entry.upload_id == upload.pk)
+            ]
+            self.assertEqual(held[0], "Проверен РП")
+            self.assertNotIn("В работе после РП", held)
+            from projects_app.report_submission import ensure_rework_after_remarks
+
+            self.assertIsNone(ensure_rework_after_remarks(open_step))
+            open_step.remarks_notice_pending = False
+            open_step.save(update_fields=["remarks_notice_pending"])
+            rework = premature
+            self.assertEqual(entry_status(rework), "В работе после РП")
+            rows = [
+                row for row in build_report_submission_rows(
+                    Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                    [upload],
+                )
+                if row.upload and row.upload.pk == upload.pk or (row.review_entry and row.review_entry.upload_id == upload.pk)
+            ]
+            self.assertEqual(rows[0].workflow_status, "В работе после РП")
+            self.assertEqual(rows[0].version_display, "")
+            self.assertEqual(rows[0].finding_count_display, "—")
+            self.assertFalse(rows[0].finding_info_disabled)
+            self.assertFalse(rows[0].review_entry.review_file_name)
+            self.assertEqual(rows[1].workflow_status, "Проверен РП")
+            self.assertEqual(rows[1].workflow_status_class, "report-status--checked")
+            self.assertTrue(rows[1].show_version_download)
+            self.assertEqual(rows[1].finding_count_display, "1")
+            self.assertFalse(rows[1].show_finding_info)
+            self.assertTrue(rows[1].finding_info_disabled)
+            self.assertTrue(rows[1].review_entry.review_file_name.endswith("_РП1.docx"))
+            rework.delete()
+            submit_report_review_file(
+                user=self.user,
+                upload=upload,
+                file_bytes=plain,
+                original_name="clean.docx",
+                local_folder_path=tmp,
+            )
+            open_step.refresh_from_db()
+            self.assertTrue(open_step.settled)
+            self.assertEqual(open_step.comment_count, 0)
+            self.assertEqual(entry_status(open_step), "Согласован РП")
+            self.assertTrue(open_step.review_file_name.endswith("_РП2.docx"))
+            self.assertEqual(
+                ReportReviewEntry.objects.filter(upload=upload).count(),
+                1,
+            )
+            settled_rows = [
+                row for row in build_report_submission_rows(
+                    Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                    [upload],
+                )
+                if row.review_entry and row.review_entry.pk == open_step.pk
+            ]
+            self.assertEqual(settled_rows[0].finding_count_display, "0")
+            self.assertFalse(settled_rows[0].show_finding_info)
+            self.assertTrue(settled_rows[0].finding_info_disabled)
+            self.assertTrue(settled_rows[0].show_version_download)
+        broad.delete()
+
+    def test_last_agreed_step_does_not_open_another_row(self):
+        from django.test import RequestFactory
+
+        from projects_app.models import ReportReviewEntry
+        from projects_app.views import _review_file_upload_payload
+
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            review_order=["ai", "rn", "rp"],
+        )
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="x",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+        )
+        basis = ReportReviewEntry.objects.create(
+            upload=upload,
+            step="rn",
+            phase="review",
+            settled=True,
+            review_file_name="rn.docx",
+            review_cloud_path="rn.docx",
+            comment_count=0,
+        )
+        ReportReviewEntry.objects.create(
+            upload=upload,
+            basis_entry=basis,
+            step="rp",
+            phase="review",
+            settled=True,
+            review_file_name="clean.docx",
+            review_cloud_path="clean.docx",
+            comment_count=0,
+        )
+        request = RequestFactory().get("/")
+        request.user = self.user
+        payload = _review_file_upload_payload(request, upload)
+        self.assertEqual(payload["workflow_status"], "Согласован РП")
+        self.assertNotIn("review_row_html", payload)
+
+        followed_upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="next.docx",
+            cloud_path="y",
+            version=2,
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+        )
+        passed = ReportReviewEntry.objects.create(
+            upload=followed_upload,
+            step="rn",
+            phase="review",
+            settled=True,
+            review_file_name="rn-clean.docx",
+            review_cloud_path="rn-clean.docx",
+            comment_count=0,
+        )
+        ReportReviewEntry.objects.create(
+            upload=followed_upload,
+            basis_entry=passed,
+            step="rp",
+            phase="review",
+        )
+        followed = _review_file_upload_payload(request, followed_upload)
+        self.assertEqual(followed["workflow_status"], "Сдан РН")
+        self.assertIn("На проверке РП", followed["review_row_html"])
+
+    def test_accept_without_remarks_closes_the_same_row(self):
+        from django.test import RequestFactory
+
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import accept_report_review_without_remarks, build_report_submission_rows
+        from projects_app.views import _render_report_submission_row, _review_accept_payload
+
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            review_order=["ai", "rn", "rp"],
+        )
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="x",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+            review_step="rp",
+            review_phase="review",
+        )
+        entry = ReportReviewEntry.objects.create(upload=upload, step="rp", phase="review")
+        request = RequestFactory().get("/")
+        request.user = self.user
+        row = next(
+            item for item in build_report_submission_rows(
+                Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                [upload],
+            )
+            if item.review_entry and item.review_entry.pk == entry.pk
+        )
+        html = _render_report_submission_row(request, row)
+        self.assertIn("Загрузить замечания", html)
+        self.assertIn("Принять без замечаний", html)
+        self.assertIn("report-review-action-rule", html)
+        accepted = accept_report_review_without_remarks(user=self.user, upload=upload)
+        entry.refresh_from_db()
+        self.assertTrue(entry.settled)
+        self.assertEqual(entry.comment_count, 0)
+        self.assertFalse(entry.review_file_name)
+        self.assertEqual(ReportReviewEntry.objects.filter(upload=upload).count(), 1)
+        payload = _review_accept_payload(request, accepted, entry)
+        self.assertEqual(payload["workflow_status"], "Согласован РП")
+        self.assertEqual(payload["finding_count_display"], "0")
+        self.assertNotIn("review_row_html", payload)
+        rows = [
+            item for item in build_report_submission_rows(
+                Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                [upload],
+            )
+            if item.review_entry and item.review_entry.pk == entry.pk
+        ]
+        self.assertEqual(rows[0].workflow_status, "Согласован РП")
+        self.assertEqual(rows[0].finding_count_display, "0")
+
+        next_upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="next.docx",
+            cloud_path="y",
+            version=2,
+            review_step="rn",
+            review_phase="review",
+        )
+        rn_entry = ReportReviewEntry.objects.create(upload=next_upload, step="rn", phase="review")
+        accept_report_review_without_remarks(user=self.user, upload=next_upload)
+        rn_entry.refresh_from_db()
+        nxt = ReportReviewEntry.objects.exclude(pk=rn_entry.pk).get(upload=next_upload)
+        self.assertEqual(nxt.step, "rp")
+        self.assertEqual(nxt.phase, "review")
+        followed = _review_accept_payload(request, next_upload, rn_entry)
+        self.assertEqual(followed["workflow_status"], "Сдан РН")
+        self.assertIn("На проверке РП", followed["review_row_html"])
+        self.assertIn("Загрузить замечания", followed["review_row_html"])
+
+    def test_review_result_cycle_is_separate_for_each_reviewer(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import build_review_result_filename, next_review_result_cycle
+
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report_00.docx",
+            cloud_path="x",
+            check_file_name="report_00_ИИ5.docx",
+        )
+        self.assertEqual(next_review_result_cycle(upload, "ai"), 6)
+        self.assertEqual(next_review_result_cycle(upload, "rn"), 1)
+        self.assertEqual(
+            build_review_result_filename("report_01_ИИ5.docx", "rn", 1),
+            "report_01_РН1.docx",
+        )
+        ReportReviewEntry.objects.create(
+            upload=upload,
+            step="rn",
+            phase="review",
+            review_file_name="report_01_РН1.docx",
+        )
+        self.assertEqual(next_review_result_cycle(upload, "rn"), 2)
+        self.assertEqual(next_review_result_cycle(upload, "kp"), 1)
+        self.assertEqual(next_review_result_cycle(upload, "ai"), 6)
+
+    def test_failed_ai_check_opens_rework_row(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_review import sync_review_after_check
+        from projects_app.report_submission import build_report_submission_rows
+
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="x",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=3,
+            checked_at=timezone.now(),
+        )
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            finding_threshold=1,
+            review_order=["ai"],
+        )
+        sync_review_after_check(upload)
+        self.assertEqual(report_workflow_status(upload), "Проверен ИИ")
+        rework = ReportReviewEntry.objects.get(upload=upload, step="ai", phase="rework")
+        rows = [
+            row for row in build_report_submission_rows(
+                Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                [upload],
+            )
+            if row.upload and row.upload.pk == upload.pk or (row.review_entry and row.review_entry.upload_id == upload.pk)
+        ]
+        self.assertEqual(rows[0].workflow_status, "В работе после ИИ")
+        self.assertEqual(rows[0].version_display, "")
+        self.assertEqual(rows[0].review_entry.pk, rework.pk)
+        self.assertEqual(rows[1].workflow_status, "Проверен ИИ")
+        self.assertTrue(rows[1].show_finding_info)
+        self.assertFalse(rows[1].finding_info_disabled)
+        self.assertTrue(rows[1].show_version_download)
+        status = self.client.get(reverse("report_check_status", args=[upload.pk]))
+        self.assertIn("В работе после ИИ", status.json()["review_row_html"])
+
+    def test_ai_rework_upload_continues_same_row(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_review import sync_review_after_check
+        from projects_app.report_submission import _retire_ai_rework_entries, build_report_submission_rows
+
+        performer = Performer.objects.get(registration=self.project)
+        checked = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="x",
+            version=1,
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=3,
+            checked_at=timezone.now(),
+        )
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            finding_threshold=1,
+            review_order=["ai", "rn"],
+        )
+        sync_review_after_check(checked)
+        corrected = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report-v2.docx",
+            cloud_path="y",
+            version=2,
+        )
+        _retire_ai_rework_entries(corrected)
+        self.assertFalse(ReportReviewEntry.objects.filter(step="ai", phase="rework").exists())
+        rows = [
+            row for row in build_report_submission_rows(
+                Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                [checked, corrected],
+            )
+            if row.upload and row.upload.pk in {checked.pk, corrected.pk}
+        ]
+        self.assertEqual(rows[0].workflow_status, "Загружен")
+        self.assertEqual(rows[0].upload.pk, corrected.pk)
+        self.assertEqual(rows[1].workflow_status, "Проверен ИИ")
+        corrected.sent_at = timezone.now()
+        corrected.check_status = PerformerReportUpload.CheckStatus.DONE
+        corrected.check_finding_count = 4
+        corrected.checked_at = timezone.now()
+        corrected.save()
+        sync_review_after_check(corrected)
+        rows = [
+            row for row in build_report_submission_rows(
+                Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                [checked, corrected],
+            )
+            if row.upload and row.upload.pk in {checked.pk, corrected.pk}
+            or (row.review_entry and row.review_entry.upload_id == corrected.pk)
+        ]
+        self.assertEqual(rows[0].workflow_status, "В работе после ИИ")
+        self.assertEqual(rows[1].workflow_status, "Проверен ИИ")
+        self.assertEqual(rows[1].upload.pk, corrected.pk)
+
+    def test_rework_send_updates_same_row_to_manual_review(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import _return_rework_to_review, build_report_submission_rows, format_report_datetime
+
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+        )
+        ReportReviewEntry.objects.create(
+            upload=upload,
+            step="rn",
+            phase="review",
+            review_file_name="remarks.docx",
+            comment_count=2,
+        )
+        rework = ReportReviewEntry.objects.create(upload=upload, step="rn", phase="rework")
+        corrected = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report-v2.docx",
+            cloud_path="x",
+            version=2,
+        )
+        self.assertTrue(_return_rework_to_review(corrected))
+        rework.refresh_from_db()
+        corrected.refresh_from_db()
+        self.assertEqual(rework.phase, "review")
+        self.assertEqual(rework.upload_id, corrected.pk)
+        self.assertTrue(corrected.step_revision)
+        rows = [
+            row for row in build_report_submission_rows(
+                Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                [upload, corrected],
+            )
+            if (row.review_entry and row.review_entry.upload_id in {upload.pk, corrected.pk})
+            or (row.upload and row.upload.pk in {upload.pk, corrected.pk} and not row.review_entry)
+        ]
+        self.assertEqual(rows[0].workflow_status, "На проверке РН")
+        self.assertNotEqual(rows[0].status_date_display, "—")
+        self.assertEqual(
+            rows[0].status_date_display,
+            format_report_datetime(rework.created_at),
+        )
+        self.assertEqual(rows[0].review_entry.pk, rework.pk)
+        self.assertFalse(any(row.upload and row.upload.pk == corrected.pk and not row.review_entry for row in rows))
+
+    def test_check_status_includes_next_review_row_when_accepted(self):
+        from projects_app.models import ReportReviewEntry
+
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            review_order=["ai", "rp"],
+        )
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+            checked_at=timezone.now(),
+        )
+        ReportReviewEntry.objects.create(upload=upload, step="rp", phase="review")
+        status = self.client.get(reverse("report_check_status", args=[upload.pk]))
+        self.assertEqual(status.status_code, 200)
+        payload = status.json()
+        self.assertEqual(payload["workflow_status"], "Сдан ИИ")
+        self.assertIn("На проверке РП", payload["review_row_html"])
+        self.assertIn('data-is-current="1"', payload["review_row_html"])
+
+    def test_admin_can_upload_review_file_for_any_manual_step(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_access import annotate_report_submission_rows
+        from projects_app.report_review import user_can_submit_review
+        from projects_app.report_submission import build_report_submission_rows
+
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+        )
+        for step in ("rn", "kp", "rp"):
+            ReportReviewEntry.objects.filter(upload=upload).delete()
+            ReportReviewEntry.objects.create(upload=upload, step=step, phase="review")
+            self.assertTrue(user_can_submit_review(self.user, upload))
+            rows = [
+                row for row in annotate_report_submission_rows(
+                    self.user,
+                    build_report_submission_rows(
+                        Performer.objects.filter(pk=performer.pk).select_related("registration"),
+                        [upload],
+                    ),
+                )
+                if row.review_entry and row.review_entry.upload_id == upload.pk
+            ]
+            self.assertTrue(rows[0].is_current)
+            self.assertTrue(rows[0].can_review_upload)
+
+    def test_pending_remarks_show_loaded_link_until_send(self):
+        from django.core import mail
+
+        from notifications_app.models import Notification
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import submit_report_review_file
+
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            review_order=["ai", "rp"],
+        )
+        executor_user = get_user_model().objects.create_user(
+            username="remarks-executor",
+            password="secret",
+            first_name="Петр",
+            last_name="Петров",
+            email="petrov@example.com",
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=executor_user, patronymic="Петрович")
+        executor_name = Performer.employee_full_name(employee)
+        first = Performer.objects.get(registration=self.project)
+        first.employee = employee
+        first.executor = executor_name
+        first.save(update_fields=["employee", "executor"])
+        second = Performer.objects.create(
+            registration=self.project,
+            employee=employee,
+            executor=executor_name,
+            asset_name="Карьер Южный",
+            typical_section=self.mrk,
+        )
+        plain = _report_docx_bytes("Текст без замечаний.")
+        north = insert_comments(plain, [{
+            "start": 0,
+            "end": 5,
+            "message": "Поправьте север",
+            "author": "РП",
+        }])
+        south = insert_comments(plain, [{
+            "start": 0,
+            "end": 5,
+            "message": "Поправьте юг",
+            "author": "РП",
+        }])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+                EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+                DEFAULT_FROM_EMAIL="system-mail@example.com",
+            ):
+                clean_upload = PerformerReportUpload.objects.create(
+                    registration=self.project,
+                    performer=first,
+                    executor=executor_name,
+                    asset_name=first.asset_name,
+                    file_name="clean.docx",
+                    cloud_path="",
+                    sent_at=timezone.now(),
+                    check_status=PerformerReportUpload.CheckStatus.DONE,
+                )
+                clean_entry = ReportReviewEntry.objects.create(
+                    upload=clean_upload,
+                    step="rp",
+                    phase="review",
+                )
+                submit_report_review_file(
+                    user=self.user,
+                    upload=clean_upload,
+                    file_bytes=plain,
+                    original_name="clean.docx",
+                    local_folder_path=tmp,
+                )
+                clean_entry.refresh_from_db()
+                self.assertFalse(clean_entry.remarks_notice_pending)
+
+                def stage_remarks(performer, file_name, file_bytes, version):
+                    upload = PerformerReportUpload.objects.create(
+                        registration=self.project,
+                        performer=performer,
+                        executor=executor_name,
+                        asset_name=performer.asset_name,
+                        file_name=file_name,
+                        cloud_path="",
+                        version=version,
+                        sent_at=timezone.now(),
+                        check_status=PerformerReportUpload.CheckStatus.DONE,
+                    )
+                    entry = ReportReviewEntry.objects.create(upload=upload, step="rp", phase="review")
+                    submit_report_review_file(
+                        user=self.user,
+                        upload=upload,
+                        file_bytes=file_bytes,
+                        original_name=file_name,
+                        local_folder_path=tmp,
+                    )
+                    entry.refresh_from_db()
+                    return entry
+
+                north_entry = stage_remarks(first, "north.docx", north, 1)
+                south_entry = stage_remarks(second, "south.docx", south, 0)
+                north_entry.review_file_link = "https://cloud.example/s/north"
+                north_entry.save(update_fields=["review_file_link"])
+                south_entry.review_file_link = "https://cloud.example/s/south"
+                south_entry.save(update_fields=["review_file_link"])
+                self.user.first_name = "Иван"
+                self.user.last_name = "Смирнов"
+                self.user.save(update_fields=["first_name", "last_name"])
+                self.assertTrue(north_entry.remarks_notice_pending)
+                self.assertTrue(south_entry.remarks_notice_pending)
+                self.assertEqual(north_entry.comment_count, 1)
+                self.assertFalse(
+                    ReportReviewEntry.objects.filter(upload__in=[north_entry.upload, south_entry.upload], phase="rework").exists()
+                )
+
+                listing = self.client.get(reverse("performers_partial")).content.decode()
+                self.assertIn("Настройки отправки замечаний", listing)
+                self.assertIn('id="report-remarks-modal"', listing)
+                self.assertIn("Загружен", listing)
+                self.assertNotIn("В работе после РП", listing)
+                self.assertNotIn(north_entry.review_file_name, listing)
+                self.assertNotIn(south_entry.review_file_name, listing)
+                loaded_row = next(part for part in listing.split("<tr") if "Загружен" in part)
+                checkbox = re.search(r'<input\b[^>]*name="report-select"[^>]*>', loaded_row, re.S)
+                self.assertIsNotNone(checkbox)
+                self.assertNotIn("disabled", checkbox.group(0))
+                self.assertIn('data-remarks-pending="1"', loaded_row)
+                self.assertIn("js-report-remarks-discard", loaded_row)
+                self.assertIn("bi-x-square", loaded_row)
+                self.assertIn("Удалить файл", loaded_row)
+                self.assertIn("report-review-action-rule", loaded_row)
+
+                with patch(
+                    "smtp_app.services.get_user_notification_email_options",
+                    return_value={
+                        "from_email": "connected-reviewer@example.com",
+                        "connection": None,
+                        "reply_to": ["connected-reviewer@example.com"],
+                    },
+                ):
+                    with self.captureOnCommitCallbacks(execute=True):
+                        response = self.client.post(
+                            reverse("report_remarks_send"),
+                            {
+                                "entry_ids[]": [str(north_entry.pk), str(south_entry.pk)],
+                                "delivery_channels[]": ["system", "system_email", "connected_email"],
+                                "request_sent_at": "2026-09-26T18:30",
+                            },
+                        )
+                self.assertEqual(response.status_code, 200, response.content)
+                payload = response.json()
+                self.assertTrue(payload["ok"])
+                self.assertEqual(
+                    {row["review_entry_id"] for row in payload["rows"]},
+                    {north_entry.pk, south_entry.pk},
+                )
+                self.assertTrue(all("В работе после РП" in row["review_row_html"] for row in payload["rows"]))
+                north_entry.refresh_from_db()
+                south_entry.refresh_from_db()
+                self.assertFalse(north_entry.remarks_notice_pending)
+                self.assertFalse(south_entry.remarks_notice_pending)
+
+                notification = Notification.objects.get()
+                self.assertEqual(notification.notification_type, "project_report_remarks")
+                self.assertEqual(notification.recipient, executor_user)
+                self.assertTrue(notification.title_text.startswith("Замечания по проекту "))
+                self.assertIn("Направляю замечания к следующим отчетам:", notification.content_text)
+                self.assertIn("отправленный текст отчета с замечаниями", notification.content_text)
+                self.assertIn("https://cloud.example/s/north", notification.content_text)
+                self.assertIn("https://cloud.example/s/south", notification.content_text)
+                self.assertIn("Иван Смирнов", notification.content_text)
+                download_sentence, signature = notification.content_text.split("С уважением", 1)
+                self.assertIn("Текст отчета с замечаниями доступен для скачивания по ссылке:", download_sentence)
+                self.assertIn("https://cloud.example/s/north", download_sentence)
+                self.assertNotIn("https://cloud.example", signature)
+                self.assertEqual(
+                    notification.payload["report_docx_link"],
+                    "https://cloud.example/s/north\nhttps://cloud.example/s/south",
+                )
+                self.assertIn("Карьер Северный", notification.content_text)
+                self.assertIn("Карьер Южный", notification.content_text)
+                self.assertEqual(len(notification.payload["remark_files"]), 2)
+                self.assertCountEqual(
+                    notification.payload["pending_entry_ids"],
+                    [north_entry.pk, south_entry.pk],
+                )
+                self.assertEqual(
+                    {item["entry_id"] for item in notification.payload["remark_files"]},
+                    {north_entry.pk, south_entry.pk},
+                )
+                sent_local = timezone.localtime(notification.sent_at)
+                self.assertEqual(sent_local.hour, 18)
+                self.assertEqual(sent_local.minute, 30)
+
+                self.assertEqual(len(mail.outbox), 2)
+                messages_by_sender = {message.from_email: message for message in mail.outbox}
+                self.assertEqual(
+                    set(messages_by_sender),
+                    {"system-mail@example.com", "connected-reviewer@example.com"},
+                )
+                for message in mail.outbox:
+                    self.assertEqual(message.to, ["petrov@example.com"])
+                    self.assertEqual(message.attachments, [])
+                    self.assertTrue(message.subject.startswith("Замечания по проекту "))
+                    self.assertIn("Направляю замечания к следующим отчетам", message.body)
+                    self.assertIn("https://cloud.example/s/north", message.body)
+                    self.assertIn("https://cloud.example/s/south", message.body)
+                    html_body = next(part for part, mime in message.alternatives if mime == "text/html")
+                    self.assertIn("Текст отчета с замечаниями доступен для скачивания по ссылке", html_body)
+                    self.assertIn("https://cloud.example/s/north", html_body)
+                    self.assertIn("https://cloud.example/s/south", html_body)
+
+                revealed = self.client.get(reverse("performers_partial")).content.decode()
+                self.assertIn(north_entry.review_file_name, revealed)
+                self.assertIn(south_entry.review_file_name, revealed)
+                self.assertIn("В работе после РП", revealed)
+                self.assertNotIn('data-remarks-pending="1"', revealed)
+
+    def test_performer_does_not_see_unsent_remarks(self):
+        from django.test import Client
+
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import submit_report_review_file
+
+        executor_user = get_user_model().objects.create_user(
+            username="remarks-hidden-executor",
+            password="secret",
+            first_name="Петр",
+            last_name="Петров",
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=executor_user, patronymic="Петрович", role=EXPERT_GROUP)
+        executor_name = Performer.employee_full_name(employee)
+        performer = Performer.objects.get(registration=self.project)
+        performer.employee = employee
+        performer.executor = executor_name
+        performer.participation_response = Performer.ParticipationResponse.CONFIRMED
+        performer.save(update_fields=["employee", "executor", "participation_response"])
+        commented = insert_comments(_report_docx_bytes("Текст без замечаний."), [{
+            "start": 0,
+            "end": 5,
+            "message": "Поправьте",
+            "author": "РП",
+        }])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                upload = PerformerReportUpload.objects.create(
+                    registration=self.project,
+                    performer=performer,
+                    executor=executor_name,
+                    asset_name=performer.asset_name,
+                    file_name="hidden-remarks.docx",
+                    cloud_path="",
+                    sent_at=timezone.now(),
+                    check_status=PerformerReportUpload.CheckStatus.DONE,
+                )
+                entry = ReportReviewEntry.objects.create(upload=upload, step="rp", phase="review")
+                submit_report_review_file(
+                    user=self.user,
+                    upload=upload,
+                    file_bytes=commented,
+                    original_name="hidden-remarks.docx",
+                    local_folder_path=tmp,
+                )
+        entry.refresh_from_db()
+        self.assertTrue(entry.remarks_notice_pending)
+
+        def current_section_row(html):
+            return next(
+                part for part in html.split("<tr")
+                if 'data-is-current="1"' in part
+                and "report-row-section" in part
+                and "hidden-remarks.docx" in part
+            )
+
+        reviewer_row = current_section_row(self.client.get(reverse("performers_partial")).content.decode())
+        self.assertIn('data-workflow-status="Проверен РП"', reviewer_row)
+        self.assertIn("Загружен", reviewer_row)
+        self.assertIn('data-remarks-pending="1"', reviewer_row)
+
+        executor_client = Client()
+        executor_client.force_login(executor_user)
+        performer_row = current_section_row(executor_client.get(reverse("performers_partial")).content.decode())
+        self.assertIn('data-workflow-status="На проверке РП"', performer_row)
+        self.assertNotIn("Загружен", performer_row)
+        self.assertNotIn("Проверен РП", performer_row)
+        self.assertNotIn("data-remarks-pending", performer_row)
+        checkbox = re.search(r'<input\b[^>]*name="report-select"[^>]*>', performer_row, re.S)
+        self.assertIsNotNone(checkbox)
+        self.assertIn("disabled", checkbox.group(0))
+
+    def test_remarks_link_is_published_when_missing(self):
+        from unittest.mock import patch
+
+        from notifications_app.services import (
+            _embed_local_remark_links,
+            _ensure_report_docx_public_link,
+            _remarks_docx_link_parts,
+        )
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import encode_local_report_path
+
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/Corporate Root/reports/report.docx",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+        )
+        entry = ReportReviewEntry.objects.create(
+            upload=upload,
+            step="rp",
+            phase="review",
+            review_file_name="remarks.docx",
+            review_cloud_path="/Corporate Root/reports/remarks.docx",
+            remarks_notice_pending=True,
+        )
+        with (
+            patch("projects_app.report_submission._cloud_upload_user", return_value=self.user),
+            patch(
+                "projects_app.report_submission.cloud_publish_resource",
+                return_value="https://cloud.example/s/remarks",
+            ) as mocked,
+        ):
+            url = _ensure_report_docx_public_link(entry, self.user)
+        self.assertEqual(url, "https://cloud.example/s/remarks")
+        mocked.assert_called_once_with(self.user, "/Corporate Root/reports/remarks.docx")
+        entry.refresh_from_db()
+        self.assertEqual(entry.review_file_link, "https://cloud.example/s/remarks")
+
+        with patch("projects_app.report_submission.cloud_publish_resource") as mocked_again:
+            self.assertEqual(
+                _ensure_report_docx_public_link(entry, self.user),
+                "https://cloud.example/s/remarks",
+            )
+        mocked_again.assert_not_called()
+
+        entry.review_file_link = ""
+        entry.review_cloud_path = encode_local_report_path(Path("/tmp/remarks.docx"))
+        entry.save(update_fields=["review_file_link", "review_cloud_path"])
+        with patch("projects_app.report_submission.cloud_publish_resource") as mocked_local:
+            self.assertEqual(_ensure_report_docx_public_link(entry, self.user), "")
+        mocked_local.assert_not_called()
+
+        local_file = {
+            "url": "/projects/reports/review-entries/5/download/",
+            "name": "remarks.docx",
+        }
+        plain, link_html = _remarks_docx_link_parts([entry], [local_file], self.user)
+        self.assertEqual(plain, local_file["url"])
+        self.assertIn(f'href="{local_file["url"]}"', link_html)
+        self.assertIn("remarks.docx", link_html)
+        stored = (
+            "<p>Текст отчета с замечаниями доступен для скачивания по ссылке: </p>"
+            "<p>С уважением,<br>Иван Смирнов</p>"
+        )
+        shown = _embed_local_remark_links(stored, [local_file], "")
+        sentence, signature = shown.split("С уважением", 1)
+        self.assertIn(local_file["url"], sentence)
+        self.assertIn("remarks.docx", sentence)
+        self.assertNotIn(local_file["url"], signature)
+
+    def test_remarks_send_keeps_file_pending_without_recipient(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import submit_report_review_file
+
+        performer = Performer.objects.get(registration=self.project)
+        plain = _report_docx_bytes("Текст без замечаний.")
+        commented = insert_comments(plain, [{
+            "start": 0,
+            "end": 5,
+            "message": "Поправьте",
+            "author": "РП",
+        }])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                upload = PerformerReportUpload.objects.create(
+                    registration=self.project,
+                    performer=performer,
+                    executor=performer.executor,
+                    asset_name=performer.asset_name,
+                    file_name="report.docx",
+                    cloud_path="",
+                    sent_at=timezone.now(),
+                    check_status=PerformerReportUpload.CheckStatus.DONE,
+                )
+                entry = ReportReviewEntry.objects.create(upload=upload, step="rp", phase="review")
+                submit_report_review_file(
+                    user=self.user,
+                    upload=upload,
+                    file_bytes=commented,
+                    original_name="remarks.docx",
+                    local_folder_path=tmp,
+                )
+                entry.refresh_from_db()
+                response = self.client.post(
+                    reverse("report_remarks_send"),
+                    {"entry_ids[]": [str(entry.pk)], "delivery_channels[]": ["system"]},
+                )
+        self.assertEqual(response.status_code, 400)
+        entry.refresh_from_db()
+        self.assertTrue(entry.remarks_notice_pending)
+        self.assertIn("не найден пользователь-получатель", response.json()["error"])
+
+    def test_uploading_corrected_file_completes_that_remarks_row(self):
+        from notifications_app.models import Notification
+        from notifications_app.services import (
+            build_notification_counters,
+            complete_report_remarks_for_upload,
+        )
+        from projects_app.models import ReportReviewEntry
+
+        executor_user = get_user_model().objects.create_user(
+            username="remarks-upload-executor",
+            password="secret",
+            first_name="Петр",
+            last_name="Петров",
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=executor_user, patronymic="Петрович")
+        executor_name = Performer.employee_full_name(employee)
+        first = Performer.objects.get(registration=self.project)
+        first.employee = employee
+        first.executor = executor_name
+        first.save(update_fields=["employee", "executor"])
+        second = Performer.objects.create(
+            registration=self.project,
+            employee=employee,
+            executor=executor_name,
+            asset_name="Карьер Южный",
+            typical_section=self.mrk,
+        )
+
+        def stage(performer, version):
+            upload = PerformerReportUpload.objects.create(
+                registration=self.project,
+                performer=performer,
+                executor=executor_name,
+                asset_name=performer.asset_name,
+                file_name=f"report-{version}.docx",
+                cloud_path="",
+                version=version,
+                sent_at=timezone.now(),
+                check_status=PerformerReportUpload.CheckStatus.DONE,
+            )
+            review = ReportReviewEntry.objects.create(
+                upload=upload,
+                step="rp",
+                phase="review",
+                review_file_name=f"remarks-{version}.docx",
+                comment_count=1,
+                remarks_notice_pending=False,
+            )
+            ReportReviewEntry.objects.create(upload=upload, step="rp", phase="rework")
+            return upload, review
+
+        north_upload, north_review = stage(first, 0)
+        _south_upload, south_review = stage(second, 0)
+        notification = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_REPORT_REMARKS,
+            related_section=Notification.RelatedSection.PROJECTS,
+            recipient=executor_user,
+            sender=self.user,
+            project=self.project,
+            title_text="Замечания по проекту",
+            payload={
+                "pending_entry_ids": [north_review.pk, south_review.pk],
+                "remark_files": [
+                    {"name": "north.docx", "entry_id": north_review.pk, "url": f"/projects/reports/review-entries/{north_review.pk}/download/"},
+                    {"name": "south.docx", "entry_id": south_review.pk, "url": f"/projects/reports/review-entries/{south_review.pk}/download/"},
+                ],
+            },
+        )
+        participation = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_PARTICIPATION_CONFIRMATION,
+            related_section=Notification.RelatedSection.PROJECTS,
+            recipient=executor_user,
+            sender=self.user,
+            project=self.project,
+            title_text="Подтвердите участие",
+        )
+
+        before = build_notification_counters(executor_user)
+        self.assertEqual(before["subsections"]["report_submission"], 2)
+        self.assertEqual(before["sections"]["projects"], 3)
+        self.assertEqual(before["total"], 3)
+
+        corrected = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=executor_name,
+            asset_name=first.asset_name,
+            file_name="fixed.docx",
+            cloud_path="",
+            version=1,
+            sent_at=timezone.now(),
+        )
+        self.assertEqual(complete_report_remarks_for_upload(upload=corrected, actor=executor_user), 1)
+        notification.refresh_from_db()
+        self.assertFalse(notification.is_processed)
+        self.assertEqual(notification.payload["pending_entry_ids"], [south_review.pk])
+        after_one = build_notification_counters(executor_user)
+        self.assertEqual(after_one["subsections"]["report_submission"], 1)
+        self.assertEqual(after_one["sections"]["projects"], 2)
+        self.assertEqual(after_one["total"], 2)
+
+        ai_performer = Performer.objects.create(
+            registration=self.project,
+            employee=employee,
+            executor=executor_name,
+            asset_name="Карьер Западный",
+            typical_section=self.mrk,
+        )
+        ai_upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=ai_performer,
+            executor=executor_name,
+            asset_name=ai_performer.asset_name,
+            file_name="ai.docx",
+            cloud_path="",
+            version=0,
+            sent_at=timezone.now(),
+        )
+        ReportReviewEntry.objects.create(upload=ai_upload, step="ai", phase="rework")
+        self.assertEqual(complete_report_remarks_for_upload(upload=ai_upload, actor=executor_user), 0)
+        notification.refresh_from_db()
+        self.assertEqual(notification.payload["pending_entry_ids"], [south_review.pk])
+
+        south_corrected = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=second,
+            executor=executor_name,
+            asset_name=second.asset_name,
+            file_name="south-fixed.docx",
+            cloud_path="",
+            version=1,
+            sent_at=timezone.now(),
+        )
+        self.assertEqual(complete_report_remarks_for_upload(upload=south_corrected, actor=executor_user), 1)
+        notification.refresh_from_db()
+        self.assertTrue(notification.is_processed)
+        self.assertTrue(notification.is_read)
+        self.assertEqual(notification.action_by, executor_user)
+        self.assertEqual(notification.payload["pending_entry_ids"], [])
+        done = build_notification_counters(executor_user)
+        self.assertEqual(done["subsections"]["report_submission"], 0)
+        self.assertEqual(done["sections"]["projects"], 1)
+        self.assertEqual(done["total"], 1)
+        participation.refresh_from_db()
+        self.assertFalse(participation.is_processed)
+
+        legacy_upload, legacy_review = stage(ai_performer, 1)
+        legacy = Notification.objects.create(
+            notification_type=Notification.NotificationType.PROJECT_REPORT_REMARKS,
+            related_section=Notification.RelatedSection.PROJECTS,
+            recipient=executor_user,
+            sender=self.user,
+            project=self.project,
+            title_text="Замечания по старому файлу",
+            payload={
+                "remark_files": [{
+                    "name": "legacy.docx",
+                    "url": f"/projects/reports/review-entries/{legacy_review.pk}/download/",
+                }],
+            },
+        )
+        legacy_fixed = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=ai_performer,
+            executor=executor_name,
+            asset_name=ai_performer.asset_name,
+            file_name="legacy-fixed.docx",
+            cloud_path="",
+            version=2,
+            sent_at=timezone.now(),
+        )
+        self.assertEqual(complete_report_remarks_for_upload(upload=legacy_fixed, actor=executor_user), 1)
+        legacy.refresh_from_db()
+        self.assertTrue(legacy.is_processed)
+        self.assertEqual(legacy.payload["pending_entry_ids"], [])
+        self.assertEqual(build_notification_counters(executor_user)["subsections"]["report_submission"], 0)
+
+        self.client.force_login(executor_user)
+        home = self.client.get(reverse("home"))
+        self.assertContains(home, 'data-notification-counter-subsection="report_submission"', html=False)
+        counters = self.client.get(reverse("notifications_counters"))
+        self.assertEqual(counters.status_code, 200)
+        self.assertEqual(counters.json()["subsections"]["report_submission"], 0)
+        self.assertEqual(counters.json()["sections"]["projects"], 1)
+
+    def test_discard_pending_remarks_restores_review_actions(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import parse_local_report_path, submit_report_review_file
+
+        performer = Performer.objects.get(registration=self.project)
+        plain = _report_docx_bytes("Текст без замечаний.")
+        commented = insert_comments(plain, [{
+            "start": 0,
+            "end": 5,
+            "message": "Поправьте",
+            "author": "РП",
+        }])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                upload = PerformerReportUpload.objects.create(
+                    registration=self.project,
+                    performer=performer,
+                    executor=performer.executor,
+                    asset_name=performer.asset_name,
+                    file_name="report.docx",
+                    cloud_path="",
+                    sent_at=timezone.now(),
+                    check_status=PerformerReportUpload.CheckStatus.DONE,
+                )
+                entry = ReportReviewEntry.objects.create(upload=upload, step="rp", phase="review")
+                submit_report_review_file(
+                    user=self.user,
+                    upload=upload,
+                    file_bytes=commented,
+                    original_name="remarks.docx",
+                    local_folder_path=tmp,
+                )
+                entry.refresh_from_db()
+                stored = Path(parse_local_report_path(entry.review_cloud_path))
+                self.assertTrue(stored.is_file())
+                ReportReviewEntry.objects.create(upload=upload, step="rp", phase="rework")
+                response = self.client.post(
+                    reverse("report_remarks_discard"),
+                    {"entry_id": str(entry.pk)},
+                )
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertFalse(stored.is_file())
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        html = payload["row_html"]
+        self.assertIn("На проверке РП", html)
+        self.assertIn("Загрузить замечания", html)
+        self.assertIn("Принять без замечаний", html)
+        self.assertNotIn("Загружен", html)
+        self.assertNotIn('data-remarks-pending="1"', html)
+        checkbox = re.search(r'<input\b[^>]*name="report-select"[^>]*>', html, re.S)
+        self.assertIsNotNone(checkbox)
+        self.assertIn("disabled", checkbox.group(0))
+        entry.refresh_from_db()
+        self.assertFalse(entry.remarks_notice_pending)
+        self.assertFalse(entry.review_file_name)
+        self.assertEqual(entry.comment_count, 0)
+        self.assertFalse(ReportReviewEntry.objects.filter(upload=upload, phase="rework").exists())
+        again = self.client.post(reverse("report_remarks_discard"), {"entry_id": str(entry.pk)})
+        self.assertEqual(again.status_code, 400)
 
     def test_create_full_report_section_rule(self):
         from projects_app.report_check import FULL_REPORT_SECTION_VALUE
@@ -9091,9 +11038,9 @@ class ReportCheckTests(TestCase):
             {
                 "product": str(self.product.pk),
                 "section": FULL_REPORT_SECTION_VALUE,
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             },
         )
         self.assertEqual(response.status_code, 204)
@@ -9117,7 +11064,7 @@ class ReportCheckTests(TestCase):
         response = self.client.get(reverse("report_check_form_create"))
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
-        self.assertIn("Запрещённые слова", html)
+        self.assertIn("Запрещённые слова", " ".join(report_check_catalog_labels(html)))
         self.assertNotIn(unique_description, html)
 
     def test_create_form_macro_checkbox_ids_do_not_match_macros_table(self):
@@ -9128,13 +11075,12 @@ class ReportCheckTests(TestCase):
         )
         form_html = self.client.get(reverse("report_check_form_create")).content.decode()
         listing = self.client.get(reverse("performers_partial")).content.decode()
-        form_id = f'id="report-check-form-macro-{macro.pk}"'
         table_id = f'id="report-macro-sel-{macro.id}"'
-        self.assertIn(form_id, form_html)
+        self.assertIn("Запрещённые слова", " ".join(report_check_catalog_labels(form_html)))
+        self.assertIn('name="line_macro"', form_html)
         self.assertNotIn(f'id="report-macro-sel-{macro.pk}"', form_html)
-        self.assertNotIn(f'id="report-check-macro-{macro.pk}"', form_html)
         self.assertIn(table_id, listing)
-        self.assertNotIn(form_id, listing)
+        self.assertNotIn('name="line_macro"', listing)
 
     def test_performers_modal_clears_report_table_selection_on_hide(self):
         source = (
@@ -9161,7 +11107,7 @@ class ReportCheckTests(TestCase):
             {
                 "product": str(self.product.pk),
                 "section": str(self.mrk.pk),
-                "check_type": "macro",
+                "completion_mode": "sum",
             },
         )
         self.assertEqual(response.status_code, 200)
@@ -9184,22 +11130,58 @@ class ReportCheckTests(TestCase):
             {
                 "product": str(self.product.pk),
                 "section": str(self.mrk.pk),
-                "check_type": "macro",
-                "macros": [str(macro.pk), str(extra.pk)],
+                "completion_mode": "sum",
+                "line_check_type": ["macro", "macro"],
+                "line_macro": [str(macro.pk), str(extra.pk)],
             },
         )
         self.assertEqual(response.status_code, 204)
         rule = ReportCheckRule.objects.get()
-        self.assertEqual(rule.check_type, ReportCheckRule.CheckType.MACRO)
-        self.assertEqual(set(rule.macros.values_list("name", flat=True)), {"Запрещённые слова", "Нумерация"})
-        self.assertEqual(rule.check_label, "2 макроса")
+        self.assertEqual(
+            list(rule.lines.order_by("position").values_list("macro__name", flat=True)),
+            ["Запрещённые слова", "Нумерация"],
+        )
+        self.assertEqual(rule.completion_mode, ReportCheckRule.CompletionMode.SUM)
+        self.assertTrue(all(line.is_enabled for line in rule.lines.all()))
 
         listing = self.client.get(reverse("performers_partial"))
         html = listing.content.decode()
         check_html = html[html.find('id="report-check-table"'): html.find('id="report-macros-table"')]
-        self.assertIn("2 макроса", check_html)
+        self.assertIn("Сумма замечаний", check_html)
         self.assertNotIn("Запрещённые слова", check_html)
         self.assertNotIn("Нумерация", check_html)
+
+    def test_unchecked_line_does_not_join_the_launch(self):
+        macro = ReportMacro.objects.create(
+            name="Запрещённые слова",
+            code="def check(ctx):\n    return []\n",
+            position=1,
+        )
+        extra = ReportMacro.objects.create(
+            name="Нумерация",
+            code="def check(ctx):\n    return []\n",
+            position=2,
+        )
+        response = self.client.post(
+            reverse("report_check_form_create"),
+            {
+                "product": "",
+                "section": "",
+                "completion_mode": "sum",
+                "line_check_type": ["macro", "macro"],
+                "line_macro": [str(macro.pk), str(extra.pk)],
+                "line_enabled": ["1", "0"],
+            },
+        )
+        self.assertEqual(response.status_code, 204)
+        rule = ReportCheckRule.objects.get()
+        lines = list(rule.lines.order_by("position"))
+        self.assertEqual([line.is_enabled for line in lines], [True, False])
+        self.assertEqual(rule.composition_label, "1 макрос")
+        edit = self.client.get(reverse("report_check_form_edit", args=[rule.pk]))
+        html = edit.content.decode()
+        self.assertIn('name="line_enabled" value="0"', html)
+        self.assertIn('name="line_enabled" value="1"', html)
 
     def test_macro_check_label_groups_counts_by_course(self):
         from types import SimpleNamespace
@@ -9213,6 +11195,24 @@ class ReportCheckTests(TestCase):
                 SimpleNamespace(course="TPGR", position=5, id=5),
             ]),
             "3 макроса TPGR, 1 макрос DOCX, 1 макрос",
+        )
+        skill = SimpleNamespace(course="DSKL", position=1, id=9, check_kind="skill")
+        self.assertEqual(
+            format_check_composition_label([
+                SimpleNamespace(check_type="macro", macro=SimpleNamespace(course="TPGR", position=1, id=1, check_kind="macro")),
+                SimpleNamespace(check_type="macro", macro=SimpleNamespace(course="TPGR", position=2, id=2, check_kind="macro")),
+                SimpleNamespace(check_type="skill", macro=skill),
+                SimpleNamespace(check_type="skill", macro=SimpleNamespace(course="DSKL", position=2, id=10, check_kind="skill")),
+                SimpleNamespace(check_type="skill", macro=SimpleNamespace(course="", position=3, id=11, check_kind="skill")),
+            ]),
+            "2 макроса TPGR, 2 навыка DSKL, 1 навык",
+        )
+        self.assertEqual(
+            format_check_composition_label([
+                SimpleNamespace(check_type="macro", is_enabled=True, macro=SimpleNamespace(course="TPGR", position=1, id=1, check_kind="macro")),
+                SimpleNamespace(check_type="macro", is_enabled=False, macro=SimpleNamespace(course="DOCX", position=2, id=2, check_kind="macro")),
+            ]),
+            "1 макрос TPGR",
         )
         tpgr_one = ReportMacro.objects.create(
             name="Знак процента",
@@ -9228,7 +11228,10 @@ class ReportCheckTests(TestCase):
         )
         docx = ReportMacro.objects.create(
             name="Ссылки",
-            course="DOCX-SS",
+            course="DOCX",
+            section="SS",
+            part="00",
+            number="99",
             code="def check(ctx):\n    return []\n",
             position=3,
         )
@@ -9237,17 +11240,25 @@ class ReportCheckTests(TestCase):
             {
                 "product": str(self.product.pk),
                 "section": str(self.mrk.pk),
-                "check_type": "macro",
-                "macros": [str(tpgr_one.pk), str(tpgr_two.pk), str(docx.pk)],
+                "completion_mode": "per_item",
+                "line_check_type": ["macro", "macro", "macro"],
+                "line_macro": [str(tpgr_one.pk), str(tpgr_two.pk), str(docx.pk)],
+                "line_threshold": ["1", "2", "0"],
             },
         )
         self.assertEqual(response.status_code, 204)
         rule = ReportCheckRule.objects.get()
-        self.assertEqual(rule.check_label, "2 макроса TPGR, 1 макрос DOCX-SS")
+        self.assertEqual(rule.completion_mode, ReportCheckRule.CompletionMode.PER_ITEM)
+        self.assertEqual(rule.threshold_label, "")
+        self.assertEqual(
+            list(rule.lines.order_by("position").values_list("finding_threshold", flat=True)),
+            [1, 2, 0],
+        )
         listing = self.client.get(reverse("performers_partial"))
         check_html = listing.content.decode()
         check_html = check_html[check_html.find('id="report-check-table"'): check_html.find('id="report-macros-table"')]
-        self.assertIn("2 макроса TPGR, 1 макрос DOCX-SS", check_html)
+        self.assertIn("Контроль порога макросов и навыков", check_html)
+        self.assertIn("2 макроса TPGR, 1 макрос DOCX", check_html)
         self.assertNotIn("Знак процента", check_html)
         self.assertNotIn("Ссылки", check_html)
 
@@ -9256,9 +11267,9 @@ class ReportCheckTests(TestCase):
             data={
                 "product": str(self.product.pk),
                 "section": str(self.other_section.pk),
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             }
         )
         self.assertFalse(form.is_valid())
@@ -9271,9 +11282,9 @@ class ReportCheckTests(TestCase):
                 "product": "",
                 "expertise_dir": str(self.geo_expertise.pk),
                 "section": "",
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             },
         )
         self.assertEqual(response.status_code, 204)
@@ -9301,9 +11312,9 @@ class ReportCheckTests(TestCase):
                 "product": str(self.product.pk),
                 "expertise_dir": str(self.geo_expertise.pk),
                 "section": str(self.mrk.pk),
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             },
         )
         self.assertEqual(response.status_code, 204)
@@ -9320,9 +11331,9 @@ class ReportCheckTests(TestCase):
                 "product": "",
                 "expertise_dir": str(self.geo_expertise.pk),
                 "section": FULL_REPORT_SECTION_VALUE,
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             }
         )
         self.assertFalse(form.is_valid())
@@ -9335,9 +11346,9 @@ class ReportCheckTests(TestCase):
                 "product": "",
                 "expertise_dir": str(self.geo_expertise.pk),
                 "section": str(self.other_section.pk),
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             }
         )
         self.assertFalse(form.is_valid())
@@ -9355,24 +11366,17 @@ class ReportCheckTests(TestCase):
             position=1,
             product=self.product,
             section=self.mrk,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value=self.skill,
-            model_id=self.model_id,
         )
-        second = ReportCheckRule.objects.create(
-            position=2,
-            check_type=ReportCheckRule.CheckType.MACRO,
-            check_value="Макрос",
-            model_id=self.model_id,
-        )
+        add_check_line(first, self.skill_macro)
+        second = ReportCheckRule.objects.create(position=2)
         edit = self.client.post(
             reverse("report_check_form_edit", args=[first.pk]),
             {
                 "product": "",
                 "section": "",
-                "check_type": "skill",
-                "check_value": self.skill,
-                "model_id": self.model_id,
+                "completion_mode": "sum",
+                "line_check_type": "skill",
+                "line_macro": str(self.skill_macro.pk),
             },
         )
         self.assertEqual(edit.status_code, 204)
@@ -9392,6 +11396,30 @@ class ReportCheckTests(TestCase):
         self.assertFalse(ReportCheckRule.objects.filter(pk=first.pk).exists())
         second.refresh_from_db()
         self.assertEqual(second.position, 1)
+
+
+def _comment_range_texts(document_xml: bytes) -> dict[str, str]:
+    from xml.etree import ElementTree as ET
+
+    word = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    root = ET.fromstring(document_xml)
+    active: dict[str, list[str]] = {}
+    found: dict[str, str] = {}
+
+    def walk(element):
+        if element.tag == f"{word}commentRangeStart":
+            active[element.get(f"{word}id") or ""] = []
+        elif element.tag == f"{word}commentRangeEnd":
+            comment_id = element.get(f"{word}id") or ""
+            found[comment_id] = "".join(active.pop(comment_id, []))
+        elif element.tag == f"{word}t":
+            for bucket in active.values():
+                bucket.append(element.text or "")
+        for child in list(element):
+            walk(child)
+
+    walk(root)
+    return found
 
 
 def _report_docx_bytes(*paragraphs: str) -> bytes:
@@ -9511,6 +11539,42 @@ def _char_style_docx(*styled_bits, paragraph_style=None):
     buffer = BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+def _prepend_tab_to_paragraph_runs(docx_bytes: bytes) -> bytes:
+    """Put w:tab in the same run as the paragraph text, as Word lists often do."""
+    from lxml import etree
+
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with zipfile.ZipFile(BytesIO(docx_bytes)) as archive:
+        parts = {info.filename: archive.read(info.filename) for info in archive.infolist()}
+    root = etree.fromstring(parts["word/document.xml"])
+    for paragraph in root.iter(f"{{{w_ns}}}p"):
+        for run in paragraph.iter(f"{{{w_ns}}}r"):
+            text_node = None
+            for child in run:
+                if child.tag == f"{{{w_ns}}}t" and (child.text or ""):
+                    text_node = child
+                    break
+            if text_node is None:
+                continue
+            tab = etree.Element(f"{{{w_ns}}}tab")
+            text_node.addprevious(tab)
+            break
+    parts["word/document.xml"] = etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _docx_tab_count(docx_bytes: bytes) -> int:
+    with zipfile.ZipFile(BytesIO(docx_bytes)) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+    return document_xml.count("<w:tab") + document_xml.count("<w:tab ")
 
 
 def _split_trailing_period_into_own_run(docx_bytes: bytes) -> bytes:
@@ -9855,8 +11919,12 @@ class ReportMacroTests(TestCase):
         self.assertIn(reverse("report_macro_csv_upload"), html)
         macros_html = html[html.find('id="report-macros-table"'):]
         self.assertLess(macros_html.find(">Курс</th>"), macros_html.find(">Секция</th>"))
-        self.assertLess(macros_html.find(">Секция</th>"), macros_html.find(">Название</th>"))
-        self.assertLess(macros_html.find(">Название</th>"), macros_html.find(">Описание</th>"))
+        self.assertLess(macros_html.find(">Секция</th>"), macros_html.find(">Раздел</th>"))
+        self.assertLess(macros_html.find(">Раздел</th>"), macros_html.find(">Номер</th>"))
+        self.assertLess(macros_html.find(">Номер</th>"), macros_html.find(">Название</th>"))
+        self.assertLess(macros_html.find(">Название</th>"), macros_html.find(">Вид проверки</th>"))
+        self.assertLess(macros_html.find(">Вид проверки</th>"), macros_html.find(">Описание</th>"))
+        self.assertIn(">Макрос<", macros_html)
         self.assertIn("TPGR", macros_html)
         self.assertIn(">ZN<", macros_html)
         self.assertIn('class="policy-table-pagination"', html)
@@ -9933,6 +12001,21 @@ class ReportMacroTests(TestCase):
         html = response.content.decode()
         self.assertIn("def check(ctx):", html)
         self.assertIn("findings", html)
+        self.assertIn('name="check_kind"', html)
+        self.assertIn(">Макрос<", html)
+        self.assertIn(">Навык<", html)
+        self.assertIn('class="mb-3 js-report-macro-code d-none"', html)
+        self.assertIn('class="mb-3 js-report-macro-skill d-none"', html)
+        self.assertIn('name="reasoning_effort"', html)
+        self.assertIn('name="temperature"', html)
+        self.assertIn(">По умолчанию<", html)
+        self.assertNotIn("передаётся в запрос модели", html)
+        self.assertIn('name="disable_tools"', html)
+        self.assertIn('name="processing_mode"', html)
+        self.assertIn(">Фрагменты<", html)
+        self.assertIn(">Агент<", html)
+        self.assertIn("текстовом режиме вопрос-ответ", html)
+        self.assertIn('id="report-macro-reasoning-levels"', html)
         self.assertIn('name="course"', html)
         self.assertIn('name="section"', html)
         row_html = html[html.find('<div class="row">'): html.find('name="name"')]
@@ -9943,14 +12026,328 @@ class ReportMacroTests(TestCase):
             html[html.find('name="course"'): html.find('name="section"')],
         )
 
+    def test_create_skill_row_stores_dsh_skill_and_model(self):
+        from core.dsh_catalog import list_dsh_models, list_dsh_skills
+
+        skills = list_dsh_skills()
+        models = list_dsh_models()
+        self.assertTrue(skills)
+        self.assertTrue(models)
+        skill_name = skills[0][0]
+        model_id = models[0][0]
+        created = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "00",
+                "number": "10",
+                "name": "Строка навыка каталога",
+                "description": "dsh",
+                "check_kind": "skill",
+                "skill_name": skill_name,
+                "model_id": model_id,
+                "code": DEFAULT_MACRO_CODE,
+            },
+        )
+        self.assertEqual(created.status_code, 204)
+        item = ReportMacro.objects.get(name="Строка навыка каталога")
+        self.assertEqual(item.check_kind, ReportMacro.CheckKind.SKILL)
+        self.assertEqual(item.skill_name, skill_name)
+        self.assertEqual(item.model_id, model_id)
+        self.assertEqual(item.reasoning_effort, "off")
+        self.assertEqual(item.temperature, "")
+        self.assertFalse(item.disable_tools)
+        self.assertEqual(item.processing_mode, ReportMacro.ProcessingMode.CHUNKS)
+        self.assertEqual(item.code, "")
+
+        text_only = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "00",
+                "number": "14",
+                "name": "Навык без инструментов",
+                "description": "dsh",
+                "check_kind": "skill",
+                "skill_name": skill_name,
+                "model_id": model_id,
+                "reasoning_effort": "off",
+                "disable_tools": "on",
+                "code": "",
+            },
+        )
+        self.assertEqual(text_only.status_code, 204)
+        self.assertTrue(
+            ReportMacro.objects.get(name="Навык без инструментов").disable_tools
+        )
+
+        agent = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "00",
+                "number": "15",
+                "name": "Навык в режиме агента",
+                "description": "dsh",
+                "check_kind": "skill",
+                "skill_name": skill_name,
+                "model_id": model_id,
+                "reasoning_effort": "off",
+                "disable_tools": "on",
+                "processing_mode": "agent",
+                "code": "",
+            },
+        )
+        self.assertEqual(agent.status_code, 204)
+        agent_item = ReportMacro.objects.get(name="Навык в режиме агента")
+        self.assertEqual(agent_item.processing_mode, ReportMacro.ProcessingMode.AGENT)
+        self.assertFalse(agent_item.disable_tools)
+        agent_html = self.client.get(
+            reverse("report_macro_form_edit", args=[agent_item.pk])
+        ).content.decode()
+        self.assertIn("js-report-macro-tools d-none", agent_html)
+
+        as_macro = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "00",
+                "number": "16",
+                "name": "Макрос сбрасывает режим",
+                "description": "",
+                "check_kind": "macro",
+                "processing_mode": "agent",
+                "temperature": "0.7",
+                "code": DEFAULT_MACRO_CODE,
+            },
+        )
+        self.assertEqual(as_macro.status_code, 204)
+        reset_macro = ReportMacro.objects.get(name="Макрос сбрасывает режим")
+        self.assertEqual(reset_macro.processing_mode, ReportMacro.ProcessingMode.CHUNKS)
+        self.assertEqual(reset_macro.temperature, "")
+
+        warmed = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "00",
+                "number": "18",
+                "name": "Навык с температурой",
+                "description": "dsh",
+                "check_kind": "skill",
+                "skill_name": skill_name,
+                "model_id": model_id,
+                "reasoning_effort": "off",
+                "temperature": "0.2",
+                "code": "",
+            },
+        )
+        self.assertEqual(warmed.status_code, 204)
+        self.assertEqual(
+            ReportMacro.objects.get(name="Навык с температурой").temperature,
+            "0.2",
+        )
+        rejected_temperature = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "00",
+                "number": "19",
+                "name": "Слишком высокая температура",
+                "description": "dsh",
+                "check_kind": "skill",
+                "skill_name": skill_name,
+                "model_id": model_id,
+                "reasoning_effort": "off",
+                "temperature": "1.5",
+                "code": "",
+            },
+        )
+        self.assertEqual(rejected_temperature.status_code, 200)
+        self.assertIn("температур", rejected_temperature.content.decode().casefold())
+        self.assertFalse(
+            ReportMacro.objects.filter(name="Слишком высокая температура").exists()
+        )
+
+        from core.dsh_catalog import reasoning_levels_by_model
+
+        allowed_levels = reasoning_levels_by_model().get(model_id) or ["off"]
+        unsupported = next(
+            level for level in ("max", "xhigh", "minimal", "medium", "high")
+            if level not in allowed_levels
+        )
+        rejected = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "00",
+                "number": "12",
+                "name": "Слишком высокий уровень",
+                "description": "dsh",
+                "check_kind": "skill",
+                "skill_name": skill_name,
+                "model_id": model_id,
+                "reasoning_effort": unsupported,
+                "code": "",
+            },
+        )
+        self.assertEqual(rejected.status_code, 200)
+        self.assertIn("уровень рассуждений", rejected.content.decode())
+        self.assertFalse(ReportMacro.objects.filter(name="Слишком высокий уровень").exists())
+
+        if "low" in allowed_levels:
+            accepted = self.client.post(
+                reverse("report_macro_form_create"),
+                {
+                    "course": "TPGR",
+                    "section": "ZN",
+                    "part": "00",
+                    "number": "13",
+                    "name": "Низкий уровень рассуждений",
+                    "description": "dsh",
+                    "check_kind": "skill",
+                    "skill_name": skill_name,
+                    "model_id": model_id,
+                    "reasoning_effort": "low",
+                    "code": "",
+                },
+            )
+            self.assertEqual(accepted.status_code, 204)
+            stored = ReportMacro.objects.get(name="Низкий уровень рассуждений")
+            self.assertEqual(stored.reasoning_effort, "low")
+
+        listing = self.client.get(reverse("performers_partial")).content.decode()
+        macros_html = listing[listing.find('id="report-macros-table"'):]
+        self.assertIn(">Навык<", macros_html)
+
+        python_macro = ReportMacro.objects.create(
+            name="Только макрос",
+            code=DEFAULT_MACRO_CODE,
+            position=2,
+        )
+        form_html = self.client.get(reverse("report_check_form_create")).content.decode()
+        labels = " ".join(report_check_catalog_labels(form_html))
+        self.assertIn("Только макрос", labels)
+        self.assertIn("Строка навыка каталога", labels)
+        self.assertIn('id="report-check-catalog-json"', form_html)
+        self.assertNotIn(f'id="report-check-form-macro-{python_macro.pk}"', form_html)
+        self.assertNotIn(f'id="report-check-form-macro-{item.pk}"', form_html)
+
+        edited = self.client.get(reverse("report_macro_form_edit", args=[item.pk]))
+        edit_html = edited.content.decode()
+        self.assertIn('class="mb-3 js-report-macro-code d-none"', edit_html)
+        self.assertIn('class="mb-3 js-report-macro-skill"', edit_html)
+        self.assertNotIn('class="mb-3 js-report-macro-skill d-none"', edit_html)
+
+        upload = self._macros_csv_upload(
+            [
+                "Курс",
+                "Секция",
+                "Раздел",
+                "Номер",
+                "Название",
+                "Описание",
+                "Код",
+                "Вид проверки",
+                "Наименование навыка DHS",
+                "Модель",
+            ],
+            [["TPGR", "ZN", "00", "11", "Навык из CSV", "dsh", "", "Навык", skill_name, model_id]],
+        )
+        uploaded = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
+        self.assertEqual(uploaded.status_code, 200)
+        self.assertEqual(uploaded.json()["created"], 1)
+        from_csv = ReportMacro.objects.get(name="Навык из CSV")
+        self.assertEqual(from_csv.check_kind, ReportMacro.CheckKind.SKILL)
+        self.assertEqual(from_csv.skill_name, skill_name)
+        self.assertEqual(from_csv.model_id, model_id)
+        self.assertEqual(from_csv.reasoning_effort, "off")
+        self.assertEqual(from_csv.processing_mode, ReportMacro.ProcessingMode.CHUNKS)
+        self.assertEqual(from_csv.code, "")
+
+        agent_upload = self._macros_csv_upload(
+            [
+                "Курс",
+                "Секция",
+                "Раздел",
+                "Номер",
+                "Название",
+                "Описание",
+                "Код",
+                "Вид проверки",
+                "Наименование навыка DHS",
+                "Модель",
+                "Уровень рассуждений",
+                "Без инструментов",
+                "Режим обработки",
+            ],
+            [[
+                "TPGR", "ZN", "00", "17", "Агент из CSV", "dsh", "",
+                "Навык", skill_name, model_id, "Выкл.", "да", "Агент",
+            ]],
+        )
+        agent_uploaded = self.client.post(
+            reverse("report_macro_csv_upload"),
+            {"csv_file": agent_upload},
+        )
+        self.assertEqual(agent_uploaded.status_code, 200)
+        self.assertEqual(agent_uploaded.json()["created"], 1)
+        from_agent_csv = ReportMacro.objects.get(name="Агент из CSV")
+        self.assertEqual(from_agent_csv.processing_mode, ReportMacro.ProcessingMode.AGENT)
+        self.assertFalse(from_agent_csv.disable_tools)
+        self.assertEqual(from_agent_csv.temperature, "")
+
+        warm_upload = self._macros_csv_upload(
+            [
+                "Курс",
+                "Секция",
+                "Раздел",
+                "Номер",
+                "Название",
+                "Описание",
+                "Код",
+                "Вид проверки",
+                "Наименование навыка DHS",
+                "Модель",
+                "Уровень рассуждений",
+                "Без инструментов",
+                "Режим обработки",
+                "Температура",
+            ],
+            [[
+                "TPGR", "ZN", "00", "22", "Температура из CSV", "dsh", "",
+                "Навык", skill_name, model_id, "Выкл.", "нет", "Фрагменты", "0,2",
+            ]],
+        )
+        warm_uploaded = self.client.post(
+            reverse("report_macro_csv_upload"),
+            {"csv_file": warm_upload},
+        )
+        self.assertEqual(warm_uploaded.status_code, 200)
+        self.assertEqual(warm_uploaded.json()["created"], 1)
+        self.assertEqual(
+            ReportMacro.objects.get(name="Температура из CSV").temperature,
+            "0.2",
+        )
+
     def test_create_edit_delete_and_move_macros(self):
         created = self.client.post(
             reverse("report_macro_form_create"),
             {
                 "course": "TPGR",
                 "section": "ZN",
+                "part": "00",
+                "number": "20",
                 "name": "Запрещённые слова",
                 "description": "regex",
+                "check_kind": "macro",
                 "code": DEFAULT_MACRO_CODE,
             },
         )
@@ -9970,10 +12367,13 @@ class ReportMacroTests(TestCase):
         edited = self.client.post(
             reverse("report_macro_form_edit", args=[first.pk]),
             {
-                "course": "TPGR-2",
-                "section": "ZN-01",
+                "course": "ABCD",
+                "section": "XY",
+                "part": "02",
+                "number": "03",
                 "name": "Запрещённые фразы",
                 "description": "обновлено",
+                "check_kind": "macro",
                 "code": "def check(ctx):\n    return []\n",
             },
         )
@@ -9981,8 +12381,10 @@ class ReportMacroTests(TestCase):
         first.refresh_from_db()
         self.assertEqual(first.name, "Запрещённые фразы")
         self.assertEqual(first.description, "обновлено")
-        self.assertEqual(first.course, "TPGR-2")
-        self.assertEqual(first.section, "ZN-01")
+        self.assertEqual(first.course, "ABCD")
+        self.assertEqual(first.section, "XY")
+        self.assertEqual(first.part, "02")
+        self.assertEqual(first.number, "03")
 
         moved = self.client.post(reverse("report_macro_move_up", args=[second.pk]))
         self.assertEqual(moved.status_code, 200)
@@ -10001,6 +12403,33 @@ class ReportMacroTests(TestCase):
         self.assertFalse(ReportMacro.objects.filter(pk=first.pk).exists())
         self.assertTrue(ReportMacro.objects.filter(pk=second.pk).exists())
 
+    def test_duplicate_macro_code_is_rejected(self):
+        ReportMacro.objects.create(
+            course="TPGR",
+            section="ZN",
+            part="01",
+            number="03",
+            name="Первый",
+            code=DEFAULT_MACRO_CODE,
+            position=1,
+        )
+        response = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "01",
+                "number": "03",
+                "name": "Второй",
+                "description": "",
+                "check_kind": "macro",
+                "code": DEFAULT_MACRO_CODE,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Такой код уже есть.")
+        self.assertFalse(ReportMacro.objects.filter(name="Второй").exists())
+
     def _macros_csv_upload(self, header, rows, *, name="macros.csv"):
         output = io.StringIO()
         writer = csv.writer(output, delimiter=";", lineterminator="\n")
@@ -10018,6 +12447,8 @@ class ReportMacroTests(TestCase):
         ReportMacro.objects.create(
             course="TPGR",
             section="ZN",
+            part="01",
+            number="04",
             name="Знак процента",
             description="regex",
             code=code,
@@ -10037,20 +12468,43 @@ class ReportMacroTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("report_macros.csv", response["Content-Disposition"])
         rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
-        self.assertEqual(rows[0], ["Курс", "Секция", "Название", "Описание", "Код"])
+        self.assertEqual(
+            rows[0],
+            [
+                "Курс",
+                "Секция",
+                "Раздел",
+                "Номер",
+                "Название",
+                "Описание",
+                "Код",
+                "Вид проверки",
+                "Наименование навыка DHS",
+                "Модель",
+                "Уровень рассуждений",
+                "Без инструментов",
+                "Режим обработки",
+                "Температура",
+            ],
+        )
+        self.assertEqual(rows[1][12], "Фрагменты")
+        self.assertEqual(rows[1][13], "По умолчанию")
+        self.assertEqual(rows[1][7], "Макрос")
         self.assertEqual(rows[1][0], "TPGR")
         self.assertEqual(rows[1][1], "ZN")
-        self.assertEqual(rows[1][2], "Знак процента")
-        self.assertEqual(rows[1][3], "regex")
-        self.assertEqual(rows[1][4], code)
-        self.assertEqual(rows[2][2], "Нумерация")
-        self.assertIn("def check(ctx):", rows[2][4])
+        self.assertEqual(rows[1][2], "01")
+        self.assertEqual(rows[1][3], "04")
+        self.assertEqual(rows[1][4], "Знак процента")
+        self.assertEqual(rows[1][5], "regex")
+        self.assertEqual(rows[1][6], code)
+        self.assertEqual(rows[2][4], "Нумерация")
+        self.assertIn("def check(ctx):", rows[2][6])
 
     def test_csv_upload_creates_macros_like_add_row(self):
         code = "def check(ctx):\n    return []\n"
         upload = self._macros_csv_upload(
-            ["Курс", "Секция", "Название", "Описание", "Код"],
-            [["TPGR", "ZN", "Запрещённые слова", "regex", code]],
+            ["Курс", "Секция", "Раздел", "Номер", "Название", "Описание", "Код"],
+            [["TPGR", "ZN", "00", "21", "Запрещённые слова", "regex", code]],
         )
 
         response = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
@@ -10070,8 +12524,11 @@ class ReportMacroTests(TestCase):
             {
                 "course": "TPGR",
                 "section": "ZN",
+                "part": "00",
+                "number": "22",
                 "name": "Через форму",
                 "description": "regex",
+                "check_kind": "macro",
                 "code": code,
             },
         )
@@ -10079,10 +12536,12 @@ class ReportMacroTests(TestCase):
         via_form = ReportMacro.objects.get(name="Через форму")
         self.assertEqual(macro.code, via_form.code)
 
-    def test_csv_upload_round_trip_adds_copies_not_updates(self):
+    def test_csv_upload_round_trip_rejects_duplicate_code(self):
         original = ReportMacro.objects.create(
             course="TPGR",
             section="ZN",
+            part="01",
+            number="03",
             name="Знак процента",
             description="regex",
             code="def check(ctx):\n    return []",
@@ -10098,18 +12557,17 @@ class ReportMacroTests(TestCase):
         response = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["created"], 1)
-        self.assertEqual(ReportMacro.objects.count(), 2)
+        payload = response.json()
+        self.assertEqual(payload["created"], 0)
+        self.assertEqual(ReportMacro.objects.count(), 1)
+        self.assertTrue(payload["warnings"])
+        self.assertIn("Такой код уже есть", payload["warnings"][0])
         original.refresh_from_db()
         self.assertEqual(original.name, "Знак процента")
-        copies = list(ReportMacro.objects.filter(name="Знак процента").order_by("id"))
-        self.assertEqual(len(copies), 2)
-        self.assertEqual(copies[0].pk, original.pk)
-        self.assertNotEqual(copies[1].pk, original.pk)
-        self.assertEqual(copies[1].course, original.course)
-        self.assertEqual(copies[1].section, original.section)
-        self.assertEqual(copies[1].description, original.description)
-        self.assertEqual(copies[1].code, original.code)
+        self.assertEqual(original.course, "TPGR")
+        self.assertEqual(original.section, "ZN")
+        self.assertEqual(original.part, "01")
+        self.assertEqual(original.number, "03")
 
     def test_csv_upload_skips_invalid_rows_with_warnings(self):
         upload = self._macros_csv_upload(
@@ -10215,10 +12673,8 @@ class ReportMacroRunnerTests(TestCase):
             position=1,
             product=self.product,
             section=self.mrk,
-            check_type=ReportCheckRule.CheckType.MACRO,
-            check_value=self.macro.name,
         )
-        rule.macros.add(self.macro)
+        add_check_line(rule, self.macro)
 
     def test_extract_and_comment_docx_text(self):
         source = _report_docx_bytes("В тексте есть ошибка и ещё текст.")
@@ -10239,6 +12695,31 @@ class ReportMacroRunnerTests(TestCase):
         self.assertIn("Исправьте формулировку", comments_xml)
         self.assertIn("commentRangeStart", document_xml)
         Document(BytesIO(result))
+
+    def test_comment_split_does_not_copy_tabs_into_the_paragraph(self):
+        source = _report_docx_bytes(
+            "ООО «Проекты и Технологии – Уральский Регион», 2025.",
+            "Рис. 9.5 Промышленная площадка шт. № 1",
+        )
+        source = _prepend_tab_to_paragraph_runs(source)
+        original = extract_document_text(source)[0]
+        tabs_before = _docx_tab_count(source)
+        self.assertGreaterEqual(tabs_before, 2)
+        findings = []
+        for needle in ("и", "–", "№"):
+            at = original.index(needle)
+            findings.append({
+                "start": at,
+                "end": at + len(needle),
+                "message": "Замечание",
+            })
+        result = insert_comments(source, findings)
+        self.assertEqual(extract_document_text(result)[0], original)
+        self.assertEqual(_docx_tab_count(result), tabs_before)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertNotIn("\t", comments_xml)
+        self.assertEqual(comments_xml.count("Замечание"), 3)
 
     def test_insert_comments_does_not_drop_spaces(self):
         source = _report_docx_bytes(
@@ -10268,6 +12749,206 @@ class ReportMacroRunnerTests(TestCase):
         self.assertIn("12,5 % в тексте", visible_after)
         self.assertIn("есть ошибка и", visible_after)
         Document(BytesIO(result))
+
+    def test_comment_renderer_keeps_unrelated_docx_parts_byte_identical(self):
+        from projects_app.docx_comments import COMMENT_WRITE_PARTS, _read_zip
+
+        source = _report_docx_bytes("Согласно утвержденного графика выполнены работы.")
+        text, _spans = extract_document_text(source)
+        start = text.index("утвержденного графика")
+        result = insert_comments(source, [{
+            "start": start,
+            "end": start + len("утвержденного графика"),
+            "message": "Предлог требует дательного падежа.",
+            "author": "Проверка",
+        }])
+        source_parts = _read_zip(source)
+        result_parts = _read_zip(result)
+        for name, value in source_parts.items():
+            if name not in COMMENT_WRITE_PARTS:
+                self.assertEqual(result_parts[name], value, name)
+        self.assertEqual(extract_document_text(result)[0], text)
+
+    def test_document_snapshot_chunks_have_exact_stable_anchors(self):
+        from projects_app.report_document_pipeline import (
+            ChunkBlock,
+            DocumentChunk,
+            build_document_snapshot,
+            chunk_document,
+            validate_chunk_finding,
+        )
+
+        source = _report_docx_bytes(
+            "Согласно утвержденного графика выполнены работы. " * 14,
+            "Повторный абзац согласно утвержденному графику. " * 14,
+        )
+        snapshot = build_document_snapshot(source)
+        chunks = chunk_document(snapshot, max_core_chars=500, overlap_chars=80)
+        self.assertGreater(len(chunks), 1)
+        target = next(anchor for anchor in snapshot.anchors if "утвержденного" in anchor.text)
+        start = target.text.index("утвержденного графика")
+        chunk = next(
+            item
+            for item in chunks
+            if any(
+                block.anchor.anchor_id == target.anchor_id
+                and block.core_start <= start
+                and start + len("утвержденного графика") <= block.core_end
+                for block in item.blocks
+            )
+        )
+        finding = validate_chunk_finding(snapshot, chunk, {
+            "anchor_id": target.anchor_id,
+            "start": start,
+            "end": start + len("утвержденного графика"),
+            "quote": "утвержденного графика",
+            "rule_id": "case-government",
+            "explanation": "Предлог требует дательного падежа.",
+            "replacement": "утверждённому графику",
+        })
+        self.assertEqual(snapshot.text[finding["start"]:finding["end"]], finding["quote"])
+        long_anchor = snapshot.anchors[0]
+        second_start = long_anchor.text.index("утвержденного графика", 500)
+        multi_segment = DocumentChunk(
+            chunk_id="multi-segment",
+            ordinal=1,
+            blocks=(
+                ChunkBlock(long_anchor, 0, 500, 0, 500),
+                ChunkBlock(
+                    long_anchor,
+                    500,
+                    len(long_anchor.text),
+                    500,
+                    len(long_anchor.text),
+                ),
+            ),
+        )
+        second = validate_chunk_finding(snapshot, multi_segment, {
+            "anchor_id": long_anchor.anchor_id,
+            "start": second_start,
+            "end": second_start + len("утвержденного графика"),
+            "quote": "утвержденного графика",
+            "rule_id": "case-government",
+            "explanation": "Предлог требует дательного падежа.",
+            "replacement": "утверждённому графику",
+        })
+        self.assertEqual(second["start"], long_anchor.start + second_start)
+
+    def test_loose_model_finding_is_anchored_without_contract_fields(self):
+        from projects_app.report_chunk_skill_runner import _expand_response_anchor_ids
+        from projects_app.report_document_pipeline import (
+            build_document_snapshot,
+            chunk_document,
+            validate_chunk_finding,
+        )
+
+        source = _report_docx_bytes("В оглавлении пункт 6.1 Риски стоит после 6.8 Выводы.")
+        snapshot = build_document_snapshot(source)
+        chunks = chunk_document(snapshot, max_core_chars=500, overlap_chars=0)
+        chunk = chunks[0]
+        full_id = chunk.blocks[0].anchor.anchor_id
+        payload = {
+            "blocks": [
+                {
+                    "anchor_id": full_id,
+                    "slice_start": 0,
+                    "core_start": 0,
+                    "core_end": len(chunk.blocks[0].anchor.text),
+                    "text": chunk.blocks[0].anchor.text,
+                }
+            ]
+        }
+        response = _expand_response_anchor_ids(
+            {
+                "findings": [
+                    {
+                        "type": "inconsistency",
+                        "anchor_id": "",
+                        "block_ids": ["a1"],
+                        "description": "Номер раздела 6.1 повторяет предыдущий.",
+                        "suggested_fix": "Переименовать в 6.9 Риски.",
+                    }
+                ]
+            },
+            payload,
+        )
+        raw = response["findings"][0]
+        self.assertEqual(raw["anchor_id"], full_id)
+        self.assertEqual(raw["rule_id"], "inconsistency")
+        placed = validate_chunk_finding(snapshot, chunk, raw)
+        self.assertIn("6.1", snapshot.text[placed["start"]:placed["end"]])
+        self.assertIn("Номер раздела", placed["explanation"])
+
+    def test_bare_findings_array_is_accepted_as_chunk_response(self):
+        from projects_app.report_chunk_skill_runner import (
+            ChunkSkillError,
+            _json_object_from_text,
+        )
+
+        parsed = _json_object_from_text(
+            '[\n  {"block_id": "a1", "rule_id": "table_number_format",'
+            ' "message": "Номер таблицы записан слитно."}\n]'
+        )
+        self.assertEqual(len(parsed["findings"]), 1)
+        self.assertEqual(parsed["findings"][0]["block_id"], "a1")
+        wrapped = _json_object_from_text(
+            'Пояснение.\n{"chunk_id": "chunk-1", "findings": []}'
+        )
+        self.assertEqual(wrapped["findings"], [])
+        with self.assertRaises(ChunkSkillError):
+            _json_object_from_text("Замечаний нет, JSON не сформирован.")
+
+    def test_insert_many_comments_keeps_text_and_ranges(self):
+        paragraphs = [f"абзац {index} ошибка {index} конец" for index in range(40)]
+        source = _report_docx_bytes(*paragraphs)
+        text, _spans = extract_document_text(source)
+        findings = []
+        cursor = 0
+        while True:
+            at = text.find("ошибка", cursor)
+            if at < 0:
+                break
+            findings.append({
+                "start": at,
+                "end": at + len("ошибка"),
+                "message": f"на {at}",
+            })
+            cursor = at + len("ошибка")
+        self.assertGreaterEqual(len(findings), 40)
+        result = insert_comments(source, findings)
+        self.assertEqual(extract_document_text(result)[0], text)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertEqual(document_xml.count("commentRangeStart"), len(findings))
+        self.assertEqual(count_comments(result), len(findings))
+
+    def test_unplaced_comment_is_reported_and_skipped(self):
+        source = _report_docx_bytes("В тексте есть ошибка.")
+        text, _spans = extract_document_text(source)
+        start = text.index("ошибка")
+        unplaced = []
+        result = insert_comments(source, [
+            {"start": start, "end": start + len("ошибка"), "message": "есть"},
+            {"start": len(text) + 5, "end": len(text) + 8, "message": "мимо"},
+        ], unplaced=unplaced)
+        self.assertEqual(len(unplaced), 1)
+        self.assertIn("мимо", unplaced[0])
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("есть", comments_xml)
+        self.assertNotIn("мимо", comments_xml)
+
+    def test_comment_insert_stops_when_progress_fails(self):
+        source = _report_docx_bytes("В тексте есть ошибка.")
+        text, _spans = extract_document_text(source)
+        start = text.index("ошибка")
+        result = insert_comments(source, [{
+            "start": start,
+            "end": start + len("ошибка"),
+            "message": "нет",
+        }], progress=lambda: False)
+        self.assertEqual(result, source)
+        self.assertEqual(count_comments(result), 0)
 
     def test_insert_comments_writes_hyperlink_in_note(self):
         source = _report_docx_bytes("В тексте есть ошибка и ещё текст.")
@@ -10360,11 +13041,9 @@ class ReportMacroRunnerTests(TestCase):
         full_rule = ReportCheckRule.objects.create(
             position=2,
             product=self.product,
-            check_type=ReportCheckRule.CheckType.MACRO,
-            check_value=full_macro.name,
             is_full_report=True,
         )
-        full_rule.macros.add(full_macro)
+        add_check_line(full_rule, full_macro)
 
         section_upload = PerformerReportUpload(
             registration=self.project,
@@ -10383,13 +13062,12 @@ class ReportMacroRunnerTests(TestCase):
         self.assertEqual(list_macros_for_upload(full_upload), [full_macro])
 
     def test_full_report_matches_only_explicit_full_report_rules(self):
-        ReportCheckRule.objects.create(
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=2,
             product=None,
-            section=None,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            section=None
         )
         full_upload = PerformerReportUpload(
             registration=self.project,
@@ -10399,14 +13077,13 @@ class ReportMacroRunnerTests(TestCase):
         )
         self.assertEqual(list_skill_rules_for_upload(full_upload), [])
 
-        explicit_skill = ReportCheckRule.objects.create(
+        explicit_skill = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=3,
             product=self.product,
             section=None,
-            is_full_report=True,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            is_full_report=True
         )
         self.assertEqual(
             list_skill_rules_for_upload(full_upload),
@@ -10414,7 +13091,7 @@ class ReportMacroRunnerTests(TestCase):
         )
 
     def test_all_sections_macro_does_not_run_on_full_report(self):
-        rule = ReportCheckRule.objects.get(check_type=ReportCheckRule.CheckType.MACRO)
+        rule = ReportCheckRule.objects.get(lines__macro=self.macro)
         rule.section = None
         rule.save(update_fields=["section_id"])
 
@@ -10434,14 +13111,13 @@ class ReportMacroRunnerTests(TestCase):
         self.assertEqual(list_macros_for_upload(full_upload), [])
         self.assertEqual(list_macros_for_upload(section_upload), [self.macro])
 
-        full_skill = ReportCheckRule.objects.create(
+        full_skill = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=2,
             product=None,
             section=None,
-            is_full_report=True,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            is_full_report=True
         )
         self.assertEqual(list_skill_rules_for_upload(full_upload), [full_skill])
         self.assertEqual(list_macros_for_upload(full_upload), [])
@@ -10469,14 +13145,13 @@ class ReportMacroRunnerTests(TestCase):
             asset_name=self.performer.asset_name,
             typical_section=econ_section,
         )
-        geo_rule = ReportCheckRule.objects.create(
+        geo_rule = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=2,
             product=None,
             expertise_dir=geo,
-            section=None,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            section=None
         )
         geo_upload = PerformerReportUpload(
             registration=self.project,
@@ -10499,14 +13174,13 @@ class ReportMacroRunnerTests(TestCase):
         geo = ExpertiseDirection.objects.create(name="Геология", short_name="ГЕО", position=1)
         self.mrk.expertise_dir = geo
         self.mrk.save(update_fields=["expertise_dir"])
-        ReportCheckRule.objects.create(
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=2,
             product=None,
             expertise_dir=geo,
-            section=None,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            section=None
         )
         full_upload = PerformerReportUpload(
             registration=self.project,
@@ -10516,13 +13190,12 @@ class ReportMacroRunnerTests(TestCase):
         )
         self.assertEqual(list_skill_rules_for_upload(full_upload), [])
 
-        ReportCheckRule.objects.create(
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=3,
             product=None,
-            section=None,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            section=None
         )
         self.assertEqual(list_skill_rules_for_upload(full_upload), [])
 
@@ -10539,12 +13212,271 @@ class ReportMacroRunnerTests(TestCase):
         upload.refresh_from_db()
         self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
         self.assertEqual(upload.check_finding_count, 1)
+        self.assertEqual(upload.check_progress_label, "")
         self.assertNotEqual(result, source)
         with zipfile.ZipFile(BytesIO(result)) as archive:
             self.assertIn("Найдено", archive.read("word/comments.xml").decode("utf-8"))
 
+    def test_recount_uses_code_label_and_every_launch_must_pass(self):
+        ReportCheckRule.objects.all().delete()
+        coded = ReportMacro.objects.create(
+            course="TEST",
+            section="ZZ",
+            part="01",
+            number="03",
+            name="Знак %",
+            code=(
+                "def check(ctx):\n"
+                "    findings = []\n"
+                "    for match in re.finditer(r'ошибка', ctx.text):\n"
+                "        findings.append({'start': match.start(), 'end': match.end(), 'message': 'Код'})\n"
+                "    return findings\n"
+            ),
+            position=3,
+        )
+        rule = ReportCheckRule.objects.create(
+            position=1,
+            product=self.product,
+            section=self.mrk,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            finding_threshold=2,
+        )
+        add_check_line(rule, coded, threshold=9)
+        source = _report_docx_bytes("В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        result = apply_report_macro_checks(upload, source)
+        upload.refresh_from_db()
+        label = "TEST-ZZ-01.03 Знак %"
+        self.assertEqual(upload.check_finding_count, 1)
+        self.assertEqual(upload.check_finding_by_author, {label: 1})
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(f'w:author="{label}"', comments_xml)
+        self.assertEqual(report_workflow_status(upload), "Согласован ИИ")
+
+        rule.completion_mode = ReportCheckRule.CompletionMode.PER_ITEM
+        rule.finding_threshold = 0
+        rule.save(update_fields=["completion_mode", "finding_threshold"])
+        line = rule.lines.get()
+        line.finding_threshold = 0
+        line.save(update_fields=["finding_threshold"])
+        self.assertEqual(report_workflow_status(upload), "Проверен ИИ")
+        line.finding_threshold = 2
+        line.save(update_fields=["finding_threshold"])
+        self.assertEqual(report_workflow_status(upload), "Согласован ИИ")
+
+        rule.completion_mode = ReportCheckRule.CompletionMode.SUM_AND_PER_ITEM
+        rule.finding_threshold = 1
+        rule.save(update_fields=["completion_mode", "finding_threshold"])
+        self.assertEqual(report_workflow_status(upload), "Проверен ИИ")
+        rule.finding_threshold = 2
+        rule.save(update_fields=["finding_threshold"])
+        line.finding_threshold = 0
+        line.save(update_fields=["finding_threshold"])
+        self.assertEqual(report_workflow_status(upload), "Проверен ИИ")
+        line.finding_threshold = 2
+        line.save(update_fields=["finding_threshold"])
+        self.assertEqual(report_workflow_status(upload), "Согласован ИИ")
+
+        other = ReportCheckRule.objects.create(
+            position=2,
+            product=self.product,
+            section=self.mrk,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            finding_threshold=0,
+        )
+        add_check_line(other, coded)
+        self.assertEqual(report_workflow_status(upload), "Проверен ИИ")
+
+    def test_check_progress_label_uses_current_macro_over_total(self):
+        from projects_app.models import format_report_check_progress
+
+        self.assertEqual(
+            format_report_check_progress(12, 24, "TPGR-SP-02.04 Точка в конце списков"),
+            "12/24 (50%) TPGR-SP-02.04 Точка в конце списков",
+        )
+        self.assertEqual(
+            format_report_check_progress(1, 24, "Первый"),
+            "1/24 (4%) Первый",
+        )
+        self.assertEqual(format_report_check_progress(0, 24, "Первый"), "0/24 (0%) Первый")
+        self.assertEqual(format_report_check_progress(0, 0, "Чтение файла"), "Чтение файла")
+        self.assertEqual(format_report_check_progress(1, 0, ""), "")
+
+    def test_running_check_shows_current_macro_progress(self):
+        from unittest.mock import patch
+
+        source = _report_docx_bytes("В отчёте ошибка.")
+        second = ReportMacro.objects.create(
+            name="TPGR-SP-02.04 Точка в конце списков",
+            code="def check(ctx):\n    return []\n",
+            position=2,
+        )
+        rule = ReportCheckRule.objects.create(
+            position=2,
+            product=self.product,
+            section=self.mrk,
+        )
+        add_check_line(rule, second)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        seen = []
+        prep = []
+
+        def wrapped(macro, ctx):
+            upload.refresh_from_db()
+            seen.append(upload.check_progress_label)
+            return run_macro(macro, ctx)
+
+        def wrapped_layout(file_bytes, progress=None):
+            upload.refresh_from_db()
+            prep.append(upload.check_progress_label)
+            from projects_app.docx_layout import extract_line_end_spaces
+
+            return extract_line_end_spaces(file_bytes, progress=progress)
+
+        with (
+            patch("projects_app.report_macro_runner.run_macro", side_effect=wrapped),
+            patch("projects_app.report_macro_runner.extract_line_end_spaces", side_effect=wrapped_layout),
+        ):
+            apply_report_macro_checks(upload, source)
+        self.assertEqual(prep, ["0/2 (0%) Подготовка документа"])
+        self.assertEqual(
+            seen,
+            [
+                "1/2 (50%) Слово ошибка",
+                "2/2 (100%) TPGR-SP-02.04 Точка в конце списков",
+            ],
+        )
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_progress_label, "")
+
+    def test_apply_stops_without_saving_when_claim_is_lost(self):
+        from projects_app.report_macro_runner import (
+            ReportCheckAborted,
+            bind_report_check_claim,
+            clear_report_check_claim,
+        )
+
+        source = _report_docx_bytes("В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            check_claim="owner",
+        )
+        upload.check_claim = "other"
+        upload.save(update_fields=["check_claim"])
+        bind_report_check_claim(upload.pk, "owner")
+        try:
+            with self.assertRaises(ReportCheckAborted):
+                apply_report_macro_checks(upload, source)
+        finally:
+            clear_report_check_claim()
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.RUNNING)
+        self.assertEqual(upload.check_claim, "other")
+        self.assertEqual(upload.check_finding_count, 0)
+
+    def test_running_macro_check_is_not_stolen(self):
+        from projects_app.report_macro_runner import clear_report_check_claim, run_macro as real_run_macro
+        from projects_app.report_submission import recover_abandoned_report_checks
+
+        source = _report_docx_bytes("В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        seen = {}
+
+        def spy(macro, ctx):
+            upload.refresh_from_db()
+            seen["claim"] = upload.check_claim
+            seen["heartbeat"] = upload.check_heartbeat_at
+            seen["recovered"] = recover_abandoned_report_checks(upload_id=upload.pk)
+            return real_run_macro(macro, ctx)
+
+        try:
+            with patch("projects_app.report_macro_runner.run_macro", side_effect=spy):
+                apply_report_macro_checks(upload, source)
+        finally:
+            clear_report_check_claim()
+        self.assertTrue(seen["claim"])
+        self.assertIsNotNone(seen["heartbeat"])
+        self.assertEqual(seen["recovered"], [])
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 1)
+
+    def test_aborted_check_does_not_overwrite_finished_file(self):
+        from projects_app.report_macro_runner import bind_report_check_claim, clear_report_check_claim
+        from projects_app.report_submission import run_saved_report_check
+
+        source = _report_docx_bytes("В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_claim="late-runner",
+            check_finding_count=317,
+        )
+        bind_report_check_claim(upload.pk, "late-runner")
+        try:
+            with (
+                patch("projects_app.report_submission.read_report_stored_bytes", return_value=source),
+                patch("projects_app.report_submission._save_report_check_copy") as mocked_save,
+            ):
+                run_saved_report_check(self.user, upload)
+            mocked_save.assert_not_called()
+        finally:
+            clear_report_check_claim()
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_claim, "late-runner")
+        self.assertEqual(upload.check_finding_count, 317)
+
+    def test_unplaced_comment_is_stored_on_the_upload(self):
+        self.macro.code = (
+            "def check(ctx):\n"
+            "    return [{'start': len(ctx.text) - 1, 'end': len(ctx.text), 'message': 'мимо'}]\n"
+        )
+        self.macro.save(update_fields=["code"])
+        source = _report_docx_bytes("В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        apply_report_macro_checks(upload, source)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertIn("мимо", upload.check_error)
+        self.assertEqual(upload.check_finding_count, 0)
+
     def test_apply_report_macro_checks_strips_existing_comments_when_flag_on(self):
-        ReportCheckRule.objects.filter(check_type=ReportCheckRule.CheckType.MACRO).update(clear_comments=True)
+        ReportCheckRule.objects.filter(lines__check_type=ReportCheckRule.CheckType.MACRO).update(clear_comments=True)
         source = _report_docx_bytes("В отчёте ошибка.")
         text, _spans = extract_document_text(source)
         start = text.index("отчёте")
@@ -10599,13 +13531,12 @@ class ReportMacroRunnerTests(TestCase):
         self.assertIn("Старое примечание", comments_xml)
 
     def test_skill_pipeline_uses_dsh_output_then_runs_macros(self):
-        skill_rule = ReportCheckRule.objects.create(
+        skill_rule = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=0,
             product=self.product,
-            section=self.mrk,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            section=self.mrk
         )
         source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
         upload = PerformerReportUpload.objects.create(
@@ -10623,22 +13554,30 @@ class ReportMacroRunnerTests(TestCase):
             dsh_runtime["settings"] = yaml.safe_load(
                 (cwd / "settings.yaml").read_text(encoding="utf-8")
             )
-            original = (cwd / "input" / "report.docx").read_bytes()
-            text, _spans = extract_document_text(original)
-            start = text.index("Падеж")
-            processed = insert_comments(original, [{
+            payload = json.loads((cwd / "input" / "chunk.json").read_text(encoding="utf-8"))
+            block = next(item for item in payload["blocks"] if "Падеж" in item["text"])
+            start = block["slice_start"] + block["text"].index("Падеж")
+            finding = {
+                "rule_id": "case-agreement",
+                "anchor_id": block["anchor_id"],
                 "start": start,
                 "end": start + len("Падеж"),
-                "message": "Проверка падежа",
-                "author": "report-final-check",
-            }])
-            (cwd / "output" / "report.docx").write_bytes(processed)
-            return "Файл создан, комментариев: 1"
+                "quote": "Падеж",
+                "explanation": "Проверка падежа.",
+                "replacement": "Падеж исправлен",
+            }
+            response = {
+                "schema_version": 1,
+                "chunk_id": payload["chunk_id"],
+                # Duplicate model rows must not crash or create two comments.
+                "findings": [finding, dict(finding)],
+            }
+            return json.dumps(response, ensure_ascii=False)
 
         with tempfile.TemporaryDirectory() as tmp, override_settings(
             DSH_SORT_WORKSPACE=tmp,
         ), patch(
-            "projects_app.report_skill_runner.run_headless",
+            "projects_app.report_chunk_skill_runner.run_headless",
             side_effect=dsh_result,
         ) as mocked_dsh:
             result = apply_report_checks(upload, source)
@@ -10653,8 +13592,8 @@ class ReportMacroRunnerTests(TestCase):
         self.assertEqual(count_comments(result), 2)
         prompt = mocked_dsh.call_args.args[0]
         self.assertIn("/report-final-check", prompt)
-        self.assertIn("input/report.docx", prompt)
-        self.assertIn("output/report.docx", prompt)
+        self.assertIn("DOCUMENT_CHUNK:", prompt)
+        self.assertIn('"id":"a1"', prompt)
         self.assertEqual(dsh_runtime["profile"], "report-check")
         self.assertEqual(
             dsh_runtime["settings"]["agent-default-model"],
@@ -10664,18 +13603,112 @@ class ReportMacroRunnerTests(TestCase):
             },
         )
 
-    def test_skill_pipeline_strips_comments_before_dsh_when_flag_on(self):
+    def test_agent_mode_runs_whole_file_with_tools_even_for_chunk_skill(self):
         ReportCheckRule.objects.filter(
-            check_type=ReportCheckRule.CheckType.MACRO,
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
         ).delete()
-        skill_rule = ReportCheckRule.objects.create(
+        rule = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=1,
             product=self.product,
             section=self.mrk,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
-            clear_comments=True,
+        )
+        macro = rule.lines.get().macro
+        macro.processing_mode = ReportMacro.ProcessingMode.AGENT
+        macro.disable_tools = True
+        macro.save(update_fields=["processing_mode", "disable_tools"])
+        source = _report_docx_bytes("Падеж нарушен.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        dsh_runtime = {}
+
+        def dsh_result(prompt, *, cwd, **kwargs):
+            root = Path(cwd)
+            dsh_runtime["profile"] = kwargs.get("profile")
+            dsh_runtime["timeout"] = kwargs.get("timeout")
+            dsh_runtime["prompt"] = prompt
+            (root / "output" / "report.docx").write_bytes(
+                (root / "input" / "report.docx").read_bytes()
+            )
+            return "Файл записан"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+        ) as chunk_dsh:
+            result = apply_report_checks(upload, source)
+
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(result, source)
+        chunk_dsh.assert_not_called()
+        self.assertEqual(dsh_runtime["profile"], "report-check")
+        self.assertEqual(dsh_runtime["timeout"], 45 * 60)
+        self.assertIn("output/report.docx", dsh_runtime["prompt"])
+        self.assertIn("Не устанавливай пакеты", dsh_runtime["prompt"])
+        self.assertIn("не копируй w:tab", dsh_runtime["prompt"])
+        self.assertIn("xmlns:a", dsh_runtime["prompt"])
+        self.assertIn("commentsExtended", dsh_runtime["prompt"])
+        self.assertIn("output пуст", dsh_runtime["prompt"])
+        self.assertIn("соберу результаты позже", dsh_runtime["prompt"])
+        self.assertNotIn("DOCUMENT_CHUNK:", dsh_runtime["prompt"])
+
+    def test_unknown_processing_mode_stops_the_check(self):
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        rule = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=1,
+            product=self.product,
+            section=self.mrk,
+        )
+        macro = rule.lines.get().macro
+        macro.processing_mode = "map_reduce"
+        macro.save(update_fields=["processing_mode"])
+        source = _report_docx_bytes("Текст отчёта.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+        ) as chunk_dsh:
+            result = apply_report_checks(upload, source)
+
+        upload.refresh_from_db()
+        self.assertEqual(result, source)
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.ERROR)
+        self.assertIn("неизвестный режим обработки", upload.check_error.casefold())
+        chunk_dsh.assert_not_called()
+
+    def test_skill_pipeline_strips_comments_before_dsh_when_flag_on(self):
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        skill_rule = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=1,
+            product=self.product,
+            section=self.mrk,
+            clear_comments=True
         )
         source = _report_docx_bytes("Падеж нарушен.")
         text, _spans = extract_document_text(source)
@@ -10693,20 +13726,23 @@ class ReportMacroRunnerTests(TestCase):
             asset_name=self.performer.asset_name,
             file_name="report.docx",
         )
-        seen = {}
-
         def dsh_result(_prompt, *, cwd, **kwargs):
-            original = (Path(cwd) / "input" / "report.docx").read_bytes()
-            seen["comment_count"] = count_comments(original)
-            with zipfile.ZipFile(BytesIO(original)) as archive:
-                seen["has_comments_xml"] = "word/comments.xml" in archive.namelist()
-            (Path(cwd) / "output" / "report.docx").write_bytes(original)
-            return "Файл создан, комментариев: 0"
+            root = Path(cwd)
+            payload = json.loads((root / "input" / "chunk.json").read_text(encoding="utf-8"))
+            (root / "output" / "findings.json").write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "chunk_id": payload["chunk_id"],
+                    "findings": [],
+                }),
+                encoding="utf-8",
+            )
+            return "JSON создан, находок: 0"
 
         with tempfile.TemporaryDirectory() as tmp, override_settings(
             DSH_SORT_WORKSPACE=tmp,
         ), patch(
-            "projects_app.report_skill_runner.run_headless",
+            "projects_app.report_chunk_skill_runner.run_headless",
             side_effect=dsh_result,
         ):
             result = apply_report_checks(upload, commented)
@@ -10714,10 +13750,70 @@ class ReportMacroRunnerTests(TestCase):
         upload.refresh_from_db()
         self.assertEqual(list_skill_rules_for_upload(upload), [skill_rule])
         self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
-        self.assertEqual(seen["comment_count"], 0)
-        self.assertFalse(seen["has_comments_xml"])
         self.assertEqual(count_comments(result), 0)
         self.assertEqual(count_comments(commented), 1)
+
+    def test_chunk_skill_does_not_mark_unrendered_finding_as_placed(self):
+        from projects_app.models import ReportCheckFinding, ReportCheckRun
+
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=1,
+            product=self.product,
+            section=self.mrk,
+        )
+        source = _report_docx_bytes("Согласно утвержденного графика выполнены работы.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            root = Path(cwd)
+            payload = json.loads((root / "input" / "chunk.json").read_text(encoding="utf-8"))
+            block = next(item for item in payload["blocks"] if "утвержденного" in item["text"])
+            start = block["slice_start"] + block["text"].index("утвержденного графика")
+            (root / "output" / "findings.json").write_text(
+                json.dumps({
+                    "chunk_id": payload["chunk_id"],
+                    "findings": [{
+                        "rule_id": "case-government",
+                        "anchor_id": block["anchor_id"],
+                        "start": start,
+                        "end": start + len("утвержденного графика"),
+                        "quote": "утвержденного графика",
+                        "explanation": "Предлог требует дательного падежа.",
+                        "replacement": "утверждённому графику",
+                    }],
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return "Готово"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.insert_comments",
+            return_value=source,
+        ):
+            result = apply_report_checks(upload, source)
+        upload.refresh_from_db()
+        run = ReportCheckRun.objects.get(upload=upload)
+        finding = ReportCheckFinding.objects.get(chunk__run=run)
+        self.assertEqual(result, source)
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.ERROR)
+        self.assertEqual(run.status, ReportCheckRun.Status.ERROR)
+        self.assertEqual(finding.status, ReportCheckFinding.Status.ACCEPTED)
 
     def test_report_skill_runtime_uses_exact_selected_model(self):
         from projects_app.report_skill_runner import _prepare_model_runtime
@@ -10742,6 +13838,13 @@ class ReportMacroRunnerTests(TestCase):
                 / "report-check"
                 / "cordis.patch.yml"
             ).read_text(encoding="utf-8")
+            plugin = (
+                home / "profiles" / "report-check" / "report-check-temperature.mjs"
+            ).read_text(encoding="utf-8")
+            continue_plugin = (
+                home / "profiles" / "report-check" / "report-check-continue.mjs"
+            ).read_text(encoding="utf-8")
+            self.assertFalse((run / "report-check-temperature.json").exists())
 
         self.assertEqual(profile, "report-check")
         self.assertEqual(
@@ -10751,19 +13854,268 @@ class ReportMacroRunnerTests(TestCase):
                 "model": "zai-org/GLM-5.3",
             },
         )
+        siliconflow = runtime["llm-pi-ai"]["providers"]["siliconflow"]
+        self.assertEqual(siliconflow["reasoning"], "off")
+        selected = next(
+            item for item in siliconflow["models"] if item["id"] == "zai-org/GLM-5.3"
+        )
+        self.assertIsNone(selected["reasoningEfforts"]["off"])
         self.assertIn("path: settings.yaml", profile_patch)
+        self.assertIn("./report-check-temperature.mjs", profile_patch)
+        self.assertIn("./report-check-continue.mjs", profile_patch)
+        self.assertIn("agent/request", plugin)
+        self.assertIn("Продолжай, дождись находок и запиши файл.", continue_plugin)
+        self.assertIn("MAX_RESUMES = 3", continue_plugin)
+
+    def test_report_skill_runtime_requests_selected_reasoning_level(self):
+        from projects_app.report_skill_runner import _prepare_model_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            run = root / "run"
+            home.mkdir()
+            run.mkdir()
+            with override_settings(DSH_HOME=str(home), DSH_COMPOSE_DIR=""):
+                _prepare_model_runtime(run, "Qwen/Qwen3.5-27B", "low")
+            runtime = yaml.safe_load((run / "settings.yaml").read_text(encoding="utf-8"))
+        siliconflow = runtime["llm-pi-ai"]["providers"]["siliconflow"]
+        self.assertEqual(siliconflow["reasoning"], "low")
+        self.assertTrue(siliconflow["compat"]["supportsReasoningEffort"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            run = root / "run"
+            home.mkdir()
+            run.mkdir()
+            with override_settings(DSH_HOME=str(home), DSH_COMPOSE_DIR=""):
+                _prepare_model_runtime(run, "qwen3.8-max", "medium")
+            runtime = yaml.safe_load((run / "settings.yaml").read_text(encoding="utf-8"))
+        alibaba = runtime["llm-pi-ai"]["providers"]["alibaba"]
+        self.assertEqual(alibaba["reasoning"], "medium")
+        selected = next(item for item in alibaba["models"] if item["id"] == "qwen3.8-max")
+        self.assertEqual(selected["reasoningEfforts"]["medium"], "medium")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            run = root / "run"
+            home.mkdir()
+            run.mkdir()
+            with override_settings(DSH_HOME=str(home), DSH_COMPOSE_DIR=""):
+                profile = _prepare_model_runtime(run, "Qwen/Qwen3.5-27B", "off", True)
+            patch = (
+                home / "profiles" / "report-check-text" / "cordis.patch.yml"
+            ).read_text(encoding="utf-8")
+        self.assertEqual(profile, "report-check-text")
+        self.assertIn("id: tool-bash\n  disabled: true", patch)
+        self.assertIn("Инструментов нет", patch)
+
+    def test_agent_runtime_keeps_selected_reasoning_and_raises_output_cap(self):
+        from projects_app.report_skill_runner import (
+            AGENT_OUTPUT_TOKENS,
+            _prepare_model_runtime,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            run = root / "run"
+            home.mkdir()
+            run.mkdir()
+            with override_settings(DSH_HOME=str(home), DSH_COMPOSE_DIR=""):
+                _prepare_model_runtime(
+                    run,
+                    "zai-org/GLM-5.3",
+                    "high",
+                    False,
+                    max_tokens=AGENT_OUTPUT_TOKENS,
+                )
+            runtime = yaml.safe_load((run / "settings.yaml").read_text(encoding="utf-8"))
+        siliconflow = runtime["llm-pi-ai"]["providers"]["siliconflow"]
+        self.assertEqual(siliconflow["reasoning"], "high")
+        selected = next(item for item in siliconflow["models"] if item["id"] == "zai-org/GLM-5.3")
+        self.assertGreaterEqual(selected["maxTokens"], AGENT_OUTPUT_TOKENS)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            run = root / "run"
+            home.mkdir()
+            run.mkdir()
+            with override_settings(DSH_HOME=str(home), DSH_COMPOSE_DIR=""):
+                _prepare_model_runtime(run, "zai-org/GLM-5.3", "high")
+            runtime = yaml.safe_load((run / "settings.yaml").read_text(encoding="utf-8"))
+        selected = next(
+            item
+            for item in runtime["llm-pi-ai"]["providers"]["siliconflow"]["models"]
+            if item["id"] == "zai-org/GLM-5.3"
+        )
+        self.assertEqual(selected["maxTokens"], 8192)
+
+    def test_report_skill_runtime_writes_selected_temperature(self):
+        from projects_app.report_skill_runner import _prepare_model_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            run = root / "run"
+            home.mkdir()
+            run.mkdir()
+            with override_settings(DSH_HOME=str(home), DSH_COMPOSE_DIR=""):
+                profile = _prepare_model_runtime(
+                    run,
+                    "Qwen/Qwen3.5-27B",
+                    "off",
+                    True,
+                    "0.2",
+                )
+            payload = json.loads(
+                (run / "report-check-temperature.json").read_text(encoding="utf-8")
+            )
+            patch = (
+                home / "profiles" / "report-check-text" / "cordis.patch.yml"
+            ).read_text(encoding="utf-8")
+        self.assertEqual(profile, "report-check-text")
+        self.assertEqual(payload, {"temperature": 0.2})
+        self.assertIn("./report-check-temperature.mjs", patch)
+        self.assertIn("./report-check-continue.mjs", patch)
+
+    def test_report_check_continue_resumes_only_while_subagents_run(self):
+        import subprocess
+
+        from django.conf import settings
+
+        plugin = (
+            Path(settings.BASE_DIR)
+            / "deploy"
+            / "dsh"
+            / "plugins"
+            / "report-check-continue"
+            / "index.mjs"
+        )
+        script = r"""
+import { pathToFileURL } from "node:url"
+const mod = await import(pathToFileURL(process.argv[1]).href)
+const { resumeIfSubagentsRunning, RESUME_TEXT, MAX_RESUMES } = mod
+
+function agent(id, fields) {
+  return {
+    id,
+    status: fields.status,
+    steered: [],
+    session: { header: {
+      id,
+      parentSession: fields.parent,
+      origin: fields.origin,
+      delegationDepth: fields.depth ?? 0,
+    }},
+    steer(message) { this.steered.push(message.content[0].text) },
+  }
+}
+
+function harness(children, { waitMs = 0, pollMs = 10, onSleep } = {}) {
+  const parent = agent("parent", { origin: "user", depth: 0, status: "running" })
+  const store = new Map([[parent.id, { agent: parent }]])
+  for (const child of children) store.set(child.id, { agent: child })
+  const resumes = new Map()
+  let now = 0
+  return {
+    parent,
+    resumes,
+    run(signal) {
+      return resumeIfSubagentsRunning({
+        resumes,
+        parent,
+        agents: { store },
+        signal,
+        now: () => now,
+        sleep: async (ms) => { now += ms; if (onSleep) onSleep() },
+        waitMs,
+        pollMs,
+      })
+    },
+  }
+}
+
+const idle = agent("child-idle", { parent: "parent", origin: "subagent", depth: 1, status: "idle" })
+const quiet = harness([idle])
+if (await quiet.run()) throw new Error("idle child must not resume")
+if (quiet.parent.steered.length) throw new Error("idle child steered")
+
+const busy = agent("child-busy", { parent: "parent", origin: "subagent", depth: 1, status: "running" })
+const waiting = harness([busy], {
+  waitMs: 30,
+  pollMs: 10,
+  onSleep() { busy.status = "idle" },
+})
+if (!await waiting.run()) throw new Error("running child must resume")
+if (waiting.parent.steered.join("\n") !== RESUME_TEXT) throw new Error(waiting.parent.steered.join("\n"))
+if (waiting.resumes.get("parent") !== 1) throw new Error("count")
+
+const stuck = agent("child-stuck", { parent: "parent", origin: "subagent", depth: 1, status: "running" })
+const limited = harness([stuck], { waitMs: 0, pollMs: 10 })
+let sent = 0
+for (let n = 0; n < MAX_RESUMES + 1; n += 1) {
+  if (await limited.run()) sent += 1
+}
+if (sent !== MAX_RESUMES) throw new Error("sent " + sent)
+if (limited.parent.steered.length !== MAX_RESUMES) throw new Error("steers")
+
+const child = agent("child", { parent: "parent", origin: "subagent", depth: 1, status: "running" })
+const nested = harness([child], { waitMs: 0 })
+nested.parent.session.header.origin = "subagent"
+nested.parent.session.header.delegationDepth = 1
+if (await nested.run()) throw new Error("subagent turn must not resume")
+
+const aborted = harness([
+  agent("child-abort", { parent: "parent", origin: "subagent", depth: 1, status: "running" }),
+], { waitMs: 50, pollMs: 10 })
+if (await aborted.run({ aborted: true })) throw new Error("aborted signal resumed")
+if (aborted.parent.steered.length) throw new Error("aborted steered")
+console.log("continue ok")
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script, str(plugin)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertIn("continue ok", result.stdout)
+
+    def test_chunk_resume_config_includes_temperature(self):
+        from types import SimpleNamespace
+
+        from projects_app.report_chunk_skill_runner import line_config_entry
+
+        macro = SimpleNamespace(
+            skill_name="report-final-check",
+            model_id="qwen",
+            reasoning_effort="low",
+            disable_tools=False,
+            processing_mode="chunks",
+            temperature="",
+        )
+        line = SimpleNamespace(pk=7, macro=macro)
+        cold = line_config_entry(line, {"version": 1})
+        macro.temperature = "0"
+        warm = line_config_entry(line, {"version": 1})
+        self.assertEqual(cold["temperature"], "")
+        self.assertEqual(warm["temperature"], "0")
+        self.assertNotEqual(cold, warm)
 
     def test_skill_pipeline_errors_when_dsh_does_not_create_output(self):
         ReportCheckRule.objects.filter(
-            check_type=ReportCheckRule.CheckType.MACRO,
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
         ).delete()
-        ReportCheckRule.objects.create(
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=1,
             product=self.product,
-            section=self.mrk,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            section=self.mrk
         )
         source = _report_docx_bytes("Текст отчёта.")
         upload = PerformerReportUpload.objects.create(
@@ -10776,15 +14128,99 @@ class ReportMacroRunnerTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp, override_settings(
             DSH_SORT_WORKSPACE=tmp,
         ), patch(
-            "projects_app.report_skill_runner.run_headless",
+            "projects_app.report_chunk_skill_runner.run_headless",
             return_value="Готово",
+        ), patch(
+            "projects_app.report_chunk_skill_runner._heartbeat_sleep",
+            return_value=None,
         ):
             result = apply_report_checks(upload, source)
 
         upload.refresh_from_db()
         self.assertEqual(result, source)
         self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.ERROR)
-        self.assertIn("не создал", upload.check_error)
+        self.assertIn("JSON", upload.check_error)
+
+    def test_chunk_skill_resumes_completed_chunks_after_failure(self):
+        from projects_app.models import ReportCheckChunk, ReportCheckRun
+
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=1,
+            product=self.product,
+            section=self.mrk,
+        )
+        source = _report_docx_bytes(
+            *[
+                ("Согласно утвержденного графика выполнены работы. " * 220)
+                for _index in range(3)
+            ]
+        )
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        first_calls = []
+
+        def write_empty(root, payload):
+            (root / "output" / "findings.json").write_text(
+                json.dumps({"chunk_id": payload["chunk_id"], "findings": []}),
+                encoding="utf-8",
+            )
+
+        def fail_second(_prompt, *, cwd, **kwargs):
+            root = Path(cwd)
+            payload = json.loads((root / "input" / "chunk.json").read_text(encoding="utf-8"))
+            first_calls.append(payload["chunk_id"])
+            if len(first_calls) == 2:
+                raise RuntimeError("permanent test failure")
+            write_empty(root, payload)
+            return "Готово"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=fail_second,
+        ):
+            apply_report_checks(upload, source)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.ERROR)
+        run = ReportCheckRun.objects.get(upload=upload)
+        completed_before = run.chunks.filter(status=ReportCheckChunk.Status.DONE).count()
+        self.assertEqual(completed_before, 1)
+
+        second_calls = []
+
+        def succeed(_prompt, *, cwd, **kwargs):
+            root = Path(cwd)
+            payload = json.loads((root / "input" / "chunk.json").read_text(encoding="utf-8"))
+            second_calls.append(payload["chunk_id"])
+            write_empty(root, payload)
+            return "Готово"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=succeed,
+        ):
+            result = apply_report_checks(upload, source)
+        upload.refresh_from_db()
+        run.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(result, source)
+        self.assertEqual(run.status, ReportCheckRun.Status.DONE)
+        self.assertEqual(ReportCheckRun.objects.filter(upload=upload).count(), 1)
+        self.assertFalse(run.chunks.exclude(status=ReportCheckChunk.Status.DONE).exists())
+        self.assertEqual(len(second_calls), run.chunks.count() - completed_before)
 
     def test_report_final_check_helper_creates_word_comment(self):
         script = (
@@ -10834,15 +14270,143 @@ class ReportMacroRunnerTests(TestCase):
         for prefix in ignorable.group(1).split():
             self.assertIn(f"xmlns:{prefix}=", document_xml)
 
+    def test_report_final_check_helper_keeps_nested_drawing_namespaces(self):
+        import importlib.util as importlib_util
+
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "deploy"
+            / "dsh"
+            / "skills"
+            / "report-final-check"
+            / "scripts"
+            / "docx_comments.py"
+        )
+        spec = importlib_util.spec_from_file_location(
+            "report_final_check_docx_comments_namespaces",
+            script,
+        )
+        helper = importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14"><w:body><w:p><w:r><w:t>Согласно карте</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"/></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>""".encode()
+        content_types = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/></Types>"""
+        package_rels = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"""
+        document_rels = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId13" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/></Relationships>"""
+        comments_extended = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"/>"""
+        source = BytesIO()
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr("[Content_Types].xml", content_types)
+            archive.writestr("_rels/.rels", package_rels)
+            archive.writestr("word/document.xml", document_xml)
+            archive.writestr("word/_rels/document.xml.rels", document_rels)
+            archive.writestr("word/commentsExtended.xml", comments_extended)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "input.docx"
+            findings_path = root / "findings.json"
+            result_path = root / "output.docx"
+            source_path.write_bytes(source.getvalue())
+            findings_path.write_text(json.dumps([{
+                "quote": "Согласно карте",
+                "message": "Проверка вложенных пространств имён.",
+            }], ensure_ascii=False), encoding="utf-8")
+            helper.annotate(source_path, result_path, findings_path)
+            result = result_path.read_bytes()
+
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            written = archive.read("word/document.xml")
+            names = set(archive.namelist())
+            rels = archive.read("word/_rels/document.xml.rels")
+        from xml.etree import ElementTree as ET
+        ET.fromstring(written)
+        text = written.decode("utf-8")
+        self.assertIn("xmlns:a=", text)
+        self.assertIn("xmlns:pic=", text)
+        self.assertIn("xmlns:wp=", text)
+        self.assertIn('mc:Ignorable="w14"', text)
+        self.assertIn("word/commentsExtended.xml", names)
+        self.assertIn("commentsExtended.xml", rels.decode("utf-8"))
+        self.assertEqual(count_comments(result), 1)
+
+    def test_report_final_check_helper_annotates_from_one_text_walk(self):
+        import importlib.util as importlib_util
+
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "deploy"
+            / "dsh"
+            / "skills"
+            / "report-final-check"
+            / "scripts"
+            / "docx_comments.py"
+        )
+        spec = importlib_util.spec_from_file_location(
+            "report_final_check_docx_comments_once",
+            script,
+        )
+        helper = importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        document = Document()
+        paragraph = document.add_paragraph()
+        leading = paragraph.add_run(" ")
+        leading.add_tab()
+        paragraph.add_run(" согласно карте и дальше")
+        document.add_paragraph("по месторождения Асачинское.")
+        source_buffer = BytesIO()
+        document.save(source_buffer)
+
+        from xml.etree import ElementTree as ET
+        deleted_xml = """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>видимый</w:t></w:r><w:del><w:r><w:t>скрытый</w:t></w:r></w:del><w:r><w:t>текст</w:t></w:r></w:p></w:body></w:document>"""
+        visible, _spans, _parents = helper.walk_text(ET.fromstring(deleted_xml))
+        self.assertEqual(visible, "видимыйтекст\n")
+
+        calls = {"count": 0}
+        original_parent_map = helper.parent_map
+
+        def counted_parent_map(root):
+            calls["count"] += 1
+            return original_parent_map(root)
+
+        helper.parent_map = counted_parent_map
+        quotes = ("карте", "согласно", "по месторождения Асачинское")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "input.docx"
+            findings_path = root / "findings.json"
+            result_path = root / "output.docx"
+            source_path.write_bytes(source_buffer.getvalue())
+            findings_path.write_text(json.dumps([
+                {"quote": quote, "message": f"Замечание: {quote}"}
+                for quote in quotes
+            ], ensure_ascii=False), encoding="utf-8")
+            helper.annotate(source_path, result_path, findings_path)
+            result = result_path.read_bytes()
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(count_comments(result), 3)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            document_xml = archive.read("word/document.xml")
+        self.assertEqual(document_xml.count(b"<w:tab"), 1)
+        text = document_xml.decode("utf-8")
+        self.assertGreaterEqual(text.count('xml:space="preserve"> </w:t>'), 2)
+        self.assertIn('xml:space="preserve"> и дальше</w:t>', text)
+        covered = _comment_range_texts(document_xml)
+        self.assertEqual(sorted(covered.values()), sorted(quotes))
+
     @patch("projects_app.report_submission._start_report_check_background")
     def test_skill_send_returns_running_and_status_endpoint(self, mocked_start):
-        ReportCheckRule.objects.create(
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
             position=0,
             product=self.product,
-            section=self.mrk,
-            check_type=ReportCheckRule.CheckType.SKILL,
-            check_value="report-final-check",
-            model_id="Qwen/Qwen3.5-27B",
+            section=self.mrk
         )
         upload = PerformerReportUpload.objects.create(
             registration=self.project,
@@ -10860,13 +14424,216 @@ class ReportMacroRunnerTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["check_status"], "running")
-        mocked_start.assert_called_once_with(self.user.pk, upload.pk)
+        self.assertEqual(mocked_start.call_args[0][0], self.user.pk)
+        self.assertEqual(mocked_start.call_args[0][1], upload.pk)
+        self.assertTrue(mocked_start.call_args[0][2])
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.RUNNING)
+        self.assertEqual(upload.check_attempts, 1)
+        self.assertTrue(upload.check_claim)
+        self.assertIsNotNone(upload.check_heartbeat_at)
 
         status = self.client.get(
             reverse("report_check_status", args=[upload.pk]),
         )
         self.assertEqual(status.status_code, 200)
         self.assertEqual(status.json()["check_status"], "running")
+        self.assertEqual(status.json()["check_progress"], "")
+        self.assertEqual(mocked_start.call_count, 1)
+
+    def test_check_status_returns_macro_progress(self):
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            check_heartbeat_at=timezone.now(),
+            check_claim="live",
+            check_macro_index=12,
+            check_macro_total=24,
+            check_macro_name="TPGR-SP-02.04 Точка в конце списков",
+        )
+        self.client.force_login(self.user)
+        status = self.client.get(reverse("report_check_status", args=[upload.pk]))
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(
+            status.json()["check_progress"],
+            "12/24 (50%) TPGR-SP-02.04 Точка в конце списков",
+        )
+
+    @patch("projects_app.report_submission._start_report_check_background")
+    def test_abandoned_report_check_is_resumed_once(self, mocked_start):
+        from projects_app.report_submission import recover_abandoned_report_checks
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            sent_by=self.user,
+            check_heartbeat_at=timezone.now() - timedelta(minutes=5),
+        )
+        started = recover_abandoned_report_checks()
+        self.assertEqual(started, [upload.pk])
+        mocked_start.assert_called_once()
+        self.assertEqual(mocked_start.call_args[0][0], self.user.pk)
+        self.assertEqual(mocked_start.call_args[0][1], upload.pk)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_attempts, 1)
+        self.assertTrue(upload.check_claim)
+        self.assertGreater(upload.check_heartbeat_at, timezone.now() - timedelta(seconds=10))
+
+        mocked_start.reset_mock()
+        self.assertEqual(recover_abandoned_report_checks(), [])
+        mocked_start.assert_not_called()
+
+    @patch("projects_app.report_submission._start_report_check_background")
+    def test_live_report_check_is_not_restarted_inside_lease(self, mocked_start):
+        from projects_app.report_submission import recover_abandoned_report_checks
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            sent_by=self.user,
+            check_heartbeat_at=timezone.now() - timedelta(seconds=45),
+        )
+        self.assertEqual(recover_abandoned_report_checks(), [])
+        mocked_start.assert_not_called()
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.RUNNING)
+
+    @patch("projects_app.report_submission.subprocess.Popen")
+    def test_report_check_starts_in_its_own_process(self, mocked_popen):
+        from projects_app.report_submission import _start_report_check_background
+
+        _start_report_check_background(self.user.pk, 15, "token")
+        mocked_popen.assert_called_once()
+        args, kwargs = mocked_popen.call_args
+        self.assertTrue(kwargs["start_new_session"])
+        command = args[0]
+        self.assertIn("run_report_check", command)
+        self.assertEqual(command[-3:], [str(self.user.pk), "15", "token"])
+
+    def test_run_report_check_command_uses_claim(self):
+        from django.core.management import call_command
+
+        with patch("projects_app.report_submission._run_saved_report_check_background") as mocked_run:
+            call_command("run_report_check", str(self.user.pk), "15", "token")
+        mocked_run.assert_called_once_with(self.user.pk, 15, "token")
+
+    def test_check_process_does_not_start_recovery_loop(self):
+        from projects_app.report_submission import report_check_recovery_autostart
+
+        with patch("projects_app.report_submission.sys.argv", ["manage.py", "run_report_check", "1", "2", "t"]):
+            self.assertFalse(report_check_recovery_autostart())
+
+    @patch("projects_app.report_submission._start_report_check_background")
+    def test_status_poll_resumes_abandoned_report_check(self, mocked_start):
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            sent_by=self.user,
+        )
+        self.client.force_login(self.user)
+        status = self.client.get(reverse("report_check_status", args=[upload.pk]))
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["check_status"], "running")
+        mocked_start.assert_called_once()
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_attempts, 1)
+
+    @patch("projects_app.report_submission.close_old_connections")
+    @patch("projects_app.report_submission.run_saved_report_check")
+    def test_background_check_does_not_run_with_stale_claim(self, mocked_run, _close_connections):
+        from projects_app.report_submission import _run_saved_report_check_background
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            check_claim="current-owner",
+            check_heartbeat_at=timezone.now(),
+            sent_by=self.user,
+        )
+        _run_saved_report_check_background(self.user.pk, upload.pk, "replaced-owner")
+        mocked_run.assert_not_called()
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.RUNNING)
+        self.assertEqual(upload.check_claim, "current-owner")
+
+    def test_lost_claim_does_not_overwrite_check_status(self):
+        from projects_app.report_macro_runner import (
+            bind_report_check_claim,
+            clear_report_check_claim,
+            store_report_check_status,
+        )
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            check_claim="current-owner",
+        )
+        bind_report_check_claim(upload.pk, "replaced-owner")
+        try:
+            saved = store_report_check_status(
+                upload,
+                PerformerReportUpload.CheckStatus.DONE,
+                4,
+                "",
+            )
+        finally:
+            clear_report_check_claim()
+        self.assertFalse(saved)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.RUNNING)
+        self.assertEqual(upload.check_finding_count, 0)
+
+    @patch("projects_app.report_submission._start_report_check_background")
+    def test_abandoned_report_check_stops_after_attempt_limit(self, mocked_start):
+        from projects_app.report_submission import (
+            MAX_REPORT_CHECK_ATTEMPTS,
+            recover_abandoned_report_checks,
+        )
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            check_status=PerformerReportUpload.CheckStatus.RUNNING,
+            check_attempts=MAX_REPORT_CHECK_ATTEMPTS,
+            sent_by=self.user,
+        )
+        self.assertEqual(recover_abandoned_report_checks(upload_id=upload.pk), [])
+        mocked_start.assert_not_called()
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.ERROR)
+        self.assertIn("прервана", upload.check_error)
 
     def test_workflow_status_accepted_when_findings_below_threshold(self):
         ReportCheckRule.objects.filter(section=self.mrk).update(finding_threshold=5)
@@ -10879,11 +14646,11 @@ class ReportMacroRunnerTests(TestCase):
             check_status=PerformerReportUpload.CheckStatus.DONE,
             check_finding_count=1,
         )
-        self.assertEqual(report_workflow_status(upload), "Сдан")
+        self.assertEqual(report_workflow_status(upload), "Согласован ИИ")
         ReportCheckRule.objects.filter(section=self.mrk).update(finding_threshold=1)
-        self.assertEqual(report_workflow_status(upload), "Проверен")
+        self.assertEqual(report_workflow_status(upload), "Проверен ИИ")
         ReportCheckRule.objects.filter(section=self.mrk).update(finding_threshold=0)
-        self.assertEqual(report_workflow_status(upload), "Проверен")
+        self.assertEqual(report_workflow_status(upload), "Проверен ИИ")
 
     @patch("projects_app.report_submission.cloud_download_file")
     @patch("projects_app.report_submission.cloud_publish_resource", return_value="https://cloud.example/report")
@@ -10935,7 +14702,7 @@ class ReportMacroRunnerTests(TestCase):
         original_path, original_bytes = mocked_upload.call_args_list[0].args[1], mocked_upload.call_args_list[0].args[2]
         check_path, commented = mocked_upload.call_args_list[1].args[1], mocked_upload.call_args_list[1].args[2]
         self.assertEqual(original_bytes, source)
-        self.assertTrue(check_path.endswith("_check.docx"))
+        self.assertTrue(check_path.endswith("_ИИ1.docx"))
         self.assertNotEqual(check_path, original_path)
         with zipfile.ZipFile(BytesIO(commented)) as archive:
             self.assertIn("Найдено", archive.read("word/comments.xml").decode("utf-8"))
@@ -10949,8 +14716,13 @@ class ReportMacroRunnerTests(TestCase):
         self.assertEqual(payload["check_file_name"], upload.check_file_name)
         self.assertIn("check-download", payload["check_download_url"])
         self.assertRegex(payload["checked_at"], r"^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$")
-        self.assertEqual(payload["workflow_status"], "Проверен")
+        self.assertEqual(payload["workflow_status"], "Проверен ИИ")
         self.assertEqual(payload["status_date"], payload["checked_at"])
+        self.assertEqual(payload["calculated_count_display"], "1")
+        self.assertEqual(payload["corrected_count_display"], "1")
+        self.assertEqual(payload["calculated_groups"]["total"], 1)
+        self.assertEqual(payload["edit_groups"]["total"], 1)
+        self.assertTrue(payload["edit_groups"]["courses"])
 
     @patch("projects_app.report_submission.cloud_upload_file")
     def test_local_full_report_send_writes_comments_to_check_copy(self, mocked_upload):
@@ -10968,11 +14740,9 @@ class ReportMacroRunnerTests(TestCase):
         full_rule = ReportCheckRule.objects.create(
             position=3,
             product=self.product,
-            check_type=ReportCheckRule.CheckType.MACRO,
-            check_value=full_macro.name,
             is_full_report=True,
         )
-        full_rule.macros.add(full_macro)
+        add_check_line(full_rule, full_macro)
         self.client.force_login(self.user)
         original = _report_docx_bytes("В отчёте ошибка.")
         with tempfile.TemporaryDirectory() as tmp:
@@ -11053,7 +14823,7 @@ class TpgrPercentMacroTests(TestCase):
 
     def test_catalog_starts_with_percent_macro(self):
         first = TPGR_MACROS[0]
-        self.assertEqual(first["name"], "TPGR-ZN-01.03 Знак %")
+        self.assertEqual(_tpgr_spec_label(first), "TPGR-ZN-01.03 Знак %")
         self.assertIn("слитно с числом", first["description"])
         self.assertIn(self.MSG, first["code"])
         self.assertIn(TPGR_COURSE_URL, first["code"])
@@ -11091,6 +14861,24 @@ class TpgrPercentMacroTests(TestCase):
         self.assertEqual(self._findings("<a <b> доля 10 % текст>"), [])
         self.assertEqual(len(self._findings("после > доля 10 %")), 1)
 
+    def test_flags_percent_after_comparison(self):
+        text = "порог < 0,1 и доля >= 2, затем 10 % запасов"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "10")
+
+    def test_flags_percent_after_unclosed_angles(self):
+        text = "Этап 2 <<Определение фазового состава\nдоля 10 % запасов"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "10")
+
+    def test_stray_closing_angle_cancels_the_next_opening(self):
+        text = "после > <доля 10 %>"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "10")
+
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("доля 10 % запасов")
         text, _spans = extract_document_text(source)
@@ -11105,20 +14893,32 @@ class TpgrPercentMacroTests(TestCase):
         self.assertIn(TPGR_COURSE_URL, rels_xml)
 
     def test_sync_creates_or_updates_percent_macro(self):
-        name = "TPGR-ZN-01.03 Знак %"
-        ReportMacro.objects.filter(name=name).delete()
+        ReportMacro.objects.filter(
+            course="TPGR",
+            section="ZN",
+            part="01",
+            number="03",
+        ).delete()
         created, updated = sync_tpgr_macros(ReportMacro)
         self.assertEqual(created, 1)
-        stored = ReportMacro.objects.get(name=name)
+        stored = ReportMacro.objects.get(
+            course="TPGR",
+            section="ZN",
+            part="01",
+            number="03",
+        )
+        self.assertEqual(stored.name, "Знак %")
         self.assertEqual(stored.code, tpgr_macro_code("TPGR-ZN-01.03"))
 
         stored.description = "старое"
         stored.code = "def check(ctx):\n    return []\n"
+        stored.name = "TPGR-ZN-01.03 Знак %"
         stored.save()
         created_again, updated_again = sync_tpgr_macros(ReportMacro)
         self.assertEqual(created_again, 0)
         self.assertEqual(updated_again, 1)
         stored.refresh_from_db()
+        self.assertEqual(stored.name, "Знак %")
         self.assertEqual(stored.code, tpgr_macro_code("TPGR-ZN-01.03"))
         self.assertEqual(stored.description, TPGR_MACROS[0]["description"])
 
@@ -11139,7 +14939,7 @@ class TpgrSignsMacroTests(TestCase):
 
     def test_catalog_has_signs_macro_with_course_link(self):
         spec = TPGR_MACROS[1]
-        self.assertEqual(spec["name"], "TPGR-ZN-01.01 Знаки №, §, °C")
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-ZN-01.01 Знаки №, §, °C")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -11219,7 +15019,7 @@ class TpgrDashMacroTests(TestCase):
 
     def test_catalog_has_dash_macro_with_course_link(self):
         spec = TPGR_MACROS[2]
-        self.assertEqual(spec["name"], "TPGR-TR-01.15 Длинное тире")
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-TR-01.15 Длинное тире")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_DASH_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -11277,6 +15077,103 @@ class TpgrDashMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
+    def test_flags_dash_between_word_and_number(self):
+        for text in (
+            "золота - 100 кг",
+            "серебра - 200 кг",
+            "золота \u2013 100 кг",
+            "золота \u2212 100 кг",
+            "золота- 100 кг",
+            "золота\u2013 100 кг",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            marked = text[findings[0]["start"]:findings[0]["end"]]
+            self.assertIn(marked, ("-", "\u2013", "\u2212"))
+
+    def test_flags_dash_between_abbreviation_and_number(self):
+        for text in (
+            "В 2018 г. - 50 кг.",
+            "В 2018 г. \u2013 50 кг.",
+            "В 2018 г. \u2212 50 кг.",
+            "В 2018 г.- 50 кг.",
+            "добыча, г. - 50 кг",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            marked = text[findings[0]["start"]:findings[0]["end"]]
+            self.assertIn(marked, ("-", "\u2013", "\u2212"))
+
+    def test_skips_minus_glued_to_the_number(self):
+        for text in (
+            "температура -30 градусов",
+            "температура \u201330 градусов",
+            "температура \u221230 градусов",
+            "температура-30 градусов",
+            "золота -100 кг",
+            "золота-100 кг",
+            "золота\u2013100 кг",
+            "золота \u2013100 кг",
+            "Золота-100 кг",
+            "В 2018 г. -50 кг.",
+            "В 2018 г.-50 кг.",
+            "В 2018 г.\u201350 кг.",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_flags_emdash_missing_spaces_before_number(self):
+        for text in (
+            "температура \u201430 градусов",
+            "золота\u2014100 кг",
+            "золота \u2014100 кг",
+            "золота\u2014 100 кг",
+            "В 2018 г.\u201450 кг.",
+            "В 2018 г. \u201450 кг.",
+            "В 2018 г.\u2014 50 кг.",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "\u2014")
+
+    def test_flags_minus_between_word_and_number_without_spaces(self):
+        text = "Знак минус\u2212100% нельзя использовать для разделения слов"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "\u2212")
+        self.assertEqual(findings[0]["message"], self.MSG)
+
+    def test_flags_dash_after_abbreviation_before_word(self):
+        samples = []
+        for mark in ("-", "\u2013", "\u2212"):
+            samples.extend((
+                f"При обозначении события, например, в 2020 г. {mark} не должен использоваться.",
+                f"При обозначении события, например, в 2020 г.{mark} не должен использоваться.",
+                f"При обозначении события, например, в 2020 г. {mark}не должен использоваться.",
+                f"При обозначении события, например, в 2020 г.{mark}не должен использоваться.",
+            ))
+        for text in samples:
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+            marked = text[findings[0]["start"]:findings[0]["end"]]
+            self.assertIn(marked, ("-", "\u2013", "\u2212"))
+
+    def test_skips_emdash_after_abbreviation_before_word(self):
+        text = "При обозначении события, например, в 2020 г. \u2014 не должен использоваться."
+        self.assertEqual(self._findings(text), [])
+
+    def test_skips_emdash_between_word_or_abbreviation_and_number(self):
+        for text in (
+            "золота \u2014 100 кг",
+            "серебра \u2014 200 кг",
+            "золота\u00a0\u2014\u00a0100 кг",
+            "В 2018 г. \u2014 50 кг.",
+            "В 2018 г.\u00a0\u2014\u00a050 кг.",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
     def test_flags_emdash_missing_spaces(self):
         for text in (
             "слово\u2014слово",
@@ -11291,6 +15188,12 @@ class TpgrDashMacroTests(TestCase):
     def test_skips_dash_inside_angle_brackets(self):
         self.assertEqual(self._findings("шаблон <слово - слово>"), [])
         self.assertEqual(self._findings("шаблон <слово\u2014слово>"), [])
+
+    def test_flags_dash_after_unclosed_angles(self):
+        text = "Этап 2 <<Определение фазового состава\nэлектроэнергию \u2013 в 2 раза"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "\u2013")
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("слово - слово")
@@ -11322,7 +15225,7 @@ class TpgrRangeDashMacroTests(TestCase):
 
     def test_catalog_has_range_dash_macro_with_course_link(self):
         spec = TPGR_MACROS[3]
-        self.assertEqual(spec["name"], "TPGR-TR-01.13 Короткое тире в диапазонах")
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-TR-01.13 Короткое тире в диапазонах")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_DASH_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -11395,7 +15298,7 @@ class TpgrAbbrMacroTests(TestCase):
 
     def test_catalog_has_abbr_macro_with_course_link(self):
         spec = TPGR_MACROS[4]
-        self.assertEqual(spec["name"], "TPGR-PR-01.01 Неразрывный пробел в сокращениях")
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-PR-01.01 Неразрывный пробел в сокращениях")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_ABBR_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -11477,7 +15380,7 @@ class TpgrHangingPrepositionMacroTests(TestCase):
 
     def test_catalog_has_hanging_macro_with_course_link(self):
         spec = TPGR_MACROS[5]
-        self.assertEqual(spec["name"], "TPGR-PR-01.08 Висячие предлоги")
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-PR-01.08 Висячие предлоги")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_ABBR_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -11536,6 +15439,523 @@ class TpgrHangingPrepositionMacroTests(TestCase):
         findings = self._findings(text, ends)
         hanging = [item for item in findings if text[item["start"]:item["end"]] == "в"]
         self.assertEqual(len(hanging), 1, (text, ends, findings))
+
+    def test_arial_does_not_flag_preposition_mid_line(self):
+        text = (
+            "Асачинское месторождение расположено в юго-восточной части полуострова "
+            "Камчатка, в 100 км южнее г. Петропавловска-Камчатского и относится к эпитермальной формации."
+        )
+        extracted, ends, findings = self._docx_findings(
+            text,
+            font="Arial",
+            size=Pt(11),
+            page_width=Twips(11900),
+            left=Twips(1701),
+            right=Twips(1134),
+        )
+        kamchatka = extracted.find("Камчатка, в ")
+        self.assertGreater(kamchatka, -1)
+        self.assertNotIn(kamchatka + len("Камчатка, в ") - 1, ends)
+        # В пробе нет w:kern: строка рвётся после «полуострова», «в» остаётся в середине следующей.
+        peninsula = extracted.find("полуострова ")
+        self.assertIn(peninsula + len("полуострова"), ends)
+        words = [extracted[item["start"]:item["end"]] for item in findings]
+        self.assertNotIn("в", words)
+
+    def test_hyphenated_word_does_not_flag_preceding_preposition(self):
+        text = (
+            "Специалисты проводят мониторинг гидрогеологических и "
+            "инженерно-геологических условий в подземных горных выработках ежедневно."
+        )
+        extracted, ends, findings = self._docx_findings(
+            text,
+            font="Arial",
+            size=Pt(11),
+            page_width=Twips(11900),
+            left=Twips(1701),
+            right=Twips(1134),
+        )
+        conjunction = extracted.find("гидрогеологических и ")
+        self.assertGreater(conjunction, -1)
+        self.assertNotIn(conjunction + len("гидрогеологических и ") - 1, ends)
+        flagged = [
+            item for item in findings
+            if extracted[item["start"]:item["end"]] == "и"
+            and item["start"] == conjunction + len("гидрогеологических ")
+        ]
+        self.assertEqual(flagged, [])
+
+    def test_normal_style_cambria_not_complex_script_font(self):
+        """Абзац без pStyle берёт Normal, а w:cs не подменяет шрифт кириллицы."""
+        paragraphs = (
+            "IMC Montan Ltd. (Великобритания) и IMC Montan D.o.o. (Сербия) – компании группы, "
+            "работающие по всему миру. В 2020 г. в России произошла юридическая реструктуризация "
+            "компании. Учредителями российского ООО «Ай Эм Си Монтан» являются физические лица, "
+            "руководители IMC Montan, работа ведётся с соблюдением всех правил международной "
+            "группы. В Казахстане и в Азии деятельность группы также ведётся через ТОО «IMC Montan» "
+            "(РК), а для проектов в Армении и на Ближнем Востоке через ООО “IMC Montan” (Армения). "
+            "Также для развития проектов в Узбекистане и в Средней Азии открыта IMC Montan FELLC "
+            "(Узбекистан).",
+            "История IMC ведётся с 1947 г. и связана с развитием угольной промышленности "
+            "Великобритании, а позже любых минеральных ресурсов по всему миру. При развитии "
+            "международного консалтинга, в 1992 г. группой был открыт офис в г. Москва. В начале "
+            "2000-х гг. для развития направлений IMC был образован консорциум DMT (Германия, история с "
+            "1737 г.) и WYG International (Великобритания, история с 1970 г., ныне Tetra Tech International "
+            "Development Project) с созданием единого брэнда IMC Montan. Обе структуры являются "
+            "крупными международными инженерно-консалтинговыми группами. Руководство IMC "
+            "Montan с 2006 г., претерпевая некоторые изменения в структуре и составе юридических лиц, "
+            "осуществляется российскими резидентами.",
+        )
+        document = Document()
+        document.styles["Normal"].font.name = "Cambria"
+        document.styles["Normal"].font.size = Pt(11)
+        section = document.sections[0]
+        section.page_width = Twips(11900)
+        section.page_height = Twips(16840)
+        section.left_margin = Twips(1701)
+        section.right_margin = Twips(850)
+        for text in paragraphs:
+            document.add_paragraph(text)
+        buffer = BytesIO()
+        document.save(buffer)
+        from lxml import etree
+        from projects_app.docx_comments import _read_zip, _write_zip, w
+
+        parts = _read_zip(buffer.getvalue())
+        styles = etree.fromstring(parts["word/styles.xml"])
+        defaults = styles.find(f"{w('docDefaults')}/{w('rPrDefault')}/{w('rPr')}")
+        fonts = defaults.find(w("rFonts"))
+        if fonts is None:
+            fonts = etree.SubElement(defaults, w("rFonts"))
+        fonts.set(w("ascii"), "Arial")
+        fonts.set(w("hAnsi"), "Arial")
+        doc = etree.fromstring(parts["word/document.xml"])
+        for run in doc.iter(w("r")):
+            r_pr = run.find(w("rPr"))
+            if r_pr is None:
+                r_pr = etree.Element(w("rPr"))
+                run.insert(0, r_pr)
+            r_fonts = r_pr.find(w("rFonts"))
+            if r_fonts is None:
+                r_fonts = etree.SubElement(r_pr, w("rFonts"))
+            for attr in list(r_fonts.attrib):
+                del r_fonts.attrib[attr]
+            r_fonts.set(w("cs"), "Calibri Light")
+        parts["word/styles.xml"] = etree.tostring(
+            styles, xml_declaration=True, encoding="UTF-8", standalone=True
+        )
+        parts["word/document.xml"] = etree.tostring(
+            doc, xml_declaration=True, encoding="UTF-8", standalone=True
+        )
+        source = _write_zip(parts)
+        extracted, _spans = extract_document_text(source)
+        ends = extract_line_end_spaces(source)
+
+        def space_after(phrase, start=0):
+            pos = extracted.find(phrase, start)
+            self.assertGreater(pos, -1, phrase)
+            return pos, pos + len(phrase) - 1
+
+        _, kazakhstan_space = space_after("Казахстане и в ")
+        _, projects_space = space_after("проектов в ")
+        history, history_space = space_after("история с ")
+        _, later_history_space = space_after("история с ", history + 1)
+        self.assertNotIn(kazakhstan_space, ends)
+        self.assertNotIn(projects_space, ends)
+        self.assertIn(history_space, ends)
+        self.assertNotIn(later_history_space, ends)
+        findings = self._findings(extracted, ends)
+        flagged = [extracted[item["start"]:item["end"]] for item in findings]
+        self.assertNotIn("в", flagged)
+        hanging_s = [
+            item for item in findings
+            if extracted[item["start"]:item["end"]] == "с"
+        ]
+        self.assertEqual(len(hanging_s), 1)
+        self.assertTrue(extracted[:hanging_s[0]["start"]].endswith("история "))
+
+    def test_justified_line_compresses_ordinary_spaces_only(self):
+        from projects_app.docx_layout import _wrap_space_offsets
+
+        # 50+40+20 = 110. Обычный пробел сжимается до 3/4: 50+30+20 = 100.
+        ordinary = [
+            ("word", 0, 50, "а"),
+            ("space", 1, 40),
+            ("word", 2, 20, "б"),
+        ]
+        self.assertEqual(_wrap_space_offsets(ordinary, 100, 100, justify=False), {1})
+        self.assertEqual(_wrap_space_offsets(ordinary, 100, 100, justify=True), set())
+        too_wide = [
+            ("word", 0, 50, "а"),
+            ("space", 1, 40),
+            ("word", 2, 40, "б"),
+        ]
+        self.assertEqual(_wrap_space_offsets(too_wide, 100, 100, justify=True), {1})
+        # Пробел после точки перед прописной не сжимается: 65+40+5 = 110.
+        sentence = [
+            ("word", 0, 55, "г"),
+            ("word", 1, 10, "."),
+            ("space", 2, 40),
+            ("word", 3, 5, "И"),
+        ]
+        self.assertEqual(_wrap_space_offsets(sentence, 100, 100, justify=True), {2})
+        # «г. по»: точка сокращения, следующее слово строчное, пробел сжимается до 3/4.
+        abbreviation = [
+            ("word", 0, 55, "г"),
+            ("word", 1, 10, "."),
+            ("space", 2, 40),
+            ("word", 3, 5, "и"),
+        ]
+        self.assertEqual(_wrap_space_offsets(abbreviation, 100, 100, justify=True), set())
+        # Скобка не висит в поле: 50+15+40+20 = 125 > 100.
+        paren = [
+            ("word", 0, 50, "а"),
+            ("space", 1, 20),
+            ("word", 2, 40, "б"),
+            ("word", 3, 20, ")"),
+        ]
+        self.assertEqual(_wrap_space_offsets(paren, 100, 100, justify=True), {1})
+        # Точка в конце слова не занимает место при проверке влезания: 50+15+30 = 95.
+        hanging = [
+            ("word", 0, 50, "а"),
+            ("space", 1, 20),
+            ("word", 2, 30, "б"),
+            ("word", 3, 15, "."),
+        ]
+        self.assertEqual(_wrap_space_offsets(hanging, 100, 100, justify=False), {1})
+        self.assertEqual(_wrap_space_offsets(hanging, 100, 100, justify=True), set())
+
+    def test_numbered_hanging_indent_belongs_to_the_marker(self):
+        from lxml import etree
+        from projects_app.docx_comments import w
+        from projects_app.docx_layout import _paragraph_widths
+
+        paragraph = etree.Element(w("p"))
+        p_pr = etree.SubElement(paragraph, w("pPr"))
+        num_pr = etree.SubElement(p_pr, w("numPr"))
+        ilvl = etree.SubElement(num_pr, w("ilvl"))
+        ilvl.set(w("val"), "0")
+        num_id = etree.SubElement(num_pr, w("numId"))
+        num_id.set(w("val"), "17")
+        ind = etree.SubElement(p_pr, w("ind"))
+        ind.set(w("left"), "425")
+        ind.set(w("hanging"), "425")
+        first, rest = _paragraph_widths(paragraph, 9349, {}, {})
+        self.assertEqual(rest, 9349 - 425)
+        self.assertEqual(first, rest)
+
+    def test_kerning_and_subscript_narrow_the_advance(self):
+        from projects_app.docx_layout import _advance, _kern_twips
+
+        fmt = {"sz": 22, "fonts": {"hAnsi": {"name": "Cambria"}, "cs": {"name": "Cambria"}}}
+        self.assertLess(_kern_twips("Cambria", "Cambria", "о", "т", fmt), 0)
+        self.assertEqual(_kern_twips("Cambria", "Arial", "о", "т", fmt), 0)
+        full = _advance(fmt, "2", {})
+        subscript = _advance({**fmt, "script_scale": 65}, "2", {})
+        self.assertEqual(subscript, full * 65 / 100)
+        self.assertLess(subscript, full)
+
+    def test_cambria_italic_uses_the_italic_face(self):
+        from projects_app.docx_layout import _advance
+
+        italic = {"sz": 22, "italic": True, "fonts": {"hAnsi": {"name": "Cambria"}}}
+        roman = {"sz": 22, "fonts": {"hAnsi": {"name": "Cambria"}}}
+        word = "геологическим"
+        italic_w = sum(_advance(italic, ch, {}) for ch in word)
+        roman_w = sum(_advance(roman, ch, {}) for ch in word)
+        self.assertLess(italic_w, roman_w)
+        self.assertLess(italic_w, roman_w * 1.04)
+
+    def test_kerning_uses_the_adjacent_glyph(self):
+        from projects_app.docx_comments import _read_zip
+        from projects_app.docx_layout import (
+            _advance,
+            _kern_twips,
+            _paragraph_items,
+            _style_sheet,
+            _theme_fonts,
+        )
+        from lxml import etree
+        from projects_app.docx_comments import w
+
+        document = Document()
+        run = document.add_paragraph().add_run("от")
+        run.font.name = "Cambria"
+        run.font.size = Pt(11)
+        buffer = BytesIO()
+        document.save(buffer)
+        parts = _read_zip(buffer.getvalue())
+        styles = _style_sheet(parts.get("word/styles.xml"), _theme_fonts(parts.get("word/theme/theme1.xml")))
+        root = etree.fromstring(parts["word/document.xml"])
+        paragraph = next(node for node in root.iter(w("p")) if node.find(f".//{w('t')}") is not None)
+        run = paragraph.find(w("r"))
+        r_pr = run.find(w("rPr"))
+        if r_pr is None:
+            r_pr = etree.SubElement(run, w("rPr"))
+        kern = etree.SubElement(r_pr, w("kern"))
+        kern.set(w("val"), "2")
+        items, _offset = _paragraph_items(paragraph, 0, styles)
+        letters = [item for item in items if item[0] == "word"]
+        self.assertEqual(len(letters), 2)
+        fmt = {"sz": 22, "fonts": {"hAnsi": {"name": "Cambria"}, "ascii": {"name": "Cambria"}}}
+        expected = _advance(fmt, "т", {}) + _kern_twips("Cambria", "Cambria", "о", "т", fmt)
+        self.assertEqual(letters[1][2], expected)
+        self.assertLess(letters[1][2], _advance(fmt, "т", {}))
+
+    def test_tab_stop_definitions_do_not_consume_line_width(self):
+        from lxml import etree
+        from projects_app.docx_comments import _read_zip, w
+        from projects_app.docx_layout import (
+            _paragraph_items,
+            _style_sheet,
+            _theme_fonts,
+        )
+
+        document = Document()
+        document.add_paragraph("Строка без символа табуляции")
+        buffer = BytesIO()
+        document.save(buffer)
+        parts = _read_zip(buffer.getvalue())
+        root = etree.fromstring(parts["word/document.xml"])
+        paragraph = next(node for node in root.iter(w("p")) if node.find(f".//{w('t')}") is not None)
+        p_pr = paragraph.find(w("pPr"))
+        if p_pr is None:
+            p_pr = etree.Element(w("pPr"))
+            paragraph.insert(0, p_pr)
+        tabs = etree.SubElement(p_pr, w("tabs"))
+        for pos in ("360", "720"):
+            stop = etree.SubElement(tabs, w("tab"))
+            stop.set(w("val"), "num")
+            stop.set(w("pos"), pos)
+        styles = _style_sheet(parts.get("word/styles.xml"), _theme_fonts(parts.get("word/theme/theme1.xml")))
+        items, _offset = _paragraph_items(paragraph, 0, styles)
+        self.assertFalse(any(item[0] == "tab" for item in items))
+
+    def test_percent_table_cell_is_narrower_than_the_page(self):
+        from lxml import etree
+        from projects_app.docx_comments import _read_zip, _write_zip, w
+        from projects_app.docx_layout import extract_line_end_spaces
+        from projects_app.docx_comments import extract_document_text
+
+        document = Document()
+        section = document.sections[0]
+        section.page_width = Twips(11906)
+        section.left_margin = Twips(720)
+        section.right_margin = Twips(720)
+        table = document.add_table(rows=1, cols=1)
+        cell = table.cell(0, 0)
+        cell.text = (
+            "Межрегиональное территориальное управление федеральной службы "
+            "по надзору в сфере транспорта"
+        )
+        buffer = BytesIO()
+        document.save(buffer)
+        parts = _read_zip(buffer.getvalue())
+        root = etree.fromstring(parts["word/document.xml"])
+        grid = root.find(f".//{w('tblGrid')}")
+        col = grid.find(w("gridCol"))
+        col.set(w("w"), "2487")
+        tc_w = root.find(f".//{w('tcW')}")
+        tc_w.set(w("w"), "1331")
+        tc_w.set(w("type"), "pct")
+        styles = etree.fromstring(parts["word/styles.xml"])
+        for style in styles.iter(w("style")):
+            if style.get(w("type")) == "table" and style.get(w("default")) == "1":
+                tbl_pr = style.find(w("tblPr"))
+                if tbl_pr is None:
+                    tbl_pr = etree.SubElement(style, w("tblPr"))
+                mar = tbl_pr.find(w("tblCellMar"))
+                if mar is None:
+                    mar = etree.SubElement(tbl_pr, w("tblCellMar"))
+                for side in ("left", "right"):
+                    node = mar.find(w(side))
+                    if node is None:
+                        node = etree.SubElement(mar, w(side))
+                    node.set(w("w"), "108")
+                    node.set(w("type"), "dxa")
+        parts["word/document.xml"] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        parts["word/styles.xml"] = etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
+        source = _write_zip(parts)
+        text, _spans = extract_document_text(source)
+        ends = extract_line_end_spaces(source)
+        start = text.find("Межрегиональное")
+        self.assertGreater(start, -1)
+        finish = text.find("транспорта", start)
+        self.assertTrue(any(start <= offset < finish for offset in ends))
+
+    def test_document_default_justification(self):
+        from lxml import etree
+        from projects_app.docx_comments import _read_zip, w
+        from projects_app.docx_layout import (
+            _paragraph_justified,
+            _style_sheet,
+            _theme_fonts,
+        )
+
+        document = Document()
+        document.add_paragraph("Абзац без своего выравнивания")
+        buffer = BytesIO()
+        document.save(buffer)
+        parts = _read_zip(buffer.getvalue())
+        styles_xml = etree.fromstring(parts["word/styles.xml"])
+        p_pr_default = styles_xml.find(f"{w('docDefaults')}/{w('pPrDefault')}/{w('pPr')}")
+        if p_pr_default is None:
+            p_default = styles_xml.find(f"{w('docDefaults')}/{w('pPrDefault')}")
+            if p_default is None:
+                defaults = styles_xml.find(w("docDefaults"))
+                p_default = etree.SubElement(defaults, w("pPrDefault"))
+            p_pr_default = etree.SubElement(p_default, w("pPr"))
+        jc = etree.SubElement(p_pr_default, w("jc"))
+        jc.set(w("val"), "both")
+        styles = _style_sheet(
+            etree.tostring(styles_xml),
+            _theme_fonts(parts.get("word/theme/theme1.xml")),
+        )
+        root = etree.fromstring(parts["word/document.xml"])
+        paragraph = next(node for node in root.iter(w("p")) if node.find(f".//{w('t')}") is not None)
+        self.assertTrue(_paragraph_justified(paragraph, styles))
+        direct = paragraph.find(w("pPr"))
+        if direct is None:
+            direct = etree.Element(w("pPr"))
+            paragraph.insert(0, direct)
+        own = etree.SubElement(direct, w("jc"))
+        own.set(w("val"), "left")
+        self.assertFalse(_paragraph_justified(paragraph, styles))
+
+    def _typeface_of(self, source, paragraph_index=0):
+        from lxml import etree
+        from projects_app.docx_comments import _read_zip, w
+        from projects_app.docx_layout import (
+            _merged_style_format,
+            _paragraph_style_id,
+            _run_format,
+            _style_sheet,
+            _theme_fonts,
+            _typeface,
+        )
+
+        parts = _read_zip(source)
+        styles = _style_sheet(
+            parts.get("word/styles.xml"),
+            _theme_fonts(parts.get("word/theme/theme1.xml")),
+        )
+        root = etree.fromstring(parts["word/document.xml"])
+        paragraphs = [
+            paragraph for paragraph in root.iter(w("p"))
+            if any((node.text or "") for node in paragraph.iter(w("t")))
+        ]
+        paragraph = paragraphs[paragraph_index]
+        para_format = _merged_style_format(styles, _paragraph_style_id(paragraph, styles))
+        text_node = paragraph.find(f".//{w('t')}")
+        fmt = _run_format(text_node, para_format, styles)
+        theme = styles.get("theme")
+        return lambda ch: _typeface(fmt, ch, theme)
+
+    def test_font_slots_follow_style_cascade(self):
+        from lxml import etree
+        from docx.enum.style import WD_STYLE_TYPE
+        from projects_app.docx_comments import _read_zip, _write_zip, w
+
+        document = Document()
+        document.styles["Normal"].font.name = "Cambria"
+        child = document.styles.add_style("Дочерний", WD_STYLE_TYPE.PARAGRAPH)
+        child.base_style = document.styles["Normal"]
+        document.styles.add_style("Тема", WD_STYLE_TYPE.PARAGRAPH)
+        linked = document.styles.add_style("ТолькоЗнак", WD_STYLE_TYPE.CHARACTER)
+        linked.font.name = "Times New Roman"
+        document.styles.add_style("СоСвязью", WD_STYLE_TYPE.PARAGRAPH)
+        document.add_paragraph("Абзац A")
+        document.add_paragraph("Абзац", style="Дочерний")
+        document.add_paragraph("Абзац A", style="Тема")
+        document.add_paragraph("Абзац", style="СоСвязью")
+        document.add_paragraph("Абзац")
+        buffer = BytesIO()
+        document.save(buffer)
+        parts = _read_zip(buffer.getvalue())
+        styles = etree.fromstring(parts["word/styles.xml"])
+        for style in styles.iter(w("style")):
+            style_id = style.get(w("styleId")) or ""
+            if style_id == "Тема":
+                based = style.find(w("basedOn"))
+                if based is not None:
+                    style.remove(based)
+            elif style_id == "СоСвязью":
+                based = style.find(w("basedOn"))
+                if based is not None:
+                    style.remove(based)
+                link = style.find(w("link"))
+                if link is None:
+                    link = etree.SubElement(style, w("link"))
+                link.set(w("val"), "ТолькоЗнак")
+        doc = etree.fromstring(parts["word/document.xml"])
+        text_paragraphs = [
+            paragraph for paragraph in doc.iter(w("p"))
+            if any((node.text or "") for node in paragraph.iter(w("t")))
+        ]
+
+        def run_fonts(paragraph):
+            run = paragraph.find(w("r"))
+            r_pr = run.find(w("rPr"))
+            if r_pr is None:
+                r_pr = etree.Element(w("rPr"))
+                run.insert(0, r_pr)
+            r_fonts = r_pr.find(w("rFonts"))
+            if r_fonts is None:
+                r_fonts = etree.SubElement(r_pr, w("rFonts"))
+            return r_fonts
+
+        ascii_fonts = run_fonts(text_paragraphs[0])
+        for attr in list(ascii_fonts.attrib):
+            del ascii_fonts.attrib[attr]
+        ascii_fonts.set(w("ascii"), "Courier New")
+        for paragraph in (text_paragraphs[1], text_paragraphs[2], text_paragraphs[3]):
+            fonts = run_fonts(paragraph)
+            fonts.getparent().remove(fonts)
+        theme_paragraph = text_paragraphs[2]
+        p_pr = theme_paragraph.find(w("pPr"))
+        if p_pr is None:
+            p_pr = etree.Element(w("pPr"))
+            theme_paragraph.insert(0, p_pr)
+        mark_fonts = etree.SubElement(etree.SubElement(p_pr, w("rPr")), w("rFonts"))
+        mark_fonts.set(w("ascii"), "Arial")
+        mark_fonts.set(w("hAnsi"), "Arial")
+        complex_fonts = run_fonts(text_paragraphs[4])
+        for attr in list(complex_fonts.attrib):
+            del complex_fonts.attrib[attr]
+        complex_fonts.set(w("cs"), "Arial")
+        theme = etree.fromstring(parts["word/theme/theme1.xml"])
+        ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+        latin = theme.find(".//a:minorFont/a:latin", ns)
+        latin.set("typeface", "Arial")
+        cyrl = etree.Element("{http://schemas.openxmlformats.org/drawingml/2006/main}font")
+        cyrl.set("script", "Cyrl")
+        cyrl.set("typeface", "Times New Roman")
+        theme.find(".//a:minorFont", ns).append(cyrl)
+        parts["word/styles.xml"] = etree.tostring(
+            styles, xml_declaration=True, encoding="UTF-8", standalone=True
+        )
+        parts["word/document.xml"] = etree.tostring(
+            doc, xml_declaration=True, encoding="UTF-8", standalone=True
+        )
+        parts["word/theme/theme1.xml"] = etree.tostring(
+            theme, xml_declaration=True, encoding="UTF-8", standalone=True
+        )
+        source = _write_zip(parts)
+        ascii_only = self._typeface_of(source, 0)
+        self.assertEqual(ascii_only("A"), "Courier New")
+        self.assertEqual(ascii_only("А"), "Cambria")
+        inherited = self._typeface_of(source, 1)
+        self.assertEqual(inherited("А"), "Cambria")
+        self.assertEqual(inherited("A"), "Cambria")
+        from_theme = self._typeface_of(source, 2)
+        self.assertEqual(from_theme("А"), "Times New Roman")
+        self.assertEqual(from_theme("A"), "Arial")
+        from_link = self._typeface_of(source, 3)
+        self.assertEqual(from_link("А"), "Times New Roman")
+        self.assertEqual(from_link("A"), "Times New Roman")
+        complex_only = self._typeface_of(source, 4)
+        self.assertEqual(complex_only("А"), "Cambria")
+        self.assertEqual(complex_only("ا"), "Arial")
 
     def test_skips_same_line_and_non_particles(self):
         for text in (
@@ -11599,6 +16019,12 @@ class TpgrHangingPrepositionMacroTests(TestCase):
     def test_skips_particle_inside_angle_brackets(self):
         self.assertEqual(self._findings("шаблон <текст в \nдоме>"), [])
 
+    def test_flags_particle_after_comparison(self):
+        text = "порог < 0,1\nтекст в \nдоме"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "в")
+
     def test_skips_when_layout_has_no_wrap_at_particle(self):
         self.assertEqual(self._findings("текст в доме и конец", frozenset()), [])
 
@@ -11643,7 +16069,7 @@ class TpgrHangingPrepositionMacroTests(TestCase):
             size=Pt(11),
         )
         words = [extracted[item["start"]:item["end"]] for item in findings]
-        self.assertEqual(words, ["по", "а", "и", "в"], (words, ends, extracted))
+        self.assertEqual(words, ["по", "а", "в"], (words, ends, extracted))
         last_and = extracted.rfind(" и вхождения") + 1
         self.assertTrue(all(item["start"] != last_and for item in findings))
 
@@ -11809,8 +16235,8 @@ class TpgrDateMacroTests(TestCase):
         return run_macro(self.macro, type("Ctx", (), {"text": text})())
 
     def test_catalog_has_date_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-DT-00.00"))
-        self.assertEqual(spec["name"], "TPGR-DT-00.00 Лишнее «г.» после даты")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TPGR-DT-00.00"))
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-DT-00.00 Лишнее «г.» после даты")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
 
@@ -11893,8 +16319,8 @@ class TpgrDigitGroupMacroTests(TestCase):
         return run_macro(self.macro, type("Ctx", (), {"text": text})())
 
     def test_catalog_has_digit_macro_with_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-CH-02.01"))
-        self.assertEqual(spec["name"], "TPGR-CH-02.01 Разряды в числах")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TPGR-CH-02.01"))
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-CH-02.01 Разряды в числах")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_NUM_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -12019,8 +16445,8 @@ class TpgrRepeatedQuotesMacroTests(TestCase):
         return run_macro(self.macro, type("Ctx", (), {"text": text})())
 
     def test_catalog_has_repeated_quotes_macro_with_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-KV-01.03"))
-        self.assertEqual(spec["name"], "TPGR-KV-01.03 Повтор кавычек")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TPGR-KV-01.03"))
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-KV-01.03 Повтор кавычек")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_QUOTE_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -12079,8 +16505,8 @@ class TpgrGuillemetMacroTests(TestCase):
         return run_macro(self.macro, type("Ctx", (), {"text": text})())
 
     def test_catalog_has_guillemet_macro_with_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-KV-01.02"))
-        self.assertEqual(spec["name"], "TPGR-KV-01.02 Кавычки-ёлочки")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TPGR-KV-01.02"))
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-KV-01.02 Кавычки-ёлочки")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_QUOTE_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -12183,8 +16609,8 @@ class TpgrUnclosedGuillemetMacroTests(TestCase):
         return run_macro(self.macro, type("Ctx", (), {"text": text})())
 
     def test_catalog_has_unclosed_guillemet_macro_with_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-KV-01.05"))
-        self.assertEqual(spec["name"], "TPGR-KV-01.05 Незакрытые ёлочки")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TPGR-KV-01.05"))
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-KV-01.05 Незакрытые ёлочки")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_QUOTE_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -12258,8 +16684,8 @@ class DocxBrokenRefMacroTests(TestCase):
         return run_macro(self.macro, type("Ctx", (), {"text": text})())
 
     def test_catalog_has_broken_ref_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("DOCX-SS-00.00 Битая"))
-        self.assertEqual(spec["name"], "DOCX-SS-00.00 Битая перекрёстная ссылка")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("DOCX-SS-00.00 Битая"))
+        self.assertEqual(_tpgr_spec_label(spec), "DOCX-SS-00.00 Битая перекрёстная ссылка")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"])
 
@@ -12343,8 +16769,8 @@ class TmplUnclosedAnglesMacroTests(TestCase):
         return run_macro(self.macro, type("Ctx", (), {"text": text, "notes": notes or []})())
 
     def test_catalog_has_unclosed_angles_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TMPL-SS-00.00"))
-        self.assertEqual(spec["name"], "TMPL-SS-00.00 Незакрытые угловые скобки")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SS-00.00"))
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SS-00.00 Незакрытые угловые скобки")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(self.MSG_OPEN, spec["code"])
         self.assertIn(self.MSG_FN, spec["code"])
@@ -12607,8 +17033,8 @@ class TmplPublicFootnoteBracketsMacroTests(TestCase):
 
     def setUp(self):
         self.macro = ReportMacro(
-            name="TMPL-SS-00.00 Сноски без угловых скобок",
-            code=tpgr_macro_code("TMPL-SS-00.00 Сноски"),
+            name="TMPL-SS-00.01 Сноски без угловых скобок",
+            code=tpgr_macro_code("TMPL-SS-00.01 Сноски"),
         )
 
     def _findings(self, notes, nextcloud_base_url=""):
@@ -12618,8 +17044,8 @@ class TmplPublicFootnoteBracketsMacroTests(TestCase):
         )
 
     def test_catalog_has_public_footnote_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TMPL-SS-00.00 Сноски"))
-        self.assertEqual(spec["name"], "TMPL-SS-00.00 Сноски без угловых скобок")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SS-00.01 Сноски"))
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SS-00.01 Сноски без угловых скобок")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
 
@@ -12684,8 +17110,8 @@ class TpgrListPeriodMacroTests(TestCase):
         )
 
     def test_catalog_has_list_period_macro_with_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-SP-02.04"))
-        self.assertEqual(spec["name"], "TPGR-SP-02.04 Точка в конце списков")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TPGR-SP-02.04"))
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-SP-02.04 Точка в конце списков")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_LIST_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -12825,8 +17251,8 @@ class TpgrFootnoteSpaceMacroTests(TestCase):
         return run_macro(self.macro, type("Ctx", (), {"text": "", "notes": notes})())
 
     def test_catalog_has_footnote_space_macro_with_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-SN-02.06"))
-        self.assertEqual(spec["name"], "TPGR-SN-02.06 Пробел перед знаком сноски")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TPGR-SN-02.06"))
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-SN-02.06 Пробел перед знаком сноски")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(TPGR_COURSE_SN_URL, spec["code"])
         self.assertIn(TPGR_COURSE_LINK_TEXT, spec["code"])
@@ -12914,8 +17340,8 @@ class TpgrTableCellPeriodMacroTests(TestCase):
         )
 
     def test_catalog_has_table_period_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TPGR-TB-00.00"))
-        self.assertEqual(spec["name"], "TPGR-TB-00.00 Точка в конце ячейки таблицы")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TPGR-TB-00.00"))
+        self.assertEqual(_tpgr_spec_label(spec), "TPGR-TB-00.00 Точка в конце ячейки таблицы")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
         self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
@@ -13033,8 +17459,8 @@ class DocxNearestObjectRefMacroTests(TestCase):
 
     def setUp(self):
         self.macro = ReportMacro(
-            name="DOCX-SS-00.00 Ссылка на ближайший объект",
-            code=tpgr_macro_code("DOCX-SS-00.00 Ссылка"),
+            name="DOCX-SS-00.01 Ссылка на ближайший объект",
+            code=tpgr_macro_code("DOCX-SS-00.01 Ссылка"),
         )
 
     def _findings(self, source):
@@ -13047,8 +17473,8 @@ class DocxNearestObjectRefMacroTests(TestCase):
         )
 
     def test_catalog_has_nearest_object_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("DOCX-SS-00.00 Ссылка"))
-        self.assertEqual(spec["name"], "DOCX-SS-00.00 Ссылка на ближайший объект")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("DOCX-SS-00.01 Ссылка"))
+        self.assertEqual(_tpgr_spec_label(spec), "DOCX-SS-00.01 Ссылка на ближайший объект")
         self.assertIn("Перекрёстная ссылка должна указывать на ближайший объект", spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
         self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
@@ -13158,8 +17584,8 @@ class DocxHeaderFooterWidthMacroTests(TestCase):
         )
 
     def test_catalog_has_header_width_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("DOCX-KL-00.00"))
-        self.assertEqual(spec["name"], "DOCX-KL-00.00 Ширина колонтитулов")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("DOCX-KL-00.00"))
+        self.assertEqual(_tpgr_spec_label(spec), "DOCX-KL-00.00 Ширина колонтитулов")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
         self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
@@ -13226,8 +17652,8 @@ class TmplSourceTabMacroTests(TestCase):
 
     def setUp(self):
         self.macro = ReportMacro(
-            name="TMPL-SS-00.00 Табуляция после «Источник:»",
-            code=tpgr_macro_code("TMPL-SS-00.00 Табуляция"),
+            name="TMPL-SS-00.02 Табуляция после «Источник:»",
+            code=tpgr_macro_code("TMPL-SS-00.02 Табуляция"),
         )
 
     def _findings(self, source=None, text=None, tab_offsets=()):
@@ -13241,9 +17667,9 @@ class TmplSourceTabMacroTests(TestCase):
 
     def test_catalog_has_source_tab_macro_without_course_link(self):
         spec = next(
-            item for item in TPGR_MACROS if item["name"].startswith("TMPL-SS-00.00 Табуляция")
+            item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SS-00.02 Табуляция")
         )
-        self.assertEqual(spec["name"], "TMPL-SS-00.00 Табуляция после «Источник:»")
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SS-00.02 Табуляция после «Источник:»")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
         self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
@@ -13329,8 +17755,8 @@ class TmplStyleCheckMacroTests(TestCase):
         )
 
     def test_catalog_has_style_check_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("TMPL-ST-00.00"))
-        self.assertEqual(spec["name"], "TMPL-ST-00.00 Проверка стилей")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-ST-00.00"))
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-ST-00.00 Проверка стилей")
         self.assertIn(self.PARA_MSG, spec["code"])
         self.assertIn(self.CHAR_PREFIX, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
@@ -13431,9 +17857,9 @@ class TmplFootnoteTabMacroTests(TestCase):
 
     def test_catalog_has_footnote_tab_macro_without_course_link(self):
         spec = next(
-            item for item in TPGR_MACROS if item["name"].startswith("TMPL-SN-00.00 Табуляция")
+            item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SN-00.00 Табуляция")
         )
-        self.assertEqual(spec["name"], "TMPL-SN-00.00 Табуляция после знака сноски")
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SN-00.00 Табуляция после знака сноски")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
         self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
@@ -13528,8 +17954,8 @@ class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
 
     def setUp(self):
         self.macro = ReportMacro(
-            name="TMPL-SN-00.00 Скобки NextCloud-сноски",
-            code=tpgr_macro_code("TMPL-SN-00.00 Скобки"),
+            name="TMPL-SN-00.01 Скобки NextCloud-сноски",
+            code=tpgr_macro_code("TMPL-SN-00.01 Скобки"),
         )
 
     def _findings(self, source, nextcloud_base_url=""):
@@ -13541,9 +17967,9 @@ class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
 
     def test_catalog_has_nextcloud_footnote_macro_without_course_link(self):
         spec = next(
-            item for item in TPGR_MACROS if item["name"].startswith("TMPL-SN-00.00 Скобки")
+            item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SN-00.01 Скобки")
         )
-        self.assertEqual(spec["name"], "TMPL-SN-00.00 Скобки NextCloud-сноски")
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SN-00.01 Скобки NextCloud-сноски")
         self.assertIn(self.MSG_WRAP, spec["code"])
         self.assertIn(self.MSG_SUPER, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
@@ -13665,8 +18091,8 @@ class TmplFootnoteBracketSpaceMacroTests(TestCase):
 
     def setUp(self):
         self.macro = ReportMacro(
-            name="TMPL-SN-00.00 Пробел перед сноской в скобках",
-            code=tpgr_macro_code("TMPL-SN-00.00 Пробел"),
+            name="TMPL-SN-00.02 Пробел перед сноской в скобках",
+            code=tpgr_macro_code("TMPL-SN-00.02 Пробел"),
         )
 
     def _findings(self, source):
@@ -13675,9 +18101,9 @@ class TmplFootnoteBracketSpaceMacroTests(TestCase):
 
     def test_catalog_has_bracket_space_macro_without_course_link(self):
         spec = next(
-            item for item in TPGR_MACROS if item["name"].startswith("TMPL-SN-00.00 Пробел")
+            item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SN-00.02 Пробел")
         )
-        self.assertEqual(spec["name"], "TMPL-SN-00.00 Пробел перед сноской в скобках")
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SN-00.02 Пробел перед сноской в скобках")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
         self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
@@ -13759,8 +18185,8 @@ class GrmmFootnotePeriodMacroTests(TestCase):
         )
 
     def test_catalog_has_footnote_period_macro_without_course_link(self):
-        spec = next(item for item in TPGR_MACROS if item["name"].startswith("GRMM-PN-00.00"))
-        self.assertEqual(spec["name"], "GRMM-PN-00.00 Точка в конце сноски")
+        spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("GRMM-PN-00.00"))
+        self.assertEqual(_tpgr_spec_label(spec), "GRMM-PN-00.00 Точка в конце сноски")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
         self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])

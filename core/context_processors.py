@@ -111,11 +111,13 @@ def notifications_counters(request):
         return {
             "NOTIFICATION_TOTAL_COUNT": 0,
             "NOTIFICATION_SECTION_COUNTS": {},
+            "NOTIFICATION_SUBSECTION_COUNTS": {},
         }
     if not getattr(request.user, "is_authenticated", False):
         return {
             "NOTIFICATION_TOTAL_COUNT": 0,
             "NOTIFICATION_SECTION_COUNTS": {},
+            "NOTIFICATION_SUBSECTION_COUNTS": {},
         }
 
     try:
@@ -123,9 +125,10 @@ def notifications_counters(request):
 
         counters = build_notification_counters(request.user)
     except Exception:
-        counters = {"total": 0, "sections": {}}
+        counters = {"total": 0, "sections": {}, "subsections": {}}
 
     return {
         "NOTIFICATION_TOTAL_COUNT": counters.get("total", 0),
         "NOTIFICATION_SECTION_COUNTS": counters.get("sections", {}),
+        "NOTIFICATION_SUBSECTION_COUNTS": counters.get("subsections", {}),
     }

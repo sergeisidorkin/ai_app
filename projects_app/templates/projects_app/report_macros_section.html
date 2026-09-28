@@ -3,7 +3,7 @@
      data-macros-page-size="{{ policy_page_size|default:'25' }}">
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
     <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
-      <i class="bi bi-table"></i> Макросы
+      <i class="bi bi-table"></i> Макросы и навыки
     </h5>
   </div>
 
@@ -11,6 +11,9 @@
     <table id="report-macros-table" class="table table-sm align-middle report-macros-table">
       <colgroup>
         <col class="col-checkbox">
+        <col>
+        <col>
+        <col>
         <col>
         <col>
         <col>
@@ -33,7 +36,10 @@
         </th>
         <th class="text-nowrap">Курс</th>
         <th class="text-nowrap">Секция</th>
+        <th class="text-nowrap">Раздел</th>
+        <th class="text-nowrap">Номер</th>
         <th class="text-nowrap">Название</th>
+        <th class="text-nowrap">Вид проверки</th>
         <th class="text-nowrap">Описание</th>
       </tr>
       </thead>
@@ -59,11 +65,14 @@
           </td>
           <td class="text-nowrap">{{ macro.course|default:"—" }}</td>
           <td class="text-nowrap">{{ macro.section|default:"—" }}</td>
+          <td class="text-nowrap">{{ macro.part|default:"—" }}</td>
+          <td class="text-nowrap">{{ macro.number|default:"—" }}</td>
           <td class="text-nowrap">{{ macro.name }}</td>
+          <td class="text-nowrap">{{ macro.get_check_kind_display }}</td>
           <td class="text-truncate">{{ macro.description|default:"—" }}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="5" class="text-muted">Пока нет данных.</td></tr>
+        <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>

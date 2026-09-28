@@ -97,6 +97,7 @@ def _deliver_notification_email_jobs(email_jobs, *, delivery_channel, email_requ
                 from_email=delivery_options.get("from_email"),
                 connection=delivery_options.get("connection"),
                 reply_to=delivery_options.get("reply_to"),
+                attachments=job.get("attachments"),
             )
             summary["sent"] += 1
         except EmailDeliveryError as exc:
@@ -496,20 +497,79 @@ def _service_line(performer, *, include_project=False):
     return line
 
 
+_REMARK_ENTRY_URL_RE = None
+
+
+def _remark_entry_url_re():
+    global _REMARK_ENTRY_URL_RE
+    if _REMARK_ENTRY_URL_RE is None:
+        import re
+
+        _REMARK_ENTRY_URL_RE = re.compile(r"/review-entries/(\d+)/")
+    return _REMARK_ENTRY_URL_RE
+
+
+def _coerce_entry_id(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def pending_remark_entry_ids(payload):
+    """Идентификаторы строк замечаний, по которым уведомление ещё не закрыто."""
+    payload = payload or {}
+    if "pending_entry_ids" in payload:
+        ids = []
+        for value in payload.get("pending_entry_ids") or []:
+            entry_id = _coerce_entry_id(value)
+            if entry_id:
+                ids.append(entry_id)
+        return ids
+    ids = []
+    for item in payload.get("remark_files") or []:
+        if not isinstance(item, dict):
+            continue
+        entry_id = _coerce_entry_id(item.get("entry_id"))
+        if entry_id:
+            ids.append(entry_id)
+            continue
+        match = _remark_entry_url_re().search(str(item.get("url") or ""))
+        if match:
+            ids.append(int(match.group(1)))
+    return ids
+
+
+def pending_remark_row_count(notification):
+    payload = notification.payload or {}
+    if "pending_entry_ids" in payload or payload.get("remark_files"):
+        return len(pending_remark_entry_ids(payload))
+    return 1
+
+
 def build_notification_counters(user):
     if not getattr(user, "is_authenticated", False):
         return {
             "total": 0,
             "sections": {},
+            "subsections": {"report_submission": 0},
         }
 
     qs = Notification.objects.for_user(user).pending_attention()
-    total = qs.count()
+    remarks = list(qs.filter(notification_type=Notification.NotificationType.PROJECT_REPORT_REMARKS))
+    other = qs.exclude(notification_type=Notification.NotificationType.PROJECT_REPORT_REMARKS)
+    remarks_rows = sum(pending_remark_row_count(item) for item in remarks)
     sections = {
         row["related_section"]: row["count"]
-        for row in qs.values("related_section").order_by().annotate(count=Count("id"))
+        for row in other.values("related_section").order_by().annotate(count=Count("id"))
     }
-    return {"total": total, "sections": sections}
+    if remarks_rows:
+        sections[Notification.RelatedSection.PROJECTS] = sections.get(Notification.RelatedSection.PROJECTS, 0) + remarks_rows
+    return {
+        "total": other.count() + remarks_rows,
+        "sections": sections,
+        "subsections": {"report_submission": remarks_rows},
+    }
 
 
 def get_notification_queryset_for_user(user):
@@ -1894,6 +1954,496 @@ def create_payment_request_notifications(
     }
 
 
+def _normalize_person_name(value):
+    return " ".join(str(value or "").split()).strip()
+
+
+def _remarks_performers(upload):
+    from projects_app.models import Performer
+
+    qs = (
+        Performer.objects
+        .select_related(
+            "employee",
+            "employee__user",
+            "typical_section",
+            "registration",
+            "registration__type",
+        )
+        .filter(registration_id=upload.registration_id)
+    )
+    if upload.performer_id:
+        qs = qs.filter(pk=upload.performer_id)
+    else:
+        executor = (upload.executor or "").strip()
+        if executor:
+            qs = qs.filter(executor=executor)
+        asset_name = (upload.asset_name or "").strip()
+        if asset_name:
+            qs = qs.filter(asset_name=asset_name)
+    return list(qs.order_by("position", "id"))
+
+
+def _remarks_recipient(performers, executor_name):
+    from projects_app.models import Performer
+
+    wanted = _normalize_person_name(executor_name).casefold()
+    fallback = None
+    for performer in performers:
+        employee = getattr(performer, "employee", None)
+        user = getattr(employee, "user", None) if employee is not None else None
+        if user is None:
+            continue
+        if fallback is None:
+            fallback = user
+        employee_name = _normalize_person_name(Performer.employee_full_name(employee)).casefold()
+        if wanted and employee_name == wanted:
+            return user
+    return fallback
+
+
+def _unique_attachment_name(name, seen):
+    clean = (name or "remarks.docx").strip() or "remarks.docx"
+    if clean not in seen:
+        seen[clean] = 1
+        return clean
+    seen[clean] += 1
+    stem, dot, ext = clean.rpartition(".")
+    if not dot:
+        return f"{clean} ({seen[clean]})"
+    return f"{stem} ({seen[clean]}).{ext}"
+
+
+def _append_unique_error(errors, message):
+    text = (message or "").strip()
+    if text and text not in errors:
+        errors.append(text)
+
+
+def _notification_sender_name(user):
+    """Имя Фамилия отправителя уведомления."""
+    if not user:
+        return ""
+    first_name = (getattr(user, "first_name", "") or "").strip()
+    last_name = (getattr(user, "last_name", "") or "").strip()
+    full = " ".join(part for part in (first_name, last_name) if part)
+    return full or (getattr(user, "username", "") or "")
+
+
+def _ensure_report_docx_public_link(entry, sender):
+    """Общедоступная ссылка Nextcloud на файл замечаний, как у проекта договора."""
+    link = (getattr(entry, "review_file_link", "") or "").strip()
+    if link:
+        return link
+    path = (getattr(entry, "review_cloud_path", "") or "").strip()
+    if not path:
+        return ""
+    from projects_app.report_submission import (
+        _cloud_upload_user,
+        cloud_publish_resource,
+        is_local_report_path,
+    )
+
+    if is_local_report_path(path):
+        return ""
+    try:
+        cloud_user = _cloud_upload_user(sender)
+    except Exception:
+        logger.exception("Failed to resolve cloud user for report remarks link")
+        return ""
+    if not cloud_user:
+        return ""
+    try:
+        public_url = (cloud_publish_resource(cloud_user, path) or "").strip()
+    except Exception:
+        logger.exception("Failed to publish report remarks file %s", path)
+        return ""
+    if public_url and getattr(entry, "pk", None):
+        entry.review_file_link = public_url
+        entry.save(update_fields=["review_file_link"])
+    return public_url
+
+
+def _report_docx_links_html(urls):
+    parts = []
+    for url in urls:
+        safe = html_escape(url)
+        parts.append(f'<a href="{safe}" target="_blank" rel="noopener">{safe}</a>')
+    return "<br>".join(parts)
+
+
+def _local_remark_file_links_html(files):
+    """Та же ссылка, что при локальном запуске показывалась после подписи."""
+    parts = []
+    for item in files or []:
+        url = (item.get("url") or "").strip()
+        name = (item.get("name") or url).strip()
+        if not url:
+            continue
+        parts.append(f'<a href="{html_escape(url)}">{html_escape(name)}</a>')
+    return "<br>".join(parts)
+
+
+def _remarks_docx_link_parts(entries, files, sender):
+    """Публичная ссылка Nextcloud, а при локальном файле — ссылка на скачивание."""
+    plain = []
+    html_parts = []
+    for entry, file_info in zip(entries, files):
+        public_url = _ensure_report_docx_public_link(entry, sender)
+        if public_url:
+            plain.append(public_url)
+            html_parts.append(_report_docx_links_html([public_url]))
+            continue
+        url = (file_info.get("url") or "").strip()
+        name = (file_info.get("name") or url).strip()
+        if not url:
+            continue
+        plain.append(url)
+        html_parts.append(f'<a href="{html_escape(url)}">{html_escape(name)}</a>')
+    return "\n".join(plain), "<br>".join(html_parts)
+
+
+def _embed_local_remark_links(content_html, files, report_docx_link):
+    """Уже отправленные локальные карточки: ссылка стоит в фразе про скачивание, не после подписи."""
+    if (report_docx_link or "").strip() or not content_html or not files:
+        return content_html
+    if any((item.get("url") or "") and (item.get("url") or "") in content_html for item in files):
+        return content_html
+    marker = "Текст отчета с замечаниями доступен для скачивания по ссылке:"
+    position = content_html.find(marker)
+    if position < 0:
+        return content_html
+    links = _local_remark_file_links_html(files)
+    if not links:
+        return content_html
+    insert_at = position + len(marker)
+    return content_html[:insert_at] + " " + links + content_html[insert_at:]
+
+
+@transaction.atomic
+def send_report_remarks_notices(*, entries, sender, sent_at, delivery_channels=None):
+    """Одно письмо на исполнителя и проект. Неотправленные строки остаются в «Загружен»."""
+    from django.urls import reverse
+
+    from projects_app.models import ReportReviewEntry
+
+    delivery_channels = normalize_delivery_channels(delivery_channels)
+    entries = list(entries)
+    if not entries:
+        raise ValueError("Выберите строки с загруженными замечаниями.")
+
+    errors = []
+    buckets = {}
+    for entry in entries:
+        upload = entry.upload
+        performers = _remarks_performers(upload)
+        executor_name = (upload.executor or "").strip() or "исполнитель"
+        recipient = _remarks_recipient(performers, upload.executor)
+        if recipient is None:
+            _append_unique_error(
+                errors,
+                f"Для исполнителя {executor_name} не найден пользователь-получатель.",
+            )
+            continue
+        project = upload.registration
+        group_key = (upload.registration_id, _normalize_person_name(upload.executor).casefold() or f"user:{recipient.pk}")
+        bucket = buckets.get(group_key)
+        if bucket is None:
+            bucket = {
+                "recipient": recipient,
+                "project": project,
+                "performers": {},
+                "entries": [],
+                "files": [],
+                "names": {},
+            }
+            buckets[group_key] = bucket
+        for performer in performers:
+            bucket["performers"][performer.pk] = performer
+        file_name = _unique_attachment_name(entry.review_file_name, bucket["names"])
+        bucket["entries"].append(entry)
+        bucket["files"].append({
+            "name": file_name,
+            "url": reverse("report_review_entry_download", args=[entry.pk]),
+            "entry_id": entry.pk,
+        })
+
+    if not buckets:
+        raise ValueError("\n".join(errors) or "Нет замечаний для отправки.")
+
+    created = []
+    sent_entry_ids = []
+    system_email_jobs = []
+    connected_email_jobs = []
+    should_create_notifications = DELIVERY_CHANNEL_SYSTEM in delivery_channels
+    for bucket in buckets.values():
+        performers = list(bucket["performers"].values())
+        project = bucket["project"]
+        recipient = bucket["recipient"]
+        project_label = _project_label(project)
+        recipient_name = _user_full_name(recipient)
+        sender_name = _notification_sender_name(sender)
+        report_docx_link, report_docx_link_html = _remarks_docx_link_parts(
+            bucket["entries"],
+            bucket["files"],
+            sender,
+        )
+        stage_lines = _product_stage_lines([project])
+        project_stages_display, project_stages_html = _stage_lines_display(stage_lines)
+        services_html = _services_list_html([project], performers)
+        template_vars = {
+            "recipient_name": recipient_name,
+            "project_label": project_label,
+            "project_stages": project_stages_html,
+            "services_list": services_html,
+            "sender": sender_name,
+            "report_docx_link": report_docx_link,
+        }
+        title_text = f"Замечания по проекту {project_label}".strip()
+        content_text = None
+        try:
+            from letters_app.services import (
+                get_letter_template_for_notification,
+                render_subject,
+                render_template,
+            )
+
+            tpl = get_letter_template_for_notification("report_remarks", sender)
+            if tpl and (tpl.body_html or "").strip():
+                content_text = render_template(
+                    tpl.body_html,
+                    {
+                        **template_vars,
+                        "report_docx_link": report_docx_link_html,
+                    },
+                    safe_keys={"project_stages", "services_list", "report_docx_link"},
+                )
+                if tpl.subject_template:
+                    title_text = render_subject(tpl.subject_template, template_vars)
+        except Exception:
+            logger.exception("letters_app template lookup failed for report_remarks, using fallback")
+        if not content_text:
+            content_text = (
+                f"<p>Добрый день, {html_escape(recipient_name)}</p>"
+                f"<p>Направляю замечания к следующим отчетам:</p>"
+                "<ul>"
+                f"<li>проект: {html_escape(project_label)}</li>"
+                f"<li>этапы проекта и продукты:{project_stages_html}</li>"
+                f"<li>блоки услуг (разделы):{services_html}</li>"
+                "</ul>"
+                "<p>Все изменения необходимо вносить в отправленный текст отчета с замечаниями (см. ссылку ниже), "
+                "в том числе все дополнения и доработки, сдаленные вами до получения настоящих замечений.</p>"
+                "<p>Прошу замечания (примечания в тексте) не удалять, можно комментировать в ответ, "
+                "однако просто об исправлении замечания сообщать не нужно.</p>"
+                f"<p>Текст отчета с замечаниями доступен для скачивания по ссылке: {report_docx_link_html}</p>"
+                "<p>Тот же текст отчета с замечаниями также можно скачать в разделе «Проекты» "
+                "в подразделе «Сдача отчетов» в таблице «Отчеты» в соответствующей строке столбца «Результаты проверки».</p>"
+                f"<p>С уважением,<br>{html_escape(sender_name)}</p>"
+            )
+        payload = {
+            "recipient_name": recipient_name,
+            "project_label": project_label,
+            "project_stages": project_stages_display,
+            "services": [_service_line(performer) for performer in performers],
+            "remark_files": bucket["files"],
+            "pending_entry_ids": [item.pk for item in bucket["entries"]],
+            "sender": sender_name,
+            "report_docx_link": report_docx_link,
+            "letter_template_type": "report_remarks",
+            "rendered_from_template": True,
+        }
+        if should_create_notifications:
+            notification = Notification.objects.create(
+                notification_type=Notification.NotificationType.PROJECT_REPORT_REMARKS,
+                related_section=Notification.RelatedSection.PROJECTS,
+                recipient=recipient,
+                sender=sender,
+                project=project,
+                title_text=title_text,
+                content_text=content_text,
+                payload=payload,
+                sent_at=sent_at,
+                deadline_at=None,
+                is_read=False,
+                is_processed=False,
+            )
+            if performers:
+                NotificationPerformerLink.objects.bulk_create(
+                    [
+                        NotificationPerformerLink(
+                            notification=notification,
+                            performer=performer,
+                            position=index,
+                        )
+                        for index, performer in enumerate(performers, start=1)
+                    ]
+                )
+            created.append(notification)
+        email_recipients = _letter_template_email_recipients("report_remarks", sender, recipient)
+        if DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels:
+            system_email_jobs.extend(
+                {
+                    "recipient": email_recipient,
+                    "subject": title_text,
+                    "content": content_text,
+                    "sender": sender,
+                }
+                for email_recipient in email_recipients
+            )
+        if DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels:
+            connected_email_jobs.extend(
+                {
+                    "recipient": email_recipient,
+                    "subject": title_text,
+                    "content": content_text,
+                    "sender": sender,
+                }
+                for email_recipient in email_recipients
+            )
+        sent_entry_ids.extend(entry.pk for entry in bucket["entries"])
+
+    if sent_entry_ids:
+        ReportReviewEntry.objects.filter(pk__in=sent_entry_ids).update(remarks_notice_pending=False)
+        from projects_app.report_submission import ensure_rework_after_remarks
+
+        sent_ids = set(sent_entry_ids)
+        for entry in entries:
+            if entry.pk in sent_ids:
+                ensure_rework_after_remarks(entry)
+
+    system_email_requested = DELIVERY_CHANNEL_SYSTEM_EMAIL in delivery_channels
+    connected_email_requested = DELIVERY_CHANNEL_CONNECTED_EMAIL in delivery_channels
+    email_delivery = {
+        "requested": system_email_requested or connected_email_requested,
+        "attempted": len(system_email_jobs) + len(connected_email_jobs),
+        "sent": 0,
+        "failed": 0,
+        "errors": [],
+        "channels": {
+            DELIVERY_CHANNEL_SYSTEM_EMAIL: _empty_email_delivery_summary(
+                delivery_channel=DELIVERY_CHANNEL_SYSTEM_EMAIL,
+                email_requested=system_email_requested,
+                attempted=len(system_email_jobs),
+            ),
+            DELIVERY_CHANNEL_CONNECTED_EMAIL: _empty_email_delivery_summary(
+                delivery_channel=DELIVERY_CHANNEL_CONNECTED_EMAIL,
+                email_requested=connected_email_requested,
+                attempted=len(connected_email_jobs),
+            ),
+        },
+    }
+    if system_email_jobs:
+        transaction.on_commit(
+            lambda jobs=list(system_email_jobs): _update_email_delivery_summary(
+                aggregate=email_delivery,
+                channel_summary=email_delivery["channels"][DELIVERY_CHANNEL_SYSTEM_EMAIL],
+                delivered_summary=_deliver_notification_email_jobs(
+                    jobs,
+                    delivery_channel=DELIVERY_CHANNEL_SYSTEM_EMAIL,
+                    email_requested=system_email_requested,
+                ),
+            )
+        )
+    if connected_email_jobs:
+        transaction.on_commit(
+            lambda jobs=list(connected_email_jobs): _update_email_delivery_summary(
+                aggregate=email_delivery,
+                channel_summary=email_delivery["channels"][DELIVERY_CHANNEL_CONNECTED_EMAIL],
+                delivered_summary=_deliver_notification_email_jobs(
+                    jobs,
+                    delivery_channel=DELIVERY_CHANNEL_CONNECTED_EMAIL,
+                    email_requested=connected_email_requested,
+                ),
+            )
+        )
+    return {
+        "notifications": created,
+        "sent_entry_ids": sent_entry_ids,
+        "errors": errors,
+        "delivery_channels": delivery_channels,
+        "email_delivery": email_delivery,
+    }
+
+
+def _remarks_source_entry_ids(upload):
+    """Строки замечаний проверяющего, на которые исполнитель отвечает новой версией файла."""
+    from projects_app.models import ReportReviewEntry
+    from projects_app.report_review import (
+        REVIEW_AI,
+        REVIEW_PHASE_REVIEW,
+        REVIEW_PHASE_REWORK,
+        _slot_upload_ids,
+    )
+
+    slot_ids = _slot_upload_ids(upload)
+    if not slot_ids:
+        return []
+    reworks = ReportReviewEntry.objects.filter(
+        upload_id__in=slot_ids,
+        phase=REVIEW_PHASE_REWORK,
+        settled=False,
+    ).exclude(step=REVIEW_AI)
+    source_ids = []
+    for rework in reworks:
+        source = (
+            ReportReviewEntry.objects
+            .filter(
+                upload_id=rework.upload_id,
+                step=rework.step,
+                phase=REVIEW_PHASE_REVIEW,
+                pk__lt=rework.pk,
+                remarks_notice_pending=False,
+            )
+            .exclude(review_file_name="")
+            .order_by("-pk")
+            .first()
+        )
+        if source is not None:
+            source_ids.append(source.pk)
+    return source_ids
+
+
+@transaction.atomic
+def complete_report_remarks_for_upload(*, upload, actor=None):
+    """Закрыть уведомление о замечаниях по строке, для которой загружен исправленный файл."""
+    source_ids = set(_remarks_source_entry_ids(upload))
+    if not source_ids or not getattr(upload, "registration_id", None):
+        return 0
+
+    notifications = list(
+        Notification.objects.filter(
+            notification_type=Notification.NotificationType.PROJECT_REPORT_REMARKS,
+            project_id=upload.registration_id,
+            is_processed=False,
+        )
+    )
+    now = timezone.now()
+    actor_user = actor if getattr(actor, "is_authenticated", False) else None
+    updated = 0
+    for notification in notifications:
+        payload = dict(notification.payload or {})
+        pending = pending_remark_entry_ids(payload)
+        if not pending or not (set(pending) & source_ids):
+            continue
+        remaining = [entry_id for entry_id in pending if entry_id not in source_ids]
+        payload["pending_entry_ids"] = remaining
+        notification.payload = payload
+        update_fields = ["payload", "updated_at"]
+        if not remaining:
+            notification.is_processed = True
+            notification.action_at = now
+            notification.action_by = actor_user
+            update_fields += ["is_processed", "action_at", "action_by"]
+            if not notification.is_read:
+                notification.is_read = True
+                notification.read_at = now
+                notification.read_by = actor_user
+                update_fields += ["is_read", "read_at", "read_by"]
+        notification.save(update_fields=update_fields)
+        updated += 1
+    return updated
+
+
 @transaction.atomic
 def process_info_request_notification(notification, actor):
     if notification.notification_type != Notification.NotificationType.PROJECT_INFO_REQUEST_APPROVAL:
@@ -2107,6 +2657,20 @@ def serialize_notification_cards(notifications):
                     show_self_confirm = True
                     break
 
+        content_text = notification.content_text or ""
+        content_html = ""
+        if (
+            notification.notification_type == Notification.NotificationType.PROJECT_PAYMENT_REQUEST
+            and (payload.get("rendered_from_template") or content_text.lstrip().startswith("<"))
+        ) or content_text.lstrip().startswith("<"):
+            content_html = content_text
+        if notification.notification_type == Notification.NotificationType.PROJECT_REPORT_REMARKS:
+            content_html = _embed_local_remark_links(
+                content_html,
+                payload.get("remark_files") or [],
+                payload.get("report_docx_link") or "",
+            )
+
         cards.append(
             {
                 "notification": notification,
@@ -2134,22 +2698,8 @@ def serialize_notification_cards(notifications):
                 "recipient_name_lawer": payload.get("recipient_name_lawer") or "",
                 "payment_date": payload.get("payment_date") or "",
                 "payment_request": payload.get("payment_request") or "",
-                "content_html": (
-                    (notification.content_text or "")
-                    if (
-                        notification.notification_type
-                        == Notification.NotificationType.PROJECT_PAYMENT_REQUEST
-                        and (
-                            payload.get("rendered_from_template")
-                            or (notification.content_text or "").lstrip().startswith("<")
-                        )
-                    )
-                    else (
-                        (notification.content_text or "")
-                        if (notification.content_text or "").lstrip().startswith("<")
-                        else ""
-                    )
-                ),
+                "remark_files": payload.get("remark_files") or [],
+                "content_html": content_html,
                 "is_direction_confirmation": is_direction,
                 "show_self_confirm_button": show_self_confirm,
             }

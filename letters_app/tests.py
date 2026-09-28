@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -104,6 +106,57 @@ class LetterTemplateVariablesTests(TestCase):
         response = self.client.get(reverse("letter_template_partial", args=["payment_request"]))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Шаблон заявки на оплату")
+
+    def test_report_remarks_variables_and_default_template(self):
+        variables = [key for key, _desc in LetterTemplate.TEMPLATE_VARIABLES["report_remarks"]]
+        self.assertEqual(
+            variables,
+            [
+                "{recipient_name}",
+                "{project_label}",
+                "[project_stages]",
+                "[services_list]",
+                "{sender}",
+                "{report_docx_link}",
+            ],
+        )
+        self.assertEqual(
+            LetterTemplate.TEMPLATE_CARD_TITLES["report_remarks"],
+            "Шаблон отправки замечаний",
+        )
+        template = LetterTemplate.objects.get(
+            template_type="report_remarks",
+            is_default=True,
+            user__isnull=True,
+        )
+        self.assertEqual(template.subject_template, "Замечания по проекту {project_label}")
+        self.assertIn("Направляю замечания к следующим отчетам:", template.body_html)
+        self.assertIn("[project_stages]", template.body_html)
+        self.assertIn("[services_list]", template.body_html)
+        self.assertIn("{sender}", template.body_html)
+        self.assertIn("{report_docx_link}", template.body_html)
+        self.assertIn("сдаленные вами до получения настоящих замечений.", template.body_html)
+
+        index_html = (Path(__file__).resolve().parents[1] / "templates" / "index.html").read_text()
+        remarks_pos = index_html.find('data-letters-section="report-remarks"')
+        payment_pos = index_html.find('data-letters-section="payment-request"')
+        self.assertGreater(remarks_pos, 0)
+        self.assertLess(remarks_pos, payment_pos)
+        self.assertIn("'report-remarks': 'Отправка замечаний'", index_html)
+
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            username="letters-remarks",
+            password="testpass123",
+            is_staff=True,
+        )
+        self.client.force_login(user)
+        response = self.client.get(reverse("letter_template_partial", args=["report_remarks"]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Шаблон отправки замечаний")
+        self.assertContains(response, "Замечания по проекту {project_label}")
+        self.assertContains(response, "Отправитель уведомления в формате Имя Фамилия")
+        self.assertContains(response, "Общедоступная ссылка на отчет (столбец «Результаты проверки»)")
 
 
 class LetterTemplatePermissionTests(TestCase):

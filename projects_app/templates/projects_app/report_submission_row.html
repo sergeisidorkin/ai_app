@@ -13,7 +13,8 @@
     {% if row.parent_row_id %}data-parent-id="{{ row.parent_row_id }}"{% endif %}
     {% if row.has_history %}data-has-history="1"{% endif %}
     {% if row.is_full_report %}data-full-report="1"{% elif row.is_all_sections %}data-all-sections="1"{% elif row.performer %}data-performer-id="{{ row.performer.id }}"{% endif %}
-    data-can-send="{% if row.can_send %}1{% else %}0{% endif %}">
+    data-can-send="{% if row.can_send %}1{% else %}0{% endif %}"
+    {% if row.review_entry and row.review_entry.remarks_notice_pending and not row.conceal_pending_remarks %}data-remarks-pending="1" data-review-entry-id="{{ row.review_entry.pk }}"{% endif %}>
   <td class="text-nowrap report-select-cell">
     {% if can_send_reports %}
       <div class="form-check m-0">
@@ -22,17 +23,17 @@
                id="report-sel-{{ row.row_id }}"
                name="report-select"
                value="{{ row.row_id }}"
-               {% if not row.can_send or not row.is_current or not row.upload or row.upload.check_status == "done" or row.upload.check_status == "running" %}disabled{% endif %}
+               {% if not row.review_entry or not row.review_entry.remarks_notice_pending or row.conceal_pending_remarks %}{% if not row.can_send or not row.is_current or not row.upload or row.upload.check_status == "done" or row.upload.check_status == "running" %}disabled{% endif %}{% endif %}
                aria-label="Выделить строку отчета">
       </div>
     {% endif %}
   </td>
-  <td class="text-nowrap cell-group-val cell-project-val">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
-  <td class="text-nowrap cell-group-val cell-type-val">{{ row.registration.type_short_display }}</td>
-  <td class="text-truncate cell-group-val">{{ row.registration.name }}</td>
-  <td class="text-nowrap cell-group-val">{{ row.executor|short_fio }}</td>
-  <td class="text-nowrap cell-asset-val">{{ row.asset_name }}</td>
-  <td class="text-nowrap cell-typical-val">
+  <td class="text-nowrap cell-group-val cell-project-val" data-col="stage">{% if row.registration %}<span class="clf-id-droid-mono">{{ row.registration.short_uid }}</span>{% endif %}</td>
+  <td class="text-nowrap cell-group-val cell-type-val" data-col="product">{{ row.registration.type_short_display }}</td>
+  <td class="text-truncate cell-group-val" data-col="name">{{ row.registration.name }}</td>
+  <td class="text-nowrap cell-group-val" data-col="executor">{{ row.executor|short_fio }}</td>
+  <td class="text-nowrap cell-asset-val" data-col="asset">{{ row.asset_name }}</td>
+  <td class="text-nowrap cell-typical-val" data-col="section">
     <span class="report-section-toggle-slot">
       {% if row.is_current and row.has_history %}
         <button type="button"
@@ -45,13 +46,21 @@
     </span>
     <span class="report-section-label">{{ row.section_label }}</span>
   </td>
-  <td class="text-nowrap report-workflow-status-cell">
+  <td class="text-nowrap report-workflow-status-cell" data-col="status">
     <span class="report-workflow-status-inner">
-      <i class="bi bi-circle reg-launch-icon reg-launch-indicator {{ row.workflow_status_class }}" aria-hidden="true"></i><span class="report-workflow-status-label{% if row.workflow_status == 'Сдан' or row.workflow_status == 'Загружен' %} report-workflow-status-label--inset{% endif %}">{{ row.workflow_status }}</span>
+      <i class="bi bi-circle reg-launch-icon reg-launch-indicator {{ row.workflow_status_class }}" aria-hidden="true"></i><span class="report-workflow-status-label{% if row.workflow_status == 'Загружен' or 'Сдан' in row.workflow_status or 'Согласован' in row.workflow_status %} report-workflow-status-label--inset{% endif %}">{{ row.workflow_status }}</span>
     </span>
   </td>
-  <td class="text-nowrap report-upload-cell{% if is_admin and row.upload and row.upload.file_name %} report-file-remove-host{% endif %}">
-    {% if row.is_current and row.can_upload %}
+  <td class="text-nowrap report-status-date-cell report-sent-at-cell" data-col="status-date">{{ row.status_date_display }}</td>
+  <td class="text-nowrap report-upload-cell{% if is_admin and row.upload and row.upload.file_name %} report-file-remove-host{% endif %}" data-col="upload">
+    {% if row.show_version_download %}
+      <a href="{% url 'report_file_download' row.upload.pk %}"
+         class="ct-upload-link"
+         download
+         title="Скачать файл">
+        <i class="bi bi-download"></i>
+      </a>
+    {% elif row.is_current and row.can_upload %}
       <label class="ct-upload-link" title="Загрузить файл">
         <i class="bi bi-upload"></i>
         <input type="file" class="d-none js-report-upload"
@@ -72,7 +81,15 @@
     {% elif row.upload and row.upload.file_name %}
       <span class="report-upload-icon-spacer" aria-hidden="true"></span>
     {% endif %}
-    {% if row.upload and row.upload.file_name %}
+    {% if row.review_entry and row.review_entry.phase == "rework" %}
+    {% elif row.review_entry and row.review_entry.basis_entry and row.review_entry.basis_entry.review_file_name %}
+      <a href="{% url 'report_review_entry_download' row.review_entry.basis_entry.pk %}"
+         class="report-file-name-link"
+         download
+         title="{{ row.review_entry.basis_entry.review_file_name }}">
+        <span class="report-file-name-text">{{ row.review_entry.basis_entry.review_file_name }}</span>
+      </a>
+    {% elif row.upload and row.upload.file_name %}
       <a href="{% url 'report_file_download' row.upload.pk %}"
          class="report-file-name-link"
          download
@@ -92,10 +109,63 @@
       </button>
     {% endif %}
   </td>
-  <td class="text-nowrap report-version-cell">{% if row.version_display %}{{ row.version_display }}{% endif %}</td>
-  <td class="text-nowrap report-status-date-cell report-sent-at-cell">{{ row.status_date_display }}</td>
-  <td class="text-nowrap report-check-result-cell{% if is_admin and row.upload and row.upload.check_file_name %} report-file-remove-host{% endif %}">{% spaceless %}
-    {% if row.upload and row.upload.check_file_name %}
+  <td class="text-nowrap report-version-cell" data-col="version">{% if row.version_display and "В работе после " not in row.workflow_status %}{{ row.version_display }}{% endif %}</td>
+  <td class="text-nowrap report-check-result-cell{% if is_admin and row.upload and row.upload.check_file_name and not row.review_entry %} report-file-remove-host{% endif %}" data-col="check-result"><span class="report-check-result-inner">{% spaceless %}
+    {% if row.conceal_pending_remarks %}
+      <span class="report-check-result-empty">—</span>
+    {% elif row.review_entry and row.review_entry.review_file_name %}
+      <a href="{% url 'report_review_entry_download' row.review_entry.pk %}"
+         class="ct-upload-link report-check-download-icon"
+         download
+         title="Скачать файл замечаний">
+        <i class="bi bi-download"></i>
+      </a>
+      <a href="{% url 'report_review_entry_download' row.review_entry.pk %}"
+         class="report-file-name-link{% if row.review_entry.remarks_notice_pending %} report-remarks-loaded-link{% endif %}"
+         download
+         {% if not row.review_entry.remarks_notice_pending %}title="{{ row.review_entry.review_file_name }}"{% endif %}>
+        <span class="report-file-name-text">{% if row.review_entry.remarks_notice_pending %}Загружен{% else %}{{ row.review_entry.review_file_name }}{% endif %}</span>
+      </a>
+      {% if row.can_discard_remarks %}
+        <span class="report-review-action-rule" aria-hidden="true"></span>
+        <button type="button"
+                class="report-review-discard-action js-report-remarks-discard"
+                data-review-entry-id="{{ row.review_entry.pk }}">
+          <i class="bi bi-x-square" aria-hidden="true"></i>
+          <span class="report-review-action-text">Удалить файл</span>
+        </button>
+      {% endif %}
+    {% endif %}
+    {% if row.can_review_upload %}
+      <label class="report-review-upload-action">
+        <i class="bi bi-upload" aria-hidden="true"></i>
+        <span class="report-review-action-text">Загрузить замечания</span>
+        <input type="file" class="d-none js-report-review-upload" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+               data-upload-id="{{ row.upload.pk }}">
+      </label>
+      <span class="report-review-action-rule" aria-hidden="true"></span>
+      <button type="button"
+              class="report-review-accept-action js-report-review-accept"
+              data-upload-id="{{ row.upload.pk }}">
+        <i class="bi bi-check2-square" aria-hidden="true"></i>
+        <span class="report-review-action-text">Принять без замечаний</span>
+      </button>
+    {% endif %}
+    {% if not row.review_entry and row.upload and row.upload.review_file_name %}
+      <a href="{% url 'report_review_file_download' row.upload.pk %}"
+         class="ct-upload-link report-check-download-icon"
+         download
+         title="Скачать файл замечаний">
+        <i class="bi bi-download"></i>
+      </a>
+      <a href="{% url 'report_review_file_download' row.upload.pk %}"
+         class="report-file-name-link"
+         download
+         title="{{ row.upload.review_file_name }}">
+        <span class="report-file-name-text">{{ row.upload.review_file_name }}</span>
+      </a>
+    {% endif %}
+    {% if not row.review_entry and row.upload and row.upload.check_file_name %}
       <a href="{% url 'report_check_file_download' row.upload.pk %}"
          class="ct-upload-link report-check-download-icon"
          download
@@ -122,14 +192,47 @@
           <i class="bi bi-x-lg"></i>
         </button>
       {% endif %}
-    {% elif row.upload and row.upload.check_status == "error" %}
+    {% elif not row.review_entry and row.upload and row.upload.check_status == "error" %}
       <span class="text-danger small js-report-check-badge" title="{{ row.upload.check_error }}">ошибка проверки</span>
-    {% elif row.upload and row.upload.check_status == "running" %}
+    {% elif not row.review_entry and row.upload and row.upload.check_status == "running" %}
       <span class="report-upload-icon-spacer" aria-hidden="true"></span>
-      <span class="text-muted js-report-check-badge report-check-pending-text">Идет проверка...</span>
-    {% else %}
-      —
+      <span class="text-muted js-report-check-badge report-check-pending-text">Идет проверка...{% if row.upload.check_progress_label %} {{ row.upload.check_progress_label }}{% endif %}</span>
+    {% elif not row.can_review_upload and not row.review_entry %}
+      <span class="report-check-result-empty">—</span>
+    {% elif row.review_entry and not row.review_entry.review_file_name and not row.can_review_upload %}
+      <span class="report-check-result-empty">—</span>
+    {% endif %}
+  {% endspaceless %}</span></td>
+  {% if show_finding_adjustment_columns %}
+  <td class="text-nowrap text-end report-calculated-count-cell" data-col="calculated-count">{% spaceless %}
+    {% if row.finding_adjustment_visible %}
+      <span class="report-finding-count-inner">{% if row.show_finding_info %}{{ row.calculated_count_display }}<button type="button"
+            class="report-finding-info-btn js-report-finding-info"
+            data-findings="{{ row.calculated_groups_json }}"
+            aria-label="Расчётные замечания"
+            title="Расчётные замечания"><i class="bi bi-info-circle" aria-hidden="true"></i></button>{% elif row.calculated_count_display != "—" %}{{ row.calculated_count_display }}<span
+            class="report-finding-info-btn report-finding-info-btn--disabled"
+            aria-hidden="true"><i class="bi bi-info-circle" aria-hidden="true"></i></span>{% else %}—{% endif %}</span>
     {% endif %}
   {% endspaceless %}</td>
-  <td class="text-nowrap report-finding-count-cell">{{ row.finding_count_display }}</td>
+  <td class="text-nowrap report-corrected-count-cell" data-col="corrected-count">{% spaceless %}
+    {% if row.finding_adjustment_visible %}
+      <span class="report-corrected-count-inner">{% if row.show_finding_info and row.can_correct_findings %}<button type="button"
+            class="report-finding-edit-btn js-report-finding-edit"
+            data-findings="{{ row.edit_groups_json }}"
+            data-upload-id="{{ row.upload.pk }}"
+            aria-label="Скорректировать замечания"
+            title="Скорректировать замечания"><i class="bi bi-pencil-square" aria-hidden="true"></i></button>{% endif %}<span class="report-corrected-count-value">{{ row.corrected_count_display }}</span></span>
+    {% endif %}
+  {% endspaceless %}</td>
+  {% endif %}
+  <td class="text-nowrap text-end report-finding-count-cell" data-col="finding-count">{% spaceless %}
+    <span class="report-finding-count-inner">{{ row.finding_count_display }}{% if row.show_finding_info %}<button type="button"
+            class="report-finding-info-btn js-report-finding-info"
+            data-findings="{{ row.finding_groups_json }}"
+            aria-label="Результаты проверки"
+            title="Результаты проверки"><i class="bi bi-info-circle" aria-hidden="true"></i></button>{% elif row.finding_info_disabled %}<span
+            class="report-finding-info-btn report-finding-info-btn--disabled"
+            aria-hidden="true"><i class="bi bi-info-circle" aria-hidden="true"></i></span>{% endif %}</span>
+  {% endspaceless %}</td>
 </tr>

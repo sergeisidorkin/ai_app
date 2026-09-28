@@ -1,0 +1,23 @@
+version: "2"
+execution_mode: local_chunks
+supported_parts:
+  - body
+max_core_chars: 9000
+overlap_chars: 1200
+max_attempts: 3
+retry_delays_seconds:
+  - 30
+  - 60
+  - 120
+max_findings_per_chunk: 40
+max_quote_chars: 300
+max_comment_chars: 1200
+max_response_bytes: 250000
+allowed_rule_ids:
+  - case-agreement
+  - case-government
+  - numeral-government
+comment_requirements:
+  exact_quote: true
+  correction_required: true
+  high_confidence_only: true

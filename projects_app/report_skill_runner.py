@@ -12,17 +12,49 @@ from django.conf import settings
 
 from core.dsh_run import DshRunError, run_headless
 
-from .docx_comments import DocxCommentError, count_comments, strip_comments
-from .models import PerformerReportUpload, ReportCheckRule
+from .docx_comments import DocxCommentError, strip_comments
+from .models import (
+    PerformerReportUpload,
+    ReportCheckLine,
+    ReportCheckRule,
+    ReportMacro,
+    report_line_participates,
+)
+from .report_chunk_skill_runner import run_chunked_skill_lines
 from .report_macro_runner import (
+    ReportCheckAborted,
     apply_report_macro_checks,
     list_macros_for_upload,
     matching_check_rules,
+    recount_report_findings,
     store_report_check_status,
+    store_report_macro_progress,
+    touch_report_check_heartbeat,
 )
 
 log = logging.getLogger(__name__)
 REPORT_CHECK_DSH_PROFILE = "report-check"
+REPORT_CHECK_TEXT_PROFILE = "report-check-text"
+REPORT_CHECK_TEMPERATURE_FILE = "report-check-temperature.json"
+AGENT_OUTPUT_TOKENS = 32_768
+AGENT_TIMEOUT_SECONDS = 45 * 60
+_TEXT_ONLY_TOOL_PLUGINS = (
+    "tool-bash",
+    "tool-pwsh",
+    "tool-jobs",
+    "tool-fs",
+    "tool-fs-search",
+    "tool-skill",
+    "tool-subagent-control",
+    "tool-subagent-list-agents",
+    "tool-subagent",
+    "tool-subagent-fork",
+    "tool-workflow",
+    "tool-todo",
+    "tool-goal",
+    "tool-ralph",
+    "tool-web",
+)
 
 
 class ReportSkillRunError(RuntimeError):
@@ -34,10 +66,34 @@ def list_skill_rules_for_upload(
 ) -> list[ReportCheckRule]:
     rules = list(
         ReportCheckRule.objects
-        .filter(check_type=ReportCheckRule.CheckType.SKILL)
+        .prefetch_related("lines__macro")
         .order_by("position", "id")
     )
-    return matching_check_rules(upload, rules)
+    matched = matching_check_rules(upload, rules)
+    return [
+        rule
+        for rule in matched
+        if any(
+            report_line_participates(line)
+            and line.check_type == ReportCheckRule.CheckType.SKILL
+            and line.macro_id
+            for line in rule.lines.all()
+        )
+    ]
+
+
+def skill_lines_for_rules(rules: list[ReportCheckRule]) -> list[ReportCheckLine]:
+    lines: list[ReportCheckLine] = []
+    for rule in rules:
+        ordered = sorted(rule.lines.all(), key=lambda item: (item.position, item.pk or 0))
+        for line in ordered:
+            if (
+                report_line_participates(line)
+                and line.check_type == ReportCheckRule.CheckType.SKILL
+                and line.macro_id
+            ):
+                lines.append(line)
+    return lines
 
 
 def has_skill_rules_for_upload(upload: PerformerReportUpload) -> bool:
@@ -53,12 +109,13 @@ def apply_report_checks(
     if not skill_rules:
         return apply_report_macro_checks(upload, file_bytes)
 
-    store_report_check_status(
+    if not store_report_check_status(
         upload,
         PerformerReportUpload.CheckStatus.RUNNING,
         0,
         "",
-    )
+    ):
+        raise ReportCheckAborted()
     try:
         processed = run_report_skill_rules(upload, file_bytes, skill_rules)
     except Exception as exc:
@@ -75,12 +132,11 @@ def apply_report_checks(
     if list_macros_for_upload(upload):
         return apply_report_macro_checks(upload, processed)
 
+    finding_count = 0
+    by_author: dict[str, int] = {}
     try:
-        finding_count = (
-            count_comments(processed)
-            if Path(upload.file_name or "").suffix.lower() == ".docx"
-            else 0
-        )
+        if Path(upload.file_name or "").suffix.lower() == ".docx":
+            finding_count, by_author = recount_report_findings(processed)
     except DocxCommentError as exc:
         store_report_check_status(
             upload,
@@ -95,8 +151,82 @@ def apply_report_checks(
         PerformerReportUpload.CheckStatus.DONE,
         finding_count,
         "",
+        by_author,
     )
     return processed
+
+
+def _require_processing_mode(macro) -> str:
+    mode = (getattr(macro, "processing_mode", None) or ReportMacro.ProcessingMode.CHUNKS).strip()
+    if mode not in PROCESSING_HANDLERS:
+        label = (macro.skill_name or macro.name or "").strip() or "навык"
+        raise ReportSkillRunError(
+            f"Навык «{label}» задаёт неизвестный режим обработки «{mode}»."
+        )
+    return mode
+
+
+def _run_chunk_mode(upload, file_bytes: bytes, lines: list) -> bytes:
+    return run_chunked_skill_lines(upload, file_bytes, lines)
+
+
+def _run_agent_mode(
+    upload,
+    file_bytes: bytes,
+    line,
+    *,
+    run_root: Path,
+    index: int,
+    input_name: str,
+    extension: str,
+) -> bytes:
+    macro = line.macro
+    skill_name = (macro.skill_name or "").strip()
+    if not store_report_macro_progress(upload, 0, 0, macro.display_label or "Навык"):
+        raise ReportCheckAborted()
+    _sync_local_bundled_skill(skill_name)
+    rule_root = run_root / f"{index:02d}-{line.pk or 'line'}"
+    input_dir = rule_root / "input"
+    output_dir = rule_root / "output"
+    input_dir.mkdir(parents=True, exist_ok=False)
+    output_dir.mkdir(parents=True, exist_ok=False)
+    input_bytes = file_bytes
+    if line.rule.clear_comments and extension == ".docx":
+        input_bytes = strip_comments(file_bytes)
+    (input_dir / input_name).write_bytes(input_bytes)
+    profile = _prepare_model_runtime(
+        rule_root,
+        macro.model_id,
+        macro.reasoning_effort,
+        False,
+        macro.temperature,
+        max_tokens=AGENT_OUTPUT_TOKENS,
+    )
+    run_headless(
+        _skill_prompt(skill_name, macro.model_id, input_name),
+        cwd=rule_root,
+        profile=profile,
+        timeout=AGENT_TIMEOUT_SECONDS,
+        heartbeat=lambda: touch_report_check_heartbeat(upload),
+    )
+    result_path = _result_file(output_dir, input_name, extension)
+    try:
+        current_bytes = result_path.read_bytes()
+    except OSError as exc:
+        raise ReportSkillRunError(
+            f"Не удалось прочитать результат навыка «{skill_name}»: {exc}"
+        ) from exc
+    if not current_bytes:
+        raise ReportSkillRunError(
+            f"Навык «{skill_name}» вернул пустой файл."
+        )
+    return current_bytes
+
+
+PROCESSING_HANDLERS = {
+    ReportMacro.ProcessingMode.CHUNKS: _run_chunk_mode,
+    ReportMacro.ProcessingMode.AGENT: _run_agent_mode,
+}
 
 
 def run_report_skill_rules(
@@ -125,36 +255,36 @@ def run_report_skill_rules(
         / f"upload-{upload.pk or 'new'}-{uuid.uuid4().hex}"
     )
     current_bytes = file_bytes
+    lines = skill_lines_for_rules(rules)
     try:
-        for index, rule in enumerate(rules, start=1):
-            _sync_local_bundled_skill(rule.check_value)
-            rule_root = run_root / f"{index:02d}-{rule.pk or 'rule'}"
-            input_dir = rule_root / "input"
-            output_dir = rule_root / "output"
-            input_dir.mkdir(parents=True, exist_ok=False)
-            output_dir.mkdir(parents=True, exist_ok=False)
-            input_bytes = current_bytes
-            if rule.clear_comments and extension == ".docx":
-                input_bytes = strip_comments(current_bytes)
-            (input_dir / input_name).write_bytes(input_bytes)
-            profile = _prepare_model_runtime(rule_root, rule.model_id)
-
-            run_headless(
-                _skill_prompt(rule, input_name),
-                cwd=rule_root,
-                profile=profile,
-            )
-            result_path = _result_file(output_dir, input_name, extension)
-            try:
-                current_bytes = result_path.read_bytes()
-            except OSError as exc:
-                raise ReportSkillRunError(
-                    f"Не удалось прочитать результат навыка «{rule.check_value}»: {exc}"
-                ) from exc
-            if not current_bytes:
-                raise ReportSkillRunError(
-                    f"Навык «{rule.check_value}» вернул пустой файл."
+        pending_chunk_lines = []
+        for index, line in enumerate(lines, start=1):
+            mode = _require_processing_mode(line.macro)
+            if mode == ReportMacro.ProcessingMode.CHUNKS:
+                pending_chunk_lines.append(line)
+                continue
+            if pending_chunk_lines:
+                current_bytes = PROCESSING_HANDLERS[ReportMacro.ProcessingMode.CHUNKS](
+                    upload,
+                    current_bytes,
+                    pending_chunk_lines,
                 )
+                pending_chunk_lines = []
+            current_bytes = PROCESSING_HANDLERS[mode](
+                upload,
+                current_bytes,
+                line,
+                run_root=run_root,
+                index=index,
+                input_name=input_name,
+                extension=extension,
+            )
+        if pending_chunk_lines:
+            current_bytes = PROCESSING_HANDLERS[ReportMacro.ProcessingMode.CHUNKS](
+                upload,
+                current_bytes,
+                pending_chunk_lines,
+            )
         return current_bytes
     except OSError as exc:
         raise ReportSkillRunError(
@@ -164,7 +294,14 @@ def run_report_skill_rules(
         shutil.rmtree(run_root, ignore_errors=True)
 
 
-def _prepare_model_runtime(rule_root: Path, model_id: str) -> str | None:
+def _prepare_model_runtime(
+    rule_root: Path,
+    model_id: str,
+    reasoning_effort: str = "off",
+    disable_tools: bool = False,
+    temperature: str = "",
+    max_tokens: int | None = None,
+) -> str | None:
     selected_model = (model_id or "").strip()
     if not selected_model:
         return None
@@ -191,6 +328,16 @@ def _prepare_model_runtime(rule_root: Path, model_id: str) -> str | None:
         for item in models
     ):
         models.append(copy.deepcopy(model_config))
+    _apply_reasoning_effort(provider, selected_model, reasoning_effort)
+    if max_tokens:
+        for model in provider.get("models") or []:
+            if (
+                isinstance(model, dict)
+                and str(model.get("id") or "").strip() == selected_model
+            ):
+                current = int(model.get("maxTokens") or 0)
+                model["maxTokens"] = max(current, int(max_tokens))
+                break
     runtime_settings["agent-default-model"] = {
         "provider": provider_id,
         "model": selected_model,
@@ -204,12 +351,56 @@ def _prepare_model_runtime(rule_root: Path, model_id: str) -> str | None:
             ),
             encoding="utf-8",
         )
-        _ensure_report_check_profile(host_home)
+        _write_temperature_file(rule_root, temperature)
+        _ensure_report_check_profile(host_home, disable_tools=disable_tools)
     except OSError as exc:
         raise ReportSkillRunError(
             f"Не удалось подготовить модель DSH «{selected_model}»: {exc}"
         ) from exc
+    if disable_tools:
+        return REPORT_CHECK_TEXT_PROFILE
     return REPORT_CHECK_DSH_PROFILE
+
+
+def _apply_reasoning_effort(provider: dict, model_id: str, reasoning_effort: str) -> None:
+    """Pin the report-check request to the skill row's reasoning level.
+
+    Qwen-compatible APIs think unless enable_thinking is false. DSH sends that
+    flag only after the model declares a reasoning control, so a model without
+    one is given an off/low map. Off omits the effort and disables thinking.
+    Any other level is sent as that effort.
+    """
+    effort = (reasoning_effort or "off").strip() or "off"
+    for model in provider.get("models") or []:
+        if not isinstance(model, dict) or str(model.get("id") or "").strip() != model_id:
+            continue
+        efforts = model.get("reasoningEfforts", None)
+        if efforts is False:
+            if effort != "off":
+                raise ReportSkillRunError(
+                    f"Модель «{model_id}» не поддерживает уровень рассуждений «{effort}»."
+                )
+            return
+        if not isinstance(efforts, dict):
+            efforts = {}
+        else:
+            efforts = dict(efforts)
+        efforts.setdefault("off", None)
+        if effort != "off" and not efforts.get(effort):
+            from core.dsh_catalog import catalog_reasoning_levels
+
+            catalog = catalog_reasoning_levels(model_id) or ()
+            wire = next((value for level, value in catalog if level == effort), "")
+            efforts[effort] = wire or effort
+        if not any(level != "off" for level in efforts):
+            efforts["low"] = "low"
+        model["reasoningEfforts"] = efforts
+        provider["reasoning"] = effort
+        if effort != "off" and efforts.get(effort):
+            compat = provider.setdefault("compat", {})
+            if isinstance(compat, dict):
+                compat["supportsReasoningEffort"] = True
+        return
 
 
 def _dsh_host_home() -> Path | None:
@@ -268,11 +459,34 @@ def _load_runtime_settings(host_home: Path) -> dict:
     raise ReportSkillRunError("Не удалось прочитать settings.yaml DSH.")
 
 
-def _ensure_report_check_profile(host_home: Path) -> None:
-    profile_dir = host_home / "profiles" / REPORT_CHECK_DSH_PROFILE
+def _temperature_number(raw: str) -> float | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    allowed = {code for code, _label in ReportMacro.TEMPERATURE_CHOICES if code}
+    if value not in allowed:
+        raise ReportSkillRunError(f"Некорректная температура «{value}».")
+    return float(value)
+
+
+def _write_temperature_file(rule_root: Path, temperature: str) -> None:
+    path = rule_root / REPORT_CHECK_TEMPERATURE_FILE
+    number = _temperature_number(temperature)
+    if number is None:
+        path.unlink(missing_ok=True)
+        return
+    _write_runtime_file(
+        path,
+        json.dumps({"temperature": number}, ensure_ascii=False) + "\n",
+    )
+
+
+def _ensure_report_check_profile(host_home: Path, disable_tools: bool = False) -> None:
+    profile_name = REPORT_CHECK_TEXT_PROFILE if disable_tools else REPORT_CHECK_DSH_PROFILE
+    profile_dir = host_home / "profiles" / profile_name
     profile_dir.mkdir(parents=True, exist_ok=True)
     package = {
-        "name": "dsh-profile-report-check",
+        "name": f"dsh-profile-{profile_name}",
         "private": True,
         "dependencies": {},
         "dsh": {
@@ -291,11 +505,49 @@ def _ensure_report_check_profile(host_home: Path) -> None:
         "    path: settings.yaml\n"
         "    watch: false\n"
     )
+    if disable_tools:
+        patch += (
+            "- id: system-prompt\n"
+            "  config:\n"
+            "    personaPrefix: >-\n"
+            "      Ты отвечаешь только текстом на сообщение пользователя. Инструментов нет.\n"
+            "    personaSuffix: \"\"\n"
+        )
+        patch += "".join(
+            f"- id: {plugin_id}\n  disabled: true\n"
+            for plugin_id in _TEXT_ONLY_TOOL_PLUGINS
+        )
+    patch += (
+        "- insert:\n"
+        "    - name: ./report-check-temperature.mjs\n"
+        "    - name: ./report-check-continue.mjs\n"
+    )
+    _install_profile_plugin(
+        profile_dir,
+        "report-check-temperature/index.js",
+        "report-check-temperature.mjs",
+    )
+    _install_profile_plugin(
+        profile_dir,
+        "report-check-continue/index.mjs",
+        "report-check-continue.mjs",
+    )
     _write_runtime_file(
         profile_dir / "package.json",
         json.dumps(package, ensure_ascii=False, indent=2) + "\n",
     )
     _write_runtime_file(profile_dir / "cordis.patch.yml", patch)
+
+
+def _install_profile_plugin(profile_dir: Path, source_name: str, dest_name: str) -> None:
+    source = Path(settings.BASE_DIR) / "deploy" / "dsh" / "plugins" / source_name
+    try:
+        plugin_text = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ReportSkillRunError(
+            f"Не найден плагин проверки отчёта «{dest_name}»."
+        ) from exc
+    _write_runtime_file(profile_dir / dest_name, plugin_text)
 
 
 def _write_runtime_file(path: Path, content: str) -> None:
@@ -343,19 +595,32 @@ def _sync_local_bundled_skill(skill_name: str) -> None:
         ) from exc
 
 
-def _skill_prompt(rule: ReportCheckRule, input_name: str) -> str:
+def _skill_prompt(skill_name: str, model_id: str, input_name: str) -> str:
     model_note = (
-        f"\nНастроенная для правила модель DSH: {rule.model_id}."
-        if (rule.model_id or "").strip()
+        f"\nНастроенная для правила модель DSH: {model_id}."
+        if (model_id or "").strip()
         else ""
     )
     return (
-        f"/{rule.check_value}\n\n"
+        f"/{skill_name}\n\n"
         "Обработай ровно один исходный файл этой проверки.\n"
         f"Вход: input/{input_name}\n"
-        f"Результат обязательно запиши: output/{input_name}\n"
-        "Результатом должен быть обработанный или пересозданный файл, "
-        "а не JSON или текст ответа. Не меняй расширение файла."
+        f"Результат обязательно запиши последним шагом: output/{input_name}\n"
+        "До этого output пуст. Черновик держи отдельно, например в work/. "
+        "Проверь текст по частям, дождись находок всех подагентов и запиши "
+        "примечания в черновик. Не завершай ответ, пока подагенты ещё работают "
+        "и пока готовый файл не лежит в output. "
+        "Фраза «соберу результаты позже» не является результатом.\n"
+        "Не устанавливай пакеты, не читай settings.yaml, не распаковывай DOCX "
+        "и не пиши собственный анализатор. "
+        "При вставке примечаний не обрезай пробелы и не копируй w:tab: "
+        "лишняя табуляция и потерянные пробелы недопустимы. "
+        "Примечания записывай скриптом навыка docx_comments.py annotate. "
+        "Сохраняй объявления xmlns, включая вложенные xmlns:a и xmlns:pic, "
+        "и части commentsExtended, commentsIds, commentsExtensible: "
+        "без них Word не открывает файл. "
+        "Результатом должен быть обработанный файл, а не JSON или текст ответа. "
+        "Не меняй расширение файла."
         f"{model_note}"
     )
 
