@@ -1003,15 +1003,45 @@ class DshBrandingTests(SimpleTestCase):
         self.assertNotIn(False, default_model["reasoningEfforts"])
 
     def test_reasoning_levels_follow_installed_model_scale(self):
+        from unittest.mock import patch
+
+        from core import dsh_catalog
         from core.dsh_catalog import catalog_reasoning_levels, reasoning_levels_for_entry
 
-        catalog = [level for level, _wire in catalog_reasoning_levels("qwen3.8-max")]
-        self.assertEqual(catalog, ["low", "medium", "xhigh"])
-        offered = reasoning_levels_for_entry(
-            {"compat": {"thinkingFormat": "qwen"}},
-            {"id": "qwen3.8-max"},
-        )
-        self.assertEqual(offered, ["off", "low", "medium", "xhigh"])
+        payload = {
+            "models": [
+                {
+                    "id": "qwen3.8-max",
+                    "thinkingLevelMap": {
+                        "off": None,
+                        "minimal": None,
+                        "low": "low",
+                        "medium": "medium",
+                        "high": None,
+                        "xhigh": "xhigh",
+                        "max": None,
+                    },
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            catalog_dir = Path(raw)
+            (catalog_dir / "qwen-token-plan.json").write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            dsh_catalog._catalog_reasoning_index.cache_clear()
+            try:
+                with patch("core.dsh_catalog._pi_ai_catalog_dir", return_value=catalog_dir):
+                    catalog = [level for level, _wire in catalog_reasoning_levels("qwen3.8-max")]
+                    self.assertEqual(catalog, ["low", "medium", "xhigh"])
+                    offered = reasoning_levels_for_entry(
+                        {"compat": {"thinkingFormat": "qwen"}},
+                        {"id": "qwen3.8-max"},
+                    )
+                    self.assertEqual(offered, ["off", "low", "medium", "xhigh"])
+            finally:
+                dsh_catalog._catalog_reasoning_index.cache_clear()
         declared = reasoning_levels_for_entry(
             {"compat": {"thinkingFormat": "qwen"}},
             {"id": "Qwen/Qwen3.5-27B", "reasoningEfforts": {"off": None, "low": "low"}},
