@@ -2971,11 +2971,12 @@ def report_check_error_reason(message: str) -> str:
 
 def resume_report_check(user, upload):
     """Повторить проверку с места остановки: готовые фрагменты не пересчитываются."""
+    from .report_macro_runner import list_macros_for_upload
     from .report_skill_runner import has_skill_rules_for_upload
 
     if not (upload.file_name or upload.cloud_path):
         raise ReportUploadError("Сначала загрузите файл.")
-    if not has_skill_rules_for_upload(upload):
+    if not has_skill_rules_for_upload(upload) and not list_macros_for_upload(upload):
         raise ReportUploadError("Для отчёта нет автоматической проверки.")
     with transaction.atomic():
         upload = PerformerReportUpload.objects.select_for_update().get(pk=upload.pk)

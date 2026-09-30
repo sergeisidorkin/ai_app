@@ -14762,6 +14762,96 @@ console.log("continue ok")
         self.assertEqual(reviewed["validation_reasoning"], "high")
         self.assertNotEqual(warm, reviewed)
 
+    def test_validation_request_holds_and_releases_model_slot(self):
+        from projects_app.models import ReportModelThrottle
+        from projects_app.report_chunk_skill_runner import _run_validation_request, _touch_model_slot
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+
+        def prepare_profile(*_args, **_kwargs):
+            return "report-check-text"
+
+        def run_headless(_prompt, *, cwd, profile, heartbeat):
+            throttle = ReportModelThrottle.objects.get(route_key="validator")
+            self.assertTrue(throttle.active_token)
+            self.assertEqual(profile, "report-check-text")
+            heartbeat()
+            return '{"results":[]}'
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=run_headless,
+        ), patch(
+            "projects_app.report_chunk_skill_runner._touch_model_slot",
+            wraps=_touch_model_slot,
+        ) as touched:
+            result = _run_validation_request(
+                upload,
+                "report-final-check",
+                "validator",
+                "off",
+                "0",
+                [],
+                [],
+                prepare_profile,
+                lambda _upload: True,
+            )
+        self.assertEqual(result, [])
+        self.assertEqual(touched.call_count, 1)
+        throttle = ReportModelThrottle.objects.get(route_key="validator")
+        self.assertEqual(throttle.active_token, "")
+        self.assertIsNone(throttle.active_until)
+        self.assertIsNone(throttle.cooldown_until)
+
+    def test_validation_request_cools_down_model_after_rate_limit(self):
+        from core.dsh_run import DshRunError
+        from projects_app.models import ReportModelThrottle
+        from projects_app.report_chunk_skill_runner import _run_validation_request
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+
+        def run_headless(_prompt, *, cwd, profile, heartbeat):
+            raise DshRunError("429 rate_limit")
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=run_headless,
+        ):
+            with self.assertRaises(DshRunError):
+                _run_validation_request(
+                    upload,
+                    "report-final-check",
+                    "validator",
+                    "off",
+                    "0",
+                    [],
+                    [],
+                    lambda *_args, **_kwargs: "report-check-text",
+                    lambda _upload: True,
+                    attempt=1,
+                    retry_delays=[45],
+                )
+        throttle = ReportModelThrottle.objects.get(route_key="validator")
+        self.assertEqual(throttle.active_token, "")
+        self.assertIsNone(throttle.active_until)
+        self.assertIsNotNone(throttle.cooldown_until)
+
     def test_skill_pipeline_errors_when_dsh_does_not_create_output(self):
         from projects_app.models import ReportCheckChunk
 
@@ -15320,6 +15410,48 @@ console.log("continue ok")
         denied = self.client.post(reverse("report_check_resume", args=[upload.pk]))
         self.assertEqual(denied.status_code, 400)
         self.assertIn("уже выполняется", denied.json()["error"])
+
+    @patch("projects_app.report_submission._start_report_check_background")
+    def test_resume_restarts_failed_macro_only_check(self, mocked_start):
+        from django.utils import timezone
+
+        sent_at = timezone.now()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            sent_at=sent_at,
+            check_status=PerformerReportUpload.CheckStatus.ERROR,
+            check_error="Ошибка макроса.",
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("report_check_resume", args=[upload.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["check_status"], "running")
+        mocked_start.assert_called_once()
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.RUNNING)
+        self.assertEqual(upload.sent_at, sent_at)
+
+    def test_resume_rejects_upload_without_automatic_check(self):
+        ReportCheckRule.objects.all().delete()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            check_status=PerformerReportUpload.CheckStatus.ERROR,
+            check_error="Ошибка макроса.",
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("report_check_resume", args=[upload.pk]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("нет автоматической проверки", response.json()["error"])
 
     def test_check_status_returns_macro_progress(self):
         upload = PerformerReportUpload.objects.create(

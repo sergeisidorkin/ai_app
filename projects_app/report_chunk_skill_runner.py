@@ -980,6 +980,8 @@ def _validate_line_findings(upload, line, pairs, prepare_profile, heartbeat):
                 numbered,
                 prepare_profile,
                 heartbeat,
+                attempt=attempt,
+                retry_delays=retry_delays,
             )
             break
         except ReportCheckAborted:
@@ -1055,10 +1057,14 @@ def _run_validation_request(
     numbered,
     prepare_profile,
     heartbeat,
+    attempt: int = 1,
+    retry_delays=None,
 ) -> list:
     workspace_value = str(getattr(settings, "DSH_SORT_WORKSPACE", "") or "").strip()
     if not workspace_value:
         raise ChunkSkillError("Не задан DSH_SORT_WORKSPACE для проверки отчётов.")
+    from .report_macro_runner import ReportCheckAborted
+
     task_root = (
         Path(workspace_value).expanduser()
         / "report-checks"
@@ -1066,6 +1072,7 @@ def _run_validation_request(
         / f"upload-{getattr(upload, 'pk', 'new')}-{uuid.uuid4().hex}"
     )
     task_root.mkdir(parents=True, exist_ok=True)
+    slot = None
     try:
         profile = prepare_profile(
             task_root,
@@ -1074,18 +1081,35 @@ def _run_validation_request(
             True,
             temperature,
         )
+        slot = _acquire_model_slot(model_id, heartbeat=lambda: heartbeat(upload))
 
         def request_heartbeat():
-            return heartbeat(upload)
+            alive = heartbeat(upload)
+            if alive is not False:
+                _touch_model_slot(slot)
+            return alive
 
-        stdout = run_headless(
-            _validation_prompt(skill_name, categories, numbered),
-            cwd=task_root,
-            profile=profile,
-            heartbeat=request_heartbeat,
-        )
-        return _validation_results(stdout)
+        try:
+            stdout = run_headless(
+                _validation_prompt(skill_name, categories, numbered),
+                cwd=task_root,
+                profile=profile,
+                heartbeat=request_heartbeat,
+            )
+            return _validation_results(stdout)
+        except ReportCheckAborted:
+            raise
+        except Exception as exc:
+            if "429" in str(exc) or "rate_limit" in str(exc).casefold():
+                _release_model_slot(
+                    slot,
+                    cooldown_seconds=_retry_delay(list(retry_delays or [30, 60, 120]), attempt),
+                )
+                slot = None
+            raise
     finally:
+        if slot is not None:
+            _release_model_slot(slot)
         shutil.rmtree(task_root, ignore_errors=True)
 
 
