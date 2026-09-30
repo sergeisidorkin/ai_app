@@ -1025,6 +1025,7 @@ def reconcile_review_after_correction(upload) -> None:
 
 
 _FINDING_AUTHOR_COURSE_RE = re.compile(r"^([A-Z]{4})-")
+_FRAGMENT_CODES_CACHE = "\x00fragment-category-codes"
 _FINDING_KIND_LABELS = {
     ReportMacro.CheckKind.MACRO: ReportMacro.CheckKind.MACRO.label,
     ReportMacro.CheckKind.SKILL: ReportMacro.CheckKind.SKILL.label,
@@ -1058,6 +1059,45 @@ def report_macro_catalog_index(macros=None) -> dict:
             "id": int(getattr(macro, "pk", None) or getattr(macro, "id", 0) or 0),
         }
     return index
+
+
+def _author_category_code(label: str) -> str:
+    from .report_macro_code import TITLE_RE
+
+    match = TITLE_RE.fullmatch(str(label or "").strip())
+    if not match:
+        return ""
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}.{match.group(4)}"
+
+
+def _fragment_validation_category_codes(catalog: dict) -> set[str]:
+    """Коды категорий навыков в режиме «Фрагменты». Их авторы в модалке — «Навык»."""
+    cached = catalog.get(_FRAGMENT_CODES_CACHE)
+    if isinstance(cached, set):
+        return cached
+    from .report_chunk_skill_runner import ChunkSkillError, load_skill_manifest
+
+    codes: set[str] = set()
+    names = (
+        ReportMacro.objects.filter(
+            check_kind=ReportMacro.CheckKind.SKILL,
+            processing_mode=ReportMacro.ProcessingMode.CHUNKS,
+        )
+        .exclude(skill_name="")
+        .values_list("skill_name", flat=True)
+        .distinct()
+    )
+    for name in names:
+        try:
+            manifest = load_skill_manifest(name) or {}
+        except ChunkSkillError:
+            continue
+        for category in manifest.get("categories") or []:
+            code = str(category.get("code") or "").strip()
+            if code:
+                codes.add(code)
+    catalog[_FRAGMENT_CODES_CACHE] = codes
+    return codes
 
 
 def _finding_author_count(count) -> int:
@@ -1183,7 +1223,12 @@ def report_finding_groups(upload, catalog=None, check_rules=None, *, source="cal
         else:
             match = _FINDING_AUTHOR_COURSE_RE.match(label)
             course = match.group(1) if match else ""
-            kind = ""
+            code = _author_category_code(label)
+            kind = (
+                ReportMacro.CheckKind.SKILL
+                if code and code in _fragment_validation_category_codes(catalog)
+                else ""
+            )
             item_name = label
             position = _FINDING_UNMATCHED_POSITION
             item_id = 0
@@ -2896,6 +2941,80 @@ def start_report_check_recovery() -> None:
     ).start()
 
 
+_CHECK_ERROR_REASONS = (
+    (("stream ended", "стрим закрылся", "сессия dsh оборвалась"), "обрыв потока"),
+    (("массивом findings", "некорректный json", "findings.json"), "неверный формат ответа"),
+    (("пустой ответ",), "пустой ответ"),
+    (("429", "rate_limit", "rate limit", "too many requests"), "превышен лимит запросов"),
+    (("timeout", "timed out", "не ответил"), "таймаут"),
+    (("прервана",), "проверка прервана"),
+    (("не удалось сохранить",), "не сохранён файл"),
+    (("не найден пользователь",), "не найден пользователь"),
+    (("свободного слота",), "ожидание модели"),
+    (("вставить принятые замечания",), "не вставлены замечания"),
+    (("неизвестный режим",), "неизвестный режим"),
+    (("макрос",), "ошибка макроса"),
+    (("не запустить проверку",), "не запущена"),
+)
+
+
+def report_check_error_reason(message: str) -> str:
+    """Короткое пояснение для строки «Ошибка проверки: …»."""
+    text = str(message or "").casefold()
+    if not text:
+        return ""
+    for markers, reason in _CHECK_ERROR_REASONS:
+        if any(marker in text for marker in markers):
+            return reason
+    return "сбой проверки"
+
+
+def resume_report_check(user, upload):
+    """Повторить проверку с места остановки: готовые фрагменты не пересчитываются."""
+    from .report_macro_runner import list_macros_for_upload
+    from .report_skill_runner import has_skill_rules_for_upload
+
+    if not (upload.file_name or upload.cloud_path):
+        raise ReportUploadError("Сначала загрузите файл.")
+    if not has_skill_rules_for_upload(upload) and not list_macros_for_upload(upload):
+        raise ReportUploadError("Для отчёта нет автоматической проверки.")
+    with transaction.atomic():
+        upload = PerformerReportUpload.objects.select_for_update().get(pk=upload.pk)
+        if upload.check_status == PerformerReportUpload.CheckStatus.RUNNING:
+            raise ReportUploadError("Проверка уже выполняется.")
+        if upload.check_status != PerformerReportUpload.CheckStatus.ERROR:
+            raise ReportUploadError("Проверку можно возобновить только после ошибки.")
+        claim_token = uuid.uuid4().hex
+        upload.check_status = PerformerReportUpload.CheckStatus.RUNNING
+        upload.check_finding_count = 0
+        upload.check_error = ""
+        upload.checked_at = None
+        upload.check_claim = claim_token
+        upload.check_heartbeat_at = timezone.now()
+        upload.check_attempts = 1
+        upload.check_macro_index = 0
+        upload.check_macro_total = 0
+        upload.check_macro_name = ""
+        upload.save(update_fields=[
+            "check_status",
+            "check_finding_count",
+            "check_error",
+            "checked_at",
+            "check_claim",
+            "check_heartbeat_at",
+            "check_attempts",
+            "check_macro_index",
+            "check_macro_total",
+            "check_macro_name",
+        ])
+    _start_report_check_background(user.pk, upload.pk, claim_token)
+    return (
+        PerformerReportUpload.objects
+        .select_related("registration", "registration__type", "performer", "performer__typical_section")
+        .get(pk=upload.pk)
+    )
+
+
 def send_report_upload(user, upload):
     if not (upload.file_name or upload.cloud_path):
         raise ReportUploadError("Сначала загрузите файл.")
@@ -2916,15 +3035,40 @@ def send_report_upload(user, upload):
         steps = manual_steps(chain)
         if not steps:
             raise ReportUploadError("В порядке проверки нет шагов.")
+        from .models import ReportReviewEntry
         from .report_review import REVIEW_PHASE_REVIEW
 
-        from .models import ReportReviewEntry
-
-        ReportReviewEntry.objects.create(
-            upload=upload,
-            step=steps[0],
-            phase=REVIEW_PHASE_REVIEW,
-        )
+        with transaction.atomic():
+            upload = PerformerReportUpload.objects.select_for_update().get(pk=upload.pk)
+            if upload.review_step:
+                raise ReportUploadError("Отчёт уже на ручной проверке.")
+            existing = (
+                ReportReviewEntry.objects
+                .filter(upload=upload, phase=REVIEW_PHASE_REVIEW, settled=False)
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            step = existing.step if existing is not None else steps[0]
+            now = timezone.now()
+            if not upload.sent_at:
+                upload.sent_at = now
+                upload.sent_by = user if getattr(user, "is_authenticated", False) else None
+            upload.review_step = step
+            upload.review_phase = REVIEW_PHASE_REVIEW
+            upload.status_changed_at = now
+            upload.save(update_fields=[
+                "sent_at",
+                "sent_by",
+                "review_step",
+                "review_phase",
+                "status_changed_at",
+            ])
+            if existing is None:
+                ReportReviewEntry.objects.create(
+                    upload=upload,
+                    step=step,
+                    phase=REVIEW_PHASE_REVIEW,
+                )
         return (
             PerformerReportUpload.objects
             .select_related("registration", "registration__type", "performer", "performer__typical_section")

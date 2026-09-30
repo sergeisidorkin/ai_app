@@ -8500,6 +8500,39 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(payload_groups["context"]["version"], "00")
         self.assertIn('id="report-finding-version"', section)
 
+    def test_fragment_validation_codes_show_as_skill(self):
+        from types import SimpleNamespace
+
+        skill = ReportMacro.objects.create(
+            course="GRMM",
+            section="SK",
+            part="00",
+            number="00",
+            name="Финальная проверка",
+            check_kind=ReportMacro.CheckKind.SKILL,
+            processing_mode=ReportMacro.ProcessingMode.CHUNKS,
+            skill_name="report-final-check",
+            position=1,
+        )
+        upload = SimpleNamespace(
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=3,
+            check_finding_by_author={
+                "GRMM-SG-01.01 Нарушение согласования определений, причастий и местоимений": 2,
+                "ZZZZ-SS-00.01 Чужой": 1,
+            },
+        )
+        groups = report_finding_groups(upload)
+        by_course = {item["course"]: item for item in groups["courses"]}
+        self.assertEqual(by_course["GRMM"]["items"][0]["kind_label"], "Навык")
+        self.assertEqual(by_course["ZZZZ"]["items"][0]["kind_label"], "—")
+
+        skill.processing_mode = ReportMacro.ProcessingMode.AGENT
+        skill.save(update_fields=["processing_mode"])
+        agent_groups = report_finding_groups(upload)
+        agent_courses = {item["course"]: item for item in agent_groups["courses"]}
+        self.assertEqual(agent_courses["GRMM"]["items"][0]["kind_label"], "—")
+
     def test_checked_current_version_disables_checkbox_until_new_upload(self):
         first, second = self._create_section_performers()
         PerformerReportUpload.objects.create(
@@ -8611,6 +8644,64 @@ class ReportSubmissionTests(TestCase):
             "Идет проверка... 12/24 (50%) TPGR-SP-02.04 Точка в конце списков",
             section,
         )
+
+    def test_report_check_error_reason_is_short(self):
+        from projects_app.report_submission import report_check_error_reason
+
+        self.assertEqual(report_check_error_reason("DSH не ответил за 900 с."), "таймаут")
+        self.assertEqual(
+            report_check_error_reason("Сессия DSH оборвалась (стрим закрылся без ответа)."),
+            "обрыв потока",
+        )
+        self.assertEqual(report_check_error_reason("429 rate_limit"), "превышен лимит запросов")
+        self.assertEqual(
+            report_check_error_reason(
+                "Навык «report-final-check», фрагмент 22: "
+                "Модель не вернула JSON-объект с массивом findings."
+            ),
+            "неверный формат ответа",
+        )
+        self.assertEqual(report_check_error_reason("Проверка отчёта была прервана и не завершилась."), "проверка прервана")
+        self.assertEqual(report_check_error_reason(""), "")
+        self.assertEqual(report_check_error_reason("что-то непонятное"), "сбой проверки")
+
+    def test_failed_check_row_offers_resume(self):
+        first, _second = self._create_section_performers()
+        PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=first,
+            executor=first.executor,
+            asset_name=first.asset_name,
+            file_name="report_00.docx",
+            version=0,
+            check_status=PerformerReportUpload.CheckStatus.ERROR,
+            check_error="Навык «report-final-check», фрагмент 22: пустой ответ.",
+        )
+        section = self._report_section_html(self.client.get(reverse("performers_partial")))
+        self.assertIn("Ошибка проверки: пустой ответ", section)
+        self.assertIn("bi-exclamation-circle", section)
+        self.assertIn("Возобновить проверку", section)
+        self.assertIn("bi-arrow-repeat", section)
+        self.assertIn("js-report-check-resume", section)
+        self.assertIn("data-report-check-resume-url=", section)
+        self.assertIn('data-send-allowed="1"', section)
+        self.assertNotIn(">ошибка проверки<", section)
+        js = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "performers-panels.js"
+        ).read_text()
+        self.assertIn("function reportRowMayResume(row)", js)
+        self.assertIn("row.dataset.sendAllowed === '1'", js)
+        self.assertIn("canResume: reportRowMayResume(row)", js)
+        self.assertIn("if (!data || data.check_status === 'error') return false;", js)
+        cell_start = section.find("report-check-error-label")
+        self.assertGreaterEqual(cell_start, 0)
+        cell_html = section[cell_start:section.find("Возобновить проверку", cell_start)]
+        self.assertIn("report-review-action-rule", cell_html)
 
     def test_same_slot_can_store_two_versions(self):
         first, _second = self._create_section_performers()
@@ -10299,6 +10390,60 @@ class ReportCheckTests(TestCase):
         self.assertEqual(rows[0].review_entry.pk, rework.pk)
         self.assertFalse(any(row.upload and row.upload.pk == corrected.pk and not row.review_entry for row in rows))
 
+    def test_manual_only_send_opens_review_once(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import report_workflow_status, send_report_upload
+
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            review_order=["rp"],
+        )
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+        )
+        response = self.client.post(reverse("report_file_send"), {"upload_id": upload.pk})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["workflow_status"], "На проверке РП")
+        self.assertNotEqual(payload["sent_at"], "")
+        upload.refresh_from_db()
+        self.assertEqual(upload.review_step, "rp")
+        self.assertEqual(upload.review_phase, "review")
+        self.assertEqual(upload.sent_by_id, self.user.pk)
+        self.assertIsNotNone(upload.sent_at)
+        self.assertIsNotNone(upload.status_changed_at)
+        self.assertEqual(report_workflow_status(upload), "На проверке РП")
+        self.assertEqual(
+            ReportReviewEntry.objects.filter(upload=upload, phase="review", settled=False).count(),
+            1,
+        )
+
+        again = self.client.post(reverse("report_file_send"), {"upload_id": upload.pk})
+        self.assertEqual(again.status_code, 400)
+        self.assertIn("ручной проверке", again.json()["error"])
+        self.assertEqual(
+            ReportReviewEntry.objects.filter(upload=upload, phase="review", settled=False).count(),
+            1,
+        )
+
+        upload.review_step = ""
+        upload.review_phase = ""
+        upload.save(update_fields=["review_step", "review_phase"])
+        send_report_upload(self.user, upload)
+        upload.refresh_from_db()
+        self.assertEqual(upload.review_step, "rp")
+        self.assertEqual(
+            ReportReviewEntry.objects.filter(upload=upload, phase="review", settled=False).count(),
+            1,
+        )
+
     def test_check_status_includes_next_review_row_when_accepted(self):
         from projects_app.models import ReportReviewEntry
 
@@ -11897,6 +12042,55 @@ class ReportMacroTests(TestCase):
         self.client.force_login(self.user)
         ReportMacro.objects.all().delete()
 
+    def test_existing_skills_without_chunk_contract_use_agent_mode(self):
+        import importlib
+
+        from django.apps import apps
+
+        migration = importlib.import_module(
+            "projects_app.migrations.0116_report_skill_processing_mode"
+        )
+        assign_existing_skill_processing_modes = migration.assign_existing_skill_processing_modes
+        chunk_compatible_skill_names = migration.chunk_compatible_skill_names
+
+        compatible = chunk_compatible_skill_names()
+        self.assertIn("report-final-check", compatible)
+        self.assertNotIn("checklist-file-sort", compatible)
+        self.assertNotIn("checklist-file-verify", compatible)
+        final_check = make_skill_catalog("report-final-check", "model")
+        file_sort = make_skill_catalog("checklist-file-sort", "model")
+        file_verify = make_skill_catalog("checklist-file-verify", "model")
+        chosen_agent = make_skill_catalog("report-final-check-custom", "model")
+        code_macro = ReportMacro.objects.create(
+            name="Макрос",
+            check_kind=ReportMacro.CheckKind.MACRO,
+            code="pass",
+            course="TPGR",
+            section="ZN",
+            part="01",
+            number="01",
+            processing_mode=ReportMacro.ProcessingMode.CHUNKS,
+        )
+        ReportMacro.objects.filter(pk__in=[final_check.pk, file_sort.pk, file_verify.pk]).update(
+            processing_mode=ReportMacro.ProcessingMode.CHUNKS
+        )
+        chosen_agent.processing_mode = ReportMacro.ProcessingMode.AGENT
+        chosen_agent.skill_name = "report-final-check"
+        chosen_agent.save(update_fields=["processing_mode", "skill_name"])
+
+        assign_existing_skill_processing_modes(apps, None)
+
+        final_check.refresh_from_db()
+        file_sort.refresh_from_db()
+        file_verify.refresh_from_db()
+        chosen_agent.refresh_from_db()
+        code_macro.refresh_from_db()
+        self.assertEqual(final_check.processing_mode, ReportMacro.ProcessingMode.CHUNKS)
+        self.assertEqual(file_sort.processing_mode, ReportMacro.ProcessingMode.AGENT)
+        self.assertEqual(file_verify.processing_mode, ReportMacro.ProcessingMode.AGENT)
+        self.assertEqual(chosen_agent.processing_mode, ReportMacro.ProcessingMode.AGENT)
+        self.assertEqual(code_macro.processing_mode, ReportMacro.ProcessingMode.CHUNKS)
+
     def test_performers_partial_renders_macros_table(self):
         ReportMacro.objects.create(
             course="TPGR",
@@ -12014,7 +12208,9 @@ class ReportMacroTests(TestCase):
         self.assertIn('name="processing_mode"', html)
         self.assertIn(">Фрагменты<", html)
         self.assertIn(">Агент<", html)
-        self.assertIn("текстовом режиме вопрос-ответ", html)
+        self.assertNotIn("текстовом режиме вопрос-ответ", html)
+        self.assertIn("Первый этап: проверка фрагментов", html)
+        self.assertIn("Второй этап: валидация и сортировка", html)
         self.assertIn('id="report-macro-reasoning-levels"', html)
         self.assertIn('name="course"', html)
         self.assertIn('name="section"', html)
@@ -12047,6 +12243,9 @@ class ReportMacroTests(TestCase):
                 "check_kind": "skill",
                 "skill_name": skill_name,
                 "model_id": model_id,
+                "validation_model_id": model_id,
+                "validation_reasoning_effort": "off",
+                "validation_temperature": "0",
                 "code": DEFAULT_MACRO_CODE,
             },
         )
@@ -12057,9 +12256,35 @@ class ReportMacroTests(TestCase):
         self.assertEqual(item.model_id, model_id)
         self.assertEqual(item.reasoning_effort, "off")
         self.assertEqual(item.temperature, "")
+        self.assertEqual(item.validation_model_id, model_id)
+        self.assertEqual(item.validation_reasoning_effort, "off")
+        self.assertEqual(item.validation_temperature, "0")
         self.assertFalse(item.disable_tools)
         self.assertEqual(item.processing_mode, ReportMacro.ProcessingMode.CHUNKS)
         self.assertEqual(item.code, "")
+
+        missing_validation = self.client.post(
+            reverse("report_macro_form_create"),
+            {
+                "course": "TPGR",
+                "section": "ZN",
+                "part": "00",
+                "number": "24",
+                "name": "Навык без модели валидации",
+                "description": "dsh",
+                "check_kind": "skill",
+                "skill_name": skill_name,
+                "model_id": model_id,
+                "reasoning_effort": "off",
+                "processing_mode": "chunks",
+                "code": "",
+            },
+        )
+        self.assertEqual(missing_validation.status_code, 200)
+        self.assertIn("модель валидации", missing_validation.content.decode().casefold())
+        self.assertFalse(
+            ReportMacro.objects.filter(name="Навык без модели валидации").exists()
+        )
 
         text_only = self.client.post(
             reverse("report_macro_form_create"),
@@ -12075,6 +12300,8 @@ class ReportMacroTests(TestCase):
                 "model_id": model_id,
                 "reasoning_effort": "off",
                 "disable_tools": "on",
+                "validation_model_id": model_id,
+                "validation_reasoning_effort": "off",
                 "code": "",
             },
         )
@@ -12105,10 +12332,15 @@ class ReportMacroTests(TestCase):
         agent_item = ReportMacro.objects.get(name="Навык в режиме агента")
         self.assertEqual(agent_item.processing_mode, ReportMacro.ProcessingMode.AGENT)
         self.assertFalse(agent_item.disable_tools)
+        self.assertEqual(agent_item.validation_model_id, "")
+        self.assertEqual(agent_item.validation_reasoning_effort, "")
+        self.assertEqual(agent_item.validation_temperature, "")
         agent_html = self.client.get(
             reverse("report_macro_form_edit", args=[agent_item.pk])
         ).content.decode()
         self.assertIn("js-report-macro-tools d-none", agent_html)
+        self.assertIn("js-report-macro-chunks-stage d-none", agent_html)
+        self.assertIn("js-report-macro-validation d-none", agent_html)
 
         as_macro = self.client.post(
             reverse("report_macro_form_create"),
@@ -12144,6 +12376,9 @@ class ReportMacroTests(TestCase):
                 "model_id": model_id,
                 "reasoning_effort": "off",
                 "temperature": "0.2",
+                "validation_model_id": model_id,
+                "validation_reasoning_effort": "off",
+                "validation_temperature": "0.2",
                 "code": "",
             },
         )
@@ -12216,6 +12451,8 @@ class ReportMacroTests(TestCase):
                     "skill_name": skill_name,
                     "model_id": model_id,
                     "reasoning_effort": "low",
+                    "validation_model_id": model_id,
+                    "validation_reasoning_effort": "off",
                     "code": "",
                 },
             )
@@ -12245,6 +12482,8 @@ class ReportMacroTests(TestCase):
         self.assertIn('class="mb-3 js-report-macro-code d-none"', edit_html)
         self.assertIn('class="mb-3 js-report-macro-skill"', edit_html)
         self.assertNotIn('class="mb-3 js-report-macro-skill d-none"', edit_html)
+        self.assertIn('class="report-macro-stage js-report-macro-chunks-stage"', edit_html)
+        self.assertNotIn("js-report-macro-chunks-stage d-none", edit_html)
 
         upload = self._macros_csv_upload(
             [
@@ -12258,8 +12497,19 @@ class ReportMacroTests(TestCase):
                 "Вид проверки",
                 "Наименование навыка DHS",
                 "Модель",
+                "Уровень рассуждений",
+                "Без инструментов",
+                "Режим обработки",
+                "Температура",
+                "Модель валидации",
+                "Уровень рассуждений валидации",
+                "Температура валидации",
             ],
-            [["TPGR", "ZN", "00", "11", "Навык из CSV", "dsh", "", "Навык", skill_name, model_id]],
+            [[
+                "TPGR", "ZN", "00", "11", "Навык из CSV", "dsh", "",
+                "Навык", skill_name, model_id, "Выкл.", "нет", "Фрагменты", "",
+                model_id, "Выкл.", "0",
+            ]],
         )
         uploaded = self.client.post(reverse("report_macro_csv_upload"), {"csv_file": upload})
         self.assertEqual(uploaded.status_code, 200)
@@ -12270,6 +12520,9 @@ class ReportMacroTests(TestCase):
         self.assertEqual(from_csv.model_id, model_id)
         self.assertEqual(from_csv.reasoning_effort, "off")
         self.assertEqual(from_csv.processing_mode, ReportMacro.ProcessingMode.CHUNKS)
+        self.assertEqual(from_csv.validation_model_id, model_id)
+        self.assertEqual(from_csv.validation_reasoning_effort, "off")
+        self.assertEqual(from_csv.validation_temperature, "0")
         self.assertEqual(from_csv.code, "")
 
         agent_upload = self._macros_csv_upload(
@@ -12324,6 +12577,7 @@ class ReportMacroTests(TestCase):
             [[
                 "TPGR", "ZN", "00", "22", "Температура из CSV", "dsh", "",
                 "Навык", skill_name, model_id, "Выкл.", "нет", "Фрагменты", "0,2",
+                model_id, "Выкл.", "",
             ]],
         )
         warm_uploaded = self.client.post(
@@ -12485,6 +12739,9 @@ class ReportMacroTests(TestCase):
                 "Без инструментов",
                 "Режим обработки",
                 "Температура",
+                "Модель валидации",
+                "Уровень рассуждений валидации",
+                "Температура валидации",
             ],
         )
         self.assertEqual(rows[1][12], "Фрагменты")
@@ -12882,6 +13139,7 @@ class ReportMacroRunnerTests(TestCase):
     def test_bare_findings_array_is_accepted_as_chunk_response(self):
         from projects_app.report_chunk_skill_runner import (
             ChunkSkillError,
+            EmptyChunkObject,
             _json_object_from_text,
         )
 
@@ -12895,6 +13153,10 @@ class ReportMacroRunnerTests(TestCase):
             'Пояснение.\n{"chunk_id": "chunk-1", "findings": []}'
         )
         self.assertEqual(wrapped["findings"], [])
+        with self.assertRaises(EmptyChunkObject):
+            _json_object_from_text("{}")
+        with self.assertRaises(EmptyChunkObject):
+            _json_object_from_text("```json\n{}\n```")
         with self.assertRaises(ChunkSkillError):
             _json_object_from_text("Замечаний нет, JSON не сформирован.")
 
@@ -13594,6 +13856,8 @@ class ReportMacroRunnerTests(TestCase):
         self.assertIn("/report-final-check", prompt)
         self.assertIn("DOCUMENT_CHUNK:", prompt)
         self.assertIn('"id":"a1"', prompt)
+        self.assertNotIn("Что проверять", prompt)
+        self.assertNotIn("case-agreement", prompt)
         self.assertEqual(dsh_runtime["profile"], "report-check")
         self.assertEqual(
             dsh_runtime["settings"]["agent-default-model"],
@@ -13602,6 +13866,390 @@ class ReportMacroRunnerTests(TestCase):
                 "model": "Qwen/Qwen3.5-27B",
             },
         )
+
+    def _validation_skill(self):
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        rule = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=1,
+            product=self.product,
+            section=self.mrk,
+        )
+        macro = rule.lines.get().macro
+        macro.validation_model_id = "Qwen/Qwen3.5-27B"
+        macro.validation_reasoning_effort = "off"
+        macro.validation_temperature = "0"
+        macro.save(update_fields=[
+            "validation_model_id",
+            "validation_reasoning_effort",
+            "validation_temperature",
+        ])
+        return macro
+
+    def _chunk_then_validation(self, validation_reply):
+        calls = []
+
+        def dsh_result(prompt, *, cwd, **kwargs):
+            calls.append({"prompt": prompt, "profile": kwargs.get("profile"), "cwd": Path(cwd)})
+            if "FINDINGS:" in prompt:
+                return validation_reply
+            payload = json.loads((Path(cwd) / "input" / "chunk.json").read_text(encoding="utf-8"))
+            findings = []
+            for quote, explanation in (
+                ("Падеж", "Проверка падежа."),
+                ("ошибка", "Лишняя пунктуация."),
+            ):
+                block = next(item for item in payload["blocks"] if quote in item["text"])
+                start = block["slice_start"] + block["text"].index(quote)
+                findings.append({
+                    "rule_id": "case-agreement",
+                    "anchor_id": block["anchor_id"],
+                    "start": start,
+                    "end": start + len(quote),
+                    "quote": quote,
+                    "explanation": explanation,
+                    "replacement": quote + " исправлено",
+                })
+            return json.dumps({
+                "schema_version": 1,
+                "chunk_id": payload["chunk_id"],
+                "findings": findings,
+            }, ensure_ascii=False)
+
+        return calls, dsh_result
+
+    def test_fragment_validation_classifies_and_drops_unconfirmed(self):
+        from projects_app.models import ReportCheckFinding
+
+        macro = self._validation_skill()
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        calls, dsh_result = self._chunk_then_validation(json.dumps({
+            "results": [
+                {
+                    "id": "f1",
+                    "correct": True,
+                    "code": "GRMM-CH-01.01",
+                    "explanation": "Модель переписала пояснение.",
+                },
+                {"id": "f2", "correct": False, "code": "", "explanation": ""},
+            ]
+        }, ensure_ascii=False))
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ):
+            result = apply_report_checks(upload, source)
+
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 1)
+        self.assertEqual(count_comments(result), 1)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(
+            'w:author="GRMM-CH-01.01 Нарушение норм сочетания числительного с существительным"',
+            comments_xml,
+        )
+        self.assertIn(
+            "GRMM-CH-01.01: Нарушена норма сочетания числительного с существительным.",
+            comments_xml,
+        )
+        self.assertNotIn("Модель переписала пояснение", comments_xml)
+        self.assertNotIn("GRMM-SG-01.01", comments_xml)
+        self.assertIn("Корректный вариант:", comments_xml)
+        self.assertNotIn("w:hyperlink", comments_xml)
+        self.assertNotIn("Лишняя пунктуация", comments_xml)
+        self.assertNotIn(macro.display_label, comments_xml)
+        rejected = ReportCheckFinding.objects.get(quote="ошибка")
+        self.assertEqual(rejected.status, ReportCheckFinding.Status.REJECTED)
+        validation_call = next(item for item in calls if "FINDINGS:" in item["prompt"])
+        self.assertEqual(validation_call["profile"], "report-check-text")
+        self.assertIn("GRMM-UP-01.02", validation_call["prompt"])
+        self.assertIn("homogeneous-government", validation_call["prompt"])
+        self.assertIn("Падеж нарушен.", validation_call["prompt"])
+        self.assertIn("Назначенный code можно заменить", validation_call["prompt"])
+        self.assertIn("Пояснение не пиши", validation_call["prompt"])
+        self.assertNotIn("DOCUMENT_CHUNK:", validation_call["prompt"])
+
+    def test_fragment_validation_failure_keeps_uncoded_comments(self):
+        macro = self._validation_skill()
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        calls, dsh_result = self._chunk_then_validation("Замечания верные, но это не JSON.")
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner._heartbeat_sleep",
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ):
+            result = apply_report_checks(upload, source)
+        validation_calls = [item for item in calls if "FINDINGS:" in item["prompt"]]
+        self.assertEqual(len(validation_calls), 3)
+
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_error, "")
+        self.assertEqual(count_comments(result), 2)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn(macro.display_label, comments_xml)
+        self.assertNotIn("GRMM-SG-01.01", comments_xml)
+        self.assertIn("Проверка падежа.", comments_xml)
+
+    def test_fragment_validation_retries_after_dropped_call(self):
+        from core.dsh_run import DshRunError
+
+        macro = self._validation_skill()
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        reply = json.dumps({
+            "results": [
+                {
+                    "id": "f1",
+                    "correct": True,
+                    "code": "GRMM-SG-01.01",
+                    "explanation": "Определение не согласовано.",
+                },
+                {"id": "f2", "correct": False, "code": "", "explanation": ""},
+            ]
+        }, ensure_ascii=False)
+        calls, dsh_result = self._chunk_then_validation(reply)
+        validation_attempts = {"count": 0}
+
+        def flaky(prompt, *, cwd, **kwargs):
+            if "FINDINGS:" in prompt:
+                validation_attempts["count"] += 1
+                if validation_attempts["count"] == 1:
+                    raise DshRunError("DSH вернул пустой ответ. Запустите сортировку ещё раз.")
+            return dsh_result(prompt, cwd=cwd, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner._heartbeat_sleep",
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=flaky,
+        ):
+            result = apply_report_checks(upload, source)
+
+        self.assertEqual(validation_attempts["count"], 2)
+        self.assertEqual(count_comments(result), 1)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn('w:author="GRMM-SG-01.01 Нарушение согласования определений, причастий и местоимений"', comments_xml)
+        self.assertNotIn(macro.display_label, comments_xml)
+
+    def test_categories_are_read_from_skill_markdown(self):
+        from django.conf import settings
+
+        from projects_app.report_chunk_skill_runner import (
+            ChunkSkillError,
+            load_skill_manifest,
+            parse_skill_categories,
+            sentence_around_quote,
+        )
+
+        manifest = load_skill_manifest("report-final-check")
+        self.assertEqual(
+            [item["code"] for item in manifest["categories"]],
+            [
+                "GRMM-SG-01.01",
+                "GRMM-UP-01.01",
+                "GRMM-UP-01.02",
+                "GRMM-CH-01.01",
+            ],
+        )
+        self.assertEqual(
+            [item["rule_id"] for item in manifest["categories"]],
+            [
+                "case-agreement",
+                "case-government",
+                "homogeneous-government",
+                "numeral-government",
+            ],
+        )
+        self.assertTrue(all(item["course_link"] is None for item in manifest["categories"]))
+        text = (
+            "оборудование для ведения горных и добычных работ. "
+            "Основным подрядчиком на горных работах на Асачинском месторождении выступает ООО «ЗГСК». "
+            "Компания выполняет работы."
+        )
+        start = text.index("на горных")
+        self.assertEqual(
+            sentence_around_quote(text, start, start + len("на горных")),
+            "Основным подрядчиком на горных работах на Асачинском месторождении выступает ООО «ЗГСК».",
+        )
+        bundled = (
+            Path(settings.BASE_DIR)
+            / "deploy"
+            / "dsh"
+            / "skills"
+            / "report-final-check"
+            / "pipeline.yaml"
+        )
+        self.assertNotIn("\ncategories:", "\n" + bundled.read_text(encoding="utf-8"))
+        self.assertIsNone(parse_skill_categories("## Что проверять\n\n- без кода"))
+        with self.assertRaises(ChunkSkillError):
+            parse_skill_categories("## Категории\n\n- не код — критерий")
+        with self.assertRaises(ChunkSkillError):
+            parse_skill_categories(
+                "## Категории\n\n- GRMM-SG-01.01 Нарушение согласования — Определение"
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "skills" / "report-final-check"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                "## Категории\n\n"
+                "- GRMM-SG-01.01 Нарушение согласования — case-agreement — Определение не согласовано.\n"
+                "  https://learn.example/grmm\n",
+                encoding="utf-8",
+            )
+            with override_settings(DSH_COMPOSE_DIR=tmp):
+                live = load_skill_manifest("report-final-check")
+        self.assertEqual(len(live["categories"]), 1)
+        self.assertEqual(live["categories"][0]["course_link"]["url"], "https://learn.example/grmm")
+        self.assertEqual(live["categories"][0]["course_link"]["text"], "Ссылка на страницу курса")
+
+    def test_fragment_validation_adds_course_link_from_skill(self):
+        from projects_app.report_chunk_skill_runner import load_skill_manifest
+
+        self._validation_skill()
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+
+        def with_link(skill_name):
+            manifest = load_skill_manifest(skill_name)
+            categories = [dict(item) for item in manifest.get("categories") or []]
+            categories[0]["course_link"] = {
+                "text": "Ссылка на страницу курса GRMM",
+                "url": "https://learn.example/grmm",
+            }
+            return {**manifest, "categories": categories}
+
+        _calls, dsh_result = self._chunk_then_validation(json.dumps({
+            "results": [
+                {
+                    "id": "f1",
+                    "correct": True,
+                    "code": "GRMM-SG-01.01",
+                    "explanation": "Определение не согласовано.",
+                },
+                {"id": "f2", "correct": False, "code": "GRMM-ZZ-01.01", "explanation": "Чужой код."},
+            ]
+        }, ensure_ascii=False))
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.load_skill_manifest",
+            side_effect=with_link,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ):
+            result = apply_report_checks(upload, source)
+
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+            rels_xml = archive.read("word/_rels/comments.xml.rels").decode("utf-8")
+        self.assertEqual(count_comments(result), 1)
+        self.assertIn("Ссылка на страницу курса GRMM", comments_xml)
+        self.assertIn("https://learn.example/grmm", rels_xml)
+        self.assertNotIn("Чужой код", comments_xml)
+
+    def test_text_only_chunk_prompt_includes_skill_contract(self):
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        rule = make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=0,
+            product=self.product,
+            section=self.mrk,
+        )
+        macro = rule.lines.get().macro
+        macro.disable_tools = True
+        macro.save(update_fields=["disable_tools"])
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            payload = json.loads((Path(cwd) / "input" / "chunk.json").read_text(encoding="utf-8"))
+            block = next(item for item in payload["blocks"] if "Падеж" in item["text"])
+            start = block["slice_start"] + block["text"].index("Падеж")
+            return json.dumps({
+                "schema_version": 1,
+                "chunk_id": payload["chunk_id"],
+                "findings": [{
+                    "rule_id": "case-agreement",
+                    "anchor_id": block["anchor_id"],
+                    "start": start,
+                    "end": start + len("Падеж"),
+                    "quote": "Падеж",
+                    "explanation": "Проверка падежа.",
+                    "replacement": "Падеж исправлен",
+                }],
+            }, ensure_ascii=False)
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ) as mocked_dsh:
+            apply_report_checks(upload, source)
+
+        self.assertTrue(mocked_dsh.call_args_list)
+        for call in mocked_dsh.call_args_list:
+            prompt = call.args[0]
+            self.assertEqual(call.kwargs["profile"], "report-check-text")
+            self.assertIn("Что проверять", prompt)
+            self.assertIn("case-agreement", prompt)
+            self.assertIn("case-government", prompt)
+            self.assertIn("numeral-government", prompt)
+            self.assertIn("DOCUMENT_CHUNK:", prompt)
+            self.assertLess(prompt.index("Что проверять"), prompt.rindex("DOCUMENT_CHUNK:"))
+            self.assertNotIn("disable-model-invocation", prompt)
 
     def test_agent_mode_runs_whole_file_with_tools_even_for_chunk_skill(self):
         ReportCheckRule.objects.filter(
@@ -14104,9 +14752,109 @@ console.log("continue ok")
         warm = line_config_entry(line, {"version": 1})
         self.assertEqual(cold["temperature"], "")
         self.assertEqual(warm["temperature"], "0")
+        self.assertEqual(cold["validation_model"], "")
         self.assertNotEqual(cold, warm)
+        macro.validation_model_id = "validator"
+        macro.validation_reasoning_effort = "high"
+        macro.validation_temperature = "0"
+        reviewed = line_config_entry(line, {"version": 1})
+        self.assertEqual(reviewed["validation_model"], "validator")
+        self.assertEqual(reviewed["validation_reasoning"], "high")
+        self.assertNotEqual(warm, reviewed)
+
+    def test_validation_request_holds_and_releases_model_slot(self):
+        from projects_app.models import ReportModelThrottle
+        from projects_app.report_chunk_skill_runner import _run_validation_request, _touch_model_slot
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+
+        def prepare_profile(*_args, **_kwargs):
+            return "report-check-text"
+
+        def run_headless(_prompt, *, cwd, profile, heartbeat):
+            throttle = ReportModelThrottle.objects.get(route_key="validator")
+            self.assertTrue(throttle.active_token)
+            self.assertEqual(profile, "report-check-text")
+            heartbeat()
+            return '{"results":[]}'
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=run_headless,
+        ), patch(
+            "projects_app.report_chunk_skill_runner._touch_model_slot",
+            wraps=_touch_model_slot,
+        ) as touched:
+            result = _run_validation_request(
+                upload,
+                "report-final-check",
+                "validator",
+                "off",
+                "0",
+                [],
+                [],
+                prepare_profile,
+                lambda _upload: True,
+            )
+        self.assertEqual(result, [])
+        self.assertEqual(touched.call_count, 1)
+        throttle = ReportModelThrottle.objects.get(route_key="validator")
+        self.assertEqual(throttle.active_token, "")
+        self.assertIsNone(throttle.active_until)
+        self.assertIsNone(throttle.cooldown_until)
+
+    def test_validation_request_cools_down_model_after_rate_limit(self):
+        from core.dsh_run import DshRunError
+        from projects_app.models import ReportModelThrottle
+        from projects_app.report_chunk_skill_runner import _run_validation_request
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+
+        def run_headless(_prompt, *, cwd, profile, heartbeat):
+            raise DshRunError("429 rate_limit")
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=run_headless,
+        ):
+            with self.assertRaises(DshRunError):
+                _run_validation_request(
+                    upload,
+                    "report-final-check",
+                    "validator",
+                    "off",
+                    "0",
+                    [],
+                    [],
+                    lambda *_args, **_kwargs: "report-check-text",
+                    lambda _upload: True,
+                    attempt=1,
+                    retry_delays=[45],
+                )
+        throttle = ReportModelThrottle.objects.get(route_key="validator")
+        self.assertEqual(throttle.active_token, "")
+        self.assertIsNone(throttle.active_until)
+        self.assertIsNotNone(throttle.cooldown_until)
 
     def test_skill_pipeline_errors_when_dsh_does_not_create_output(self):
+        from projects_app.models import ReportCheckChunk
+
         ReportCheckRule.objects.filter(
             lines__check_type=ReportCheckRule.CheckType.MACRO,
         ).delete()
@@ -14125,11 +14873,19 @@ console.log("continue ok")
             asset_name=self.performer.asset_name,
             file_name="report.docx",
         )
+        calls = []
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                return '{ "findings": ['
+            return "Готово"
+
         with tempfile.TemporaryDirectory() as tmp, override_settings(
             DSH_SORT_WORKSPACE=tmp,
         ), patch(
             "projects_app.report_chunk_skill_runner.run_headless",
-            return_value="Готово",
+            side_effect=dsh_result,
         ), patch(
             "projects_app.report_chunk_skill_runner._heartbeat_sleep",
             return_value=None,
@@ -14137,9 +14893,181 @@ console.log("continue ok")
             result = apply_report_checks(upload, source)
 
         upload.refresh_from_db()
+        chunk = ReportCheckChunk.objects.get()
+        self.assertEqual(len(calls), 3)
         self.assertEqual(result, source)
         self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.ERROR)
         self.assertIn("JSON", upload.check_error)
+        self.assertEqual(chunk.attempts, 3)
+        self.assertEqual(chunk.status, ReportCheckChunk.Status.ERROR)
+
+    def test_broken_response_succeeds_on_third_attempt(self):
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=1,
+            product=self.product,
+            section=self.mrk,
+        )
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        calls = []
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            calls.append(1)
+            if len(calls) < 3:
+                return "Готово" if len(calls) == 1 else '{"status": "ok"}'
+            payload = json.loads((Path(cwd) / "input" / "chunk.json").read_text(encoding="utf-8"))
+            block = next(item for item in payload["blocks"] if "Падеж" in item["text"])
+            start = block["slice_start"] + block["text"].index("Падеж")
+            return json.dumps({
+                "schema_version": 1,
+                "chunk_id": payload["chunk_id"],
+                "findings": [{
+                    "rule_id": "case-agreement",
+                    "anchor_id": block["anchor_id"],
+                    "start": start,
+                    "end": start + len("Падеж"),
+                    "quote": "Падеж",
+                    "explanation": "Проверка падежа.",
+                    "replacement": "Падеж исправлен",
+                }],
+            }, ensure_ascii=False)
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ), patch(
+            "projects_app.report_chunk_skill_runner._heartbeat_sleep",
+            return_value=None,
+        ):
+            result = apply_report_checks(upload, source)
+
+        upload.refresh_from_db()
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 1)
+        self.assertEqual(count_comments(result), 1)
+
+    def test_second_empty_object_counts_as_no_findings(self):
+        from projects_app.models import ReportCheckChunk
+
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=1,
+            product=self.product,
+            section=self.mrk,
+        )
+        source = _report_docx_bytes("Текст отчёта.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        calls = []
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            calls.append(Path(cwd).name)
+            return "{}"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ), patch(
+            "projects_app.report_chunk_skill_runner._heartbeat_sleep",
+            return_value=None,
+        ):
+            result = apply_report_checks(upload, source)
+
+        upload.refresh_from_db()
+        chunk = ReportCheckChunk.objects.get()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result, source)
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 0)
+        self.assertEqual(upload.check_error, "")
+        self.assertEqual(chunk.status, ReportCheckChunk.Status.DONE)
+        self.assertEqual(chunk.attempts, 2)
+        self.assertEqual(chunk.response.get("findings"), [])
+        self.assertEqual(chunk.error, "")
+
+    def test_empty_object_is_retried_before_a_real_findings_response(self):
+        ReportCheckRule.objects.filter(
+            lines__check_type=ReportCheckRule.CheckType.MACRO,
+        ).delete()
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=1,
+            product=self.product,
+            section=self.mrk,
+        )
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        calls = []
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                return "{}"
+            payload = json.loads((Path(cwd) / "input" / "chunk.json").read_text(encoding="utf-8"))
+            block = next(item for item in payload["blocks"] if "Падеж" in item["text"])
+            start = block["slice_start"] + block["text"].index("Падеж")
+            return json.dumps({
+                "schema_version": 1,
+                "chunk_id": payload["chunk_id"],
+                "findings": [{
+                    "rule_id": "case-agreement",
+                    "anchor_id": block["anchor_id"],
+                    "start": start,
+                    "end": start + len("Падеж"),
+                    "quote": "Падеж",
+                    "explanation": "Проверка падежа.",
+                    "replacement": "Падеж исправлен",
+                }],
+            }, ensure_ascii=False)
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ), patch(
+            "projects_app.report_chunk_skill_runner._heartbeat_sleep",
+            return_value=None,
+        ):
+            result = apply_report_checks(upload, source)
+
+        upload.refresh_from_db()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 1)
+        self.assertEqual(count_comments(result), 1)
 
     def test_chunk_skill_resumes_completed_chunks_after_failure(self):
         from projects_app.models import ReportCheckChunk, ReportCheckRun
@@ -14440,6 +15368,90 @@ console.log("continue ok")
         self.assertEqual(status.json()["check_status"], "running")
         self.assertEqual(status.json()["check_progress"], "")
         self.assertEqual(mocked_start.call_count, 1)
+
+    @patch("projects_app.report_submission._start_report_check_background")
+    def test_resume_restarts_failed_check_without_changing_send_time(self, mocked_start):
+        from django.utils import timezone
+
+        make_skill_launch(
+            "report-final-check",
+            "Qwen/Qwen3.5-27B",
+            position=0,
+            product=self.product,
+            section=self.mrk,
+        )
+        sent_at = timezone.now()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            sent_at=sent_at,
+            check_status=PerformerReportUpload.CheckStatus.ERROR,
+            check_error="Модель не вернула JSON.",
+            check_attempts=3,
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("report_check_resume", args=[upload.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["check_status"], "running")
+        self.assertEqual(response.json()["check_error"], "")
+        mocked_start.assert_called_once()
+        self.assertEqual(mocked_start.call_args[0][0], self.user.pk)
+        self.assertEqual(mocked_start.call_args[0][1], upload.pk)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.RUNNING)
+        self.assertEqual(upload.check_attempts, 1)
+        self.assertEqual(upload.check_error, "")
+        self.assertEqual(upload.sent_at, sent_at)
+
+        denied = self.client.post(reverse("report_check_resume", args=[upload.pk]))
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn("уже выполняется", denied.json()["error"])
+
+    @patch("projects_app.report_submission._start_report_check_background")
+    def test_resume_restarts_failed_macro_only_check(self, mocked_start):
+        from django.utils import timezone
+
+        sent_at = timezone.now()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            sent_at=sent_at,
+            check_status=PerformerReportUpload.CheckStatus.ERROR,
+            check_error="Ошибка макроса.",
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("report_check_resume", args=[upload.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["check_status"], "running")
+        mocked_start.assert_called_once()
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.RUNNING)
+        self.assertEqual(upload.sent_at, sent_at)
+
+    def test_resume_rejects_upload_without_automatic_check(self):
+        ReportCheckRule.objects.all().delete()
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            check_status=PerformerReportUpload.CheckStatus.ERROR,
+            check_error="Ошибка макроса.",
+        )
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("report_check_resume", args=[upload.pk]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("нет автоматической проверки", response.json()["error"])
 
     def test_check_status_returns_macro_progress(self):
         upload = PerformerReportUpload.objects.create(

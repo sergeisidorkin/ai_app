@@ -1,12 +1,12 @@
 ---
-name: report-final-check
+name: report-final-check-v1-min
 version: 1.0.0
-description: Проверяет согласование падежей в русском тексте отчёта. Для фрагмента возвращает JSON замечаний, для целого файла записывает обработанный DOCX.
+description: Проверяет согласование падежей в русском тексте отчёта. Для фрагмента возвращает JSON замечаний, для целого файла записывает обработанный DOCX. Версия v1-min: только достоверное нарушение.
 disable-model-invocation: false
 user-invocable: true
 ---
 
-# report-final-check
+# report-final-check-v1-min
 
 Способ работы задаёт текст задания.
 
