@@ -1791,6 +1791,25 @@ class ReportMacro(models.Model):
         choices=ProcessingMode.choices,
         default=ProcessingMode.CHUNKS,
     )
+    validation_model_id = models.CharField(
+        "Модель валидации",
+        max_length=255,
+        blank=True,
+        default="",
+    )
+    validation_reasoning_effort = models.CharField(
+        "Уровень рассуждений валидации",
+        max_length=16,
+        blank=True,
+        default="",
+    )
+    validation_temperature = models.CharField(
+        "Температура валидации",
+        max_length=8,
+        blank=True,
+        default="",
+        choices=TEMPERATURE_CHOICES,
+    )
     code = models.TextField("Код", blank=True, default="")
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
 

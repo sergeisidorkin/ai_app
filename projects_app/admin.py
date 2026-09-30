@@ -306,6 +306,9 @@ class ReportMacroAdmin(admin.ModelAdmin):
         "temperature",
         "disable_tools",
         "processing_mode",
+        "validation_model_id",
+        "validation_reasoning_effort",
+        "validation_temperature",
     )
     ordering = ("position", "id")
 

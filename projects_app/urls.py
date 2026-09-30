@@ -26,6 +26,7 @@ urlpatterns = [
     path("projects/reports/remarks-discard/", views.report_remarks_discard, name="report_remarks_discard"),
     path("projects/reports/send/", views.report_file_send, name="report_file_send"),
     path("projects/reports/<int:pk>/check-status/", views.report_check_status, name="report_check_status"),
+    path("projects/reports/<int:pk>/check-resume/", views.report_check_resume, name="report_check_resume"),
     path(
         "projects/reports/<int:pk>/finding-correction/",
         views.report_finding_correction,

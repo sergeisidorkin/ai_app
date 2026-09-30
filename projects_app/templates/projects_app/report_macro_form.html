@@ -65,21 +65,6 @@
       {{ form.skill_name.errors }}
     </div>
     <div class="mb-3 js-report-macro-skill{% if form.check_kind.value != 'skill' %} d-none{% endif %}">
-      <label class="form-label" for="{{ form.model_id.id_for_label }}">Модель</label>
-      {{ form.model_id }}
-      {{ form.model_id.errors }}
-    </div>
-    <div class="mb-3 js-report-macro-skill{% if form.check_kind.value != 'skill' %} d-none{% endif %}">
-      <label class="form-label" for="{{ form.reasoning_effort.id_for_label }}">Уровень рассуждений</label>
-      {{ form.reasoning_effort }}
-      {{ form.reasoning_effort.errors }}
-    </div>
-    <div class="mb-3 js-report-macro-skill{% if form.check_kind.value != 'skill' %} d-none{% endif %}">
-      <label class="form-label" for="{{ form.temperature.id_for_label }}">Температура</label>
-      {{ form.temperature }}
-      {{ form.temperature.errors }}
-    </div>
-    <div class="mb-3 js-report-macro-skill{% if form.check_kind.value != 'skill' %} d-none{% endif %}">
       <label class="form-label" for="{{ form.processing_mode.id_for_label }}">Режим обработки</label>
       {{ form.processing_mode }}
       {{ form.processing_mode.errors }}
@@ -87,8 +72,47 @@
     <div class="mb-3 form-check js-report-macro-skill js-report-macro-tools{% if form.check_kind.value != 'skill' or form.processing_mode.value == 'agent' %} d-none{% endif %}">
       {{ form.disable_tools }}
       <label class="form-check-label" for="{{ form.disable_tools.id_for_label }}">Без инструментов</label>
-      <div class="form-text">Модель работает в текстовом режиме вопрос-ответ и не может вызывать инструменты.</div>
       {{ form.disable_tools.errors }}
+    </div>
+    <div class="report-macro-stage js-report-macro-chunks-stage{% if form.check_kind.value != 'skill' or form.processing_mode.value == 'agent' %} d-none{% endif %}">
+      <div class="report-macro-stage-title">Первый этап: проверка фрагментов</div>
+    </div>
+    <div class="row js-report-macro-skill{% if form.check_kind.value != 'skill' %} d-none{% endif %}">
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.model_id.id_for_label }}">Модель</label>
+        {{ form.model_id }}
+        {{ form.model_id.errors }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.reasoning_effort.id_for_label }}">Уровень рассуждений</label>
+        {{ form.reasoning_effort }}
+        {{ form.reasoning_effort.errors }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.temperature.id_for_label }}">Температура</label>
+        {{ form.temperature }}
+        {{ form.temperature.errors }}
+      </div>
+    </div>
+    <div class="report-macro-stage js-report-macro-validation{% if form.check_kind.value != 'skill' or form.processing_mode.value == 'agent' %} d-none{% endif %}">
+      <div class="report-macro-stage-title">Второй этап: валидация и сортировка</div>
+    </div>
+    <div class="row js-report-macro-validation{% if form.check_kind.value != 'skill' or form.processing_mode.value == 'agent' %} d-none{% endif %}">
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.validation_model_id.id_for_label }}">Модель валидации</label>
+        {{ form.validation_model_id }}
+        {{ form.validation_model_id.errors }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.validation_reasoning_effort.id_for_label }}">Уровень рассуждений валидации</label>
+        {{ form.validation_reasoning_effort }}
+        {{ form.validation_reasoning_effort.errors }}
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label" for="{{ form.validation_temperature.id_for_label }}">Температура валидации</label>
+        {{ form.validation_temperature }}
+        {{ form.validation_temperature.errors }}
+      </div>
     </div>
     {{ form.reasoning_catalog|json_script:"report-macro-reasoning-levels" }}
     {% if form.errors %}
@@ -108,8 +132,12 @@
   const kindSel = form.querySelector('select[name="check_kind"]');
   const modelSel = form.querySelector('select[name="model_id"]');
   const effortSel = form.querySelector('select[name="reasoning_effort"]');
+  const validationModelSel = form.querySelector('select[name="validation_model_id"]');
+  const validationEffortSel = form.querySelector('select[name="validation_reasoning_effort"]');
   const modeSel = form.querySelector('select[name="processing_mode"]');
   const toolsField = form.querySelector('.js-report-macro-tools');
+  const chunksStage = form.querySelector('.js-report-macro-chunks-stage');
+  const validationFields = form.querySelectorAll('.js-report-macro-validation');
   const codeFields = form.querySelector('.js-report-macro-code');
   const skillFields = form.querySelectorAll('.js-report-macro-skill');
   let levelLabels = {off: 'Выкл.'};
@@ -125,24 +153,46 @@
     }
   }
 
-  function syncEffort() {
-    if (!effortSel) return;
-    const levels = levelsByModel[modelSel?.value] || ['off'];
-    const current = effortSel.value;
-    effortSel.replaceChildren();
+  function fillEffort(modelSelect, effortSelect, keepBlank) {
+    if (!effortSelect) return;
+    const levels = levelsByModel[modelSelect?.value] || ['off'];
+    const current = effortSelect.value;
+    effortSelect.replaceChildren();
+    if (keepBlank) {
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = '';
+      effortSelect.appendChild(blank);
+    }
     levels.forEach(function(level) {
       const option = document.createElement('option');
       option.value = level;
       option.textContent = levelLabels[level] || level;
-      effortSel.appendChild(option);
+      effortSelect.appendChild(option);
     });
-    effortSel.value = levels.indexOf(current) >= 0 ? current : (levels.indexOf('off') >= 0 ? 'off' : levels[0]);
+    if (levels.indexOf(current) >= 0) {
+      effortSelect.value = current;
+    } else if (keepBlank && !current) {
+      effortSelect.value = '';
+    } else {
+      effortSelect.value = levels.indexOf('off') >= 0 ? 'off' : levels[0];
+    }
+  }
+
+  function syncEffort() {
+    fillEffort(modelSel, effortSel, false);
+    fillEffort(validationModelSel, validationEffortSel, true);
   }
 
   function syncMode() {
     const kind = kindSel?.value || '';
     const agent = modeSel?.value === 'agent';
+    const hideValidation = kind !== 'skill' || agent;
     if (toolsField) toolsField.classList.toggle('d-none', kind !== 'skill' || agent);
+    if (chunksStage) chunksStage.classList.toggle('d-none', hideValidation);
+    validationFields.forEach(function(el) {
+      el.classList.toggle('d-none', hideValidation);
+    });
   }
 
   function syncKind() {
@@ -157,6 +207,9 @@
 
   kindSel?.addEventListener('change', syncKind);
   modelSel?.addEventListener('change', syncEffort);
+  validationModelSel?.addEventListener('change', function() {
+    fillEffort(validationModelSel, validationEffortSel, true);
+  });
   modeSel?.addEventListener('change', syncMode);
   syncKind();
 })();

@@ -3,8 +3,14 @@ from decimal import Decimal, InvalidOperation
 from django import template
 from django.utils.safestring import mark_safe
 from core.cloud_storage import build_folder_url
+from projects_app.report_submission import report_check_error_reason
 
 register = template.Library()
+
+
+@register.filter
+def report_check_error_brief(message):
+    return report_check_error_reason(message)
 
 
 @register.filter

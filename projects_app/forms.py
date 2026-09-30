@@ -1772,28 +1772,42 @@ class ReportMacroForm(BootstrapMixin, forms.ModelForm):
         ),
         required=True,
         error_messages={"required": "Выберите вид проверки."},
-        widget=forms.Select(attrs={**_common_select}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
     skill_name = forms.ChoiceField(
         label="Наименование навыка DHS",
         choices=(),
         required=False,
         error_messages={"invalid_choice": "Выберите навык из списка DSH."},
-        widget=forms.Select(attrs={**_common_select}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
     model_id = forms.ChoiceField(
         label="Модель",
         choices=(),
         required=False,
         error_messages={"invalid_choice": "Выберите модель из списка DSH."},
-        widget=forms.Select(attrs={**_common_select}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
     reasoning_effort = forms.ChoiceField(
         label="Уровень рассуждений",
         choices=(),
         required=False,
         error_messages={"invalid_choice": "Выберите уровень рассуждений."},
-        widget=forms.Select(attrs={**_common_select}),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    validation_model_id = forms.ChoiceField(
+        label="Модель валидации",
+        choices=(),
+        required=False,
+        error_messages={"invalid_choice": "Выберите модель валидации из списка DSH."},
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    validation_reasoning_effort = forms.ChoiceField(
+        label="Уровень рассуждений валидации",
+        choices=(),
+        required=False,
+        error_messages={"invalid_choice": "Выберите уровень рассуждений валидации."},
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     class Meta:
@@ -1812,18 +1826,20 @@ class ReportMacroForm(BootstrapMixin, forms.ModelForm):
             "temperature",
             "disable_tools",
             "processing_mode",
+            "validation_model_id",
+            "validation_reasoning_effort",
+            "validation_temperature",
             "code",
         ]
         widgets = {
-            "course": forms.TextInput(attrs={**_common_input, "maxlength": "4"}),
-            "section": forms.TextInput(attrs={**_common_input, "maxlength": "2"}),
-            "part": forms.TextInput(attrs={**_common_input, "maxlength": "2", "inputmode": "numeric"}),
-            "number": forms.TextInput(attrs={**_common_input, "maxlength": "2", "inputmode": "numeric"}),
-            "name": forms.TextInput(attrs={**_common_input}),
-            "description": forms.TextInput(attrs={**_common_input}),
+            "course": forms.TextInput(attrs={"class": "form-control", "maxlength": "4"}),
+            "section": forms.TextInput(attrs={"class": "form-control", "maxlength": "2"}),
+            "part": forms.TextInput(attrs={"class": "form-control", "maxlength": "2", "inputmode": "numeric"}),
+            "number": forms.TextInput(attrs={"class": "form-control", "maxlength": "2", "inputmode": "numeric"}),
+            "name": forms.TextInput(attrs={"class": "form-control"}),
+            "description": forms.TextInput(attrs={"class": "form-control"}),
             "code": forms.Textarea(attrs={
-                **_common_input,
-                "class": _common_input["class"] + " font-monospace",
+                "class": "form-control font-monospace",
                 "rows": 18,
                 "spellcheck": "false",
                 "style": "tab-size: 4; font-size: 13px;",
@@ -1883,27 +1899,44 @@ class ReportMacroForm(BootstrapMixin, forms.ModelForm):
         if current_model and current_model not in known_ids:
             model_choices = [(current_model, current_model), *model_choices]
         self.fields["model_id"].choices = model_choices or [("", "Нет доступных моделей")]
+        current_validation_model = (self.data.get("validation_model_id") if self.data else "") or ""
+        if not self.data:
+            current_validation_model = getattr(self.instance, "validation_model_id", "") or ""
+        current_validation_model = current_validation_model.strip()
+        flat_validation = [("", "")]
+        if current_validation_model and current_validation_model not in known_ids:
+            flat_validation.append((current_validation_model, current_validation_model))
+        flat_validation.extend(self.model_choices)
+        self.fields["validation_model_id"].choices = flat_validation or [("", "Нет доступных моделей")]
         self.reasoning_by_model = reasoning_levels_by_model()
         if current_model and current_model not in self.reasoning_by_model:
             self.reasoning_by_model[current_model] = ["off"]
+        if current_validation_model and current_validation_model not in self.reasoning_by_model:
+            self.reasoning_by_model[current_validation_model] = ["off"]
         self.reasoning_catalog = {
             "labels": REASONING_LEVEL_LABELS,
             "byModel": self.reasoning_by_model,
         }
-        self.fields["reasoning_effort"].choices = [
+        reasoning_choices = [
             (code, REASONING_LEVEL_LABELS[code]) for code in REASONING_LEVEL_ORDER
         ]
+        self.fields["reasoning_effort"].choices = reasoning_choices
+        self.fields["validation_reasoning_effort"].choices = [("", ""), *reasoning_choices]
         if not self.data and not (getattr(self.instance, "reasoning_effort", "") or "").strip():
             self.initial["reasoning_effort"] = "off"
         self.fields["temperature"].label = "Температура"
         self.fields["temperature"].required = False
         self.fields["temperature"].error_messages["invalid_choice"] = "Выберите температуру."
         self.fields["temperature"].help_text = ""
+        self.fields["validation_temperature"].label = "Температура валидации"
+        self.fields["validation_temperature"].required = False
+        self.fields["validation_temperature"].error_messages["invalid_choice"] = (
+            "Выберите температуру валидации."
+        )
+        self.fields["validation_temperature"].help_text = ""
         self.fields["disable_tools"].label = "Без инструментов"
         self.fields["disable_tools"].required = False
-        self.fields["disable_tools"].help_text = (
-            "Модель работает в текстовом режиме вопрос-ответ и не может вызывать инструменты."
-        )
+        self.fields["disable_tools"].help_text = ""
         self.fields["processing_mode"].label = "Режим обработки"
         self.fields["processing_mode"].required = False
         self.fields["processing_mode"].help_text = ""
@@ -1911,6 +1944,36 @@ class ReportMacroForm(BootstrapMixin, forms.ModelForm):
             self.initial["processing_mode"] = ReportMacro.ProcessingMode.CHUNKS
         self._bootstrapify()
         self.fields["disable_tools"].widget.attrs["class"] = "form-check-input"
+
+    def _clean_validation_settings(self, cleaned):
+        if "validation_model_id" not in self.errors:
+            model = (cleaned.get("validation_model_id") or "").strip()
+            allowed_models = {item[0] for item in self.model_choices}
+            if not model or (allowed_models and model not in allowed_models) or not allowed_models:
+                self.add_error("validation_model_id", "Выберите модель валидации.")
+            else:
+                cleaned["validation_model_id"] = model
+        if (
+            "validation_reasoning_effort" not in self.errors
+            and "validation_model_id" not in self.errors
+        ):
+            model = (cleaned.get("validation_model_id") or "").strip()
+            allowed_levels = list(self.reasoning_by_model.get(model) or ["off"])
+            effort = (cleaned.get("validation_reasoning_effort") or "").strip()
+            if not effort or effort not in allowed_levels:
+                self.add_error(
+                    "validation_reasoning_effort",
+                    "Выберите уровень рассуждений валидации, который поддерживает эта модель.",
+                )
+            else:
+                cleaned["validation_reasoning_effort"] = effort
+        if "validation_temperature" not in self.errors:
+            temperature = (cleaned.get("validation_temperature") or "").strip()
+            allowed_temperatures = {code for code, _label in ReportMacro.TEMPERATURE_CHOICES}
+            if temperature not in allowed_temperatures:
+                self.add_error("validation_temperature", "Выберите температуру валидации.")
+            else:
+                cleaned["validation_temperature"] = temperature
 
     def _clean_code_part(self, field, pattern, message):
         value = (self.cleaned_data.get(field) or "").strip()
@@ -1966,6 +2029,9 @@ class ReportMacroForm(BootstrapMixin, forms.ModelForm):
             cleaned["temperature"] = ""
             cleaned["disable_tools"] = False
             cleaned["processing_mode"] = ReportMacro.ProcessingMode.CHUNKS
+            cleaned["validation_model_id"] = ""
+            cleaned["validation_reasoning_effort"] = ""
+            cleaned["validation_temperature"] = ""
         elif kind == ReportMacro.CheckKind.SKILL:
             if "skill_name" not in self.errors:
                 skill = (cleaned.get("skill_name") or "").strip()
@@ -2006,6 +2072,11 @@ class ReportMacroForm(BootstrapMixin, forms.ModelForm):
                 cleaned["processing_mode"] = mode
                 if mode == ReportMacro.ProcessingMode.AGENT:
                     cleaned["disable_tools"] = False
+                    cleaned["validation_model_id"] = ""
+                    cleaned["validation_reasoning_effort"] = ""
+                    cleaned["validation_temperature"] = ""
+                else:
+                    self._clean_validation_settings(cleaned)
             cleaned["code"] = ""
         return cleaned
         

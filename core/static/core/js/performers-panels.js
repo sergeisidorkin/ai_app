@@ -4088,6 +4088,7 @@
     }));
     if ((data.workflow_status || 'Загружен') === 'Загружен') {
       row.dataset.canSend = '1';
+      row.dataset.sendAllowed = '1';
     }
     ensureReportSelectCheckbox(row);
     if (data.previous_row_html) {
@@ -4201,10 +4202,23 @@
     resultCell.appendChild(inner);
   }
 
+  function reportRowMayResume(row) {
+    return Boolean(row && row.dataset.isCurrent === '1' && row.dataset.sendAllowed === '1');
+  }
+
+  function reportCheckLocksRow(data) {
+    if (!data || data.check_status === 'error') return false;
+    if (data.check_status === 'done' || data.check_status === 'running') return true;
+    return (data.workflow_status || '').indexOf('На проверке') === 0;
+  }
+
   function applyReportSendResult(row, data) {
     if (!row || !data) return;
     if (Object.prototype.hasOwnProperty.call(data, 'check_status')) {
       row.dataset.checkStatus = data.check_status || '';
+    }
+    if (data.check_status === 'error' && reportRowMayResume(row)) {
+      row.dataset.canSend = '1';
     }
     updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), data);
     updateReportWorkflowStatusCell(row, data);
@@ -4220,14 +4234,14 @@
     updateReportCorrectedCell(row, data);
     if (data.review_row_html) insertReviewStepRow(row, data.review_row_html);
     var checkbox = row.querySelector('input[name="report-select"]');
-    if (data.check_status === 'done' || data.check_status === 'running' || (data.workflow_status || '').indexOf('На проверке') === 0) {
+    if (reportCheckLocksRow(data)) {
       if (checkbox) {
         checkbox.checked = false;
         checkbox.disabled = true;
       }
       row.dataset.canSend = '0';
       row.classList.remove('table-active');
-    } else if (checkbox && row.dataset.isCurrent === '1') {
+    } else if (checkbox && row.dataset.isCurrent === '1' && (data.check_status !== 'error' || reportRowMayResume(row))) {
       checkbox.disabled = false;
     }
     updateReportSubmissionMasterState();
@@ -4240,6 +4254,64 @@
     var template = (section && section.dataset.reportCheckStatusUrl) || '';
     if (!template || !uploadId) return '';
     return template.replace(/\/0\/check-status\/?$/, '/' + uploadId + '/check-status/');
+  }
+
+  function reportCheckResumeUrl(section, uploadId) {
+    var template = (section && section.dataset.reportCheckResumeUrl) || '';
+    if (!template || !uploadId) return '';
+    return template.replace(/\/0\/check-resume\/?$/, '/' + uploadId + '/check-resume/');
+  }
+
+  function appendReportCheckError(inner, options) {
+    var label = document.createElement('span');
+    label.className = 'report-check-error-label';
+    if (options.error) label.title = options.error;
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-exclamation-circle';
+    icon.setAttribute('aria-hidden', 'true');
+    var text = document.createElement('span');
+    text.className = 'report-check-error-text';
+    text.textContent = options.reason
+      ? 'Ошибка проверки: ' + options.reason
+      : 'Ошибка проверки';
+    if (options.reason) label.dataset.reason = options.reason;
+    label.appendChild(icon);
+    label.appendChild(text);
+    inner.appendChild(label);
+    if (!options.canResume) return;
+    var rule = document.createElement('span');
+    rule.className = 'report-review-action-rule';
+    rule.setAttribute('aria-hidden', 'true');
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'report-check-resume-action js-report-check-resume';
+    button.dataset.uploadId = String(options.uploadId || '');
+    var repeat = document.createElement('i');
+    repeat.className = 'bi bi-arrow-repeat';
+    repeat.setAttribute('aria-hidden', 'true');
+    var caption = document.createElement('span');
+    caption.className = 'report-review-action-text';
+    caption.textContent = 'Возобновить проверку';
+    button.appendChild(repeat);
+    button.appendChild(caption);
+    inner.appendChild(rule);
+    inner.appendChild(button);
+  }
+
+  function showReportCheckPending(cell) {
+    if (!cell) return;
+    cell.textContent = '';
+    var inner = document.createElement('span');
+    inner.className = 'report-check-result-inner';
+    var spacer = document.createElement('span');
+    spacer.className = 'report-upload-icon-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    var pending = document.createElement('span');
+    pending.className = 'text-muted js-report-check-badge report-check-pending-text';
+    pending.textContent = reportCheckPendingText(null);
+    inner.appendChild(spacer);
+    inner.appendChild(pending);
+    cell.appendChild(inner);
   }
 
   function reportPollDelay(milliseconds) {
@@ -4310,6 +4382,17 @@
     }
     var inner = document.createElement('span');
     inner.className = 'report-check-result-inner';
+    var row = cell.closest('tr');
+    if (data.check_status === 'error' && !(data.review_file_name && data.review_download_url)) {
+      appendReportCheckError(inner, {
+        error: data.check_error || '',
+        reason: data.check_error_reason || '',
+        canResume: reportRowMayResume(row),
+        uploadId: data.upload_id || (row && row.dataset.uploadId) || '',
+      });
+      cell.appendChild(inner);
+      return;
+    }
     if (data.review_file_name && data.review_download_url) {
       var reviewIcon = document.createElement('a');
       reviewIcon.href = data.review_download_url;
@@ -4353,13 +4436,7 @@
       link.appendChild(nameSpan);
       inner.appendChild(link);
     }
-    if (data.check_status === 'error') {
-      var badge = document.createElement('span');
-      badge.className = 'text-danger small js-report-check-badge';
-      badge.textContent = 'ошибка проверки';
-      if (data.check_error) badge.title = data.check_error;
-      inner.appendChild(badge);
-    } else if (data.check_status === 'running') {
+    if (data.check_status === 'running') {
       var spacer = document.createElement('span');
       spacer.className = 'report-upload-icon-spacer';
       spacer.setAttribute('aria-hidden', 'true');
@@ -4934,6 +5011,65 @@
     var modal = document.getElementById('report-remarks-modal');
     if (!modal || !modal.contains(box)) return;
     saveReportRemarksChannels();
+  });
+
+  document.addEventListener('click', async function(e) {
+    var btn = e.target.closest('.js-report-check-resume');
+    if (!btn || btn.disabled) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(btn)) return;
+    e.preventDefault();
+    var row = btn.closest('tr');
+    var uploadId = (btn.dataset.uploadId || (row && row.dataset.uploadId) || '').trim();
+    var url = reportCheckResumeUrl(section, uploadId);
+    if (!row || !url) return;
+    var resultCell = row.querySelector('.report-check-result-cell');
+    var previousLabel = resultCell && resultCell.querySelector('.report-check-error-label');
+    var previousError = previousLabel ? (previousLabel.title || '') : '';
+    var previousReason = previousLabel ? (previousLabel.dataset.reason || '') : '';
+    var checkbox = row.querySelector('input[name="report-select"]');
+    if (checkbox) {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+    }
+    row.classList.remove('table-active');
+    updateReportSubmissionMasterState();
+    btn.disabled = true;
+    showReportCheckPending(resultCell);
+    row.dataset.checkStatus = 'running';
+    var checkPollGate = { allowFinish: false };
+    pollReportCheck(row, checkPollGate);
+    try {
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': csrftoken,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      });
+      var data = null;
+      try { data = await response.json(); } catch (_) {}
+      if (!response.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || 'Не удалось возобновить проверку.');
+      }
+      checkPollGate.allowFinish = true;
+      applyReportSendResult(row, data);
+      if (data.check_status === 'running') pollReportCheck(row, checkPollGate);
+    } catch (err) {
+      alert(err.message || 'Не удалось возобновить проверку.');
+      row.dataset.checkStatus = 'error';
+      if (reportRowMayResume(row)) row.dataset.canSend = '1';
+      if (checkbox && reportRowMayResume(row)) {
+        checkbox.disabled = false;
+      }
+      updateReportCheckResultCell(resultCell, {
+        check_status: 'error',
+        check_error: previousError,
+        check_error_reason: previousReason,
+        upload_id: uploadId,
+      });
+      updateReportSubmissionMasterState();
+    }
   });
 
   document.addEventListener('click', async function(e) {

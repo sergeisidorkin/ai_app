@@ -91,8 +91,10 @@ from .report_submission import (
     report_section_number,
     report_slot_row_id,
     recover_abandoned_report_checks,
+    report_check_error_reason,
     resolve_report_upload_source,
     accept_report_review_without_remarks,
+    resume_report_check,
     send_report_upload,
     submit_report_review_file,
     withdraw_pending_report_remarks,
@@ -226,6 +228,9 @@ REPORT_MACRO_CSV_HEADERS = [
     "Без инструментов",
     "Режим обработки",
     "Температура",
+    "Модель валидации",
+    "Уровень рассуждений валидации",
+    "Температура валидации",
 ]
 REPORT_MACRO_CSV_SKILL_COLUMNS = 10
 REPORT_MACRO_CSV_LEGACY_COLUMNS = 5
@@ -4403,6 +4408,7 @@ def _report_upload_fallback_payload(upload, viewer=None, **extra):
         "check_progress": getattr(upload, "check_progress_label", "") or "",
         "check_finding_count": getattr(upload, "check_finding_count", 0) or 0,
         "check_error": getattr(upload, "check_error", "") or "",
+        "check_error_reason": report_check_error_reason(getattr(upload, "check_error", "") or ""),
         "check_file_name": getattr(upload, "check_file_name", "") or "",
         "check_download_url": "",
         "review_file_name": getattr(upload, "review_file_name", "") or "",
@@ -4979,6 +4985,26 @@ def report_check_status(request, pk):
 @login_required
 @user_passes_test(staff_required)
 @require_POST
+def report_check_resume(request, pk):
+    upload = get_object_or_404(PerformerReportUpload, pk=pk)
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    if not can_mutate_report_upload(request.user, upload):
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    try:
+        upload = resume_report_check(user=request.user, upload=upload)
+    except ReportUploadError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    payload = _report_upload_fallback_payload(upload, viewer=request.user)
+    if upload.check_file_name:
+        payload["check_download_url"] = reverse("report_check_file_download", args=[upload.pk])
+    return JsonResponse(payload)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
 def report_finding_correction(request, pk):
     upload = get_object_or_404(
         PerformerReportUpload.objects.select_related(
@@ -5432,6 +5458,9 @@ def report_macro_csv_download(request):
                 _disable_tools_label(macro.disable_tools),
                 macro.get_processing_mode_display(),
                 _temperature_label(macro.temperature),
+                macro.validation_model_id,
+                _reasoning_level_label(macro.validation_reasoning_effort),
+                _temperature_label(macro.validation_temperature),
             ]
         )
     response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
@@ -5514,6 +5543,9 @@ def report_macro_csv_upload(request):
             "temperature": "",
             "disable_tools": False,
             "processing_mode": ReportMacro.ProcessingMode.CHUNKS,
+            "validation_model_id": "",
+            "validation_reasoning_effort": "",
+            "validation_temperature": "",
         }
         if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS:
             from core.dsh_catalog import parse_reasoning_level
@@ -5529,6 +5561,12 @@ def report_macro_csv_upload(request):
                 payload["processing_mode"] = _parse_processing_mode(row[12])
             if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS + 4:
                 payload["temperature"] = _canonical_temperature(row[13])
+            if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS + 5:
+                payload["validation_model_id"] = row[14]
+            if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS + 6:
+                payload["validation_reasoning_effort"] = parse_reasoning_level(row[15])
+            if len(row) >= REPORT_MACRO_CSV_SKILL_COLUMNS + 7:
+                payload["validation_temperature"] = _canonical_temperature(row[16])
         form = ReportMacroForm(payload)
         if not form.is_valid():
             warnings.append(f"Строка {i}: {_report_macro_csv_error_text(form)}")

@@ -12717,6 +12717,67 @@ body.proposal-service-text-modal-open {
 #report-submission-table .report-review-discard-action:focus-visible .report-review-action-text {
   color: #b42323;
 }
+#report-submission-table .report-check-result-inner > .report-check-error-label {
+  display: inline-flex;
+  align-items: center;
+  column-gap: .35rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #dc3545;
+  font: inherit;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+#report-submission-table .report-check-error-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#report-submission-table .report-check-error-label .bi-exclamation-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--report-upload-icon-size);
+  height: var(--report-upload-icon-size);
+  flex: 0 0 var(--report-upload-icon-size);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+#report-submission-table .report-check-resume-action {
+  display: inline-flex;
+  align-items: center;
+  column-gap: .35rem;
+  margin: 0;
+  height: var(--report-upload-icon-size);
+  padding: 0 .35rem;
+  padding-right: calc(.35rem + 10px);
+  border: 0;
+  background: transparent;
+  color: #7eb6ea;
+  font: inherit;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: .375rem;
+}
+#report-submission-table .report-check-resume-action .bi {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+#report-submission-table .report-check-resume-action:hover,
+#report-submission-table .report-check-resume-action:focus-visible {
+  color: #3d7ec4;
+  background-color: rgba(126, 182, 234, .18);
+}
+#report-submission-table .report-check-resume-action:hover .report-review-action-text,
+#report-submission-table .report-check-resume-action:focus-visible .report-review-action-text {
+  color: #3d7ec4;
+}
+#report-submission-table .report-check-resume-action:disabled {
+  cursor: default;
+  opacity: .65;
+}
 #report-submission-table .report-check-result-inner > .report-file-name-link.report-remarks-loaded-link {
   flex: 0 0 auto;
 }
@@ -12882,6 +12943,11 @@ body.proposal-service-text-modal-open {
 #report-finding-modal .report-finding-heading {
   margin-top: 0.35rem;
   line-height: 1.45;
+}
+#report-finding-modal .modal-dialog {
+  --bs-modal-width: min(96vw, 1720px);
+  max-width: min(96vw, 1720px);
+  width: min(96vw, 1720px);
 }
 #report-finding-modal {
   --report-finding-icon-size: 16px;
@@ -13575,6 +13641,19 @@ body.proposal-service-text-modal-open {
   margin: 1.25rem -1rem 1rem;
 }
 
+#performers-modal .report-macro-stage {
+  border-top: 1px solid #adb5bd;
+  margin: 0.25rem -1rem 1rem;
+  padding: 0.75rem 1rem 0;
+}
+
+#performers-modal .report-macro-stage-title {
+  color: #6c757d;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
 #performers-modal .report-check-ai-heading {
   font-size: 1rem;
   font-weight: 600;
@@ -13605,5 +13684,11 @@ body.proposal-service-text-modal-open {
   font-weight: 600;
   font-style: normal;
   color: #6c757d;
+}
+
+#performers-modal select[name="model_id"] option {
+  font-weight: 400;
+  font-style: normal;
+  color: #212529;
 }
 
