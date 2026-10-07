@@ -4345,7 +4345,12 @@ class PolicyManagedTablePaginationTests(TestCase):
         css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
         js = (root / "core" / "static" / "core" / "js" / "policy-panels.js").read_text()
         self.assertIn("#policy-pane .policy-table-editor {", css)
-        self.assertIn("#policy-pane .policy-table-footer {\n  position: sticky;", css)
+        self.assertIn(
+            "#policy-pane .policy-table-footer,\n"
+            "#report-submission-section .policy-table-footer {\n"
+            "  position: sticky;",
+            css,
+        )
         self.assertIn("#policy-pane .policy-table-footer.is-stuck", css)
         self.assertIn(".policy-sticky-actions-marker", css)
         self.assertIn("function attachPolicyTableFooterStickyState(footer)", js)

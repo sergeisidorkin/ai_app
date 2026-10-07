@@ -2653,6 +2653,25 @@ def read_report_stored_bytes(upload, user) -> bytes:
     return data
 
 
+def report_check_result_pending(upload) -> bool:
+    """A finished check whose result file is still being saved.
+
+    The status is stored as done before the cloud copy is uploaded. While the
+    worker still owns the check, the table keeps polling instead of painting
+    an empty result cell.
+    """
+    if (getattr(upload, "check_status", "") or "") != PerformerReportUpload.CheckStatus.DONE:
+        return False
+    if (getattr(upload, "check_file_name", "") or "").strip():
+        return False
+    if not (getattr(upload, "check_claim", "") or "").strip():
+        return False
+    checked_at = getattr(upload, "checked_at", None)
+    if checked_at is None:
+        return False
+    return timezone.now() - checked_at < REPORT_CHECK_RESULT_WAIT
+
+
 def run_saved_report_check(user, upload):
     from .report_macro_runner import ReportCheckAborted, store_report_macro_progress
 
@@ -2702,6 +2721,7 @@ def run_saved_report_check(user, upload):
 
 REPORT_CHECK_HEARTBEAT_INTERVAL = 10
 REPORT_CHECK_LEASE = timedelta(seconds=120)
+REPORT_CHECK_RESULT_WAIT = timedelta(minutes=3)
 REPORT_CHECK_RECOVERY_INTERVAL = 10
 MAX_REPORT_CHECK_ATTEMPTS = 3
 _recovery_lock = threading.Lock()

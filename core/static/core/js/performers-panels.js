@@ -2357,17 +2357,20 @@
   }
 
   var REPORT_FIXED_COLUMN_WIDTHS = { checkbox: 30, stage: 105 };
-  var REPORT_CHECK_RESULT_FLOOR_REM = 40;
+  // Columns whose file names may be truncated with an ellipsis when the
+  // table does not fit. They shrink from their natural (full file name)
+  // width down to REPORT_SHRINK_COLUMN_FLOOR_PX, but never below the width
+  // of their non-truncatable content (icons, action buttons).
+  var REPORT_SHRINKABLE_COLUMNS = { upload: true, 'check-result': true };
+  var REPORT_SHRINK_COLUMN_FLOOR_PX = 150;
+  var REPORT_SHRINKABLE_CONTENT_SELECTOR =
+    '.report-file-name-link:not(.report-remarks-loaded-link), .report-check-pending-text, .report-check-error-label';
+  var REPORT_MEASURING_CLASS = 'report-submission-measuring';
   var reportColumnLayoutCache = null;
   var reportColumnLayoutQueued = false;
   var reportColumnLayoutNeedsMeasure = false;
   var reportColumnLayoutObserver = null;
   var reportColumnLayoutObserved = null;
-
-  function reportCheckResultFloorPx() {
-    var root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    return Math.ceil(REPORT_CHECK_RESULT_FLOOR_REM * root);
-  }
 
   function reportSubmissionColumnKey(col) {
     if (!col) return '';
@@ -2413,30 +2416,85 @@
     return getComputedStyle(th).display === 'none';
   }
 
+  function reportSubmissionBoxPaddingX(el) {
+    var style = getComputedStyle(el);
+    return (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  }
+
+  // Width of the content of a shrinkable cell that must never be clipped:
+  // everything except the file name / status text (icons, action buttons,
+  // separators), including the cell padding. Measured in measuring mode,
+  // when the cell is laid out at its natural width.
+  function reportSubmissionCellRigidWidth(cell) {
+    var inner = cell.querySelector(':scope > .report-check-result-inner') || cell;
+    var width = reportSubmissionBoxPaddingX(cell);
+    var gap = inner === cell ? 0 : (parseFloat(getComputedStyle(inner).columnGap) || 0);
+    var children = Array.from(inner.children).filter(function(child) {
+      if (child.classList.contains('report-file-remove-btn')) return false;
+      return getComputedStyle(child).display !== 'none';
+    });
+    children.forEach(function(child, index) {
+      var style = getComputedStyle(child);
+      var margins = (parseFloat(style.marginLeft) || 0) + (parseFloat(style.marginRight) || 0);
+      var rigid;
+      if (child.matches(REPORT_SHRINKABLE_CONTENT_SELECTOR)) {
+        var icon = child.querySelector('.bi');
+        rigid = icon ? icon.getBoundingClientRect().width : 0;
+      } else {
+        rigid = child.getBoundingClientRect().width;
+      }
+      width += rigid + margins + (index ? gap : 0);
+    });
+    return Math.ceil(width);
+  }
+
+  function reportSubmissionHeaderContentWidth(th) {
+    if (!th || typeof document.createRange !== 'function') return 0;
+    var range = document.createRange();
+    range.selectNodeContents(th);
+    var width = range.getBoundingClientRect().width;
+    range.detach && range.detach();
+    return Math.ceil(width + reportSubmissionBoxPaddingX(th));
+  }
+
+  function reportSubmissionShrinkableColumnMin(table, key, th, natural) {
+    var min = Math.max(REPORT_SHRINK_COLUMN_FLOOR_PX, reportSubmissionHeaderContentWidth(th));
+    table.querySelectorAll('tbody td[data-col="' + key + '"]').forEach(function(cell) {
+      min = Math.max(min, reportSubmissionCellRigidWidth(cell));
+    });
+    return Math.min(natural, min);
+  }
+
   function measureReportSubmissionColumns(table) {
     clearReportSubmissionAssignedWidths(table);
-    var floor = reportCheckResultFloorPx();
-    table.querySelectorAll(
-      'col.col-report-check-result, thead th.report-check-result-col, tbody td.report-check-result-cell'
-    ).forEach(function(el) {
-      assignReportSubmissionColumnWidth(el, floor);
-    });
+    table.classList.add(REPORT_MEASURING_CLASS);
     table.style.setProperty('width', 'max-content', 'important');
     table.style.setProperty('min-width', '0', 'important');
     table.style.setProperty('table-layout', 'auto', 'important');
-    return Array.from(table.querySelectorAll('colgroup col')).map(function(col) {
+    var columns = Array.from(table.querySelectorAll('colgroup col')).map(function(col) {
       var key = reportSubmissionColumnKey(col);
       var nodes = reportSubmissionColumnElements(table, key);
       var hidden = reportSubmissionColumnHidden(nodes.th);
       var fixed = REPORT_FIXED_COLUMN_WIDTHS[key] || 0;
+      var natural = 0;
       var min = 0;
       if (!hidden) {
-        if (fixed) min = fixed;
-        else if (key === 'check-result') min = floor;
-        else min = Math.floor(nodes.th.getBoundingClientRect().width);
+        if (fixed) {
+          natural = fixed;
+          min = fixed;
+        } else {
+          // ceil: a column laid out at its natural width must show the
+          // longest file name without an ellipsis.
+          natural = Math.ceil(nodes.th.getBoundingClientRect().width);
+          min = REPORT_SHRINKABLE_COLUMNS[key]
+            ? reportSubmissionShrinkableColumnMin(table, key, nodes.th, natural)
+            : natural;
+        }
       }
-      return { key: key, hidden: hidden, fixed: fixed, min: min };
+      return { key: key, hidden: hidden, fixed: fixed, natural: natural, min: min };
     });
+    table.classList.remove(REPORT_MEASURING_CLASS);
+    return columns;
   }
 
   function reportSubmissionColumnNodes(table, key) {
@@ -2450,27 +2508,66 @@
   var REPORT_FIT_SLACK_PX = 2;
   var REPORT_FIT_SLOP_PX = 48;
 
+  // Distributes the available width:
+  //  * surplus: every column at its natural width, the rest spread evenly;
+  //  * deficit: shrinkable columns give up width proportionally to their
+  //    (natural - min) room, the others keep their natural width;
+  //  * deficit beyond the shrink room (plus a small slop that absorbs
+  //    phantom scrollbars): every column at its min, the table overflows
+  //    horizontally.
   function applyReportSubmissionColumnWidths(table, columns, available) {
-    var visible = columns.filter(function(column) { return !column.hidden && column.min > 0; });
+    var visible = columns.filter(function(column) { return !column.hidden && column.natural > 0; });
     var flex = visible.filter(function(column) { return !column.fixed; });
     var fixedSum = 0;
-    var flexMin = 0;
+    var naturalSum = 0;
+    var shrinkRoom = 0;
     visible.forEach(function(column) {
-      if (column.fixed) fixedSum += column.fixed;
-      else flexMin += column.min;
+      if (column.fixed) {
+        fixedSum += column.fixed;
+      } else {
+        naturalSum += column.natural;
+        shrinkRoom += Math.max(0, column.natural - column.min);
+      }
     });
-    var delta = available - fixedSum - flexMin;
-    var fitting = delta >= -REPORT_FIT_SLOP_PX;
-    var target = fitting ? Math.max(fixedSum + flex.length, available - REPORT_FIT_SLACK_PX) : available;
-    var room = fitting ? target - fixedSum - flexMin : 0;
     var count = flex.length;
-    var base = count ? Math.trunc(room / count) : 0;
-    var remainder = count ? Math.abs(room - base * count) : 0;
+    var widths = {};
+    flex.forEach(function(column) { widths[column.key] = column.natural; });
+    var deficit = fixedSum + naturalSum - available;
+    var fitting = true;
+    var spread = 0;
+    if (deficit <= 0) {
+      var target = Math.max(fixedSum + count, available - REPORT_FIT_SLACK_PX);
+      spread = target - fixedSum - naturalSum;
+    } else {
+      var shrink = Math.min(deficit, shrinkRoom);
+      if (shrink > 0) {
+        var shrinkable = flex.filter(function(column) { return column.natural > column.min; });
+        var applied = 0;
+        shrinkable.forEach(function(column, index) {
+          var room = column.natural - column.min;
+          var share = index === shrinkable.length - 1
+            ? shrink - applied
+            : Math.floor(shrink * room / shrinkRoom);
+          share = Math.max(0, Math.min(share, room));
+          widths[column.key] = column.natural - share;
+          applied += share;
+        });
+      }
+      var rest = deficit - shrink;
+      if (rest > REPORT_FIT_SLOP_PX) {
+        fitting = false;
+        flex.forEach(function(column) { widths[column.key] = column.min; });
+      } else if (rest > 0) {
+        spread = -rest;
+      }
+    }
+    var base = count ? Math.trunc(spread / count) : 0;
+    var remainder = count ? Math.abs(spread - base * count) : 0;
     var flexIndex = 0;
     var total = 0;
     columns.forEach(function(column) {
       var nodes = reportSubmissionColumnNodes(table, column.key);
-      if (column.hidden || column.min <= 0) {
+      if (column.hidden || column.natural <= 0) {
         nodes.forEach(function(el) {
           if (!el) return;
           el.style.removeProperty('width');
@@ -2479,10 +2576,10 @@
         });
         return;
       }
-      var width = column.fixed ? column.fixed : column.min;
+      var width = column.fixed ? column.fixed : widths[column.key];
       if (!column.fixed && count) {
         width += base;
-        if (flexIndex < remainder) width += room >= 0 ? 1 : -1;
+        if (flexIndex < remainder) width += spread >= 0 ? 1 : -1;
         if (width < 1) width = 1;
         flexIndex += 1;
       }
@@ -4359,6 +4456,71 @@
     getReportSubmissionRows().forEach(function(row) {
       if (row.dataset.checkStatus === 'running') pollReportCheck(row);
     });
+  }
+
+  function initReportSubmissionFooterSticky() {
+    var footer = document.querySelector('#report-submission-section .policy-table-footer');
+    var section = footer && footer.closest('#report-submission-section');
+    if (!footer || !section || footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    var spacer = document.createElement('div');
+    spacer.className = 'report-submission-footer-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('beforebegin', spacer);
+
+    var marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    var intersectionObserver = null;
+
+    function release() {
+      if (intersectionObserver) intersectionObserver.disconnect();
+      window.removeEventListener('scroll', sync, true);
+      window.removeEventListener('resize', sync);
+    }
+
+    function sync() {
+      if (!footer.isConnected) {
+        release();
+        return;
+      }
+      var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      var sectionRect = section.getBoundingClientRect();
+      var markerRect = marker.getBoundingClientRect();
+      var sectionVisible = sectionRect.top < viewportHeight && sectionRect.bottom > 0;
+      var footerBelowFold = markerRect.top >= viewportHeight - 1;
+      var stuck = sectionVisible && footerBelowFold;
+      if (stuck) {
+        if (!footer.classList.contains('is-stuck')) {
+          var styles = window.getComputedStyle(footer);
+          var blockHeight = footer.offsetHeight
+            + (parseFloat(styles.marginTop) || 0)
+            + (parseFloat(styles.marginBottom) || 0);
+          spacer.style.height = blockHeight + 'px';
+          footer.classList.add('is-stuck');
+        }
+        var pinnedRect = section.getBoundingClientRect();
+        footer.style.left = pinnedRect.left + 'px';
+        footer.style.width = pinnedRect.width + 'px';
+      } else if (footer.classList.contains('is-stuck')) {
+        footer.classList.remove('is-stuck');
+        footer.style.left = '';
+        footer.style.width = '';
+        spacer.style.height = '0px';
+      }
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
+      intersectionObserver.observe(section);
+      intersectionObserver.observe(marker);
+    }
+    window.addEventListener('scroll', sync, true);
+    window.addEventListener('resize', sync);
+    window.requestAnimationFrame(sync);
   }
 
   function reportCheckPendingText(data) {
@@ -6567,6 +6729,7 @@
     applyRowGrouping(root.querySelector('#report-submission-section'));
     applyReportVersionCollapsedState();
     initReportCheckPolling();
+    initReportSubmissionFooterSticky();
     updateReportSubmissionMasterState();
     updateRowHighlight('report-select');
     try { delete window.__tableSel['report-select']; } catch(_) {}
@@ -6906,6 +7069,7 @@
     restoreReportRemarksChannels();
     initReportLocalSource();
     initReportCheckPolling();
+    initReportSubmissionFooterSticky();
     var root = pane();
     if (root) {
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));

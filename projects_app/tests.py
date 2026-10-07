@@ -14401,6 +14401,68 @@ class ReportMacroRunnerTests(TestCase):
         self.assertEqual(count_comments(result), 0)
         self.assertEqual(count_comments(commented), 1)
 
+    def test_combined_rule_clears_comments_once_before_skill_and_macros(self):
+        rule = ReportCheckRule.objects.get(lines__macro=self.macro)
+        rule.clear_comments = True
+        rule.save(update_fields=["clear_comments"])
+        add_check_line(
+            rule,
+            make_skill_catalog("report-final-check", "Qwen/Qwen3.5-27B"),
+            position=2,
+        )
+        source = _report_docx_bytes("Падеж нарушен. В отчёте ошибка.")
+        text, _spans = extract_document_text(source)
+        start = text.index("Падеж")
+        commented = insert_comments(source, [{
+            "start": start,
+            "end": start + len("Падеж"),
+            "message": "Старое примечание",
+            "author": "Редактор",
+        }])
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+
+        def dsh_result(_prompt, *, cwd, **kwargs):
+            payload = json.loads((Path(cwd) / "input" / "chunk.json").read_text(encoding="utf-8"))
+            block = next(item for item in payload["blocks"] if "Падеж" in item["text"])
+            start = block["slice_start"] + block["text"].index("Падеж")
+            return json.dumps({
+                "schema_version": 1,
+                "chunk_id": payload["chunk_id"],
+                "findings": [{
+                    "rule_id": "case-agreement",
+                    "anchor_id": block["anchor_id"],
+                    "start": start,
+                    "end": start + len("Падеж"),
+                    "quote": "Падеж",
+                    "explanation": "Проверка падежа.",
+                    "replacement": "Падеж исправлен",
+                }],
+            }, ensure_ascii=False)
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=dsh_result,
+        ):
+            result = apply_report_checks(upload, commented)
+
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 2)
+        self.assertEqual(count_comments(result), 2)
+        with zipfile.ZipFile(BytesIO(result)) as archive:
+            comments_xml = archive.read("word/comments.xml").decode("utf-8")
+        self.assertIn("Проверка падежа.", comments_xml)
+        self.assertIn("Найдено", comments_xml)
+        self.assertNotIn("Старое примечание", comments_xml)
+
     def test_chunk_skill_does_not_mark_unrendered_finding_as_placed(self):
         from projects_app.models import ReportCheckFinding, ReportCheckRun
 
@@ -15368,6 +15430,52 @@ console.log("continue ok")
         self.assertEqual(status.json()["check_status"], "running")
         self.assertEqual(status.json()["check_progress"], "")
         self.assertEqual(mocked_start.call_count, 1)
+
+    def test_check_status_waits_for_the_result_file(self):
+        from datetime import timedelta
+
+        from projects_app.report_review import sync_review_after_check
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=3,
+            checked_at=timezone.now(),
+            check_claim="worker",
+        )
+        sync_review_after_check(upload)
+        self.client.force_login(self.user)
+
+        pending = self.client.get(reverse("report_check_status", args=[upload.pk]))
+        self.assertEqual(pending.status_code, 200)
+        pending_payload = pending.json()
+        self.assertEqual(pending_payload["check_status"], "running")
+        self.assertEqual(pending_payload["check_progress"], "Сохранение результата")
+        self.assertEqual(pending_payload["check_file_name"], "")
+        self.assertEqual(pending_payload["workflow_status"], "На проверке ИИ")
+        self.assertNotIn("review_row_html", pending_payload)
+
+        upload.check_file_name = "report_ИИ1.docx"
+        upload.save(update_fields=["check_file_name"])
+        ready = self.client.get(reverse("report_check_status", args=[upload.pk]))
+        ready_payload = ready.json()
+        self.assertEqual(ready_payload["check_status"], "done")
+        self.assertEqual(ready_payload["check_file_name"], "report_ИИ1.docx")
+        self.assertIn(str(upload.pk), ready_payload["check_download_url"])
+        self.assertIn("В работе после ИИ", ready_payload["review_row_html"])
+
+        upload.check_file_name = ""
+        upload.checked_at = timezone.now() - timedelta(minutes=5)
+        upload.save(update_fields=["check_file_name", "checked_at"])
+        stalled = self.client.get(reverse("report_check_status", args=[upload.pk]))
+        self.assertEqual(stalled.json()["check_status"], "done")
+        self.assertIn("review_row_html", stalled.json())
 
     @patch("projects_app.report_submission._start_report_check_background")
     def test_resume_restarts_failed_check_without_changing_send_time(self, mocked_start):

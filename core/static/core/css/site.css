@@ -1643,7 +1643,8 @@ body .second-sidebar + .flex-grow-1 {
   margin-bottom: 0;
 }
 
-#policy-pane .policy-table-footer {
+#policy-pane .policy-table-footer,
+#report-submission-section .policy-table-footer {
   position: sticky;
   bottom: 0;
   z-index: 20;
@@ -1653,17 +1654,36 @@ body .second-sidebar + .flex-grow-1 {
   border-top: 1px solid transparent;
 }
 
-#policy-pane .policy-table-footer.is-stuck {
+#policy-pane .policy-table-footer.is-stuck,
+#report-submission-section .policy-table-footer.is-stuck {
   background: #fff;
   border-top-color: #e9ecef;
 }
 
-#policy-pane .policy-sticky-actions-marker {
+#policy-pane .policy-sticky-actions-marker,
+#report-submission-section .policy-sticky-actions-marker {
   display: block;
   height: 1px;
   margin-top: -1px;
   visibility: hidden;
   pointer-events: none;
+}
+
+/* The reports page scrolls inside a horizontal overflow box, so sticky
+   cannot pin the footer to the viewport. While the table is on screen and
+   its natural footer is below the fold, the bar is fixed to the bottom. */
+#report-submission-section .report-submission-footer-spacer {
+  display: block;
+  height: 0;
+  pointer-events: none;
+}
+
+#report-submission-section .policy-table-footer.is-stuck {
+  position: fixed;
+  bottom: 0;
+  z-index: 30;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 .policy-table-footer-actions {
@@ -12549,11 +12569,6 @@ body.proposal-service-text-modal-open {
   text-overflow: clip !important;
 }
 
-#report-submission-section .performers-table thead th.report-check-result-col,
-#report-submission-section .performers-table tbody td.report-check-result-cell {
-  min-width: 40rem !important;
-  max-width: none !important;
-}
 #report-submission-section .performers-table thead th.report-check-result-col {
   white-space: nowrap !important;
   overflow: visible !important;
@@ -13280,9 +13295,13 @@ body.proposal-service-text-modal-open {
   overflow: visible;
   max-width: none;
 }
-/* Имя файла не должно заходить на соседний столбец «Верс.». */
+/* Имя файла не должно заходить на соседний столбец «Верс.». Ширину столбцов
+   «Загрузить» и «Результаты проверки» назначает JS (layoutReportSubmissionColumns):
+   при недостатке места они ужимаются, а имя файла усекается троеточием. */
 #report-submission-section #report-submission-table thead th[data-col="upload"],
-#report-submission-section #report-submission-table tbody td.report-upload-cell,
+#report-submission-section #report-submission-table tbody td.report-upload-cell {
+  overflow: hidden !important;
+}
 #report-submission-section #report-submission-table thead th[data-col="version"],
 #report-submission-section #report-submission-table tbody td.report-version-cell {
   width: max-content !important;
@@ -13290,11 +13309,22 @@ body.proposal-service-text-modal-open {
   max-width: none !important;
   overflow: hidden !important;
 }
-#report-submission-table td.report-upload-cell .report-file-name-link,
-#report-submission-table td.report-upload-cell .report-file-name-text {
-  max-width: none;
+/* Ссылка на файл делит ячейку с иконкой загрузки/скачивания (или её
+   заглушкой) шириной --report-upload-icon-size и отступом .35rem; процент
+   считается от content-box ячейки, поэтому резерв справа под крестик
+   (padding-right у .report-file-remove-host) сохраняется. */
+#report-submission-table td.report-upload-cell > .report-file-name-link {
+  max-width: calc(100% - var(--report-upload-icon-size) - .35rem);
+  min-width: 0;
   overflow: hidden;
-  text-overflow: clip;
+  white-space: nowrap;
+}
+#report-submission-table td.report-upload-cell > .report-file-name-link > .report-file-name-text {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 #report-submission-table td.report-file-remove-host {
@@ -13341,6 +13371,33 @@ body.proposal-service-text-modal-open {
 #report-submission-table .report-file-name-text {
   overflow: visible;
   text-overflow: clip;
+}
+/* Режим измерения (класс выставляет JS на время замера естественной ширины
+   столбцов): содержимое ячеек раскладывается без усечения, чтобы столбцы
+   «Загрузить» и «Результаты проверки» получили ширину полного имени файла. */
+#report-submission-table.report-submission-measuring .report-check-result-inner {
+  display: inline-flex;
+  width: max-content;
+  min-width: 0;
+  max-width: none;
+}
+#report-submission-table.report-submission-measuring .report-check-result-inner > .report-file-name-link,
+#report-submission-table.report-submission-measuring .report-check-result-inner > .report-check-pending-text,
+#report-submission-table.report-submission-measuring .report-check-result-inner > .js-report-check-badge,
+#report-submission-table.report-submission-measuring .report-check-result-inner > .report-check-error-label {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+#report-submission-table.report-submission-measuring .report-file-name-text,
+#report-submission-table.report-submission-measuring .report-check-result-inner > .report-check-pending-text,
+#report-submission-table.report-submission-measuring .report-check-result-inner > .js-report-check-badge,
+#report-submission-table.report-submission-measuring .report-check-error-text {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+#report-submission-table.report-submission-measuring td.report-upload-cell > .report-file-name-link {
+  max-width: none;
 }
 
 #report-submission-section .report-source-group {
