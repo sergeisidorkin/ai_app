@@ -138,7 +138,7 @@ def is_chunk_skill(skill_name: str) -> bool:
     return load_skill_manifest(skill_name) is not None
 
 
-def run_chunked_skill_lines(upload, file_bytes: bytes, lines: list) -> bytes:
+def run_chunked_skill_lines(upload, file_bytes: bytes, lines: list, *, skip_clear_rule_ids=()) -> bytes:
     from .report_macro_runner import (
         ReportCheckAborted,
         store_report_macro_progress,
@@ -160,7 +160,11 @@ def run_chunked_skill_lines(upload, file_bytes: bytes, lines: list) -> bytes:
             )
         manifests.append(manifest)
 
-    clear_comments = any(bool(line.rule.clear_comments) for line in lines)
+    skipped_clear_rules = set(skip_clear_rule_ids or ())
+    clear_comments = any(
+        bool(line.rule.clear_comments) and line.rule_id not in skipped_clear_rules
+        for line in lines
+    )
     base_bytes = strip_comments(file_bytes) if clear_comments else file_bytes
     source_sha256 = hashlib.sha256(base_bytes).hexdigest()
     config_payload = [

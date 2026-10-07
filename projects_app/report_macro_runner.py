@@ -145,19 +145,42 @@ def list_macros_for_upload(upload: PerformerReportUpload) -> list[ReportMacro]:
     return macros
 
 
-def matching_macro_rules_clear_comments(upload: PerformerReportUpload) -> bool:
+def _rule_has_participating_kind(rule, kind: str) -> bool:
+    return any(
+        report_line_participates(line) and _line_is_kind(line, kind)
+        for line in rule.lines.all()
+    )
+
+
+def combined_clear_rule_ids(rules) -> set[int]:
+    """Rows that run macros and a skill together and ask to clear comments.
+
+    Those comments are removed once, before either kind starts. The macro pass
+    must not clear them again, or it drops the skill findings.
+    """
+    ids: set[int] = set()
+    for rule in rules:
+        if not getattr(rule, "clear_comments", False) or not getattr(rule, "pk", None):
+            continue
+        if (
+            _rule_has_participating_kind(rule, ReportCheckRule.CheckType.MACRO)
+            and _rule_has_participating_kind(rule, ReportCheckRule.CheckType.SKILL)
+        ):
+            ids.add(rule.pk)
+    return ids
+
+
+def matching_macro_rules_clear_comments(upload: PerformerReportUpload, skip_rule_ids=()) -> bool:
+    skipped = set(skip_rule_ids or ())
     rules = (
         ReportCheckRule.objects
         .prefetch_related("lines")
         .order_by("position", "id")
     )
     for rule in matching_check_rules(upload, rules):
-        if not rule.clear_comments:
+        if rule.pk in skipped or not rule.clear_comments:
             continue
-        if any(
-            report_line_participates(line) and _line_is_kind(line, ReportCheckRule.CheckType.MACRO)
-            for line in rule.lines.all()
-        ):
+        if _rule_has_participating_kind(rule, ReportCheckRule.CheckType.MACRO):
             return True
     return False
 
@@ -225,7 +248,12 @@ def _require_report_check_owner(upload: PerformerReportUpload) -> None:
         raise ReportCheckAborted()
 
 
-def apply_report_macro_checks(upload: PerformerReportUpload, file_bytes: bytes) -> bytes:
+def apply_report_macro_checks(
+    upload: PerformerReportUpload,
+    file_bytes: bytes,
+    *,
+    skip_clear_rule_ids=(),
+) -> bytes:
     macros = list_macros_for_upload(upload)
     if not macros:
         return file_bytes
@@ -242,7 +270,7 @@ def apply_report_macro_checks(upload: PerformerReportUpload, file_bytes: bytes) 
     total = len(macros)
     _publish_check_progress(upload, 0, total, "Подготовка документа")
 
-    if matching_macro_rules_clear_comments(upload):
+    if matching_macro_rules_clear_comments(upload, skip_clear_rule_ids):
         try:
             file_bytes = strip_comments(file_bytes)
         except DocxCommentError as exc:

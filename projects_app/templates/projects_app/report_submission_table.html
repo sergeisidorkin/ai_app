@@ -84,6 +84,12 @@
           </button>
         </div>
       </div>
+    {% else %}
+      <div class="policy-table-footer-actions" id="report-submission-actions"></div>
+    {% endif %}
+    {% include "policy_app/_policy_pagination.html" with pagination_target="#report-submission-table-block" page_size_id="report-submission" page_obj=reports_page_obj paginator=reports_paginator policy_pagination_pages=reports_pagination_pages policy_pagination_previous_url=reports_pagination_previous_url policy_pagination_next_url=reports_pagination_next_url policy_pagination_start=reports_pagination_start policy_pagination_end=reports_pagination_end policy_page_size=reports_page_size policy_page_size_options=reports_page_size_options policy_page_size_url=reports_page_size_url %}
+  </div>
+  {% if can_send_reports %}
       <div class="modal fade" id="report-remarks-modal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog">
           <div class="modal-content">
@@ -143,9 +149,5 @@
           </div>
         </div>
       </div>
-    {% else %}
-      <div class="policy-table-footer-actions" id="report-submission-actions"></div>
-    {% endif %}
-    {% include "policy_app/_policy_pagination.html" with pagination_target="#report-submission-table-block" page_size_id="report-submission" page_obj=reports_page_obj paginator=reports_paginator policy_pagination_pages=reports_pagination_pages policy_pagination_previous_url=reports_pagination_previous_url policy_pagination_next_url=reports_pagination_next_url policy_pagination_start=reports_pagination_start policy_pagination_end=reports_pagination_end policy_page_size=reports_page_size policy_page_size_options=reports_page_size_options policy_page_size_url=reports_page_size_url %}
-  </div>
+  {% endif %}
 </div>

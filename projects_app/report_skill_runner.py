@@ -24,6 +24,7 @@ from .report_chunk_skill_runner import run_chunked_skill_lines
 from .report_macro_runner import (
     ReportCheckAborted,
     apply_report_macro_checks,
+    combined_clear_rule_ids,
     list_macros_for_upload,
     matching_check_rules,
     recount_report_findings,
@@ -116,8 +117,28 @@ def apply_report_checks(
         "",
     ):
         raise ReportCheckAborted()
+    source_bytes = file_bytes
+    skip_clear_rule_ids: set[int] = set()
+    combined_ids = combined_clear_rule_ids(skill_rules)
+    if combined_ids and Path(upload.file_name or "").suffix.lower() == ".docx":
+        try:
+            file_bytes = strip_comments(file_bytes)
+        except DocxCommentError as exc:
+            store_report_check_status(
+                upload,
+                PerformerReportUpload.CheckStatus.ERROR,
+                0,
+                str(exc),
+            )
+            return source_bytes
+        skip_clear_rule_ids = combined_ids
     try:
-        processed = run_report_skill_rules(upload, file_bytes, skill_rules)
+        processed = run_report_skill_rules(
+            upload,
+            file_bytes,
+            skill_rules,
+            skip_clear_rule_ids=skip_clear_rule_ids,
+        )
     except Exception as exc:
         if not isinstance(exc, (DshRunError, ReportSkillRunError)):
             log.exception("Report skill check failed for upload %s", upload.pk)
@@ -127,10 +148,14 @@ def apply_report_checks(
             0,
             str(exc),
         )
-        return file_bytes
+        return source_bytes
 
     if list_macros_for_upload(upload):
-        return apply_report_macro_checks(upload, processed)
+        return apply_report_macro_checks(
+            upload,
+            processed,
+            skip_clear_rule_ids=skip_clear_rule_ids,
+        )
 
     finding_count = 0
     by_author: dict[str, int] = {}
@@ -166,8 +191,13 @@ def _require_processing_mode(macro) -> str:
     return mode
 
 
-def _run_chunk_mode(upload, file_bytes: bytes, lines: list) -> bytes:
-    return run_chunked_skill_lines(upload, file_bytes, lines)
+def _run_chunk_mode(upload, file_bytes: bytes, lines: list, *, skip_clear_rule_ids=()) -> bytes:
+    return run_chunked_skill_lines(
+        upload,
+        file_bytes,
+        lines,
+        skip_clear_rule_ids=skip_clear_rule_ids,
+    )
 
 
 def _run_agent_mode(
@@ -179,6 +209,7 @@ def _run_agent_mode(
     index: int,
     input_name: str,
     extension: str,
+    skip_clear_rule_ids=(),
 ) -> bytes:
     macro = line.macro
     skill_name = (macro.skill_name or "").strip()
@@ -191,7 +222,11 @@ def _run_agent_mode(
     input_dir.mkdir(parents=True, exist_ok=False)
     output_dir.mkdir(parents=True, exist_ok=False)
     input_bytes = file_bytes
-    if line.rule.clear_comments and extension == ".docx":
+    if (
+        line.rule.clear_comments
+        and line.rule_id not in set(skip_clear_rule_ids or ())
+        and extension == ".docx"
+    ):
         input_bytes = strip_comments(file_bytes)
     (input_dir / input_name).write_bytes(input_bytes)
     profile = _prepare_model_runtime(
@@ -233,6 +268,8 @@ def run_report_skill_rules(
     upload: PerformerReportUpload,
     file_bytes: bytes,
     rules: list[ReportCheckRule] | None = None,
+    *,
+    skip_clear_rule_ids=(),
 ) -> bytes:
     rules = rules if rules is not None else list_skill_rules_for_upload(upload)
     if not rules:
@@ -268,6 +305,7 @@ def run_report_skill_rules(
                     upload,
                     current_bytes,
                     pending_chunk_lines,
+                    skip_clear_rule_ids=skip_clear_rule_ids,
                 )
                 pending_chunk_lines = []
             current_bytes = PROCESSING_HANDLERS[mode](
@@ -278,12 +316,14 @@ def run_report_skill_rules(
                 index=index,
                 input_name=input_name,
                 extension=extension,
+                skip_clear_rule_ids=skip_clear_rule_ids,
             )
         if pending_chunk_lines:
             current_bytes = PROCESSING_HANDLERS[ReportMacro.ProcessingMode.CHUNKS](
                 upload,
                 current_bytes,
                 pending_chunk_lines,
+                skip_clear_rule_ids=skip_clear_rule_ids,
             )
         return current_bytes
     except OSError as exc:

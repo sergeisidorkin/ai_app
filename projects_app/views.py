@@ -92,6 +92,8 @@ from .report_submission import (
     report_slot_row_id,
     recover_abandoned_report_checks,
     report_check_error_reason,
+    report_check_result_pending,
+    REPORT_STATUS_SENT,
     resolve_report_upload_source,
     accept_report_review_without_remarks,
     resume_report_check,
@@ -4972,6 +4974,16 @@ def report_check_status(request, pk):
         recover_abandoned_report_checks(upload_id=upload.pk)
         upload.refresh_from_db()
     payload = _report_upload_fallback_payload(upload, viewer=request.user)
+    if report_check_result_pending(upload):
+        payload["check_status"] = PerformerReportUpload.CheckStatus.RUNNING
+        payload["check_progress"] = "Сохранение результата"
+        payload["check_file_name"] = ""
+        payload["check_download_url"] = ""
+        payload["workflow_status"] = REPORT_STATUS_SENT
+        payload["workflow_status_class"] = report_workflow_status_class(REPORT_STATUS_SENT)
+        payload["status_date"] = format_report_status_date(upload, REPORT_STATUS_SENT)
+        payload["finding_count_display"] = "—"
+        return JsonResponse(payload)
     if upload.check_file_name:
         payload["check_download_url"] = reverse(
             "report_check_file_download",
