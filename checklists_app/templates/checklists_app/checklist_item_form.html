@@ -24,7 +24,7 @@
     <div class="mb-3">
       <label class="form-label">Тип запроса</label>
       <select name="item_type" id="chk-item-type-select"
-              class="form-select{% if edit_mode or forced_type %} bg-light text-muted{% endif %}"
+              class="form-select{% if edit_mode or forced_type %} readonly-field{% endif %}"
               {% if edit_mode or forced_type %}disabled{% endif %}>
         <option value="basic" {% if item_type == "basic" or not item_type %}selected{% endif %}>Основной</option>
         <option value="additional" {% if item_type == "additional" %}selected{% endif %}>Дополнительный</option>
@@ -37,14 +37,14 @@
     <div class="row mb-3">
       <div class="col-md-6">
         <label class="form-label">Код</label>
-        <input type="text" id="chk-item-code-display" class="form-control bg-light text-muted"
-               value="{{ code }}" required disabled>
+        <input type="text" id="chk-item-code-display" class="form-control readonly-field"
+               value="{{ code }}" required disabled tabindex="-1">
         <input type="hidden" name="code" id="chk-item-code" value="{{ code }}">
       </div>
       <div class="col-md-6">
         <label class="form-label">№</label>
         <input type="number" {% if not lock_number %}name="number"{% endif %} id="chk-item-number"
-               class="form-control{% if lock_number %} bg-light text-muted{% endif %}"
+               class="form-control{% if lock_number %} readonly-field{% endif %}"
                value="{{ next_number }}" min="1" required
                {% if lock_number %}disabled{% endif %}>
         {% if lock_number %}
@@ -57,7 +57,7 @@
     <div class="mb-3">
       <label class="form-label">Краткое наименование</label>
       <input type="text" {% if not lock_number %}name="short_name"{% endif %}
-             class="form-control{% if lock_number %} bg-light text-muted{% endif %}"
+             class="form-control{% if lock_number %} readonly-field{% endif %}"
              value="{{ short_name|default:'' }}" placeholder="Краткое наименование"
              {% if lock_number %}disabled{% endif %}>
       {% if lock_number %}<input type="hidden" name="short_name" value="{{ short_name|default:'' }}">{% endif %}

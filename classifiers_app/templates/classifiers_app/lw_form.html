@@ -23,8 +23,7 @@
     </div>
     <div class="mb-3">
       <label class="form-label">Код</label>
-      <input type="text" class="form-control" id="lw-country-code" readonly tabindex="-1"
-             style="background-color:#f8f9fa; color:#6c757d;"
+      <input type="text" class="form-control readonly-field" id="lw-country-code" readonly tabindex="-1"
              value="{% if lw_item %}{{ lw_item.country.code }}{% endif %}">
     </div>
     <div class="mb-3">
@@ -38,8 +37,7 @@
     </div>
     <div class="mb-3">
       <label class="form-label">Код</label>
-      <input type="text" class="form-control" id="lw-region-code" readonly tabindex="-1"
-             style="background-color:#f8f9fa; color:#6c757d;"
+      <input type="text" class="form-control readonly-field" id="lw-region-code" readonly tabindex="-1"
              value="{% if lw_item %}{{ lw_item.region.region_code }}{% endif %}">
     </div>
     <div class="mb-3">

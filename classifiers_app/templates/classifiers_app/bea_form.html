@@ -70,10 +70,9 @@
         <input
           type="text"
           id="id_registration_region_code_display"
-          class="form-control"
+          class="form-control readonly-field"
           readonly
           tabindex="-1"
-          style="background-color:#f8f9fa; color:#6c757d;"
           value="">
       </div>
       <div class="col-md-3">
@@ -116,20 +115,18 @@
         <label class="form-label">Запись</label>
         <input
           type="text"
-          class="form-control"
+          class="form-control readonly-field"
           readonly
           tabindex="-1"
-          style="background-color:#f8f9fa; color:#6c757d;"
           value="{% if form.instance and form.instance.record_date %}{{ form.instance.record_date|date:'d.m.Y' }}{% endif %}">
       </div>
       <div class="col-md-6">
         <label class="form-label">Автор записи</label>
         <input
           type="text"
-          class="form-control"
+          class="form-control readonly-field"
           readonly
           tabindex="-1"
-          style="background-color:#f8f9fa; color:#6c757d;"
           value="{% if form.instance and form.instance.record_author %}{{ form.instance.record_author }}{% endif %}">
       </div>
     </div>

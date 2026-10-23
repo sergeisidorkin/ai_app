@@ -14,4 +14,5 @@ urlpatterns = [
     path("org/<int:pk>/delete/", views.org_delete, name="org_delete"),
     path("org/<int:pk>/move-up/", views.org_move_up, name="org_move_up"),
     path("org/<int:pk>/move-down/", views.org_move_down, name="org_move_down"),
+    path("mode/<int:pk>/edit/", views.expertise_mode_form_edit, name="expertise_mode_form_edit"),
 ]

@@ -1,0 +1,234 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if action == "create" %}Добавить строку{% else %}Изменить строку{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    {% if action == "create" %}
+      hx-post="{% url 'service_block_classifier_form_create' %}"
+    {% else %}
+      hx-post="{% url 'service_block_classifier_form_edit' classifier.pk %}"
+    {% endif %}
+    hx-target="#policy-modal .modal-content"
+    hx-swap="innerHTML"
+    id="sbc-form">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Код</label>
+      {{ form.code }}
+    </div>
+    <div class="row mb-3">
+      <div class="col-6">
+        <label class="form-label">Краткое имя EN</label>
+        {{ form.short_name }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Краткое имя RU</label>
+        {{ form.short_name_ru }}
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Тип учета</label>
+      {{ form.accounting_type }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="sbc-expertise-select">Направление экспертизы</label>
+      {{ form.expertise_dir }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Исполнитель</label>
+      <div id="sbc-specialties-container">
+        {% for rs in ranked_specialties %}
+        <div class="d-flex align-items-center gap-2 mb-2 sbc-spec-row">
+          <span class="badge rounded-circle d-flex align-items-center justify-content-center"
+                style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ rs.rank }}</span>
+          <select name="specialty_id" class="form-select">
+            <option value="">---------</option>
+            {% for opt in specialty_options %}
+              {% if selected_expertise_id and opt.expertise_dir == selected_expertise_id %}
+              <option value="{{ opt.id }}" {% if opt.id == rs.specialty_id %}selected{% endif %}>{{ opt.label }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <button type="button" class="btn btn-sm sbc-spec-remove" title="Удалить"
+                  style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;">&times;</button>
+        </div>
+        {% empty %}
+        <div class="d-flex align-items-center gap-2 mb-2 sbc-spec-row">
+          <span class="badge rounded-circle d-flex align-items-center justify-content-center"
+                style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">1</span>
+          <select name="specialty_id" class="form-select">
+            <option value="">---------</option>
+            {% for opt in specialty_options %}
+              {% if selected_expertise_id and opt.expertise_dir == selected_expertise_id %}
+              <option value="{{ opt.id }}">{{ opt.label }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <button type="button" class="btn btn-sm sbc-spec-remove" title="Удалить"
+                  style="flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" id="sbc-add-specialty" class="btn btn-sm mt-1"
+              style="border:1px solid #ced4da; background-color:#f8f9fa; color:#495057; font-size:1rem; padding:.375rem .75rem; margin-left:26px;">
+        <i class="bi bi-plus-circle me-2"></i>Добавить специальность
+      </button>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="sbc-department">Подразделение</label>
+      {{ form.department }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="sbc-organization">Организация</label>
+      {{ form.organization }}
+    </div>
+
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">
+        Проверьте введённые данные.
+        <ul class="mb-0 mt-2">
+          {% for field, errors in form.errors.items %}
+            {% for error in errors %}
+              <li>{{ error }}</li>
+            {% endfor %}
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>
+
+<script>
+(function () {
+  var specContainer = document.getElementById('sbc-specialties-container');
+  var addSpecBtn = document.getElementById('sbc-add-specialty');
+  var expertiseSelect = document.getElementById('sbc-expertise-select');
+  var specOptions = {{ specialty_options_json|safe }};
+  var badgeStyle = 'width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:SF Pro Text,system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;';
+
+  function expertiseId() {
+    return expertiseSelect ? String(expertiseSelect.value || '') : '';
+  }
+
+  function matchingOptions() {
+    var directionId = expertiseId();
+    if (!directionId) return [];
+    return specOptions.filter(function (opt) {
+      return String(opt.expertise_dir || '') === directionId;
+    });
+  }
+
+  function fillSpecialtySelect(select, keepValue) {
+    var current = keepValue ? String(select.value || '') : '';
+    var options = matchingOptions();
+    var allowed = false;
+    select.innerHTML = '';
+    var blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = '---------';
+    select.appendChild(blank);
+    options.forEach(function (opt) {
+      var option = document.createElement('option');
+      option.value = String(opt.id);
+      option.textContent = opt.label || '';
+      if (current && option.value === current) allowed = true;
+      select.appendChild(option);
+    });
+    select.value = allowed ? current : '';
+  }
+
+  function refreshSpecialtySelects(keepValues) {
+    if (!specContainer) return;
+    specContainer.querySelectorAll('select[name="specialty_id"]').forEach(function (select) {
+      fillSpecialtySelect(select, keepValues);
+    });
+    if (addSpecBtn) addSpecBtn.disabled = !expertiseId();
+  }
+
+  function renumberRows() {
+    if (!specContainer) return;
+    specContainer.querySelectorAll('.sbc-spec-row').forEach(function (row, idx) {
+      var badge = row.querySelector('.badge');
+      if (badge) badge.textContent = idx + 1;
+    });
+  }
+
+  if (specContainer) {
+    specContainer.addEventListener('click', function (event) {
+      var button = event.target.closest('.sbc-spec-remove');
+      if (!button) return;
+      var rows = specContainer.querySelectorAll('.sbc-spec-row');
+      if (rows.length <= 1) {
+        var select = button.parentElement.querySelector('select');
+        if (select) select.value = '';
+        return;
+      }
+      button.parentElement.remove();
+      renumberRows();
+    });
+  }
+
+  if (addSpecBtn && specContainer) {
+    addSpecBtn.addEventListener('click', function () {
+      if (!expertiseId()) return;
+      var num = specContainer.querySelectorAll('.sbc-spec-row').length + 1;
+      var div = document.createElement('div');
+      div.className = 'd-flex align-items-center gap-2 mb-2 sbc-spec-row';
+      var badge = document.createElement('span');
+      badge.className = 'badge rounded-circle d-flex align-items-center justify-content-center';
+      badge.style.cssText = badgeStyle;
+      badge.textContent = String(num);
+      var select = document.createElement('select');
+      select.name = 'specialty_id';
+      select.className = 'form-select';
+      fillSpecialtySelect(select, false);
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn-sm sbc-spec-remove';
+      remove.title = 'Удалить';
+      remove.style.cssText = 'flex-shrink:0; color:#adb5bd; border:none; font-size:1.25rem; line-height:1; padding:0 .25rem;';
+      remove.textContent = '×';
+      div.appendChild(badge);
+      div.appendChild(select);
+      div.appendChild(remove);
+      specContainer.appendChild(div);
+    });
+  }
+
+  if (expertiseSelect) {
+    expertiseSelect.addEventListener('change', function () {
+      refreshSpecialtySelects(true);
+    });
+  }
+  refreshSpecialtySelects(true);
+})();
+</script>
+
+<script>
+(function () {
+  // Подразделение и организация заблокированы и берутся из выбранной экспертизы
+  // (таблица «Направления экспертизы» — единственный источник этих значений).
+  var expertise = document.getElementById('sbc-expertise-select');
+  var department = document.getElementById('sbc-department');
+  var organization = document.getElementById('sbc-organization');
+  if (!expertise || !department || !organization) return;
+
+  function syncFromExpertise() {
+    var option = expertise.options[expertise.selectedIndex];
+    department.value = (option && option.getAttribute('data-department')) || '';
+    organization.value = (option && option.getAttribute('data-organization')) || '';
+  }
+
+  expertise.addEventListener('change', syncFromExpertise);
+  syncFromExpertise();
+})();
+</script>

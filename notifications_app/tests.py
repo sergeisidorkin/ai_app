@@ -32,7 +32,7 @@ from notifications_app.services import (
     normalize_delivery_channels,
     process_participation_notification,
 )
-from policy_app.models import DEPARTMENT_HEAD_GROUP, LAWYER_GROUP, Product
+from policy_app.models import DEPARTMENT_HEAD_GROUP, ExpertiseDirection, LAWYER_GROUP, Product, TypicalSection
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from users_app.forms import FREELANCER_LABEL
 from users_app.models import Employee
@@ -807,11 +807,27 @@ class ParticipationNotificationContractPrefillTests(TestCase):
             nextcloud_username=f"ncstaff-{self.expert_user.pk}",
             nextcloud_email=self.expert_user.email,
         )
+        self.project_group.is_management_company = True
+        self.project_group.save(update_fields=["is_management_company"])
+        expertise = ExpertiseDirection.objects.create(name="Горное дело", short_name="ГД", position=1)
         direction = OrgUnit.objects.create(
             company=self.project_group,
             department_name="Горное дело",
             unit_type="expertise",
+            level=2,
+            expertise=expertise,
         )
+        product = Product.objects.create(short_name="DD", name_en="DD", name_ru="ДД", position=1)
+        self.performer.typical_section = TypicalSection.objects.create(
+            product=product,
+            code="GEO",
+            short_name="GEO",
+            name_en="Geology",
+            name_ru="Геология",
+            expertise_dir=expertise,
+            position=1,
+        )
+        self.performer.save(update_fields=["typical_section"])
         ExpertProfile.objects.create(
             employee=self.employee,
             expertise_direction=direction,

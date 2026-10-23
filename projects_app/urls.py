@@ -10,6 +10,7 @@ urlpatterns = [
     path("projects/registration/<int:pk>/launch/", views.registration_launch, name="registration_launch"),
     path("projects/registration/<int:pk>/status/", views.registration_status_update, name="registration_status_update"),
     path("projects/registration/<int:pk>/manager/", views.registration_manager_update, name="registration_manager_update"),
+    path("projects/registration/<int:pk>/coordinator/", views.registration_coordinator_update, name="registration_coordinator_update"),
     path("projects/registration/<int:pk>/deadline/", views.registration_deadline_update, name="registration_deadline_update"),
     path("projects/registration/<int:pk>/evaluation-date/", views.registration_evaluation_date_update, name="registration_evaluation_date_update"),
     path("projects/registration/<int:pk>/move-up/", views.registration_move_up, name="registration_move_up"),
@@ -91,9 +92,15 @@ urlpatterns = [
     path("projects/performers/contract-project-target-folder/", views.contract_project_target_folder_load, name="contract_project_target_folder_load"),
     path("projects/performers/contract-project-target-folder/save/", views.contract_project_target_folder_save, name="contract_project_target_folder_save"),
     path("projects/performers/contract-docx-source/<int:pk>/", views.contract_onlyoffice_docx_source, name="contract_onlyoffice_docx_source"),
+    path("projects/reports/render-source/<str:key>/", views.report_render_docx_source, name="report_render_docx_source"),
     path("projects/performers/sign-contract/", views.sign_contract_documents, name="sign_contract_documents"),
     path("projects/performers/sign-performer-contract/", views.sign_performer_contract_documents, name="sign_performer_contract_documents"),
     path("projects/performers/create-contract-project/", views.create_contract_project, name="create_contract_project"),
+    path(
+        "projects/performers/contract-project-local/<int:pk>/download/",
+        views.contract_project_local_download,
+        name="contract_project_local_download",
+    ),
 
     path("projects/legal-entities/create/", views.legal_entity_form_create, name="legal_entity_form_create"),
     path("projects/legal-entities/<int:pk>/edit/", views.legal_entity_form_edit, name="legal_entity_form_edit"),

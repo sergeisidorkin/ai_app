@@ -38,6 +38,7 @@ from .models import (
     TypicalSectionSpecialty,
     SectionStructure,
     ReportStructure,
+    ServiceBlockClassifier,
     ServiceGoalReport,
     TypicalServiceComposition,
     TypicalServiceTerm,
@@ -51,6 +52,7 @@ from .models import (
     build_consulting_catalog_meta,
     ensure_system_dsc_section,
     is_system_dsc_code,
+    normalize_service_block_code,
 )
 from .forms import (
     ConsultingDirectionForm,
@@ -65,6 +67,7 @@ from .forms import (
     TypicalServiceCompositionForm,
     TypicalServiceTermForm,
     ExpertiseDirectionForm,
+    ServiceBlockClassifierForm,
     GradeForm,
     SpecialtyTariffForm,
     TariffForm,
@@ -86,6 +89,7 @@ from .querysets import (
 # Вынесенные константы для единообразия шаблонов/заголовков
 POLICY_PARTIAL_TEMPLATE = "policy_app/policy_partial.html"
 POLICY_EXPERTISE_DIRECTIONS_TABLE_TEMPLATE = "policy_app/policy_expertise_directions_table.html"
+POLICY_SERVICE_BLOCK_CLASSIFIERS_TABLE_TEMPLATE = "policy_app/policy_service_block_classifiers_table.html"
 POLICY_CONSULTING_DIRECTIONS_TABLE_TEMPLATE = "policy_app/policy_consulting_directions_table.html"
 POLICY_PRODUCTS_TABLE_TEMPLATE = "policy_app/policy_products_table.html"
 POLICY_SERVICE_GOAL_REPORTS_TABLE_TEMPLATE = "policy_app/policy_service_goal_reports_table.html"
@@ -107,6 +111,7 @@ SERVICE_GOAL_REPORT_FORM_TEMPLATE = "policy_app/service_goal_report_form.html"
 TYPICAL_SERVICE_COMPOSITION_FORM_TEMPLATE = "policy_app/typical_service_composition_form.html"
 TYPICAL_SERVICE_TERM_FORM_TEMPLATE = "policy_app/typical_service_term_form.html"
 EXPERTISE_DIR_FORM_TEMPLATE = "policy_app/expertise_direction_form.html"
+SERVICE_BLOCK_CLASSIFIER_FORM_TEMPLATE = "policy_app/service_block_classifier_form.html"
 CONSULTING_DIR_FORM_TEMPLATE = "policy_app/consulting_direction_form.html"
 GRADE_FORM_TEMPLATE = "policy_app/grade_form.html"
 SPECIALTY_TARIFF_FORM_TEMPLATE = "policy_app/specialty_tariff_form.html"
@@ -423,12 +428,65 @@ def _report_structure_form_initial_number(form, report_structure=None):
         level = form.initial.get("level", 0)
     return _report_structure_number_preview(product_id, level, report_structure)
 
+def _expertise_direction_pair_rows(direction):
+    units = list(getattr(direction, "_managed_display_units", None) or [])
+    pairs = []
+    for unit in units:
+        company = getattr(unit, "company", None)
+        pairs.append({
+            "department": str(getattr(unit, "department_name", "") or "").strip(),
+            "organization": str(getattr(company, "short_name", "") or "").strip(),
+        })
+    return pairs or [{"department": "", "organization": ""}]
+
+
+def _expertise_direction_display_rows(directions):
+    rows = []
+    for direction in directions:
+        pairs = _expertise_direction_pair_rows(direction)
+        total = len(pairs)
+        for index, pair in enumerate(pairs, start=1):
+            rows.append({
+                "direction": direction,
+                "department": pair["department"],
+                "organization": pair["organization"],
+                "is_first": index == 1,
+                "is_continuation": index > 1,
+                "has_next": index < total,
+                "group_key": direction.pk,
+            })
+    return rows
+
+
 def _policy_expertise_directions_context(request):
-    return {
-        "expertise_directions": ExpertiseDirection.objects.prefetch_related(
+    from group_app.expertise_management import attach_display_units
+
+    directions = list(
+        ExpertiseDirection.objects.prefetch_related(
             ordered_owner_display_prefetch()
-        ).order_by("position", "id"),
-    }
+        ).order_by("position", "id")
+    )
+    attach_display_units(directions, direction_attr=None)
+    return {"expertise_direction_rows": _expertise_direction_display_rows(directions)}
+
+
+def _policy_service_block_classifiers_context(request):
+    from group_app.expertise_management import attach_display_units
+
+    rows = list(
+        ServiceBlockClassifier.objects.select_related("expertise_dir")
+        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .order_by("position", "id")
+    )
+    attach_display_units(rows, direction_attr="expertise_dir")
+    context = {"service_block_classifiers": rows}
+    if getattr(request.user, "is_staff", False):
+        context["policy_inline_edit"] = True
+        context["policy_inline_options_json"] = json.dumps(
+            {"specialties": _classifier_specialty_options()},
+            ensure_ascii=False,
+        )
+    return context
 
 
 def _policy_consulting_directions_context(request):
@@ -480,7 +538,11 @@ def _policy_typical_sections_queryset():
 
 
 def _policy_typical_sections_context(request):
-    return {"sections": _policy_typical_sections_queryset()}
+    from group_app.expertise_management import attach_display_units
+
+    sections = list(_policy_typical_sections_queryset())
+    attach_display_units(sections, direction_attr="expertise_dir")
+    return {"sections": sections}
 
 
 def _is_policy_workspace_request(request):
@@ -591,6 +653,15 @@ def _typical_section_inline_options():
             for item in departments
         ],
         "specialties": _section_specialty_options(),
+        "service_blocks": [
+            {
+                "id": block.pk,
+                "code": block.code,
+                "short_name": block.short_name,
+                "short_name_ru": block.short_name_ru,
+            }
+            for block in ServiceBlockClassifier.objects.exclude(code="DSC").order_by("position", "id")
+        ],
     }
 
 
@@ -600,7 +671,11 @@ def _policy_typical_sections_table_context(request):
         request,
     )
     context = _policy_pagination_context(request, sections)
-    context["sections"] = context["page_obj"].object_list
+    from group_app.expertise_management import attach_display_units
+
+    page_sections = attach_display_units(list(context["page_obj"].object_list), direction_attr="expertise_dir")
+    context["page_obj"].object_list = page_sections
+    context["sections"] = page_sections
     if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
         context["policy_inline_edit"] = True
         context["policy_inline_options_json"] = json.dumps(
@@ -676,16 +751,42 @@ def _policy_grades_context(request):
 
 
 def _policy_expert_specialties_context(request):
+    from experts_app.specialty_source import (
+        attach_specialty_heads,
+        mark_specialty_row_access,
+        specialty_display_rows,
+        specialty_table_flags,
+    )
     from experts_app.views import _specialties_queryset
 
-    return {"specialties": _specialties_queryset()}
+    specialties = mark_specialty_row_access(
+        attach_specialty_heads(_specialties_queryset()),
+        request.user,
+    )
+    context = {
+        "specialties": specialties,
+        "specialty_rows": specialty_display_rows(specialties),
+    }
+    context.update(specialty_table_flags(request.user))
+    return context
 
 
 def _policy_expert_specialties_table_context(request):
+    from experts_app.specialty_source import (
+        attach_specialty_heads,
+        mark_specialty_row_access,
+        specialty_display_rows,
+        specialty_table_flags,
+    )
     from experts_app.views import _specialties_queryset
 
     context = _policy_pagination_context(request, _specialties_queryset())
-    context["specialties"] = context["page_obj"].object_list
+    context["specialties"] = mark_specialty_row_access(
+        attach_specialty_heads(context["page_obj"].object_list),
+        request.user,
+    )
+    context["specialty_rows"] = specialty_display_rows(context["specialties"])
+    context.update(specialty_table_flags(request.user))
     return context
 
 
@@ -906,6 +1007,7 @@ def _policy_context(request):
     context = {}
     for builder in (
         _policy_expertise_directions_context,
+        _policy_service_block_classifiers_context,
         _policy_consulting_directions_context,
         _policy_products_context,
         _policy_service_goal_reports_context,
@@ -1002,8 +1104,14 @@ POLICY_MUTATION_DEPENDENCIES = {
     },
     "product-defaults": {"tables": ("products",)},
     "expertise-direction": {
-        "tables": ("expertise-directions", "typical-sections", "specialty-tariffs"),
+        "tables": (
+            "expertise-directions",
+            "typical-sections",
+            "specialty-tariffs",
+            "service-block-classifiers",
+        ),
     },
+    "service-block-classifier": {"tables": ("service-block-classifiers",)},
     "typical-section": {
         "tables": (
             "typical-sections",
@@ -1069,6 +1177,11 @@ POLICY_MUTATION_URL_ENTITY = {
             "expertise_dir_form_create", "expertise_dir_form_edit", "expertise_dir_delete",
             "expertise_dir_move_up", "expertise_dir_move_down",
         ),
+        "service-block-classifier": (
+            "service_block_classifier_form_create", "service_block_classifier_form_edit",
+            "service_block_classifier_delete",
+            "service_block_classifier_move_up", "service_block_classifier_move_down",
+        ),
         "grade": (
             "grade_form_create", "grade_form_edit", "grade_delete", "grade_move_up", "grade_move_down",
         ),
@@ -1100,6 +1213,7 @@ POLICY_ENTITY_TABLE_KEY = {
     "typical-service-composition": "typical-service-compositions",
     "typical-service-term": "typical-service-terms",
     "expertise-direction": "expertise-directions",
+    "service-block-classifier": "service-block-classifiers",
     "grade": "grades",
     "expert-specialty": "expert-specialties",
     "specialty-tariff": "specialty-tariffs",
@@ -1261,7 +1375,6 @@ TYPICAL_SECTION_INLINE_FIELDS = (
     "name_ru",
     "accounting_type",
     "expertise_dir",
-    "expertise_direction",
     "exclude_from_tkp_autofill",
 )
 TYPICAL_SECTION_INLINE_BOOL_FIELDS = frozenset({"exclude_from_tkp_autofill"})
@@ -1295,7 +1408,8 @@ def _inline_truthy(value):
 def _typical_section_form_data(item, fields):
     data = QueryDict(mutable=True)
     data["product"] = str(item.product_id)
-    fk_fields = {"expertise_dir", "expertise_direction"}
+    fk_fields = {"expertise_dir"}
+    identity_fields = {"code", "short_name", "short_name_ru"}
     for key in TYPICAL_SECTION_INLINE_FIELDS:
         if key in TYPICAL_SECTION_INLINE_BOOL_FIELDS:
             continue
@@ -1303,10 +1417,15 @@ def _typical_section_form_data(item, fields):
             current = str(getattr(item, f"{key}_id") or "")
         else:
             current = "" if getattr(item, key) is None else str(getattr(item, key))
-        if key in fields:
+        if key not in identity_fields and key in fields:
             value = fields[key]
             current = "" if value is None else str(value)
         data[key] = current
+    if not getattr(item, "pk", None) and "service_block" in fields:
+        value = fields.get("service_block")
+        data["service_block"] = "" if value in (None, "") else str(value)
+    elif getattr(item, "service_block_id", None):
+        data["service_block"] = str(item.service_block_id)
     checked = item.exclude_from_tkp_autofill
     if "exclude_from_tkp_autofill" in fields:
         checked = _inline_truthy(fields["exclude_from_tkp_autofill"])
@@ -1707,6 +1826,16 @@ def policy_expertise_directions_table(request):
         request,
         POLICY_EXPERTISE_DIRECTIONS_TABLE_TEMPLATE,
         _policy_expertise_directions_context(request),
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def policy_service_block_classifiers_table(request):
+    return render(
+        request,
+        POLICY_SERVICE_BLOCK_CLASSIFIERS_TABLE_TEMPLATE,
+        _policy_service_block_classifiers_context(request),
     )
 
 
@@ -2560,6 +2689,18 @@ def _section_specialty_options():
     ]
 
 
+def _classifier_specialty_options():
+    """Специальности классификатора с направлением, по которому фильтруется исполнитель."""
+    return [
+        {
+            "id": specialty.pk,
+            "label": specialty.specialty,
+            "expertise_dir": specialty.expertise_dir_id or "",
+        }
+        for specialty in ExpertSpecialty.objects.exclude(specialty="").order_by("position", "id")
+    ]
+
+
 def _section_form_context(form, action, section=None):
     spec_options = _section_specialty_options()
     ranked = []
@@ -2954,12 +3095,6 @@ def section_csv_upload(request):
             key = _csv_lookup_key(label)
             if key:
                 expertise_dirs[key] = direction
-    expertise_units = {
-        key: u
-        for u in OrgUnit.objects.filter(Q(unit_type="expertise") | Q(unit_type="administrative", level=1))
-        for key in {_csv_lookup_key(u.department_name), _csv_lookup_key(u.short_name)}
-        if key
-    }
     specialties_by_name = {
         _csv_lookup_key(s.specialty): s
         for s in ExpertSpecialty.objects.exclude(specialty="").all()
@@ -3006,6 +3141,11 @@ def section_csv_upload(request):
             warnings.append(f"Строка {i}: отсутствует код раздела.")
             continue
 
+        block = None
+        normalized_code = normalize_service_block_code(code)
+        if normalized_code:
+            block = ServiceBlockClassifier.objects.filter(code=normalized_code).first()
+
         if is_system_dsc_code(code):
             ensure_system_dsc_section(product)
             warnings.append(
@@ -3014,7 +3154,7 @@ def section_csv_upload(request):
             continue
 
         missing = []
-        if not short_name:
+        if block is None and not short_name and not TypicalSection.objects.filter(product=product, code=code).exists():
             missing.append("Краткое имя EN")
         if not name_en:
             missing.append("Наименование EN")
@@ -3034,20 +3174,28 @@ def section_csv_upload(request):
             if not expertise_dir:
                 warnings.append(f"Строка {i}: экспертиза «{expertise_dir_name}» не найдена. Поле оставлено пустым.")
 
-        expertise_direction = None
-        if expertise_name:
-            expertise_direction = expertise_units.get(_csv_lookup_key(expertise_name))
-            if not expertise_direction:
-                warnings.append(f"Строка {i}: подразделение «{expertise_name}» не найдено. Поле оставлено пустым.")
+        lookup_code = block.code if block is not None else code
+        section = TypicalSection.objects.filter(product=product, code=lookup_code).first()
+        if section is None and lookup_code != code:
+            section = TypicalSection.objects.filter(product=product, code=code).first()
+        was_created = section is None
+        if was_created and block is None:
+            warnings.append(
+                f"Строка {i}: код «{code}» не найден в классификаторе типовых блоков услуг."
+            )
+            continue
 
         try:
             with transaction.atomic():
                 ensure_system_dsc_section(product)
-                section = TypicalSection.objects.filter(product=product, code=code).first()
-                was_created = section is None
+                if block is not None:
+                    code = block.code
+                    short_name = block.short_name
+                    short_name_ru = block.short_name_ru
                 if was_created:
                     section = TypicalSection.objects.create(
                         product=product,
+                        service_block=block,
                         code=code,
                         short_name=short_name,
                         short_name_ru=short_name_ru,
@@ -3055,32 +3203,21 @@ def section_csv_upload(request):
                         name_ru=name_ru,
                         accounting_type=accounting_type,
                         expertise_dir=expertise_dir,
-                        expertise_direction=expertise_direction,
                         exclude_from_tkp_autofill=_csv_truthy(tkp_raw),
                         position=_next_position(TypicalSection, {"product": product}),
                     )
                 else:
-                    section.short_name = short_name
-                    section.short_name_ru = short_name_ru
+                    if block is not None:
+                        section.service_block = block
+                        section.code = block.code
+                        section.short_name = block.short_name
+                        section.short_name_ru = block.short_name_ru
                     section.name_en = name_en
                     section.name_ru = name_ru
                     section.accounting_type = accounting_type
                     section.expertise_dir = expertise_dir
-                    section.expertise_direction = expertise_direction
                     section.exclude_from_tkp_autofill = _csv_truthy(tkp_raw)
-                    section.save(
-                        update_fields=[
-                            "short_name",
-                            "short_name_ru",
-                            "name_en",
-                            "name_ru",
-                            "accounting_type",
-                            "expertise_dir",
-                            "expertise_direction",
-                            "exclude_from_tkp_autofill",
-                            "updated_at",
-                        ]
-                    )
+                    section.save()
                     TypicalSectionSpecialty.objects.filter(section=section).delete()
                 missing_specialties = []
                 for rank, specialty_name in enumerate(_split_csv_list_value(executor_raw, specialties_by_name), start=1):
@@ -3134,7 +3271,7 @@ def section_csv_download(request):
                 section.accounting_type,
                 executor,
                 section.expertise_dir.short_name if section.expertise_dir else "",
-                section.expertise_direction.department_name if section.expertise_direction else "",
+                section.managed_department_display,
                 "Да" if section.exclude_from_tkp_autofill else "Нет",
             ]
         )
@@ -5947,6 +6084,166 @@ def expertise_dir_move_down(request, pk: int):
         ExpertiseDirection.objects.filter(pk=cur.id).update(position=next_pos)
         ExpertiseDirection.objects.filter(pk=nxt.id).update(position=cur_pos)
         _normalize_expertise_dir_positions()
+    return _render_policy_updated(request)
+
+
+# --- Классификатор типовых блоков услуг ---
+
+def _classifier_ranked_specialties(classifier, post_data=None):
+    if post_data is not None:
+        ranked = []
+        for rank, raw in enumerate(post_data.getlist("specialty_id"), start=1):
+            ranked.append({"rank": rank, "specialty_id": _positive_int(raw)})
+        return ranked
+    if classifier is None or not getattr(classifier, "pk", None):
+        return []
+    return [
+        {"rank": link.rank, "specialty_id": link.specialty_id}
+        for link in classifier.ranked_specialties.order_by("rank", "id")
+    ]
+
+
+def _classifier_selected_expertise_id(classifier, post_data=None):
+    if post_data is not None:
+        return _positive_int(post_data.get("expertise_dir"))
+    if classifier is not None:
+        return classifier.expertise_dir_id or None
+    return None
+
+
+def _classifier_form_context(form, action, classifier=None, post_data=None):
+    options = _classifier_specialty_options()
+    return {
+        "form": form,
+        "action": action,
+        "classifier": classifier,
+        "specialty_options": options,
+        "specialty_options_json": json.dumps(options, ensure_ascii=False),
+        "selected_expertise_id": _classifier_selected_expertise_id(classifier, post_data),
+        "ranked_specialties": _classifier_ranked_specialties(
+            classifier,
+            post_data if post_data is not None else None,
+        ),
+    }
+
+
+def _save_classifier_specialties(classifier, post_data):
+    from policy_app.service_block_link import replace_service_block_classifier_specialties
+
+    replace_service_block_classifier_specialties(classifier, post_data.getlist("specialty_id"))
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def service_block_classifier_form_create(request):
+    if request.method == "GET":
+        form = ServiceBlockClassifierForm()
+        return render(
+            request,
+            SERVICE_BLOCK_CLASSIFIER_FORM_TEMPLATE,
+            _classifier_form_context(form, "create"),
+        )
+    form = ServiceBlockClassifierForm(request.POST)
+    if not form.is_valid():
+        return _render_form_with_errors(
+            request,
+            SERVICE_BLOCK_CLASSIFIER_FORM_TEMPLATE,
+            _classifier_form_context(form, "create", post_data=request.POST),
+        )
+    if not form.instance.position:
+        form.instance.position = _next_position(ServiceBlockClassifier)
+    classifier = form.save()
+    _save_classifier_specialties(classifier, request.POST)
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def service_block_classifier_form_edit(request, pk: int):
+    classifier = get_object_or_404(ServiceBlockClassifier, pk=pk)
+    if request.method == "GET":
+        form = ServiceBlockClassifierForm(instance=classifier)
+        return render(
+            request,
+            SERVICE_BLOCK_CLASSIFIER_FORM_TEMPLATE,
+            _classifier_form_context(form, "edit", classifier),
+        )
+    form = ServiceBlockClassifierForm(request.POST, instance=classifier)
+    if not form.is_valid():
+        return _render_form_with_errors(
+            request,
+            SERVICE_BLOCK_CLASSIFIER_FORM_TEMPLATE,
+            _classifier_form_context(form, "edit", classifier, post_data=request.POST),
+        )
+    classifier = form.save()
+    _save_classifier_specialties(classifier, request.POST)
+    return _render_policy_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def service_block_classifier_specialties_save(request, pk: int):
+    classifier = get_object_or_404(ServiceBlockClassifier, pk=pk)
+    _save_classifier_specialties(classifier, request.POST)
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def service_block_classifier_delete(request, pk: int):
+    from django.db.models import ProtectedError
+
+    classifier = get_object_or_404(ServiceBlockClassifier, pk=pk)
+    try:
+        classifier.delete()
+    except ProtectedError:
+        return JsonResponse(
+            {"ok": False, "error": "Блок используется в типовых разделах и не может быть удалён."},
+            status=400,
+        )
+    return _render_policy_updated(request)
+
+
+def _normalize_service_block_classifier_positions():
+    items = ServiceBlockClassifier.objects.order_by("position", "id").only("id", "position")
+    for idx, it in enumerate(items, start=1):
+        if it.position != idx:
+            ServiceBlockClassifier.objects.filter(pk=it.pk).update(position=idx)
+
+
+def _swap_service_block_classifier_position(pk: int, step: int):
+    _normalize_service_block_classifier_positions()
+    items = list(ServiceBlockClassifier.objects.order_by("position", "id").only("id", "position"))
+    idx = next((i for i, it in enumerate(items) if it.id == pk), None)
+    if idx is None:
+        return
+    other_idx = idx + step
+    if other_idx < 0 or other_idx >= len(items):
+        return
+    cur, other = items[idx], items[other_idx]
+    cur_pos, other_pos = cur.position, other.position
+    ServiceBlockClassifier.objects.filter(pk=cur.id).update(position=other_pos)
+    ServiceBlockClassifier.objects.filter(pk=other.id).update(position=cur_pos)
+    _normalize_service_block_classifier_positions()
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+@user_passes_test(staff_required)
+def service_block_classifier_move_up(request, pk: int):
+    _swap_service_block_classifier_position(pk, -1)
+    return _render_policy_updated(request)
+
+
+@require_http_methods(["POST", "GET"])
+@login_required
+@user_passes_test(staff_required)
+def service_block_classifier_move_down(request, pk: int):
+    _swap_service_block_classifier_position(pk, 1)
     return _render_policy_updated(request)
 
 

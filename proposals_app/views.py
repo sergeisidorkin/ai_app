@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from datetime import date as dt_date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import quote
 
 from django import forms
@@ -31,7 +31,7 @@ from core.proposal_registry_columns import (
 )
 from core.section_labels import get_app_section_label
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty
-from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+from nextcloud_app.api import NextcloudApiClient, NextcloudApiError, NextcloudNetworkError
 from nextcloud_app.models import NextcloudUserLink
 from nextcloud_app.workspace import build_proposal_workspace_path, create_proposal_workspace
 from policy_app.models import (
@@ -847,6 +847,16 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
     live_share_lookup = bool(
         getattr(settings, "NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ", True)
     )
+    if live_share_lookup and NextcloudApiClient.network_cooldown_active():
+        # The host failed at transport level moments ago: every live lookup
+        # would burn connect-timeout + retry per proposal. Render from the
+        # persisted file ids / public links instead (same fallback as a
+        # failed lookup) and let the next request after the cooldown retry.
+        logger.info(
+            "Nextcloud network cooldown is active; rendering the proposals "
+            "registry from saved links without live share resolution",
+        )
+        live_share_lookup = False
     normalized_root_path = _get_normalized_nextcloud_root_path()
     resolved_cache = {}
     cached_target_paths = _get_cached_proposal_target_paths(request, root_path=normalized_root_path)
@@ -903,6 +913,10 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     target_path = stored_target_paths.get(path, "")
                 if not target_path:
                     target_path = cached_target_paths.get(path, "")
+                if not target_path and live_share_lookup and NextcloudApiClient.network_cooldown_active():
+                    # A lookup earlier in this render already hit a transport
+                    # error; do not pay the timeout again for every path.
+                    live_share_lookup = False
                 if not target_path and live_share_lookup:
                     target_path, lookup_share = _resolve_target_path_via_user_share_lookup(
                         client,
@@ -940,6 +954,7 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 )
 
     def _maybe_resolve_owner_file_id(proposal, *, stored_attr: str, cloud_path: str) -> str:
+        nonlocal live_share_lookup
         # Avoid an extra PROPFIND when the file id is already persisted in DB.
         stored_file_id = _stored_proposal_file_id(proposal, stored_attr)
         if stored_file_id:
@@ -953,6 +968,18 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 cloud_path,
                 resource_cache=resource_cache,
             )
+        except NextcloudNetworkError as exc:
+            # Host unreachable: the remaining proposals would hit the same
+            # timeout one by one. Fall back to saved links for all of them.
+            logger.warning(
+                "Nextcloud unreachable while resolving file id for proposal %s path %s; "
+                "skipping live lookups for the rest of this render: %s",
+                getattr(proposal, "pk", ""),
+                cloud_path,
+                exc,
+            )
+            live_share_lookup = False
+            return ""
         except NextcloudApiError as exc:
             logger.warning(
                 "Could not resolve Nextcloud file id for proposal %s path %s: %s",
@@ -1127,6 +1154,71 @@ def _add_proposal_schedule_weeks(value, weeks):
     return value + timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
 
 
+def _subtract_proposal_schedule_weeks(value, weeks):
+    weeks = _proposal_schedule_decimal(weeks)
+    if not value or weeks is None:
+        return value
+    safe_weeks = max(weeks, Decimal("0"))
+    return value - timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
+
+
+def _proposal_schedule_preliminary_term_unit(value):
+    raw = str(value or "").strip()
+    if raw in {"months", "days", "weeks"}:
+        return raw
+    return "months"
+
+
+def _proposal_schedule_final_term_unit(value):
+    raw = str(value or "").strip()
+    if raw in {"days", "weeks", "months"}:
+        return raw
+    return "weeks"
+
+
+def _add_proposal_schedule_days(value, days):
+    days = _proposal_schedule_decimal(days)
+    if not value or days is None:
+        return value
+    return value + timedelta(days=int(max(days, Decimal("0")) + Decimal("0.5")))
+
+
+def _subtract_proposal_schedule_days(value, days):
+    days = _proposal_schedule_decimal(days)
+    if not value or days is None:
+        return value
+    return value - timedelta(days=int(max(days, Decimal("0")) + Decimal("0.5")))
+
+
+def _add_proposal_schedule_term(value, amount, unit):
+    if unit == "days":
+        return _add_proposal_schedule_days(value, amount)
+    if unit == "weeks":
+        return _add_proposal_schedule_weeks(value, amount)
+    return _add_proposal_schedule_months(value, amount)
+
+
+def _subtract_proposal_schedule_term(value, amount, unit):
+    if unit == "days":
+        return _subtract_proposal_schedule_days(value, amount)
+    if unit == "weeks":
+        return _subtract_proposal_schedule_weeks(value, amount)
+    return _subtract_proposal_schedule_months(value, amount)
+
+
+def _format_proposal_schedule_term(value, unit):
+    amount = _proposal_schedule_decimal(value)
+    if amount is None:
+        return ""
+    if unit == "days":
+        display = str(int(max(amount, Decimal("0")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
+    else:
+        rounded = amount.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        display = f"{rounded:.1f}".replace(".", ",").rstrip("0").rstrip(",")
+    labels = {"days": "дн.", "weeks": "нед.", "months": "мес."}
+    return f"{display} {labels.get(unit, 'мес.')}"
+
+
 def _proposal_schedule_base_start_date(today=None):
     current = (today or timezone.localdate()) + timedelta(days=14)
     previous_monday = current - timedelta(days=current.weekday())
@@ -1183,8 +1275,14 @@ def _build_proposal_payment_schedule_rows(proposals):
             service_term_months = _proposal_schedule_decimal(
                 _proposal_stage_value(payload, "service_term_months", proposal, "service_term_months")
             )
+            preliminary_report_term_unit = _proposal_schedule_preliminary_term_unit(
+                _proposal_stage_value(payload, "preliminary_report_term_unit", proposal, "preliminary_report_term_unit")
+            )
             final_report_term_weeks = _proposal_schedule_decimal(
                 _proposal_stage_value(payload, "final_report_term_weeks", proposal, "final_report_term_weeks")
+            )
+            final_report_term_unit = _proposal_schedule_final_term_unit(
+                _proposal_stage_value(payload, "final_report_term_unit", proposal, "final_report_term_unit")
             )
             preliminary_report_date = _proposal_schedule_date(
                 _proposal_stage_value(payload, "preliminary_report_date", proposal, "preliminary_report_date")
@@ -1197,13 +1295,25 @@ def _build_proposal_payment_schedule_rows(proposals):
             ) or 0
 
             if preliminary_report_date and service_term_months is not None:
-                start_date = _subtract_proposal_schedule_months(preliminary_report_date, service_term_months)
+                start_date = _subtract_proposal_schedule_term(
+                    preliminary_report_date,
+                    service_term_months,
+                    preliminary_report_term_unit,
+                )
             else:
                 start_date = rolling_start_date
             if not preliminary_report_date and service_term_months is not None:
-                preliminary_report_date = _add_proposal_schedule_months(start_date, service_term_months)
+                preliminary_report_date = _add_proposal_schedule_term(
+                    start_date,
+                    service_term_months,
+                    preliminary_report_term_unit,
+                )
             if not final_report_date and preliminary_report_date and final_report_term_weeks is not None:
-                final_report_date = _add_proposal_schedule_weeks(preliminary_report_date, final_report_term_weeks)
+                final_report_date = _add_proposal_schedule_term(
+                    preliminary_report_date,
+                    final_report_term_weeks,
+                    final_report_term_unit,
+                )
             stage_end_date = final_report_date or preliminary_report_date or start_date
             rolling_start_date = (
                 stage_end_date + timedelta(days=next_stage_delay_days)
@@ -1233,8 +1343,16 @@ def _build_proposal_payment_schedule_rows(proposals):
                     ),
                     "start_date": start_date,
                     "service_term_months": service_term_months,
+                    "preliminary_term_display": _format_proposal_schedule_term(
+                        service_term_months,
+                        preliminary_report_term_unit,
+                    ),
                     "preliminary_report_date": preliminary_report_date,
                     "final_report_term_weeks": final_report_term_weeks,
+                    "final_term_display": _format_proposal_schedule_term(
+                        final_report_term_weeks,
+                        final_report_term_unit,
+                    ),
                     "final_report_date": final_report_date,
                     "next_stage_delay_days": next_stage_delay_days,
                     "advance_percent": _proposal_schedule_decimal(
@@ -1387,16 +1505,38 @@ def _render_proposals_updated(request):
     return response
 
 
-def _render_proposal_variables_updated(request):
-    return render(
+SKIP_RENDER_HEADER = "X-Skip-Render"
+
+
+def _skip_render_requested(request) -> bool:
+    """Client performs a batch mutation and will fetch the final markup itself.
+
+    The panel JS sends ``X-Skip-Render: 1`` on every request of a batch except
+    the last one, so intermediate deletions do not pay for a full registry
+    render (and its Nextcloud link resolution) whose result is discarded.
+    """
+    return str(request.headers.get(SKIP_RENDER_HEADER, "") or "").strip() == "1"
+
+
+def _render_proposals_updated_or_empty(request):
+    if _skip_render_requested(request):
+        return HttpResponse(status=204)
+    return _render_proposals_updated(request)
+
+
+def _render_proposal_variables_updated(request, *, close_modal=False):
+    # The variables section depends only on ``proposal_variables``: skip the
+    # registry query and Nextcloud link resolution of the full pane context.
+    if _skip_render_requested(request):
+        return HttpResponse(status=204)
+    response = render(
         request,
         PROPOSAL_VARIABLES_SECTION_TEMPLATE,
-        _proposals_context(
-            request=request,
-            debug_nextcloud_links=_proposal_link_debug_enabled(request),
-            strict_nextcloud=False,
-        ),
+        {"proposal_variables": ProposalVariable.objects.all()},
     )
+    if close_modal:
+        response[HX_TRIGGER_HEADER] = HX_PROPOSALS_UPDATED_EVENT
+    return response
 
 
 def _maybe_create_nextcloud_proposal_workspace(request, proposal) -> None:
@@ -1514,7 +1654,7 @@ def _proposal_product_catalog():
     }
 
 
-def _proposal_product_autofill_data(product_ids=None):
+def _proposal_product_autofill_data(product_ids=None, group_member=None):
     def _section_specialty_names(section):
         names = []
         seen = set()
@@ -1715,20 +1855,18 @@ def _proposal_product_autofill_data(product_ids=None):
     if product_filter is not None:
         section_tariffs_qs = section_tariffs_qs.filter(product_id__in=product_filter)
     section_tariffs = list(section_tariffs_qs)
-    direction_ids = {
-        section.expertise_direction_id
-        for section in sections
-        if section.expertise_direction_id and section.expertise_dir_id
-    }
+    from group_app.expertise_management import ExpertiseAssignmentIndex
+
+    assignment_index = ExpertiseAssignmentIndex(
+        section.expertise_dir_id for section in sections if section.expertise_dir_id
+    )
     direction_heads = {}
-    if direction_ids:
-        for employee in (
-            Employee.objects
-            .select_related("user")
-            .filter(department_id__in=direction_ids, role="Руководитель направления")
-            .order_by("position", "id")
-        ):
-            direction_heads.setdefault(employee.department_id, employee)
+    for section in sections:
+        if not section.expertise_dir_id:
+            continue
+        head = assignment_index.operation_head(section.expertise_dir_id, group_member)
+        if head is not None:
+            direction_heads[section.pk] = head
     head_profiles = {}
     head_employee_ids = [employee.pk for employee in direction_heads.values()]
     if head_employee_ids:
@@ -1787,8 +1925,8 @@ def _proposal_product_autofill_data(product_ids=None):
             default_specialist = default_candidate["name"]
             default_professional_status = default_candidate["professional_status"]
             default_base_rate_share = int(default_candidate.get("base_rate_share", 0) or 0)
-            if section.expertise_dir_id and section.expertise_direction_id:
-                head = direction_heads.get(section.expertise_direction_id)
+            if section.expertise_dir_id:
+                head = direction_heads.get(section.pk)
                 head_profile = head_profiles.get(getattr(head, "pk", None))
                 head_name = _employee_short_name(head)
                 if head_name:
@@ -1890,7 +2028,9 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             "action": action,
             "proposal": proposal,
             "proposal_type_meta_json": json.dumps(_proposal_product_catalog(), ensure_ascii=False),
-            **_proposal_product_autofill_data(),
+            **_proposal_product_autofill_data(
+                group_member=getattr(proposal, "group_member", None),
+            ),
         },
     )
 
@@ -2186,7 +2326,13 @@ def proposal_cbr_eur_rate(request):
 def proposal_product_autofill(request, product_id: int):
     product = get_object_or_404(Product, pk=product_id)
     product_key = str(product.pk)
-    data = _proposal_product_autofill_data(product_ids=[product.pk])
+    group_member = None
+    raw_group_member = request.GET.get("group_member")
+    if str(raw_group_member or "").isdigit():
+        from group_app.models import GroupMember
+
+        group_member = GroupMember.objects.filter(pk=int(raw_group_member)).first()
+    data = _proposal_product_autofill_data(product_ids=[product.pk], group_member=group_member)
     response = JsonResponse(
         {
             "ok": True,
@@ -2888,7 +3034,7 @@ def proposal_template_delete(request, pk: int):
         obj.file.delete(save=False)
     obj.delete()
     _normalize_proposal_template_positions()
-    return _render_proposals_updated(request)
+    return _render_proposals_updated_or_empty(request)
 
 
 @login_required
@@ -2901,7 +3047,7 @@ def proposal_template_move_up(request, pk: int):
         obj.position, prev.position = prev.position, obj.position
         ProposalTemplate.objects.filter(pk=obj.pk).update(position=obj.position)
         ProposalTemplate.objects.filter(pk=prev.pk).update(position=prev.position)
-    return _render_proposals_updated(request)
+    return _render_proposals_updated_or_empty(request)
 
 
 @login_required
@@ -2914,7 +3060,7 @@ def proposal_template_move_down(request, pk: int):
         obj.position, nxt.position = nxt.position, obj.position
         ProposalTemplate.objects.filter(pk=obj.pk).update(position=obj.position)
         ProposalTemplate.objects.filter(pk=nxt.pk).update(position=nxt.position)
-    return _render_proposals_updated(request)
+    return _render_proposals_updated_or_empty(request)
 
 
 @login_required
@@ -2951,7 +3097,7 @@ def proposal_variable_form_create(request):
     variable = form.save(commit=False)
     variable.position = _next_position(ProposalVariable)
     variable.save()
-    return _render_proposals_updated(request)
+    return _render_proposal_variables_updated(request, close_modal=True)
 
 
 @login_required
@@ -2970,7 +3116,7 @@ def proposal_variable_form_edit(request, pk: int):
         return response
 
     form.save()
-    return _render_proposals_updated(request)
+    return _render_proposal_variables_updated(request, close_modal=True)
 
 
 @login_required
@@ -2979,7 +3125,7 @@ def proposal_variable_form_edit(request, pk: int):
 def proposal_variable_delete(request, pk: int):
     get_object_or_404(ProposalVariable, pk=pk).delete()
     _normalize_proposal_variable_positions()
-    return _render_proposals_updated(request)
+    return _render_proposal_variables_updated(request)
 
 
 @login_required
@@ -3015,7 +3161,7 @@ def proposal_delete(request, pk: int):
     proposal = get_object_or_404(ProposalRegistration, pk=pk)
     proposal.delete()
     _normalize_proposal_positions()
-    return _render_proposals_updated(request)
+    return _render_proposals_updated_or_empty(request)
 
 
 @login_required
@@ -3074,7 +3220,7 @@ def proposal_move_up(request, pk: int):
         ProposalRegistration.objects.filter(pk=current.id).update(position=previous.position)
         ProposalRegistration.objects.filter(pk=previous.id).update(position=current.position)
         _normalize_proposal_positions()
-    return _render_proposals_updated(request)
+    return _render_proposals_updated_or_empty(request)
 
 
 @login_required
@@ -3089,4 +3235,4 @@ def proposal_move_down(request, pk: int):
         ProposalRegistration.objects.filter(pk=current.id).update(position=next_item.position)
         ProposalRegistration.objects.filter(pk=next_item.id).update(position=current.position)
         _normalize_proposal_positions()
-    return _render_proposals_updated(request)
+    return _render_proposals_updated_or_empty(request)

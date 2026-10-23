@@ -209,7 +209,7 @@ PROPOSAL_REGISTRY_COLUMNS = [
         "picker_value": "term",
         "data_col": "term",
         "source_column": "term",
-        "label": "Срок предв. отчёта, мес.",
+        "label": "Срок предв. отчёта",
         "variable_available": True,
     },
     {
@@ -223,7 +223,7 @@ PROPOSAL_REGISTRY_COLUMNS = [
         "picker_value": "final-report-weeks",
         "data_col": "final-report-weeks",
         "source_column": "final_report_term_weeks",
-        "label": "Срок итог. отчёта, нед.",
+        "label": "Срок итог. отчёта",
         "variable_available": True,
     },
     {
@@ -389,7 +389,7 @@ PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS = [
         "picker_value": "term",
         "data_col": "term",
         "source_column": "term",
-        "label": "Срок предв. отчёта, мес.",
+        "label": "Срок предв. отчёта",
     },
     {
         "picker_value": "preliminary-report-date",
@@ -401,7 +401,7 @@ PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS = [
         "picker_value": "final-report-weeks",
         "data_col": "final-report-weeks",
         "source_column": "final_report_term_weeks",
-        "label": "Срок итог. отчёта, нед.",
+        "label": "Срок итог. отчёта",
     },
     {
         "picker_value": "final-report-date",

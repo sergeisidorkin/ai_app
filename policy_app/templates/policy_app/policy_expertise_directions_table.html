@@ -12,10 +12,10 @@
 
 <div class="policy-table-editor">
 <div class="table-responsive">
-    <table class="table table-sm align-top">
+    <table data-queued-row-order data-row-order-key="expertise-direction" class="table table-sm align-top expertise-directions-table">
         <thead>
         <tr>
-            <th style="width:1%; vertical-align: top;">
+            <th class="text-nowrap" style="width:1%; vertical-align: top;">
                 {% if request.user.is_authenticated and request.user.is_staff %}
                     <div class="form-check m-0">
                         <input class="form-check-input"
@@ -27,40 +27,49 @@
                     </div>
                 {% endif %}
             </th>
-            <th style="width:9%">Краткое имя</th>
-            <th style="width:20%">Наименование направления</th>
-            <th>Расчет стоимости услуг</th>
-            <th>Область специализации</th>
-            <th style="width:35%">Владелец</th>
+            <th class="text-nowrap">Краткое имя</th>
+            <th class="text-nowrap">Наименование направления</th>
+            <th class="text-nowrap">Расчет стоимости услуг</th>
+            <th class="text-nowrap">Область специализации</th>
+            <th class="text-nowrap">Подразделение</th>
+            <th class="text-nowrap">Организация</th>
+            <th class="text-nowrap">Владелец</th>
         </tr>
         </thead>
         <tbody>
-        {% for ed in expertise_directions %}
-            <tr data-edit-url="{% url 'expertise_dir_form_edit' ed.pk %}"
-                data-delete-url="{% url 'expertise_dir_delete' ed.pk %}"
-                data-move-up-url="{% url 'expertise_dir_move_up' ed.pk %}"
-                data-move-down-url="{% url 'expertise_dir_move_down' ed.pk %}">
+        {% for row in expertise_direction_rows %}
+            <tr data-expdir-group="{{ row.group_key }}"
+                {% if row.is_continuation %}data-expdir-group-continuation="1"{% endif %}
+                data-edit-url="{% url 'expertise_dir_form_edit' row.direction.pk %}"
+                {% if row.is_first %}
+                data-delete-url="{% url 'expertise_dir_delete' row.direction.pk %}"
+                data-move-up-url="{% url 'expertise_dir_move_up' row.direction.pk %}"
+                data-move-down-url="{% url 'expertise_dir_move_down' row.direction.pk %}"
+                {% endif %}
+                {% if row.has_next or row.is_continuation %}class="{% if row.has_next %}expdir-group-has-next{% endif %}{% if row.is_continuation %}{% if row.has_next %} {% endif %}expdir-group-continuation{% endif %}"{% endif %}>
 
-                <td class="text-nowrap">
-                    {% if request.user.is_authenticated and request.user.is_staff %}
+                <td class="text-nowrap" data-col="checkbox">
+                    {% if row.is_first and request.user.is_authenticated and request.user.is_staff %}
                         <div class="form-check">
                             <input class="form-check-input"
                                    type="checkbox"
-                                   id="expdir-sel-{{ ed.id }}"
+                                   id="expdir-sel-{{ row.direction.id }}"
                                    name="expdir-select"
-                                   value="{{ ed.id }}"
+                                   value="{{ row.direction.id }}"
                                    aria-label="Выделить строку">
                         </div>
                     {% endif %}
                 </td>
-                <td class="text-nowrap">{{ ed.short_name }}</td>
-                <td>{{ ed.name }}</td>
-                <td class="text-nowrap">{{ ed.get_pricing_method_display }}</td>
-                <td>{{ ed.specialization_area|default:"—" }}</td>
-                <td class="text-nowrap">{{ ed.owner_display }}</td>
+                <td data-col="short-name">{% if row.is_first %}{{ row.direction.short_name }}{% endif %}</td>
+                <td data-col="name">{% if row.is_first %}{{ row.direction.name }}{% endif %}</td>
+                <td data-col="pricing">{% if row.is_first %}{{ row.direction.get_pricing_method_display }}{% endif %}</td>
+                <td data-col="area">{% if row.is_first %}{{ row.direction.specialization_area|default:"—" }}{% endif %}</td>
+                <td data-col="department">{{ row.department }}</td>
+                <td data-col="organization">{{ row.organization }}</td>
+                <td data-col="owner">{% if row.is_first %}{{ row.direction.owner_display }}{% endif %}</td>
             </tr>
         {% empty %}
-            <tr><td colspan="6" class="text-muted">Пока нет данных.</td></tr>
+            <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
         </tbody>
     </table>

@@ -192,7 +192,7 @@
   const csrftoken = getCookie('csrftoken');
 
   function cleanupDanglingModalState() {
-    if (document.querySelector('.modal.show, .modal.showing')) return;
+    if (window.ModalBackdropGuard ? window.ModalBackdropGuard.isAnyModalActive() : document.querySelector('.modal.show, .modal.showing')) return;
     document.querySelectorAll('.modal-backdrop').forEach((backdrop) => backdrop.remove());
     document.body.classList.remove('modal-open');
     document.body.style.removeProperty('padding-right');
@@ -274,6 +274,11 @@
   function performerRowIsSectionLocked(tr) {
     return !!(tr && tr.dataset.reportSectionLocked === '1');
   }
+  // Rows with a section code («Код») cannot change position once the project
+  // workspace exists: the code is part of report folder and file names.
+  function performerRowIsOrderLocked(tr) {
+    return !!(tr && (tr.dataset.orderLocked === '1' || tr.dataset.reportSectionLocked === '1'));
+  }
   function performerRowDeleteLocked(tr) {
     return performerRowIsSectionLocked(tr) || !!(tr && tr.dataset.reportUploadLocked === '1');
   }
@@ -336,7 +341,7 @@
     const downBtn = panel.querySelector('[data-panel-action="down"]');
     const deleteBtn = panel.querySelector('[data-panel-action="delete"]');
     const rows = getChecked('performer-select').map((box) => box.closest('tr')).filter(Boolean);
-    const anyLocked = rows.some(performerRowIsSectionLocked);
+    const anyLocked = rows.some(performerRowIsOrderLocked);
     const anyDeleteLocked = rows.some(performerRowDeleteLocked);
     if (upBtn) {
       upBtn.classList.toggle('d-none', anyLocked);
@@ -359,7 +364,7 @@
     ) {
       return false;
     }
-    if (checked.some((box) => performerRowIsSectionLocked(box.closest('tr')))) {
+    if (checked.some((box) => performerRowIsOrderLocked(box.closest('tr')))) {
       return false;
     }
     const root = pane();
@@ -2366,6 +2371,7 @@
   var REPORT_SHRINKABLE_CONTENT_SELECTOR =
     '.report-file-name-link:not(.report-remarks-loaded-link), .report-check-pending-text, .report-check-error-label';
   var REPORT_MEASURING_CLASS = 'report-submission-measuring';
+  var REPORT_MEASURING_HOST_CLASS = 'report-submission-measuring-host';
   var reportColumnLayoutCache = null;
   var reportColumnLayoutQueued = false;
   var reportColumnLayoutNeedsMeasure = false;
@@ -2394,6 +2400,7 @@
   function clearReportSubmissionAssignedWidths(table) {
     table.style.removeProperty('width');
     table.style.removeProperty('min-width');
+    table.style.removeProperty('max-width');
     table.style.removeProperty('table-layout');
     table.querySelectorAll('col, thead th, tbody td').forEach(function(el) {
       el.style.removeProperty('width');
@@ -2465,7 +2472,26 @@
     return Math.min(natural, min);
   }
 
+  // The natural widths are measured on a clone of the table laid out inside
+  // a zero-size clipped host next to it, so the live table (and the scroll
+  // width of its wrap) stays untouched while measuring. Re-laying out the
+  // live table at its natural width made the wrap's scrollable width jump on
+  // every check-status poll, which flashes the overlay scrollbar on macOS.
   function measureReportSubmissionColumns(table) {
+    var host = document.createElement('div');
+    host.className = REPORT_MEASURING_HOST_CLASS;
+    host.setAttribute('aria-hidden', 'true');
+    var probe = table.cloneNode(true);
+    host.appendChild(probe);
+    (table.parentNode || document.body).appendChild(host);
+    try {
+      return measureReportSubmissionProbeColumns(probe);
+    } finally {
+      host.remove();
+    }
+  }
+
+  function measureReportSubmissionProbeColumns(table) {
     clearReportSubmissionAssignedWidths(table);
     table.classList.add(REPORT_MEASURING_CLASS);
     table.style.setProperty('width', 'max-content', 'important');
@@ -4623,6 +4649,35 @@
     });
   }
 
+  function syncContractLocalSourceUi() {
+    var section = document.getElementById('contract-conclusion-section');
+    if (!section) return;
+    var sourceSel = section.querySelector('#contract-draft-source');
+    var wrap = section.querySelector('#contract-draft-local-wrap');
+    var isLocal = Boolean(sourceSel && sourceSel.value === 'local');
+    if (wrap) wrap.classList.toggle('d-none', !isLocal);
+    var note = document.getElementById('create-contract-destination-note');
+    if (note) {
+      var text = isLocal ? note.dataset.localText : note.dataset.cloudText;
+      if (text) note.textContent = text;
+    }
+  }
+
+  function initContractLocalSource() {
+    var section = document.getElementById('contract-conclusion-section');
+    if (!section) return;
+    var sourceSel = section.querySelector('#contract-draft-source');
+    var pathInput = section.querySelector('#contract-draft-local-path');
+    if (!sourceSel) return;
+    if (window.UIPref) {
+      var savedSource = UIPref.get('contracts:draftSource', 'cloud');
+      if (savedSource === 'local') sourceSel.value = 'local';
+      var savedPath = UIPref.get('contracts:localFolder', '');
+      if (pathInput && !pathInput.value && savedPath) pathInput.value = savedPath;
+    }
+    syncContractLocalSourceUi();
+  }
+
   function initReportLocalSource() {
     var section = getReportSubmissionSection();
     if (!section) return;
@@ -5357,6 +5412,16 @@
   });
 
   document.addEventListener('change', function(e) {
+    if (e.target.id === 'contract-draft-source') {
+      if (window.UIPref) UIPref.set('contracts:draftSource', e.target.value);
+      syncContractLocalSourceUi();
+    }
+    if (e.target.id === 'contract-draft-local-path' && window.UIPref) {
+      UIPref.set('contracts:localFolder', e.target.value.trim());
+    }
+  });
+
+  document.addEventListener('change', function(e) {
     var root = pane();
     if (!root) return;
     if (e.target.closest && e.target.closest('#performers-modal')) return;
@@ -5812,6 +5877,19 @@
 
       const formData = new FormData();
       performerIds.forEach((id) => formData.append('performer_ids[]', id));
+      const sourceSel = document.getElementById('contract-draft-source');
+      const pathInput = document.getElementById('contract-draft-local-path');
+      if (sourceSel && sourceSel.value === 'local') {
+        const localPath = pathInput ? pathInput.value.trim() : '';
+        if (!localPath) {
+          if (progressEl) progressEl.classList.add('d-none');
+          if (statusEl) statusEl.innerHTML = '<span class="text-danger">Укажите путь к локальной папке.</span>';
+          createContractConfirm.disabled = false;
+          return;
+        }
+        formData.append('source_kind', 'local');
+        formData.append('local_folder_path', localPath);
+      }
 
       try {
         const response = await fetch(createUrl, {
@@ -6140,6 +6218,7 @@
         const url = tr?.dataset?.editUrl;
         if (!url) return;
         forgetTableSelection('report-check-select');
+        window.TableSelection?.clearOnModalHide('performers-modal', 'report-check-select', root);
         await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
         ensureReportCheckActionsVisibility();
         return;
@@ -6151,18 +6230,31 @@
       if (action === 'delete') {
         if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
         const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-        for (let i = 0; i < urls.length; i++) {
-          const isLast = i === urls.length - 1;
-          if (isLast) {
-            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
-          } else {
-            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+        const progress = window.TableActionProgress?.begin(checked);
+        try {
+          for (let i = 0; i < urls.length; i++) {
+            const isLast = i === urls.length - 1;
+            if (isLast) {
+              await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+            } else {
+              await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+            }
           }
+        } finally {
+          progress?.end();
         }
         return;
       }
 
       if (action === 'up' || action === 'down') {
+        if (window.__queuedRowOrder?.handleMoveAction({
+          checked,
+          action,
+          refresh: () => document.body.dispatchEvent(new Event('performers-updated')),
+        })) {
+          ensureReportCheckActionsVisibility();
+          return;
+        }
         let urls = checked
           .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
           .filter(Boolean);
@@ -6190,6 +6282,7 @@
         const url = tr?.dataset?.editUrl;
         if (!url) return;
         forgetTableSelection('report-macro-select');
+        window.TableSelection?.clearOnModalHide('performers-modal', 'report-macro-select', root);
         await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
         ensureReportMacrosActionsVisibility();
         return;
@@ -6204,18 +6297,31 @@
           const url = ch.closest('tr')?.dataset?.deleteUrl;
           return url ? url + reportMacrosListQuery() : '';
         }).filter(Boolean);
-        for (let i = 0; i < urls.length; i++) {
-          const isLast = i === urls.length - 1;
-          if (isLast) {
-            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
-          } else {
-            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+        const progress = window.TableActionProgress?.begin(checked);
+        try {
+          for (let i = 0; i < urls.length; i++) {
+            const isLast = i === urls.length - 1;
+            if (isLast) {
+              await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+            } else {
+              await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+            }
           }
+        } finally {
+          progress?.end();
         }
         return;
       }
 
       if (action === 'up' || action === 'down') {
+        if (window.__queuedRowOrder?.handleMoveAction({
+          checked,
+          action,
+          refresh: () => document.body.dispatchEvent(new Event('performers-updated')),
+        })) {
+          ensureReportMacrosActionsVisibility();
+          return;
+        }
         let urls = checked
           .map(ch => {
             const url = ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'];
@@ -6250,6 +6356,10 @@
       const tr = checked[0].closest('tr');
       const url = tr?.dataset?.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы перерисовка после «Сохранить» его не восстановила.
+      forgetTableSelection('performer-select');
+      window.TableSelection?.clearOnModalHide('performers-modal', 'performer-select', root);
       await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
       ensurePerformerActionsVisibility();
       return;
@@ -6260,19 +6370,24 @@
       if (!deletable.length) return;
       if (!confirm(`Удалить ${deletable.length} строк(у/и)?`)) return;
       const urls = deletable.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+      const progress = window.TableActionProgress?.begin(deletable);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
-      if (checked.some((box) => performerRowIsSectionLocked(box.closest('tr')))) return;
+      if (checked.some((box) => performerRowIsOrderLocked(box.closest('tr')))) return;
       if (movePerformerSelectionImmediately(action, checked)) return;
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
@@ -6294,6 +6409,7 @@
     const root = pane();
     const table = e.detail && e.detail.table;
     if (!root || !table || !root.contains(table)) return;
+    if (e.detail.generic) return; // generic tables refresh themselves
     window.__tableSel['performer-select'] = getChecked('performer-select').map((box) => String(box.value));
     window.__tableSelLast = 'performer-select';
     document.body.dispatchEvent(new Event('performers-updated'));
@@ -6698,6 +6814,7 @@
     var contractDispatchSet = new Set(contractDispatchIds || []);
     getRowChecks('contract-dispatch-select').forEach(function(b) { b.checked = contractDispatchSet.has(String(b.value)); });
     initContractProjectFilter();
+    initContractLocalSource();
     updateContractState();
     try { delete window.__tableSel['contract-select']; } catch(_) {}
     try { delete window.__tableSel['contract-dispatch-select']; } catch(_) {}
@@ -6777,6 +6894,7 @@
       b.checked = contractDispatchSet.has(String(b.value));
     });
     initContractProjectFilter();
+    initContractLocalSource();
     initCreateContractSettingsModal();
     applyRowGrouping(root.querySelector('#contract-conclusion-section'));
     applyContractSentState();
@@ -7062,6 +7180,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     initParticipationProjectFilter();
     initContractProjectFilter();
+    initContractLocalSource();
     initInfoRequestProjectFilter();
     initPaymentRequestProjectFilter();
     initReportSubmissionProjectFilter();

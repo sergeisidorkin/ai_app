@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import re
+import shutil
 import tempfile
 import uuid
 import zipfile
@@ -52,6 +53,7 @@ from policy_app.models import (
     DIRECTION_DIRECTOR_GROUP,
     EXPERT_GROUP,
     LAWYER_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
     PROJECTS_HEAD_GROUP,
     ExpertiseDirection,
     Product,
@@ -882,6 +884,97 @@ class ProjectRegistrationFormTests(TestCase):
 
         self.assertEqual(form["project_manager"].value(), person.formatted_id)
 
+    def test_project_coordinator_choices_include_only_coordinators(self):
+        coordinator_user = get_user_model().objects.create_user(
+            username="project-coordinator-choice",
+            first_name="Кира",
+            last_name="Координаторова",
+            is_staff=True,
+        )
+        project_manager_user = get_user_model().objects.create_user(
+            username="project-manager-not-coordinator",
+            first_name="Иван",
+            last_name="Проектов",
+            is_staff=True,
+        )
+        Employee.objects.create(
+            user=coordinator_user,
+            patronymic="Кирилловна",
+            role=PROJECTS_COORDINATOR_GROUP,
+        )
+        Employee.objects.create(
+            user=project_manager_user,
+            patronymic="Иванович",
+            role=PROJECTS_HEAD_GROUP,
+        )
+
+        coordinator_choices = [
+            label for _value, label in ProjectRegistrationForm().fields["project_coordinator"].choices
+        ]
+        manager_choices = [
+            label for _value, label in ProjectRegistrationForm().fields["project_manager"].choices
+        ]
+
+        self.assertTrue(any(label.startswith("Координаторова Кира Кирилловна") for label in coordinator_choices))
+        self.assertFalse(any(label.startswith("Проектов Иван Иванович") for label in coordinator_choices))
+        self.assertTrue(any(label.startswith("Проектов Иван Иванович") for label in manager_choices))
+        self.assertFalse(any(label.startswith("Координаторова Кира Кирилловна") for label in manager_choices))
+
+    def test_project_coordinator_form_saves_selected_prs_id(self):
+        person = PersonRecord.objects.create(
+            last_name="Соколова",
+            first_name="Софья",
+            middle_name="Сергеевна",
+            position=3,
+        )
+        user = get_user_model().objects.create_user(
+            username="project-coordinator-prs",
+            first_name="Софья",
+            last_name="Соколова",
+            is_staff=True,
+        )
+        Employee.objects.create(
+            user=user,
+            person_record=person,
+            patronymic="Сергеевна",
+            role=PROJECTS_COORDINATOR_GROUP,
+        )
+        group_member = GroupMember.objects.create(
+            short_name="IMCC",
+            country_name="Россия",
+            country_alpha2="RU",
+        )
+        product = Product.objects.create(short_name="PRS-KP", name_en="Coordinator PRS", name_ru="КП PRS")
+
+        choices = dict(ProjectRegistrationForm().fields["project_coordinator"].choices)
+        self.assertEqual(choices[person.formatted_id], "Соколова Софья Сергеевна")
+        manager_values = {value for value, _label in ProjectRegistrationForm().fields["project_manager"].choices}
+        self.assertNotIn(person.formatted_id, manager_values)
+
+        form = ProjectRegistrationForm(
+            data={
+                "number": "6202",
+                "group_member": str(group_member.pk),
+                "agreement_type": ProjectRegistration.AgreementType.MAIN,
+                "name": "Проект с координатором",
+                "status": "Не начат",
+                "deadline": "2026-05-01",
+                "year": "2026",
+                "country": "",
+                "customer": "",
+                "identifier": "",
+                "registration_number": "",
+                "registration_date": "",
+                "project_coordinator": person.formatted_id,
+                "type_id": str(product.pk),
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        obj = form.save(commit=False)
+        self.assertEqual(obj.project_coordinator, "Соколова Софья Сергеевна")
+        self.assertEqual(obj.project_coordinator_prs_id, person.formatted_id)
+
 
 class PerformerFormExecutorFilteringTests(TestCase):
     def setUp(self):
@@ -1017,6 +1110,7 @@ class ProjectRegistrationFormViewTests(TestCase):
             '<label class="form-label">Дата оценки</label>',
             '<label class="form-label">Дедлайн</label>',
             '<label class="form-label">Руководитель проекта</label>',
+            '<label class="form-label">Координатор проекта</label>',
             '<label class="form-label">Статус</label>',
         ]
         schedule_field_positions = [content.index(item) for item in schedule_field_order]
@@ -2515,6 +2609,80 @@ class ProjectRegistrationFormViewTests(TestCase):
         registration.refresh_from_db()
         self.assertEqual(registration.project_manager, "")
         self.assertEqual(registration.project_manager_prs_id, "")
+
+    def test_registration_coordinator_update_changes_project_coordinator(self):
+        coordinator_user = get_user_model().objects.create_user(
+            username="project.coordinator",
+            password="secret",
+            first_name="Софья",
+            last_name="Соколова",
+        )
+        coordinator_employee = Employee.objects.create(
+            user=coordinator_user,
+            patronymic="Сергеевна",
+            role=PROJECTS_COORDINATOR_GROUP,
+        )
+        registration = ProjectRegistration.objects.create(
+            number=6208,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект со сменой координатора",
+            status="Не начат",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("registration_coordinator_update", args=[registration.pk]),
+            {"project_coordinator": "Соколова Софья Сергеевна"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "coordinator": "Соколова Софья Сергеевна",
+                "coordinatorValue": coordinator_employee.formatted_prs_id,
+                "coordinatorLabel": "Соколова С.С.",
+            },
+        )
+        registration.refresh_from_db()
+        self.assertEqual(registration.project_coordinator, "Соколова Софья Сергеевна")
+        self.assertEqual(registration.project_coordinator_prs_id, coordinator_employee.formatted_prs_id)
+
+    def test_registration_coordinator_update_rejects_project_manager(self):
+        manager_user = get_user_model().objects.create_user(
+            username="project.manager.not.coordinator",
+            password="secret",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        Employee.objects.create(
+            user=manager_user,
+            patronymic="Иванович",
+            role=PROJECTS_HEAD_GROUP,
+        )
+        registration = ProjectRegistration.objects.create(
+            number=6209,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект без координатора",
+            status="Не начат",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("registration_coordinator_update", args=[registration.pk]),
+            {"project_coordinator": "Иванов Иван Иванович"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+        registration.refresh_from_db()
+        self.assertEqual(registration.project_coordinator, "")
+        self.assertEqual(registration.project_coordinator_prs_id, "")
 
     def test_registration_deadline_update_changes_project_deadline(self):
         registration = ProjectRegistration.objects.create(
@@ -4439,13 +4607,16 @@ class WorkVolumePerformerCreationTests(TestCase):
             country_code="643",
             country_alpha2="RU",
             position=10,
+            is_management_company=True,
         )
+        expertise = ExpertiseDirection.objects.create(name="Налоги", short_name="TAX", position=1)
         direction = OrgUnit.objects.create(
             company=company,
             level=2,
             department_name="Налоговое направление",
             short_name="TAX",
             unit_type="expertise",
+            expertise=expertise,
         )
         section = self.product.sections.create(
             code="TAX",
@@ -4454,6 +4625,7 @@ class WorkVolumePerformerCreationTests(TestCase):
             name_en="Tax",
             name_ru="Налоги",
             accounting_type="Раздел",
+            expertise_dir=expertise,
             expertise_direction=direction,
             position=4,
         )
@@ -4591,6 +4763,8 @@ class ProjectProductLinkSyncTests(TestCase):
         self.assertContains(response, "Дата оценки")
         self.assertContains(response, 'id="registration-status-editor"', html=False)
         self.assertContains(response, 'id="registration-manager-editor"', html=False)
+        self.assertContains(response, 'id="registration-coordinator-editor"', html=False)
+        self.assertContains(response, 'data-registration-coordinator', html=False)
         self.assertContains(response, 'id="registration-deadline-editor"', html=False)
         self.assertContains(response, 'bi bi-play-circle', html=False)
         self.assertContains(response, 'bi bi-circle', html=False)
@@ -4646,6 +4820,7 @@ class ProjectProductLinkSyncTests(TestCase):
             '<th data-col="evaluation-date">Дата оценки</th>',
             '<th data-col="deadline">Дедлайн</th>',
             '<th data-col="manager">Руководитель проекта</th>',
+            '<th data-col="coordinator">Координатор проекта</th>',
             '<th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>',
             '<th data-col="status">Статус</th>',
         ]
@@ -5496,6 +5671,199 @@ class NextcloudSourceDataWorkspaceFlowTests(TestCase):
         self.assertEqual(item_folder.public_url, "https://cloud.example.com/s/item-folder")
         self.assertEqual(workspace.disk_path, base_path)
         self.assertEqual(workspace.created_by, self.user)
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
+class LocalContractProjectFlowTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="local-contracts-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.local_root = Path(tempfile.mkdtemp(prefix="local-contract-root-"))
+        self.outside_root = Path(tempfile.mkdtemp(prefix="local-contract-outside-"))
+        self.addCleanup(shutil.rmtree, self.local_root, True)
+        self.addCleanup(shutil.rmtree, self.outside_root, True)
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=3809,
+            type=self.product,
+            name="Полиметалл",
+            year=2026,
+        )
+        self.employee_user = get_user_model().objects.create_user(
+            username="local-performer@example.com",
+            email="local-performer@example.com",
+            password="secret",
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        self.employee = Employee.objects.create(
+            user=self.employee_user,
+            patronymic="Иванович",
+            employment=FREELANCER_LABEL,
+        )
+        self.performer = Performer.objects.create(
+            registration=self.project,
+            employee=self.employee,
+            executor="Иванов Иван Иванович",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        self.template = ContractTemplate.objects.create(
+            product=self.product,
+            contract_type="gph",
+            party="individual",
+            sample_name="Локальный шаблон",
+            version="1",
+            file=SimpleUploadedFile(
+                "contract.docx",
+                b"fake-docx-content",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            is_all_sections=True,
+        )
+
+    def _local_settings(self):
+        return override_settings(
+            CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER=True,
+            REPORT_CHECK_LOCAL_ROOTS=(str(self.local_root),),
+            DSH_SORT_LOCAL_ROOTS=(),
+        )
+
+    @patch("projects_app.views._resolve_contract_project_nextcloud_file_id", return_value="nc-file")
+    @patch("projects_app.views._share_contract_folder_for_nextcloud", return_value=["share warning"])
+    @patch("projects_app.views.cloud_publish_resource", return_value="https://cloud.example.com/s/doc")
+    @patch("projects_app.views.cloud_upload_file", return_value=True)
+    @patch("projects_app.views.cloud_create_folder", return_value=True)
+    @patch("projects_app.views.list_folder_resources", return_value=[])
+    @patch("projects_app.views.get_selected_root_path", return_value="/Corporate Root")
+    @patch("contracts_app.variable_resolver.resolve_variables", return_value=({}, {}))
+    def test_create_contract_project_writes_docx_under_local_folder(
+        self,
+        _resolve_variables,
+        mocked_root,
+        mocked_list,
+        mocked_create_folder,
+        mocked_upload,
+        mocked_publish,
+        mocked_share,
+        mocked_file_id,
+    ):
+        with self._local_settings():
+            response = self.client.post(
+                reverse("create_contract_project"),
+                {
+                    "performer_ids[]": [self.performer.pk],
+                    "source_kind": "local",
+                    "local_folder_path": str(self.local_root),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        chunks = [json.loads(chunk.decode("utf-8").strip()) for chunk in response.streaming_content]
+        self.assertTrue(chunks[-1]["ok"], chunks)
+        self.performer.refresh_from_db()
+        self.assertTrue(self.performer.contract_project_created)
+        self.assertTrue(self.performer.contract_project_disk_folder.startswith("local:"))
+        self.assertEqual(self.performer.contract_project_link, "")
+        self.assertEqual(self.performer.contract_project_folder_link, "")
+        self.assertEqual(self.performer.contract_project_file_id, "")
+        self.assertTrue(self.performer.contract_file.endswith(".docx"))
+        folder = Path(self.performer.contract_project_disk_folder[len("local:"):])
+        docx_path = folder / self.performer.contract_file
+        self.assertTrue(docx_path.is_file(), docx_path)
+        self.assertEqual(docx_path.read_bytes(), b"fake-docx-content")
+        relative = docx_path.relative_to(self.local_root.resolve())
+        self.assertEqual(relative.parts[0], "02 Договоры")
+        self.assertIn("02 Исполнители", relative.parts)
+        mocked_root.assert_not_called()
+        mocked_list.assert_not_called()
+        mocked_create_folder.assert_not_called()
+        mocked_upload.assert_not_called()
+        mocked_publish.assert_not_called()
+        mocked_share.assert_not_called()
+        mocked_file_id.assert_not_called()
+
+    def test_create_contract_project_rejects_local_folder_when_disabled(self):
+        with override_settings(CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER=False):
+            response = self.client.post(
+                reverse("create_contract_project"),
+                {
+                    "performer_ids[]": [self.performer.pk],
+                    "source_kind": "local",
+                    "local_folder_path": str(self.local_root),
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("выключена", response.json()["error"])
+        self.performer.refresh_from_db()
+        self.assertFalse(self.performer.contract_project_created)
+
+    def test_create_contract_project_rejects_local_folder_outside_allowlist(self):
+        with self._local_settings():
+            response = self.client.post(
+                reverse("create_contract_project"),
+                {
+                    "performer_ids[]": [self.performer.pk],
+                    "source_kind": "local",
+                    "local_folder_path": str(self.outside_root),
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("вне разрешённых корней", response.json()["error"])
+        self.performer.refresh_from_db()
+        self.assertFalse(self.performer.contract_project_created)
+
+    def test_local_contract_download_serves_file_inside_allowlist(self):
+        folder = self.local_root / "02 Договоры" / "executor"
+        folder.mkdir(parents=True)
+        (folder / "Договор.docx").write_bytes(b"local-docx")
+        self.performer.contract_file = "Договор.docx"
+        self.performer.contract_project_disk_folder = f"local:{folder}"
+        self.performer.save(update_fields=["contract_file", "contract_project_disk_folder"])
+
+        with self._local_settings():
+            response = self.client.get(reverse("contract_project_local_download", args=[self.performer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"local-docx")
+
+    def test_local_contract_download_rejects_path_outside_allowlist_and_disabled_flag(self):
+        folder = self.outside_root / "executor"
+        folder.mkdir()
+        (folder / "Договор.docx").write_bytes(b"secret")
+        self.performer.contract_file = "Договор.docx"
+        self.performer.contract_project_disk_folder = f"local:{folder}"
+        self.performer.save(update_fields=["contract_file", "contract_project_disk_folder"])
+
+        with self._local_settings():
+            outside = self.client.get(reverse("contract_project_local_download", args=[self.performer.pk]))
+        self.assertEqual(outside.status_code, 404)
+
+        allowed = self.local_root / "executor"
+        allowed.mkdir()
+        (allowed / "Договор.docx").write_bytes(b"local-docx")
+        self.performer.contract_project_disk_folder = f"local:{allowed}"
+        self.performer.save(update_fields=["contract_project_disk_folder"])
+        with override_settings(CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER=False):
+            disabled = self.client.get(reverse("contract_project_local_download", args=[self.performer.pk]))
+        self.assertEqual(disabled.status_code, 404)
 
 
 @override_settings(
@@ -6859,6 +7227,64 @@ class ReportSubmissionTests(TestCase):
         self.assertFalse(rows[1].is_full_report)
         self.assertEqual(rows[1].section_label, "MRK Маркетинг")
 
+    def test_reloaded_table_keeps_polling_until_the_result_file_is_saved(self):
+        from datetime import timedelta
+
+        from projects_app.report_review import sync_review_after_check
+
+        performer = Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name=self.asset_name,
+            typical_section=self.mrk,
+        )
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="/reports/report.docx",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=3,
+            checked_at=timezone.now(),
+            check_claim="worker",
+        )
+        sync_review_after_check(upload)
+
+        def table_html():
+            response = self.client.get(reverse("report_submission_table"))
+            self.assertEqual(response.status_code, 200)
+            return response.content.decode()
+
+        pending = table_html()
+        marker = pending.find(f'data-performer-id="{performer.pk}"')
+        self.assertGreaterEqual(marker, 0)
+        row_html = pending[pending.rfind("<tr", 0, marker):pending.find("</tr>", marker)]
+        self.assertIn('data-check-status="running"', row_html)
+        self.assertIn("На проверке ИИ", row_html)
+        self.assertIn("Идет проверка...", row_html)
+        self.assertIn("Сохранение результата", row_html)
+        self.assertNotIn("В работе после ИИ", pending)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+
+        upload.checked_at = timezone.now() - timedelta(minutes=5)
+        upload.save(update_fields=["checked_at"])
+        stalled = table_html()
+        self.assertIn("В работе после ИИ", stalled)
+        self.assertIn('data-check-status="done"', stalled)
+        self.assertNotIn("Сохранение результата", stalled)
+
+        upload.check_file_name = "report_ИИ1.docx"
+        upload.checked_at = timezone.now()
+        upload.save(update_fields=["check_file_name", "checked_at"])
+        ready = table_html()
+        self.assertIn("В работе после ИИ", ready)
+        self.assertIn('data-check-status="done"', ready)
+        self.assertNotIn("Сохранение результата", ready)
+
     def test_full_report_history_row_uses_the_same_slot_id_as_the_table(self):
         Performer.objects.create(
             registration=self.project,
@@ -7823,6 +8249,148 @@ class ReportSubmissionTests(TestCase):
         self.assertIn("порядок разделов", reorder.json()["error"])
         self.assertEqual(
             list(Performer.objects.filter(registration=self.project).order_by("position", "id").values_list("pk", flat=True)),
+            [first.pk, second.pk],
+        )
+
+    def _row_html(self, html, row_id):
+        start = html.find(f'data-row-order-id="{row_id}"')
+        self.assertNotEqual(start, -1)
+        return html[start:html.find("</tr>", start)]
+
+    def test_performer_row_order_signature_matches_rendered_order_for_multi_asset_project(self):
+        # Positions put «Фабрика» first, but the table groups rows by asset name,
+        # so «Карьер» is rendered first. Both sides must agree on that order.
+        factory_a = Performer.objects.create(
+            registration=self.project, executor=self.executor, asset_name="Фабрика",
+            typical_section=self.mrk, position=1,
+        )
+        factory_b = Performer.objects.create(
+            registration=self.project, executor=self.executor, asset_name="Фабрика",
+            typical_section=self.ecn, position=2,
+        )
+        quarry_a = Performer.objects.create(
+            registration=self.project, executor=self.executor, asset_name="Карьер",
+            typical_section=self.mrk, position=3,
+        )
+        quarry_b = Performer.objects.create(
+            registration=self.project, executor=self.executor, asset_name="Карьер",
+            typical_section=self.ecn, position=4,
+        )
+
+        html = self.client.get(reverse("performers_partial")).content.decode()
+        signature = re.search(r'data-row-order-signature="([^"]*)"', html).group(1)
+        rendered_ids = [int(m) for m in re.findall(r'data-row-order-id="(\d+)"', html)]
+        self.assertEqual(rendered_ids, [quarry_a.pk, quarry_b.pk, factory_a.pk, factory_b.pk])
+
+        # Swap the two «Карьер» sections exactly as the client does (rendered order + move).
+        desired = [quarry_b.pk, quarry_a.pk, factory_a.pk, factory_b.pk]
+        response = self.client.post(
+            reverse("performer_row_order"),
+            data=json.dumps({"ordered_performer_ids": desired, "base_order_signature": signature}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(Performer.objects.filter(registration=self.project).order_by("position", "id").values_list("pk", flat=True)),
+            desired,
+        )
+        html_after = self.client.get(reverse("performers_partial")).content.decode()
+        self.assertEqual(
+            re.search(r'data-row-order-signature="([^"]*)"', html_after).group(1),
+            response.json()["order_signature"],
+        )
+        self.assertIn(">01<", self._row_html(html_after, quarry_b.pk))
+        self.assertIn(">02<", self._row_html(html_after, quarry_a.pk))
+
+    def test_performer_section_rows_are_order_locked_after_workspace_created(self):
+        first, second = self._create_section_performers()
+        service = self.product.sections.create(
+            code="PRD", short_name="Project Director", short_name_ru="Руководитель проекта",
+            name_en="Project Director", name_ru="Руководитель проекта", accounting_type="Услуги", position=0,
+        )
+        service_row = Performer.objects.create(
+            registration=self.project, executor="Сидоров Сидор Сидорович", asset_name=self.asset_name,
+            typical_section=service, position=0,
+        )
+        first.position, second.position = 1, 2
+        first.save(update_fields=["position"])
+        second.save(update_fields=["position"])
+
+        html = self.client.get(reverse("performers_partial")).content.decode()
+        self.assertIn('data-order-locked="0"', self._row_html(html, first.pk))
+        self.assertIn('data-order-locked="0"', self._row_html(html, service_row.pk))
+
+        ProjectWorkspace.objects.create(project=self.project, disk_path="/root/8101", created_by=self.user)
+
+        html = self.client.get(reverse("performers_partial")).content.decode()
+        self.assertIn('data-order-locked="1"', self._row_html(html, first.pk))
+        self.assertIn('data-order-locked="1"', self._row_html(html, second.pk))
+        # Rows without a section code stay movable and are still deletable.
+        self.assertIn('data-order-locked="0"', self._row_html(html, service_row.pk))
+        self.assertIn('data-report-section-locked="0"', self._row_html(html, first.pk))
+
+        signature = re.search(r'data-row-order-signature="([^"]*)"', html).group(1)
+        reorder = self.client.post(
+            reverse("performer_row_order"),
+            data=json.dumps({
+                "ordered_performer_ids": [service_row.pk, second.pk, first.pk],
+                "base_order_signature": signature,
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(reorder.status_code, 409)
+        self.assertIn("рабочего пространства", reorder.json()["error"])
+
+        # Moving the uncoded service row past the sections is fine: codes do not change.
+        allowed = self.client.post(
+            reverse("performer_row_order"),
+            data=json.dumps({
+                "ordered_performer_ids": [first.pk, service_row.pk, second.pk],
+                "base_order_signature": signature,
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(allowed.status_code, 200, allowed.content)
+
+        def current_order():
+            return list(
+                Performer.objects.filter(registration=self.project).order_by("position", "id").values_list("pk", flat=True)
+            )
+
+        self.assertEqual(current_order(), [first.pk, service_row.pk, second.pk])
+        # Per-row fallback: passing the uncoded row is allowed, swapping two sections is not.
+        self.assertEqual(self.client.post(reverse("performer_move_up", args=[second.pk])).status_code, 200)
+        self.assertEqual(current_order(), [first.pk, second.pk, service_row.pk])
+        self.assertEqual(self.client.post(reverse("performer_move_up", args=[second.pk])).status_code, 200)
+        self.assertEqual(current_order(), [first.pk, second.pk, service_row.pk])
+
+    def test_work_rows_are_order_locked_after_workspace_created(self):
+        first = WorkVolume.objects.create(project=self.project, name="Карьер", asset_name="Карьер", manager="M", position=1)
+        second = WorkVolume.objects.create(project=self.project, name="Фабрика", asset_name="Фабрика", manager="M", position=2)
+
+        html = self.client.get(reverse("projects_partial")).content.decode()
+        self.assertIn('data-order-locked="0"', html)
+        self.assertNotIn('data-order-locked="1"', html)
+        self.assertIn('class="text-nowrap js-asset-code">A1<', html)
+
+        ProjectWorkspace.objects.create(project=self.project, disk_path="/root/8101", created_by=self.user)
+
+        html = self.client.get(reverse("projects_partial")).content.decode()
+        self.assertIn('data-row-order-locked="1"', html)
+        self.assertIn('data-order-locked="1"', html)
+        self.assertIn('data-report-folder-locked="0"', html)
+
+        response = self.client.post(
+            reverse("row_order_save", args=["work-volume"]),
+            data=json.dumps({"ordered_ids": [second.pk, first.pk], "base_order_ids": [first.pk, second.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("рабочее пространство", response.json()["error"])
+
+        self.client.post(reverse("work_move_down", args=[first.pk]))
+        self.assertEqual(
+            list(WorkVolume.objects.filter(project=self.project).order_by("position").values_list("pk", flat=True)),
             [first.pk, second.pk],
         )
 
@@ -8992,13 +9560,22 @@ class ReportSubmissionTests(TestCase):
             country_code="643",
             country_alpha2="RU",
             position=81,
+            is_management_company=True,
         )
+        marketing = ExpertiseDirection.objects.create(name="Маркетинг", short_name="MRK-A", position=1)
+        economics = ExpertiseDirection.objects.create(name="Экономика", short_name="ECN-A", position=2)
         direction = self._direction_org(company, "Маркетинг", "MRK")
         other = self._direction_org(company, "Экономика", "ECN")
+        direction.expertise = marketing
+        direction.save(update_fields=["expertise"])
+        other.expertise = economics
+        other.save(update_fields=["expertise"])
+        self.mrk.expertise_dir = marketing
         self.mrk.expertise_direction = direction
-        self.mrk.save(update_fields=["expertise_direction"])
+        self.mrk.save(update_fields=["expertise_dir", "expertise_direction"])
+        self.ecn.expertise_dir = economics
         self.ecn.expertise_direction = other
-        self.ecn.save(update_fields=["expertise_direction"])
+        self.ecn.save(update_fields=["expertise_dir", "expertise_direction"])
         expert_user = get_user_model().objects.create_user(
             username="report-adjust-expert",
             password="secret",
@@ -9267,13 +9844,17 @@ class ReportSubmissionAccessTests(TestCase):
             country_code="643",
             country_alpha2="RU",
             position=20,
+            is_management_company=True,
         )
+        marketing = ExpertiseDirection.objects.create(name="Маркетинг", short_name="MRK", position=1)
+        economics = ExpertiseDirection.objects.create(name="Экономика", short_name="ECN", position=2)
         self.direction = OrgUnit.objects.create(
             company=company,
             level=2,
             department_name="Маркетинг",
             short_name="MRK",
             unit_type="expertise",
+            expertise=marketing,
         )
         self.other_direction = OrgUnit.objects.create(
             company=company,
@@ -9281,7 +9862,12 @@ class ReportSubmissionAccessTests(TestCase):
             department_name="Экономика",
             short_name="ECN",
             unit_type="expertise",
+            expertise=economics,
         )
+        self.mrk.expertise_dir = marketing
+        self.mrk.save(update_fields=["expertise_dir"])
+        self.ecn.expertise_dir = economics
+        self.ecn.save(update_fields=["expertise_dir"])
         self.admin_user, _admin = self._make_staff("report-access-admin", ADMIN_GROUP)
         self.expert_user, self.expert_employee = self._make_staff(
             "report-access-expert",
@@ -9473,7 +10059,7 @@ class ReportSubmissionAccessTests(TestCase):
         self.own_mrk.save(update_fields=["participation_response"])
         visible = report_visible_registration_ids(self.head_user)
         self.assertIn(self.own_project.pk, visible)
-        self.assertNotIn(self.foreign_project.pk, visible)
+        self.assertIn(self.foreign_project.pk, visible)
         self.assertTrue(
             can_mutate_report_slot(
                 self.head_user,
@@ -9481,11 +10067,18 @@ class ReportSubmissionAccessTests(TestCase):
                 performer=self.own_mrk,
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             can_mutate_report_slot(
                 self.head_user,
                 project=self.foreign_project,
                 performer=self.foreign_row,
+            )
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                self.head_user,
+                project=self.own_project,
+                performer=self.own_ecn,
             )
         )
 
@@ -13624,6 +14217,25 @@ class ReportMacroRunnerTests(TestCase):
         upload.refresh_from_db()
         self.assertEqual(upload.check_progress_label, "")
 
+    def test_layout_renderer_failure_is_stored_as_warning_not_error(self):
+        from projects_app.docx_render import DocxRenderError
+
+        source = _report_docx_bytes("В отчёте всё хорошо.")
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        with patch("projects_app.docx_render.render_docx_to_pdf", side_effect=DocxRenderError("LibreOffice: boom")):
+            apply_report_macro_checks(upload, source)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_status, PerformerReportUpload.CheckStatus.DONE)
+        self.assertEqual(upload.check_finding_count, 0)
+        self.assertIn("LibreOffice: boom", upload.check_error)
+        self.assertIn("метрикам шрифтов", upload.check_error)
+
     def test_apply_stops_without_saving_when_claim_is_lost(self):
         from projects_app.report_macro_runner import (
             ReportCheckAborted,
@@ -16179,6 +16791,40 @@ class TpgrDashMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
+    def test_skips_suspended_hyphen_before_conjunction_i(self):
+        for text in (
+            "макро- и микроменеджмент",
+            "макро-  и  микроменеджмент",
+            "макро-   и    микроменеджмент",
+            "макро-\u00a0и\u00a0микроменеджмент",
+            "макро- \u00a0и \u00a0микроменеджмент",
+            "северо- и юго-запад",
+            "В тексте макро- и микроменеджмент встречаются вместе.",
+            "Макро- И Микро",
+            "а- и б",
+        ):
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_flags_dash_that_is_not_suspended_hyphen_with_i(self):
+        for text in (
+            "макро - и микроменеджмент",
+            "макро- или микроменеджмент",
+            "макро\u2013 и микроменеджмент",
+            "макро- имикроменеджмент",
+            "macro- i micro",
+            "макро- и 100",
+        ):
+            findings = self._findings(text)
+            self.assertEqual(len(findings), 1, repr(text))
+            self.assertEqual(findings[0]["message"], self.MSG)
+
+    def test_flags_spaced_dash_after_suspended_hyphen(self):
+        text = "макро- и микро - менеджмент"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "-")
+        self.assertGreater(findings[0]["start"], text.index("микро"))
+
     def test_skips_correct_emdash_and_ranges(self):
         for text in (
             "слово \u2014 слово",
@@ -17338,6 +17984,374 @@ class TpgrHangingPrepositionMacroTests(TestCase):
         self.assertIn(TPGR_COURSE_LINK_TEXT, comments_xml)
         self.assertIn("w:hyperlink", comments_xml)
         self.assertIn(TPGR_COURSE_ABBR_URL, rels_xml)
+
+
+class RenderedLayoutTests(TestCase):
+    """Переносы строк из отрисованного PDF: выравнивание текста PDF с текстом документа."""
+
+    def _ends(self, text, lines):
+        from projects_app.docx_rendered_layout import line_end_spaces_from_lines
+
+        return line_end_spaces_from_lines(text, lines)
+
+    def _space_after(self, text, phrase):
+        pos = text.find(phrase)
+        self.assertGreater(pos, -1, phrase)
+        return pos + len(phrase)
+
+    def test_space_between_words_on_different_lines_is_line_end(self):
+        text = "ресурсами так и от их использования. В Республике Узбекистан в 2010–2024 гг.\n"
+        lines = [
+            ["ресурсами", "так", "и", "от", "их", "использования.", "В", "Республике", "Узбекистан"],
+            ["в", "2010–2024", "гг."],
+        ]
+        ends = self._ends(text, lines)
+        self.assertEqual(ends, {self._space_after(text, "Узбекистан")})
+
+    def test_preposition_followed_by_word_on_same_line_is_not_flagged(self):
+        text = "наблюдается рост, при этом в Навоийской области\n"
+        lines = [["наблюдается", "рост,", "при", "этом", "в", "Навоийской"], ["области"]]
+        ends = self._ends(text, lines)
+        self.assertEqual(ends, {self._space_after(text, "Навоийской")})
+        findings = run_macro(
+            ReportMacro(name="hp", code=tpgr_macro_code("TPGR-PR-01.08")),
+            type("Ctx", (), {"text": text, "line_end_spaces": ends})(),
+        )
+        self.assertEqual(findings, [])
+
+    def test_conjunction_at_line_start_is_not_flagged(self):
+        text = "Газган и пос. Тумарис. В области функционирует аэропорт\n"
+        lines = [["Газган"], ["и", "пос.", "Тумарис.", "В", "области", "функционирует", "аэропорт"]]
+        ends = self._ends(text, lines)
+        self.assertEqual(ends, {self._space_after(text, "Газган")})
+        findings = run_macro(
+            ReportMacro(name="hp", code=tpgr_macro_code("TPGR-PR-01.08")),
+            type("Ctx", (), {"text": text, "line_end_spaces": ends})(),
+        )
+        self.assertEqual(findings, [])
+
+    def test_preposition_at_line_end_is_flagged(self):
+        text = "медицинских учреждений, при этом в Навоийской области\n"
+        lines = [["медицинских", "учреждений,", "при", "этом", "в"], ["Навоийской", "области"]]
+        ends = self._ends(text, lines)
+        self.assertEqual(ends, {self._space_after(text, "этом в")})
+        findings = run_macro(
+            ReportMacro(name="hp", code=tpgr_macro_code("TPGR-PR-01.08")),
+            type("Ctx", (), {"text": text, "line_end_spaces": ends})(),
+        )
+        self.assertEqual([text[f["start"]:f["end"]] for f in findings], ["в"])
+
+    def test_non_breaking_space_is_never_a_line_end(self):
+        text = "текст в\xa0доме и сад\n"
+        lines = [["текст", "в"], ["доме", "и"], ["сад"]]
+        ends = self._ends(text, lines)
+        self.assertEqual(ends, {self._space_after(text, "доме и")})
+
+    def test_every_space_in_a_run_of_spaces_is_reported(self):
+        text = "слово в   доме\n"
+        lines = [["слово", "в"], ["доме"]]
+        ends = self._ends(text, lines)
+        start = self._space_after(text, "слово в")
+        self.assertEqual(ends, {start, start + 1, start + 2})
+
+    def test_paragraph_break_is_not_a_space(self):
+        text = "текст в\nдоме\n"
+        ends = self._ends(text, [["текст", "в"], ["доме"]])
+        self.assertEqual(ends, set())
+
+    def test_hyphenated_word_keeps_preceding_space_inside_line(self):
+        text = "так и от их рационального использования в целом\n"
+        lines = [["так", "и", "от", "их", "рацио-"], ["нального", "использования", "в"], ["целом"]]
+        ends = self._ends(text, lines)
+        self.assertEqual(
+            ends,
+            {self._space_after(text, "использования в")},
+        )
+
+    def test_word_split_by_superscript_and_glued_words(self):
+        text = "площадь 12 м2 и это важно для расчёта в бассейне\n"
+        lines = [["площадь", "12", "м", "2", "и", "это", "важнодля", "расчёта", "в"], ["бассейне"]]
+        ends = self._ends(text, lines)
+        self.assertEqual(ends, {self._space_after(text, "расчёта в")})
+
+    def test_header_footer_and_footnote_tokens_do_not_break_alignment(self):
+        text = "первая строка абзаца и вторая строка абзаца\n"
+        lines = [
+            ["ООО", "«Компания»", "Отчёт"],
+            ["первая", "строка", "абзаца", "и"],
+            ["1", "Текст", "сноски", "внизу", "страницы."],
+            ["3"],
+            ["ООО", "«Компания»", "Отчёт"],
+            ["вторая", "строка", "абзаца"],
+            ["4"],
+        ]
+        ends = self._ends(text, lines)
+        self.assertEqual(ends, {self._space_after(text, "абзаца и")})
+
+    def test_table_cells_drawn_row_by_row(self):
+        text = "Наименование показателя и его подробное описание\nЗначение показателя в 2024 г.\n"
+        lines = [
+            ["Наименование", "показателя", "и", "Значение", "показателя", "в"],
+            ["его", "подробное", "описание", "2024", "г."],
+        ]
+        ends = self._ends(text, lines)
+        self.assertEqual(
+            ends,
+            {self._space_after(text, "показателя и"), self._space_after(text, "Значение показателя в")},
+        )
+
+    def test_short_leftover_words_are_not_paired_out_of_order(self):
+        text = "первый абзац текста и второй\nв\n"
+        lines = [["в", "первый", "абзац", "текста", "и"], ["второй"]]
+        ends = self._ends(text, lines)
+        self.assertEqual(ends, {self._space_after(text, "текста и")})
+
+    def test_frequent_short_words_are_aligned(self):
+        sentence = "в доме и в саду в поле и в лесу "
+        text = (sentence * 60).strip() + "\n"
+        words = text.split()
+        lines = [words[i:i + 9] for i in range(0, len(words), 9)]
+        ends = self._ends(text, lines)
+        expected = set()
+        pos = 0
+        for line in lines[:-1]:
+            for word in line:
+                pos = text.index(word, pos) + len(word)
+            expected.add(pos)
+        self.assertEqual(ends, expected)
+
+    def test_unrelated_pdf_text_is_rejected(self):
+        from projects_app.docx_rendered_layout import RenderedLayoutError
+
+        text = "совсем другой документ про геологию и разведку\n"
+        with self.assertRaises(RenderedLayoutError):
+            self._ends(text, [["lorem", "ipsum", "dolor"], ["sit", "amet"]])
+
+    def test_group_lines_merges_superscript_and_splits_rows(self):
+        from projects_app.docx_rendered_layout import _group_lines
+
+        chunks = [
+            ("Площадь водосбора 12 м", 234.2, 12.0),
+            ("2", 238.8, 7.0),
+            (" и это важно", 234.2, 12.0),
+            ("следующая строка", 218.4, 12.0),
+            ("ячейка 1", 304.2, 12.0),
+            ("ячейка 2", 304.2, 12.0),
+            ("ячейка 3", 290.4, 12.0),
+        ]
+        self.assertEqual(
+            _group_lines(chunks),
+            [
+                ["Площадь", "водосбора", "12", "м", "2", "и", "это", "важно"],
+                ["следующая", "строка"],
+                ["ячейка", "1", "ячейка", "2"],
+                ["ячейка", "3"],
+            ],
+        )
+
+    def test_extract_pdf_lines_reads_positions_from_pdf(self):
+        from pypdf import PdfWriter
+
+        from projects_app.docx_rendered_layout import extract_pdf_lines
+
+        content = (
+            b"BT /F1 12 Tf 72 700 Td (first line in) Tj ET\n"
+            b"BT /F1 12 Tf 72 684 Td (second line) Tj ET\n"
+        )
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=595, height=842)
+        from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+        font = DictionaryObject({
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        })
+        resources = DictionaryObject({
+            NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)}),
+        })
+        page[NameObject("/Resources")] = resources
+        stream = DecodedStreamObject()
+        stream.set_data(content)
+        page[NameObject("/Contents")] = writer._add_object(stream)
+        buffer = BytesIO()
+        writer.write(buffer)
+        lines = extract_pdf_lines(buffer.getvalue())
+        self.assertEqual(lines, [["first", "line", "in"], ["second", "line"]])
+
+
+class ReportLayoutRendererTests(TestCase):
+    """Выбор рендерера DOCX→PDF и откат к оценке по метрикам."""
+
+    def setUp(self):
+        self.upload = PerformerReportUpload(file_name="report.docx")
+        self.source = _report_docx_bytes("текст в ", "доме")
+        self.text, _spans = extract_document_text(self.source)
+
+    @override_settings(REPORT_LAYOUT_RENDERER="estimate")
+    def test_estimate_mode_returns_none_without_rendering(self):
+        from projects_app.docx_render import render_docx_to_pdf
+
+        started = []
+        self.assertIsNone(render_docx_to_pdf(b"PK", on_start=started.append))
+        self.assertEqual(started, [])
+
+    @override_settings(REPORT_LAYOUT_RENDERER="auto", ONLYOFFICE_DOCUMENT_SERVER_URL="")
+    def test_auto_mode_without_renderers_returns_none(self):
+        from projects_app.docx_render import render_docx_to_pdf
+
+        with patch("projects_app.docx_render.find_soffice", return_value=""):
+            self.assertIsNone(render_docx_to_pdf(b"PK"))
+
+    @override_settings(REPORT_LAYOUT_RENDERER="onlyoffice", ONLYOFFICE_DOCUMENT_SERVER_URL="")
+    def test_explicit_renderer_that_is_not_configured_raises(self):
+        from projects_app.docx_render import DocxRenderError, render_docx_to_pdf
+
+        with self.assertRaises(DocxRenderError):
+            render_docx_to_pdf(b"PK")
+
+    @override_settings(
+        REPORT_LAYOUT_RENDERER="onlyoffice",
+        ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com",
+        BASE_URL="http://testserver",
+    )
+    def test_onlyoffice_backend_serves_docx_once_through_signed_url(self):
+        from projects_app.docx_render import render_docx_to_pdf, render_source_dir
+
+        seen = {}
+
+        def fake_convert(*, source_url, source_name):
+            seen["url"] = source_url
+            seen["name"] = source_name
+            response = self.client.get(source_url.replace("http://testserver", ""))
+            seen["status"] = response.status_code
+            seen["body"] = response.content
+            return b"%PDF-1.4 rendered"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(REPORT_RENDER_CACHE_DIR=tmp):
+            started = []
+            with patch("proposals_app.document_generation.convert_docx_source_to_pdf", side_effect=fake_convert):
+                pdf = render_docx_to_pdf(b"PK docx bytes", file_name="report.docx", on_start=started.append)
+            self.assertEqual(pdf, b"%PDF-1.4 rendered")
+            self.assertEqual(started, ["ONLYOFFICE"])
+            self.assertEqual(seen["name"], "report.docx")
+            self.assertEqual(seen["status"], 200)
+            self.assertEqual(seen["body"], b"PK docx bytes")
+            self.assertIn("/projects/reports/render-source/", seen["url"])
+            self.assertEqual([p for p in render_source_dir().iterdir() if p.suffix == ".docx"], [])
+            response = self.client.get(seen["url"].replace("http://testserver", ""))
+            self.assertEqual(response.status_code, 404)
+
+    def test_render_source_requires_valid_token(self):
+        from projects_app.docx_render import build_render_source_token, store_render_source
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(REPORT_RENDER_CACHE_DIR=tmp):
+            key = store_render_source(b"PK data")
+            other = build_render_source_token("0" * 32)
+            response = self.client.get(
+                reverse("report_render_docx_source", args=[key]) + f"?token={other}"
+            )
+            self.assertEqual(response.status_code, 403)
+            response = self.client.get(reverse("report_render_docx_source", args=[key]))
+            self.assertEqual(response.status_code, 403)
+            response = self.client.get(
+                reverse("report_render_docx_source", args=[key]) + f"?token={build_render_source_token(key)}"
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content, b"PK data")
+
+    def test_rendered_layout_is_preferred_over_estimate(self):
+        from projects_app.report_macro_runner import _resolve_line_end_spaces
+
+        rendered = frozenset({7})
+        with (
+            patch("projects_app.docx_render.render_docx_to_pdf", return_value=b"%PDF"),
+            patch("projects_app.docx_rendered_layout.line_end_spaces_from_pdf", return_value=rendered) as aligned,
+            patch("projects_app.report_macro_runner.extract_line_end_spaces") as estimate,
+        ):
+            ends, warning = _resolve_line_end_spaces(self.upload, self.source, self.text, 1)
+        self.assertEqual(ends, rendered)
+        self.assertEqual(warning, "")
+        aligned.assert_called_once_with(self.text, b"%PDF")
+        estimate.assert_not_called()
+
+    def test_estimate_is_used_when_no_renderer_is_available(self):
+        from projects_app.report_macro_runner import _resolve_line_end_spaces
+
+        with (
+            patch("projects_app.docx_render.render_docx_to_pdf", return_value=None),
+            patch("projects_app.report_macro_runner.extract_line_end_spaces", return_value=frozenset({3})) as estimate,
+        ):
+            ends, warning = _resolve_line_end_spaces(self.upload, self.source, self.text, 1)
+        self.assertEqual(ends, frozenset({3}))
+        self.assertEqual(warning, "")
+        estimate.assert_called_once()
+
+    def test_renderer_failure_falls_back_to_estimate_with_warning(self):
+        from projects_app.docx_render import DocxRenderError
+        from projects_app.report_macro_runner import _resolve_line_end_spaces
+
+        with (
+            patch("projects_app.docx_render.render_docx_to_pdf", side_effect=DocxRenderError("LibreOffice: boom")),
+            patch("projects_app.report_macro_runner.extract_line_end_spaces", return_value=frozenset({3})),
+        ):
+            ends, warning = _resolve_line_end_spaces(self.upload, self.source, self.text, 1)
+        self.assertEqual(ends, frozenset({3}))
+        self.assertIn("LibreOffice: boom", warning)
+        self.assertIn("метрикам шрифтов", warning)
+
+    def test_unaligned_pdf_falls_back_to_estimate_with_warning(self):
+        from projects_app.docx_rendered_layout import RenderedLayoutError
+        from projects_app.report_macro_runner import _resolve_line_end_spaces
+
+        with (
+            patch("projects_app.docx_render.render_docx_to_pdf", return_value=b"%PDF"),
+            patch(
+                "projects_app.docx_rendered_layout.line_end_spaces_from_pdf",
+                side_effect=RenderedLayoutError("Текст PDF совпал с документом только на 10%."),
+            ),
+            patch("projects_app.report_macro_runner.extract_line_end_spaces", return_value=frozenset()),
+        ):
+            ends, warning = _resolve_line_end_spaces(self.upload, self.source, self.text, 1)
+        self.assertEqual(ends, frozenset())
+        self.assertIn("10%", warning)
+
+
+
+class LibreOfficeRenderedLayoutTests(TestCase):
+    """Сквозная проверка с настоящим LibreOffice; пропускается, если он не установлен."""
+
+    def setUp(self):
+        from projects_app.docx_render import find_soffice
+
+        if not find_soffice():
+            self.skipTest("LibreOffice не установлен")
+
+    def _render(self, text, *, page_width, size=Pt(12)):
+        from projects_app.docx_render import _render_with_libreoffice
+        from projects_app.docx_rendered_layout import line_end_spaces_from_pdf
+
+        document = Document()
+        section = document.sections[0]
+        section.page_width = page_width
+        section.left_margin = Cm(1)
+        section.right_margin = Cm(1)
+        run = document.add_paragraph().add_run(text)
+        run.font.size = size
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        extracted, _spans = extract_document_text(source)
+        pdf = _render_with_libreoffice(source, "report.docx")
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        return extracted, line_end_spaces_from_pdf(extracted, pdf)
+
+    def test_wrap_before_long_token_is_found_and_mid_line_preposition_is_not(self):
+        text = "слово слово слово в следующаяоченьдлиннаялексемабезпробелов"
+        extracted, ends = self._render(text, page_width=Cm(8))
+        self.assertEqual(ends, {extracted.find(" в ") + 2}, (extracted, ends))
+        extracted, ends = self._render(text, page_width=Cm(29))
+        self.assertEqual(ends, set(), (extracted, ends))
 
 
 class TpgrDateMacroTests(TestCase):
@@ -19374,3 +20388,145 @@ class GrmmFootnotePeriodMacroTests(TestCase):
         self.assertNotIn("learn.imcmontanai.ru", comments_xml)
 
 
+
+
+class ProjectsModalFormErrorRetargetTests(TestCase):
+    """Ошибка валидации формы из #projects-modal должна возвращаться в модалку.
+
+    Формы целятся в #projects-pane (outerHTML) для успешного ответа; без
+    HX-Retarget фрагмент формы с ошибками заменил бы собой весь пан.
+    """
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="projects-modal-error-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def _assert_retargeted_to_modal(self, response, template_name):
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["HX-Retarget"], "#projects-modal .modal-content")
+        self.assertEqual(response["HX-Reswap"], "innerHTML")
+        self.assertTemplateUsed(response, template_name)
+
+    def test_work_form_create_error_is_retargeted_to_modal(self):
+        response = self.client.post(
+            reverse("work_form_create"),
+            {"project": "", "name": ""},
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_retargeted_to_modal(response, "projects_app/work_form.html")
+        self.assertEqual(WorkVolume.objects.count(), 0)
+
+    def test_legal_entity_form_create_error_is_retargeted_to_modal(self):
+        response = self.client.post(
+            reverse("legal_entity_form_create"),
+            {"work_item": "", "legal_name": "QA"},
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_retargeted_to_modal(response, "projects_app/legal_entity_form.html")
+        self.assertEqual(LegalEntity.objects.count(), 0)
+
+    def test_registration_form_create_error_is_retargeted_to_modal(self):
+        response = self.client.post(
+            reverse("registration_form_create"),
+            {"short_uid": ""},
+            HTTP_HX_REQUEST="true",
+        )
+        self._assert_retargeted_to_modal(response, "projects_app/registration_form.html")
+        self.assertEqual(ProjectRegistration.objects.count(), 0)
+
+    def test_work_form_get_has_no_retarget(self):
+        response = self.client.get(reverse("work_form_create"))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("HX-Retarget", response.headers)
+
+
+class ProjectRowOrderTests(TestCase):
+    """Bulk row-order specs registered by projects_app/row_order.py."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="row-order@example.com", email="row-order@example.com", password="secret", is_staff=True
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC", country_name="Россия", country_code="643", country_alpha2="RU", position=0
+        )
+        self.product = Product.objects.create(short_name="DD-RO", name_en="Due Diligence", name_ru="ДД")
+        self.second_product = Product.objects.create(short_name="QAQC-RO", name_en="QAQC", name_ru="QAQC", position=2)
+
+    def _post(self, key, ordered, base):
+        return self.client.post(
+            reverse("row_order_save", args=[key]),
+            data=json.dumps({"ordered_ids": ordered, "base_order_ids": base}),
+            content_type="application/json",
+        )
+
+    def test_registration_reorder_refreshes_number_sequences(self):
+        first = ProjectRegistration.objects.create(
+            number=55, group_member=self.group_member, type=self.product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN, name="Первый", status="Не начат", position=1,
+        )
+        second = ProjectRegistration.objects.create(
+            number=55, group_member=self.group_member, type=self.second_product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN, name="Второй", status="Не начат", position=2,
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((first.agreement_sequence, second.agreement_sequence), (1, 2))
+
+        response = self._post("project-registration", [second.pk, first.pk], [first.pk, second.pk])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["events"], {"projects-updated": True})
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((second.position, first.position), (1, 2))
+        self.assertEqual((second.agreement_sequence, first.agreement_sequence), (1, 2))
+        self.assertEqual(second.short_uid, "00550010RU")
+        self.assertEqual(first.short_uid, "00550020RU")
+
+    def test_work_volume_reorder_is_scoped_by_project_and_respects_locks(self):
+        project_a = ProjectRegistration.objects.create(number=901, name="A", year=2026)
+        project_b = ProjectRegistration.objects.create(number=902, name="B", year=2026)
+        a1 = WorkVolume.objects.create(project=project_a, name="Карьер", asset_name="Карьер", manager="M", position=1)
+        a2 = WorkVolume.objects.create(project=project_a, name="Фабрика", asset_name="Фабрика", manager="M", position=2)
+        b1 = WorkVolume.objects.create(project=project_b, name="Склад", asset_name="Склад", manager="M", position=1)
+
+        with patch("projects_app.row_order.report_folder_locked_asset_keys", return_value=set()):
+            response = self._post("work-volume", [a2.pk, a1.pk, b1.pk], [a1.pk, a2.pk, b1.pk])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(WorkVolume.objects.filter(project=project_a).order_by("position").values_list("pk", flat=True)),
+            [a2.pk, a1.pk],
+        )
+        b1.refresh_from_db()
+        self.assertEqual(b1.position, 1)
+
+        with patch(
+            "projects_app.row_order.report_folder_locked_asset_keys",
+            return_value={(project_a.pk, "Карьер")},
+        ):
+            response = self._post("work-volume", [a1.pk, a2.pk], [a2.pk, a1.pk])
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("заблокирована", response.json()["error"])
+        self.assertEqual(
+            list(WorkVolume.objects.filter(project=project_a).order_by("position").values_list("pk", flat=True)),
+            [a2.pk, a1.pk],
+        )
+
+    def test_report_check_reorder_requires_manage_permission(self):
+        response = self._post("report-check", [1], [1])
+        self.assertEqual(response.status_code, 403)
+
+    def test_projects_partial_marks_tables_for_queued_row_order(self):
+        ProjectRegistration.objects.create(number=903, name="C", year=2026)
+        response = self.client.get(reverse("projects_partial"))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertIn('data-row-order-key="project-registration"', content)
+        self.assertIn('data-row-order-key="work-volume"', content)
+        self.assertIn('data-row-order-key="legal-entity"', content)

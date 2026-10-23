@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -7,59 +6,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.test import RequestFactory
 
+from projects_app.local_contract_storage import LocalContractCloud
 from projects_app.models import Performer
-
-
-class LocalContractCloud:
-    def __init__(self, output_dir, root_path):
-        self.output_dir = Path(output_dir).expanduser().resolve()
-        self.root_path = self._normalize_cloud_path(root_path)
-        self.uploaded_files = []
-        self._published_counter = 0
-
-    @staticmethod
-    def _normalize_cloud_path(path):
-        raw = str(path or "").strip().replace("\\", "/")
-        parts = [part.strip() for part in raw.split("/") if part.strip()]
-        if any(part in {".", ".."} for part in parts):
-            raise CommandError("Локальный cloud path не должен содержать '.' или '..'.")
-        return "/" + "/".join(parts) if parts else "/"
-
-    def local_path(self, cloud_path):
-        normalized = self._normalize_cloud_path(cloud_path)
-        parts = [part for part in normalized.strip("/").split("/") if part]
-        return self.output_dir.joinpath(*parts)
-
-    def create_folder(self, _user, cloud_path):
-        self.local_path(cloud_path).mkdir(parents=True, exist_ok=True)
-        return True
-
-    def list_resources(self, _user, cloud_path, *, limit=100, offset=0):
-        local_path = self.local_path(cloud_path)
-        if not local_path.exists():
-            return []
-        items = []
-        start = max(int(offset or 0), 0)
-        children = sorted(local_path.iterdir(), key=lambda item: item.name)
-        for child in children[start:start + limit]:
-            items.append({
-                "name": child.name,
-                "path": f"{self._normalize_cloud_path(cloud_path).rstrip('/')}/{child.name}",
-            })
-        return items
-
-    def upload_file(self, _user, cloud_path, data, *, overwrite=True):
-        local_path = self.local_path(cloud_path)
-        if local_path.exists() and not overwrite:
-            return False
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        local_path.write_bytes(data)
-        self.uploaded_files.append((cloud_path, local_path))
-        return True
-
-    def publish_resource(self, _user, cloud_path):
-        self._published_counter += 1
-        return f"https://local.contract.test/{self._published_counter}"
 
 
 class Command(BaseCommand):
@@ -107,7 +55,10 @@ class Command(BaseCommand):
         if not user.is_staff:
             raise CommandError(f"Пользователь {user!s} не staff; view не разрешит генерацию.")
 
-        local_cloud = LocalContractCloud(options["output_dir"], options["root_path"])
+        try:
+            local_cloud = LocalContractCloud(options["output_dir"], options["root_path"])
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
         request = RequestFactory().post(
             "/projects/performers/create-contract-project/",
             data={"performer_ids[]": [str(pk) for pk in performer_ids]},

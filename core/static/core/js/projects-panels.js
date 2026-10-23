@@ -96,16 +96,43 @@
     return null;
   }
 
+  function workRowOrderLocked(tr) {
+    return !!(tr && tr.dataset && (tr.dataset.orderLocked === '1' || tr.dataset.reportFolderLocked === '1'));
+  }
+
+  // Asset codes are A1..An by position inside a project (A0 when the project has a
+  // single asset); recompute them right after an optimistic reorder so the «Код»
+  // column does not wait for the server round-trip.
+  function updateWorkAssetCodes(table) {
+    const rootTable = table || pane()?.querySelector('table[data-row-order-key="work-volume"]');
+    if (!rootTable) return;
+    const grouped = {};
+    Array.from(rootTable.querySelectorAll('tbody tr[data-project-id]')).forEach((tr) => {
+      const key = String(tr.dataset.projectId || '');
+      (grouped[key] || (grouped[key] = [])).push(tr);
+    });
+    Object.keys(grouped).forEach((key) => {
+      const rows = grouped[key];
+      rows.forEach((tr, index) => {
+        const cell = tr.querySelector('td.js-asset-code');
+        if (!cell) return;
+        cell.textContent = rows.length <= 1 ? 'A0' : 'A' + (index + 1);
+      });
+    });
+  }
+
   function updateWorkLockedActionButtons(panel) {
     if (!panel) return;
     const upBtn = panel.querySelector('[data-panel-action="up"]');
     const downBtn = panel.querySelector('[data-panel-action="down"]');
     const deleteBtn = panel.querySelector('[data-panel-action="delete"]');
     const rows = getCheckedByName('work-select').map((box) => box.closest('tr')).filter(Boolean);
-    const anyFolderLocked = rows.some((tr) => tr.dataset.reportFolderLocked === '1');
+    // Asset codes (A1, A2 …) follow the row order; once the project workspace exists
+    // (or a report folder is already there) the order — and the buttons — are frozen.
+    const anyOrderLocked = rows.some(workRowOrderLocked);
     const anyUploadLocked = rows.some((tr) => tr.dataset.reportUploadLocked === '1');
-    const blockUp = anyFolderLocked || rows.some((tr) => visibleWorkRowSibling(tr, 'up')?.dataset?.reportFolderLocked === '1');
-    const blockDown = anyFolderLocked || rows.some((tr) => visibleWorkRowSibling(tr, 'down')?.dataset?.reportFolderLocked === '1');
+    const blockUp = anyOrderLocked || rows.some((tr) => workRowOrderLocked(visibleWorkRowSibling(tr, 'up')));
+    const blockDown = anyOrderLocked || rows.some((tr) => workRowOrderLocked(visibleWorkRowSibling(tr, 'down')));
     if (upBtn) {
       upBtn.classList.toggle('d-none', blockUp);
       upBtn.disabled = blockUp;
@@ -496,6 +523,7 @@
     const root = pane();
     closeRegistrationStatusEditor(root);
     closeRegistrationManagerEditor(root);
+    closeRegistrationCoordinatorEditor(root);
     closeRegistrationDeadlineEditor(root);
   }
 
@@ -509,6 +537,7 @@
 
     closeRegistrationStatusEditor(root);
     closeRegistrationManagerEditor(root);
+    closeRegistrationCoordinatorEditor(root);
     closeRegistrationDeadlineEditor(root);
     button.classList.add('is-editing');
     editor.value = button.dataset.statusValue || td.dataset.statusValue || button.textContent.trim();
@@ -550,10 +579,86 @@
 
     closeRegistrationStatusEditor(root);
     closeRegistrationManagerEditor(root);
+    closeRegistrationCoordinatorEditor(root);
     closeRegistrationDeadlineEditor(root);
     button.classList.add('is-editing');
     editor.value = button.dataset.managerValue || td.dataset.managerValue || '';
     editor.dataset.managerUrl = url;
+    editor.dataset.projectId = tr.dataset.projectId || '';
+
+    const rect = td.getBoundingClientRect();
+    editor.style.position = 'fixed';
+    editor.style.left = rect.left + 'px';
+    editor.style.top = (rect.top - REGISTRATION_INLINE_EDITOR_FRAME_OFFSET) + 'px';
+    editor.style.width = Math.max(rect.width - 4, 170) + 'px';
+    editor.style.height = (rect.height + REGISTRATION_INLINE_EDITOR_FRAME_OFFSET * 2) + 'px';
+    editor.style.zIndex = '1080';
+    editor.classList.remove('d-none');
+
+    try { editor.showPicker(); } catch (_) { editor.focus(); }
+  }
+
+  function getRegistrationCoordinatorEditor(root) {
+    return root?.querySelector('#registration-coordinator-editor') || null;
+  }
+
+  function closeRegistrationCoordinatorEditor(root) {
+    const editor = getRegistrationCoordinatorEditor(root);
+    if (!editor) return;
+    editor.classList.add('d-none');
+    editor.removeAttribute('style');
+    root?.querySelectorAll('.reg-coordinator-btn.is-editing').forEach((btn) => {
+      btn.classList.remove('is-editing');
+      btn.blur();
+    });
+    delete editor.dataset.coordinatorUrl;
+    delete editor.dataset.projectId;
+  }
+
+  function updateRegistrationCoordinatorDom(tr, coordinatorValue, coordinatorLabel, coordinatorName) {
+    const coordinatorCell = tr?.querySelector('[data-reg-coordinator-cell]');
+    if (!coordinatorCell) return;
+    coordinatorCell.dataset.coordinatorValue = coordinatorValue || '';
+    const coordinatorBtn = coordinatorCell.querySelector('[data-registration-coordinator]');
+    if (coordinatorBtn) {
+      coordinatorBtn.textContent = coordinatorLabel || '';
+      coordinatorBtn.dataset.coordinatorValue = coordinatorValue || '';
+      coordinatorBtn.dataset.coordinatorLabel = coordinatorName || coordinatorLabel || '';
+    } else {
+      coordinatorCell.textContent = coordinatorLabel || '';
+    }
+  }
+
+  function syncCoordinatorCurrentOption(editor, value, label) {
+    editor.querySelectorAll('option[data-current-only="1"]').forEach((option) => option.remove());
+    if (!value) return;
+    if (Array.from(editor.options).some((option) => option.value === value)) return;
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label || value;
+    option.dataset.currentOnly = '1';
+    const anchor = editor.options[0] ? editor.options[0].nextSibling : null;
+    if (anchor) editor.insertBefore(option, anchor);
+    else editor.appendChild(option);
+  }
+
+  function openRegistrationCoordinatorEditor(button) {
+    const root = pane();
+    const editor = getRegistrationCoordinatorEditor(root);
+    const td = button.closest('[data-reg-coordinator-cell]');
+    const tr = button.closest('tr');
+    const url = button.dataset.coordinatorUrl || tr?.dataset?.coordinatorUrl;
+    if (!root || !editor || !td || !tr || !url) return;
+
+    closeRegistrationStatusEditor(root);
+    closeRegistrationManagerEditor(root);
+    closeRegistrationCoordinatorEditor(root);
+    closeRegistrationDeadlineEditor(root);
+    button.classList.add('is-editing');
+    const value = button.dataset.coordinatorValue || td.dataset.coordinatorValue || '';
+    syncCoordinatorCurrentOption(editor, value, button.dataset.coordinatorLabel || button.textContent.trim());
+    editor.value = value;
+    editor.dataset.coordinatorUrl = url;
     editor.dataset.projectId = tr.dataset.projectId || '';
 
     const rect = td.getBoundingClientRect();
@@ -768,6 +873,7 @@
 
     closeRegistrationStatusEditor(root);
     closeRegistrationManagerEditor(root);
+    closeRegistrationCoordinatorEditor(root);
     closeRegistrationDeadlineEditor(root);
     editor.spellcheck = false;
     editor.setAttribute('spellcheck', 'false');
@@ -840,6 +946,24 @@
     return data;
   }
 
+  async function postRegistrationCoordinator(url, coordinatorValue) {
+    const body = new FormData();
+    body.append('project_coordinator', coordinatorValue);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': csrftoken,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || 'Не удалось изменить координатора проекта.');
+    }
+    return data;
+  }
+
   async function postRegistrationDeadline(url, deadlineValue, fieldName) {
     const body = new FormData();
     body.append(fieldName || 'deadline', deadlineValue);
@@ -871,6 +995,11 @@
       openRegistrationManagerEditor(managerBtn);
       return;
     }
+    const coordinatorBtn = e.target.closest('button[data-registration-coordinator]');
+    if (coordinatorBtn && root.contains(coordinatorBtn)) {
+      openRegistrationCoordinatorEditor(coordinatorBtn);
+      return;
+    }
     const deadlineBtn = e.target.closest('button[data-registration-date], button[data-registration-deadline]');
     if (deadlineBtn && root.contains(deadlineBtn)) {
       openRegistrationDeadlineEditor(deadlineBtn);
@@ -884,6 +1013,10 @@
     if (managerEditor && !managerEditor.classList.contains('d-none') && e.target !== managerEditor) {
       closeRegistrationManagerEditor(root);
     }
+    const coordinatorEditor = getRegistrationCoordinatorEditor(root);
+    if (coordinatorEditor && !coordinatorEditor.classList.contains('d-none') && e.target !== coordinatorEditor) {
+      closeRegistrationCoordinatorEditor(root);
+    }
     const deadlineEditor = getRegistrationDeadlineEditor(root);
     const deadlineWrap = getRegistrationDeadlineEditorWrap(root);
     if (deadlineWrap && !deadlineWrap.classList.contains('d-none') && !deadlineWrap.contains(e.target)) {
@@ -895,6 +1028,7 @@
     const root = pane();
     const editor = getRegistrationStatusEditor(root);
     const managerEditor = getRegistrationManagerEditor(root);
+    const coordinatorEditor = getRegistrationCoordinatorEditor(root);
     const deadlineEditor = getRegistrationDeadlineEditor(root);
     if (!root) return;
     if (editor && !editor.classList.contains('d-none')) {
@@ -904,6 +1038,10 @@
     if (managerEditor && !managerEditor.classList.contains('d-none')) {
       if (e.target === managerEditor || e.target.closest('button[data-registration-manager]')) return;
       closeRegistrationManagerEditor(root);
+    }
+    if (coordinatorEditor && !coordinatorEditor.classList.contains('d-none')) {
+      if (e.target === coordinatorEditor || e.target.closest('button[data-registration-coordinator]')) return;
+      closeRegistrationCoordinatorEditor(root);
     }
     const deadlineWrap = getRegistrationDeadlineEditorWrap(root);
     if (deadlineWrap && !deadlineWrap.classList.contains('d-none')) {
@@ -1121,6 +1259,39 @@
     }
   });
 
+  document.addEventListener('change', async (e) => {
+    const root = pane();
+    const editor = getRegistrationCoordinatorEditor(root);
+    if (!root || !editor || e.target !== editor) return;
+
+    const url = editor.dataset.coordinatorUrl;
+    const projectId = editor.dataset.projectId || '';
+    const coordinatorValue = editor.value;
+    const tr = projectId
+      ? root.querySelector(`table.reg-table tbody tr[data-project-id="${CSS.escape(projectId)}"]`)
+      : null;
+    if (!url || !tr) {
+      closeRegistrationCoordinatorEditor(root);
+      return;
+    }
+
+    editor.disabled = true;
+    try {
+      const data = await postRegistrationCoordinator(url, coordinatorValue);
+      updateRegistrationCoordinatorDom(
+        tr,
+        data.coordinatorValue || coordinatorValue,
+        data.coordinatorLabel || '',
+        data.coordinator || '',
+      );
+      closeRegistrationCoordinatorEditor(root);
+    } catch (error) {
+      alert(error.message || 'Не удалось изменить координатора проекта.');
+    } finally {
+      editor.disabled = false;
+    }
+  });
+
   // Единый делегированный запуск проекта: меняем только строку, без HTMX-перерисовки таблицы.
   document.addEventListener('click', async (e) => {
     const root = pane();
@@ -1190,6 +1361,12 @@
       const url = tr?.dataset?.editUrl;
       if (!url) return;
 
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__tableSel[name]; } catch (_) { window.__tableSel[name] = []; }
+      if (window.__tableSelLast === name) window.__tableSelLast = null;
+      window.TableSelection?.clearOnModalHide('projects-modal', name, root);
+
       // грузим форму в модалку ПРОЕКТОВ — как в Продуктах
       await htmx.ajax('GET', url, { target: '#projects-modal .modal-content', swap: 'innerHTML' });
       ensureActionsVisibility(name);
@@ -1203,13 +1380,18 @@
       if (!deletable.length) return;
       if (!confirm(getDeleteConfirmationMessage(name, deletable.length))) return;
       const urls = deletable.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#projects-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(deletable);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#projects-pane', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
@@ -1229,6 +1411,24 @@
             await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
           }
         }
+        ensureActionsVisibility(name);
+        return;
+      }
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        // Project numbers (xx/1, xx/2 …) follow the registry order and are refreshed server-side.
+        refreshAfterSave: name === 'registration-select',
+        // Asset codes (A1, A2 …) are derived from the order and renumbered in place.
+        onAfterMove: name === 'work-select' ? (table) => updateWorkAssetCodes(table) : undefined,
+        refresh: () => {
+          window.__tableSel[name] = getCheckedByName(name).map(ch => String(ch.value));
+          window.__tableSelLast = name;
+          const root = pane();
+          const url = root?.getAttribute('hx-get') || root?.dataset?.refreshUrl || '/projects/partial/';
+          return htmx.ajax('GET', url, { target: '#projects-pane', swap: 'outerHTML' });
+        },
+      })) {
         ensureActionsVisibility(name);
         return;
       }

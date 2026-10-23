@@ -50,6 +50,15 @@ from .report_access import (
     report_visible_registration_ids,
 )
 from .report_macro_runner import report_acceptance_threshold
+from .local_contract_storage import (
+    LocalContractCloud,
+    LocalContractFolderError,
+    encode_local_contract_path,
+    is_local_contract_path,
+    local_contract_cloud_path,
+    read_local_contract_docx,
+    resolve_local_contract_folder,
+)
 from .report_submission import (
     ReportUploadError,
     annotate_performers_report_section_lock,
@@ -92,8 +101,7 @@ from .report_submission import (
     report_slot_row_id,
     recover_abandoned_report_checks,
     report_check_error_reason,
-    report_check_result_pending,
-    REPORT_STATUS_SENT,
+    pending_report_check_payload,
     resolve_report_upload_source,
     accept_report_review_without_remarks,
     resume_report_check,
@@ -103,6 +111,7 @@ from .report_submission import (
     upload_report_file,
     validate_workspace_folder_roles,
     work_item_has_report_uploads,
+    work_item_order_locked,
     work_item_report_folder_locked,
     work_volume_asset_code,
 )
@@ -116,7 +125,9 @@ from .forms import (
     LegalEntityForm,
     ReportCheckRuleForm,
     ReportMacroForm,
+    _project_coordinator_choices,
     _project_manager_choices,
+    _resolve_project_coordinator_choice,
     _resolve_project_manager_choice,
 )
 from .services.schedule_copy import copy_typical_gantt_to_project
@@ -167,6 +178,7 @@ from policy_app.models import (
     EXPERT_GROUP,
     LAWYER_GROUP,
     Product,
+    PROJECTS_COORDINATOR_GROUP,
     PROJECTS_HEAD_GROUP,
     ServiceGoalReport,
     SYSTEM_DSC_SECTION_CODE,
@@ -215,6 +227,23 @@ LEGAL_FORM_TEMPLATE     = "projects_app/legal_entity_form.html"
 REPORT_CHECK_FORM_TEMPLATE = "projects_app/report_check_form.html"
 REPORT_MACRO_FORM_TEMPLATE = "projects_app/report_macro_form.html"
 REPORT_MACROS_SECTION_TEMPLATE = "projects_app/report_macros_section.html"
+PROJECTS_MODAL_CONTENT_SELECTOR = "#projects-modal .modal-content"
+
+
+def _render_projects_modal_form_error(request, template_name, context):
+    """Невалидная форма из #projects-modal.
+
+    Формы модалки целятся в #projects-pane (outerHTML) — это нужно для
+    успешного ответа, который перерисовывает весь пан. Ошибочный ответ
+    содержит только разметку формы, поэтому перенаправляем swap обратно в
+    .modal-content, иначе фрагмент формы заменит собой весь пан.
+    """
+    response = render(request, template_name, context)
+    response["HX-Retarget"] = PROJECTS_MODAL_CONTENT_SELECTOR
+    response["HX-Reswap"] = "innerHTML"
+    return response
+
+
 REPORT_MACRO_CSV_HEADERS = [
     "Курс",
     "Секция",
@@ -444,6 +473,7 @@ def _projects_context(user=None):
         "legal_projects": legal_projects,
         "registration_status_choices": ProjectRegistration.STATUS_CHOICES,
         "registration_manager_choices": _project_manager_choices("", show_prs_label=False),
+        "registration_coordinator_choices": _project_coordinator_choices("", show_prs_label=False),
         "is_expert": is_expert,
     }
 
@@ -771,7 +801,9 @@ def registration_form_create(request):
         return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
     form = ProjectRegistrationForm(request.POST)
     if not form.is_valid():
-        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
+        return _render_projects_modal_form_error(
+            request, REG_FORM_TEMPLATE, _registration_form_context(form, "create")
+        )
     base_obj = form.save(commit=False)
     product_ids = list(getattr(form, "cleaned_type_ids", []))
     with transaction.atomic():
@@ -894,6 +926,46 @@ def registration_manager_update(request, pk: int):
         }
     )
 
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_coordinator_update(request, pk: int):
+    coordinator_value = (request.POST.get("project_coordinator") or "").strip()
+    coordinator_name, coordinator_prs_id, matched = _resolve_project_coordinator_choice(coordinator_value)
+
+    reg = get_object_or_404(
+        ProjectRegistration.objects.only(
+            "id",
+            "project_coordinator",
+            "project_coordinator_prs_id",
+        ),
+        pk=pk,
+    )
+    if coordinator_value and not matched:
+        stored_name = (reg.project_coordinator or "").strip()
+        stored_prs_id = (reg.project_coordinator_prs_id or "").strip()
+        if coordinator_value not in {stored_name, stored_prs_id}:
+            return JsonResponse(
+                {"ok": False, "error": "Выберите координатора проектов."},
+                status=400,
+            )
+        coordinator_name = stored_name
+        coordinator_prs_id = stored_prs_id
+    if reg.project_coordinator != coordinator_name or reg.project_coordinator_prs_id != coordinator_prs_id:
+        reg.project_coordinator = coordinator_name
+        reg.project_coordinator_prs_id = coordinator_prs_id
+        reg.save(update_fields=["project_coordinator", "project_coordinator_prs_id"])
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "coordinator": reg.project_coordinator,
+            "coordinatorValue": reg.project_coordinator_prs_id or reg.project_coordinator,
+            "coordinatorLabel": _short_fio_label(reg.project_coordinator),
+        }
+    )
+
 @login_required
 @user_passes_test(staff_required)
 @require_POST
@@ -997,7 +1069,7 @@ def contract_form_edit(request, pk: int):
         })
     form = ContractConditionsForm(request.POST, instance=reg)
     if not form.is_valid():
-        return render(request, CONTRACT_FORM_TEMPLATE, {
+        return _render_projects_modal_form_error(request, CONTRACT_FORM_TEMPLATE, {
             "form": form, "action": "edit", "registration": reg,
         })
     form.save()
@@ -1102,7 +1174,7 @@ def project_schedule_form_create(request, pk: int):
         )
     form = ProjectScheduleTaskForm(request.POST, registration=reg)
     if not form.is_valid():
-        return render(
+        return _render_projects_modal_form_error(
             request,
             SCHEDULE_FORM_TEMPLATE,
             _schedule_form_context(form, "create", project_pk=reg.pk, project=reg),
@@ -1111,7 +1183,7 @@ def project_schedule_form_create(request, pk: int):
         gantt_tasks.add_task(reg, form.task_payload())
     except ValueError as exc:
         form.add_error(None, str(exc))
-        return render(
+        return _render_projects_modal_form_error(
             request,
             SCHEDULE_FORM_TEMPLATE,
             _schedule_form_context(form, "create", project_pk=reg.pk, project=reg),
@@ -1139,7 +1211,7 @@ def project_schedule_form_edit(request, project_pk: int, task_id: str):
         )
     form = ProjectScheduleTaskForm(request.POST, registration=reg)
     if not form.is_valid():
-        return render(
+        return _render_projects_modal_form_error(
             request,
             SCHEDULE_FORM_TEMPLATE,
             _schedule_form_context(form, "edit", project_pk=reg.pk, task_id=task_id, project=reg),
@@ -1148,7 +1220,7 @@ def project_schedule_form_edit(request, project_pk: int, task_id: str):
         gantt_tasks.update_task(reg, task_id, form.task_payload())
     except ValueError as exc:
         form.add_error(None, str(exc))
-        return render(
+        return _render_projects_modal_form_error(
             request,
             SCHEDULE_FORM_TEMPLATE,
             _schedule_form_context(form, "edit", project_pk=reg.pk, task_id=task_id, project=reg),
@@ -1372,7 +1444,9 @@ def work_form_create(request):
         return render(request, WORK_FORM_TEMPLATE, _work_form_context(form, "create"))
     form = WorkVolumeForm(request.POST)
     if not form.is_valid():
-        return render(request, WORK_FORM_TEMPLATE, _work_form_context(form, "create"))
+        return _render_projects_modal_form_error(
+            request, WORK_FORM_TEMPLATE, _work_form_context(form, "create")
+        )
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
         obj.position = _next_position(WorkVolume, {"project": obj.project})
@@ -1401,7 +1475,9 @@ def registration_form_edit(request, pk: int):
         return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
     form = ProjectRegistrationForm(request.POST, instance=reg, allow_multiple_products=False)
     if not form.is_valid():
-        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
+        return _render_projects_modal_form_error(
+            request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg)
+        )
     obj = form.save()
     _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
     for work_item in obj.work_items.select_related("project").all():
@@ -1527,7 +1603,9 @@ def work_form_edit(request, pk: int):
         return render(request, WORK_FORM_TEMPLATE, _work_form_context(form, "edit", item))
     form = WorkVolumeForm(request.POST, instance=item)
     if not form.is_valid():
-        return render(request, WORK_FORM_TEMPLATE, _work_form_context(form, "edit", item))
+        return _render_projects_modal_form_error(
+            request, WORK_FORM_TEMPLATE, _work_form_context(form, "edit", item)
+        )
     obj = form.save()
     _sync_to_legal_entity_record(
         obj.asset_name, obj.country, obj.identifier,
@@ -1631,7 +1709,7 @@ def _normalize_legal_positions(project_id: int | None = None):
             LegalEntity.objects.filter(pk=b.pk).update(position=idx)
 
 def _swap_work_volumes_if_unlocked(first: WorkVolume, second: WorkVolume) -> bool:
-    if work_item_report_folder_locked(first) or work_item_report_folder_locked(second):
+    if work_item_order_locked(first) or work_item_order_locked(second):
         return False
     WorkVolume.objects.filter(pk=first.pk).update(position=second.position)
     WorkVolume.objects.filter(pk=second.pk).update(position=first.position)
@@ -1687,7 +1765,9 @@ def legal_entity_form_create(request):
         return render(request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "create"})
     form = LegalEntityForm(request.POST)
     if not form.is_valid():
-        return render(request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "create"})
+        return _render_projects_modal_form_error(
+            request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "create"}
+        )
     entity = form.save(commit=False)
     if not getattr(entity, "position", 0):
         entity.position = _next_position(LegalEntity, {"project": entity.project})
@@ -1710,7 +1790,9 @@ def legal_entity_form_edit(request, pk: int):
         return render(request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "edit", "legal_entity": entity})
     form = LegalEntityForm(request.POST, instance=entity)
     if not form.is_valid():
-        return render(request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "edit", "legal_entity": entity})
+        return _render_projects_modal_form_error(
+            request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "edit", "legal_entity": entity}
+        )
     obj = form.save()
     _sync_to_legal_entity_record(
         obj.legal_name, obj.country, obj.identifier,
@@ -2263,10 +2345,7 @@ def _performers_context(user=None, request=None):
                 -(getattr(p.registration, "number", None) or 0),
                 getattr(p.registration, "short_uid", "") or "",
                 p.registration_id or 0,
-                p.asset_name or "",
-                p.section_code or "",
-                p.position or 0,
-                p.pk or 0,
+                *_performer_display_sort_key(p),
             )
         )
         for p in performers:
@@ -2288,7 +2367,10 @@ def _performers_context(user=None, request=None):
         dh_department_id = getattr(user.employee_profile, "department_id", None)
         participation_performers = list(participation_performers)
         for p in participation_performers:
-            ts_dir = _effective_direction_id(p.typical_section)
+            ts_dir = _effective_direction_id(
+                p.typical_section,
+                getattr(getattr(p, "registration", None), "group_member", None),
+            )
             in_dh_direction = bool(ts_dir and ts_dir == dh_department_id)
             p.dh_checkbox_locked = (
                 not in_dh_direction
@@ -2629,7 +2711,10 @@ def _performer_form_ctx(form, action: str, performer=None):
                 "label": _typical_section_option_label(s),
                 "product_id": s.product_id,
                 "pricing_method": (s.expertise_dir.pricing_method or "") if s.expertise_dir_id else "",
-                "direction_id": s.expertise_direction_id,
+                "direction_id": _effective_direction_id(
+                    s,
+                    getattr(r, "group_member", None),
+                ),
                 "specialty_ids": [
                     link.specialty_id
                     for link in s.ranked_specialties.all()
@@ -2677,6 +2762,36 @@ def _render_performers_updated(request):
     return resp
 
 
+def _performer_display_sort_key(performer):
+    """Order of performer rows inside one registration, as rendered in the table."""
+    return (
+        performer.asset_name or "",
+        getattr(performer, "section_code", "") or "",
+        performer.position or 0,
+        performer.pk or 0,
+    )
+
+
+def _performer_order_items_in_display_order(performers):
+    """Rows for the order signature in the exact order the performers table renders them.
+
+    The table groups rows by asset (and section code) rather than by raw ``position``,
+    so the signature must be built from the same ordering on both the render and the
+    save side; otherwise every bulk save of a multi-asset project would report a conflict.
+    """
+    items = annotate_performers_section_codes(list(performers))
+    items.sort(key=lambda p: (p.registration_id or 0, *_performer_display_sort_key(p)))
+    return [
+        {
+            "id": p.pk,
+            "registration_id": p.registration_id,
+            "position": p.position,
+            "asset_name": p.asset_name or "",
+        }
+        for p in items
+    ]
+
+
 def _performer_order_signature_for_items(items):
     grouped = defaultdict(list)
     for item in items:
@@ -2697,16 +2812,17 @@ def _next_performer_position(registration_id: int | None = None):
     return _next_position(Performer, filters)
 
 
-def _effective_direction_id(typical_section):
-    """Return the OrgUnit PK of the expertise direction, or None if absent or 'директорское' (level 1)."""
-    if not typical_section:
+def _effective_direction_id(typical_section, group_member=None):
+    """Подразделение руководителя по экспертизе раздела, режиму и организации проекта.
+
+    Уровень 1 не даёт руководителя направления.
+    """
+    if not typical_section or not getattr(typical_section, "expertise_dir_id", None):
         return None
-    direction = getattr(typical_section, "expertise_direction", None)
-    if not direction:
-        return None
-    if direction.level == 1:
-        return None
-    return direction.pk
+    from group_app.expertise_management import operation_unit
+
+    unit = operation_unit(typical_section.expertise_dir_id, group_member)
+    return unit.pk if unit else None
 
 
 def _is_executor_locked(user, performer):
@@ -2720,8 +2836,9 @@ def _is_executor_locked(user, performer):
         emp = user.employee_profile
     except Exception:
         return False
-    ts_direction_id = _effective_direction_id(performer.typical_section)
-    if emp.role in (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP):
+    group_member = getattr(getattr(performer, "registration", None), "group_member", None)
+    ts_direction_id = _effective_direction_id(performer.typical_section, group_member)
+    if emp.role in (PROJECTS_HEAD_GROUP, PROJECTS_COORDINATOR_GROUP, DIRECTION_DIRECTOR_GROUP):
         if ts_direction_id:
             return True
         if (performer.participation_request_sent_at
@@ -3296,6 +3413,23 @@ def contract_onlyoffice_docx_source(request, pk: int):
     file_name = str(getattr(performer, "contract_file", "") or "").strip() or "contract.docx"
     response = HttpResponse(docx_bytes, content_type=DOCX_CONTENT_TYPE)
     response["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(file_name)}"
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_GET
+def report_render_docx_source(request, key: str):
+    """Отчёт, отданный ONLYOFFICE Document Server для отрисовки раскладки строк."""
+    from .docx_render import load_render_source, render_source_token_matches
+
+    token = str(request.GET.get("token") or "").strip()
+    if not render_source_token_matches(key, token):
+        return HttpResponseForbidden("Недействительная ссылка на DOCX-файл отчёта.")
+    docx_bytes = load_render_source(key)
+    if docx_bytes is None:
+        raise Http404("DOCX-файл отчёта для отрисовки не найден.")
+    response = HttpResponse(docx_bytes, content_type=DOCX_CONTENT_TYPE)
+    response["Content-Disposition"] = "inline; filename=\"report.docx\""
     response["Cache-Control"] = "no-store"
     return response
 
@@ -4026,12 +4160,11 @@ def performer_row_order(request):
 
     base_signature = str(payload.get("base_order_signature") or "")
     with transaction.atomic():
-        current_items = list(
+        current_items = _performer_order_items_in_display_order(
             Performer.objects
-            .select_for_update()
+            .select_for_update(of=("self",))
             .select_related("typical_section")
             .order_by("registration_id", "position", "id")
-            .values("id", "registration_id", "position", "asset_name")
         )
         current_ids = [item["id"] for item in current_items]
         current_signature = _performer_order_signature_for_items(current_items)
@@ -4063,7 +4196,7 @@ def performer_row_order(request):
         if locked_report_section_sequences(current_lock_items) != locked_report_section_sequences(desired_lock_items):
             return JsonResponse({
                 "ok": False,
-                "error": "После загрузки отчётов нельзя менять порядок разделов.",
+                "error": "После создания рабочего пространства нельзя менять порядок разделов.",
                 "current_performer_ids": current_ids,
                 "order_signature": current_signature,
             }, status=409)
@@ -4974,15 +5107,9 @@ def report_check_status(request, pk):
         recover_abandoned_report_checks(upload_id=upload.pk)
         upload.refresh_from_db()
     payload = _report_upload_fallback_payload(upload, viewer=request.user)
-    if report_check_result_pending(upload):
-        payload["check_status"] = PerformerReportUpload.CheckStatus.RUNNING
-        payload["check_progress"] = "Сохранение результата"
-        payload["check_file_name"] = ""
-        payload["check_download_url"] = ""
-        payload["workflow_status"] = REPORT_STATUS_SENT
-        payload["workflow_status_class"] = report_workflow_status_class(REPORT_STATUS_SENT)
-        payload["status_date"] = format_report_status_date(upload, REPORT_STATUS_SENT)
-        payload["finding_count_display"] = "—"
+    pending_result = pending_report_check_payload(upload)
+    if pending_result:
+        payload.update(pending_result)
         return JsonResponse(payload)
     if upload.check_file_name:
         payload["check_download_url"] = reverse(
@@ -6214,12 +6341,49 @@ def create_contract_project(request):
             ),
         )
 
-    try:
-        disk_root = get_selected_root_path(request.user)
-    except CloudStorageNotReadyError as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
-    if not disk_root:
-        return JsonResponse({"ok": False, "error": "Не выбрана папка в основном облачном хранилище."}, status=400)
+    source_kind = (request.POST.get("source_kind") or "cloud").strip() or "cloud"
+    if source_kind not in {"cloud", "local"}:
+        source_kind = "cloud"
+    local_cloud = None
+    if source_kind == "local":
+        try:
+            local_root = resolve_local_contract_folder(request.POST.get("local_folder_path") or "")
+        except LocalContractFolderError as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        local_cloud = LocalContractCloud(local_root, "/")
+        disk_root = local_cloud.root_path
+    else:
+        try:
+            disk_root = get_selected_root_path(request.user)
+        except CloudStorageNotReadyError as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        if not disk_root:
+            return JsonResponse({"ok": False, "error": "Не выбрана папка в основном облачном хранилище."}, status=400)
+
+    def _reusable_cloud_folder(stored):
+        stored = (stored or "").strip()
+        if not stored:
+            return ""
+        if local_cloud is not None:
+            return local_contract_cloud_path(stored, local_cloud.output_dir)
+        if is_local_contract_path(stored):
+            return ""
+        return normalize_cloud_path(stored)
+
+    def _create_contract_folder(path):
+        if local_cloud is not None:
+            return local_cloud.create_folder(request.user, path)
+        return cloud_create_folder(request.user, path)
+
+    def _list_contract_folder(path):
+        if local_cloud is not None:
+            return local_cloud.list_resources(request.user, path, limit=1000)
+        return list_folder_resources(request.user, path, limit=1000)
+
+    def _upload_contract_file(user, path, data):
+        if local_cloud is not None:
+            return local_cloud.upload_file(user, path, data)
+        return cloud_upload_file(user, path, data)
 
     all_templates = list(
         ContractTemplate.objects
@@ -6264,7 +6428,7 @@ def create_contract_project(request):
         current = ""
         for part in normalized.strip("/").split("/"):
             current = f"{current}/{part}" if current else f"/{part}"
-            if not cloud_create_folder(request.user, current):
+            if not _create_contract_folder(current):
                 return False
         return True
 
@@ -6449,9 +6613,12 @@ def create_contract_project(request):
                     ),
                     None,
                 )
-                existing_folder_performer = selected_folder_performer
-                if existing_folder_performer is None:
-                    existing_folder_performer = (
+                folder_candidates = [
+                    item for item in all_perfs_for_executor
+                    if (item.contract_project_disk_folder or "").strip()
+                ]
+                if not folder_candidates:
+                    sibling = (
                         Performer.objects
                         .filter(
                             registration_id=perf.registration_id,
@@ -6461,6 +6628,16 @@ def create_contract_project(request):
                         .order_by("contract_sent_at", "contract_project_created_at", "id")
                         .first()
                     )
+                    if sibling is not None:
+                        folder_candidates.append(sibling)
+                existing_folder_performer = None
+                reused_folder_path = ""
+                for candidate in folder_candidates:
+                    candidate_path = _reusable_cloud_folder(candidate.contract_project_disk_folder)
+                    if candidate_path:
+                        existing_folder_performer = candidate
+                        reused_folder_path = candidate_path
+                        break
                 reuse_existing_folder = existing_folder_performer is not None
                 selected_batch_id = next((item.contract_batch_id for item in all_perfs_for_executor if item.contract_batch_id), None)
                 year_str = sanitize_folder_name(str(project.year) if project.year else "Без года")
@@ -6477,7 +6654,7 @@ def create_contract_project(request):
 
                 executor_name = contract_executor_short_name(perf.executor)
                 if reuse_existing_folder:
-                    folder_path = normalize_cloud_path(existing_folder_performer.contract_project_disk_folder)
+                    folder_path = normalize_cloud_path(reused_folder_path)
                     folder_name = os.path.basename(folder_path.rstrip("/")) or executor_name
                     if not _ensure_cloud_folder_path(folder_path):
                         errors.append(folder_path)
@@ -6491,7 +6668,7 @@ def create_contract_project(request):
                         yield _padded(json.dumps({"current": current, "total": total}) + "\n")
                         continue
 
-                    existing = list_folder_resources(request.user, base_path, limit=1000)
+                    existing = _list_contract_folder(base_path)
                     contract_display_id = contract_project_registration_display_id(project) or "Unknown"
                     next_number = 1
                     for item in existing:
@@ -6505,21 +6682,24 @@ def create_contract_project(request):
                     folder_name = sanitize_folder_name(f"{contract_display_id} {next_number:03d} {executor_name}")
                     folder_path = f"{base_path}/{folder_name}"
 
-                    if not cloud_create_folder(request.user, folder_path):
+                    if not _create_contract_folder(folder_path):
                         errors.append(folder_name)
                         current += 1
                         yield _padded(json.dumps({"current": current, "total": total}) + "\n")
                         continue
 
-                warnings.extend(_share_contract_folder_for_nextcloud(perf, folder_path))
+                if local_cloud is None:
+                    warnings.extend(_share_contract_folder_for_nextcloud(perf, folder_path))
                 existing_folder_file_id = ""
                 existing_folder_public_url = ""
-                if existing_folder_performer:
+                if existing_folder_performer and local_cloud is None:
                     existing_folder_file_id = existing_folder_performer.contract_project_folder_file_id or ""
                     existing_folder_public_url = existing_folder_performer.contract_project_folder_link or ""
-                folder_file_id = existing_folder_file_id or _resolve_contract_project_nextcloud_file_id(folder_path)
+                folder_file_id = existing_folder_file_id or (
+                    "" if local_cloud is not None else _resolve_contract_project_nextcloud_file_id(folder_path)
+                )
                 folder_public_url = existing_folder_public_url
-                if not folder_public_url:
+                if local_cloud is None and not folder_public_url:
                     try:
                         published_folder_url = cloud_publish_resource(request.user, folder_path)
                         if published_folder_url:
@@ -6637,7 +6817,7 @@ def create_contract_project(request):
                             batch_performers=all_perfs_for_executor,
                         )
                         upload_path = f"{folder_path}/{upload_name}"
-                        if not cloud_upload_file(request.user, upload_path, file_data):
+                        if not _upload_contract_file(request.user, upload_path, file_data):
                             errors.append(f"Загрузка файла: {upload_name} → {folder_name}")
                         else:
                             file_update_kwargs = {
@@ -6650,38 +6830,47 @@ def create_contract_project(request):
                                 "contract_signed_pdf_link": "",
                                 "contract_signed_pdf_file_id": "",
                             }
-                            file_id = _resolve_contract_project_nextcloud_file_id(
-                                upload_path,
-                                attempts=3,
-                                retry_delay=0.2,
-                            )
-                            if file_id:
-                                file_update_kwargs["contract_project_file_id"] = file_id
-                            try:
-                                public_url = cloud_publish_resource(request.user, upload_path)
-                                if public_url:
-                                    file_update_kwargs["contract_project_link"] = public_url
-                            except Exception:
-                                pass
+                            if local_cloud is None:
+                                file_id = _resolve_contract_project_nextcloud_file_id(
+                                    upload_path,
+                                    attempts=3,
+                                    retry_delay=0.2,
+                                )
+                                if file_id:
+                                    file_update_kwargs["contract_project_file_id"] = file_id
+                                try:
+                                    public_url = cloud_publish_resource(request.user, upload_path)
+                                    if public_url:
+                                        file_update_kwargs["contract_project_link"] = public_url
+                                except Exception:
+                                    pass
                             Performer.objects.filter(
                                 pk__in=executor_to_ids[key],
                             ).update(**file_update_kwargs)
-                    except Exception:
-                        errors.append(f"Чтение файла: {tmpl.sample_name}")
+                    except Exception as exc:
+                        logger.exception("Не удалось собрать проект договора из образца %s", tmpl.sample_name)
+                        errors.append(f"Чтение файла: {tmpl.sample_name}: {exc}")
 
                 batch_id = (
                     selected_batch_id
                     or perf.contract_batch_id
                     or uuid.uuid4()
                 )
+                stored_folder_path = folder_path
+                if local_cloud is not None:
+                    stored_folder_path = encode_local_contract_path(local_cloud.local_path(folder_path))
                 update_kwargs = dict(
                     contract_batch_id=batch_id,
                     contract_is_addendum=is_addendum,
                     contract_addendum_number=addendum_number,
-                    contract_project_disk_folder=folder_path,
+                    contract_project_disk_folder=stored_folder_path,
                     contract_project_folder_link=folder_public_url,
                 )
-                if folder_file_id:
+                if local_cloud is not None:
+                    update_kwargs["contract_project_folder_file_id"] = ""
+                    update_kwargs["contract_project_link"] = ""
+                    update_kwargs["contract_project_file_id"] = ""
+                elif folder_file_id:
                     update_kwargs["contract_project_folder_file_id"] = folder_file_id
                 if pre_contract_number:
                     update_kwargs["contract_number"] = pre_contract_number
@@ -6724,6 +6913,22 @@ def create_contract_project(request):
     resp["Cache-Control"] = "no-cache, no-store"
     resp["X-Accel-Buffering"] = "no"
     return resp
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_GET
+def contract_project_local_download(request, pk):
+    performer = get_object_or_404(Performer, pk=pk)
+    payload = read_local_contract_docx(
+        performer.contract_project_disk_folder,
+        performer.contract_file,
+    )
+    if not payload:
+        raise Http404("Файл не найден.")
+    path, file_bytes = payload
+    filename = os.path.basename(performer.contract_file or "") or path.name
+    return FileResponse(BytesIO(file_bytes), as_attachment=True, filename=filename)
 
 
 @login_required

@@ -4282,7 +4282,7 @@
     }
 
     function cleanupWorktimeCsvModalArtifacts() {
-      if (document.querySelector('.modal.show')) return;
+      if (window.ModalBackdropGuard ? window.ModalBackdropGuard.isAnyModalActive() : document.querySelector('.modal.show')) return;
       document.querySelectorAll('.modal-backdrop').forEach(function (backdrop) {
         backdrop.remove();
       });

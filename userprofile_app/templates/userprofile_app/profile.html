@@ -121,19 +121,19 @@
             <div class="row mb-2 align-items-center">
               <div class="col-auto text-muted small" style="width:150px;">Имя</div>
               <div class="col">
-                <input type="text" class="form-control form-control-sm" value="{{ request.user.first_name|default:"" }}" readonly tabindex="-1">
+                <input type="text" class="form-control form-control-sm readonly-field" value="{{ request.user.first_name|default:"" }}" readonly tabindex="-1">
               </div>
             </div>
             <div class="row mb-2 align-items-center">
               <div class="col-auto text-muted small" style="width:150px;">Отчество</div>
               <div class="col">
-                <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.patronymic }}{% endif %}" readonly tabindex="-1">
+                <input type="text" class="form-control form-control-sm readonly-field" value="{% if employee %}{{ employee.patronymic }}{% endif %}" readonly tabindex="-1">
               </div>
             </div>
             <div class="row mb-2 align-items-center">
               <div class="col-auto text-muted small" style="width:150px;">Фамилия</div>
               <div class="col">
-                <input type="text" class="form-control form-control-sm" value="{{ request.user.last_name|default:"" }}" readonly tabindex="-1">
+                <input type="text" class="form-control form-control-sm readonly-field" value="{{ request.user.last_name|default:"" }}" readonly tabindex="-1">
               </div>
             </div>
             <div class="row mb-2 align-items-center">
@@ -145,13 +145,13 @@
             <div class="row mb-2 align-items-center">
               <div class="col-auto text-muted small" style="width:150px;">Пароль</div>
               <div class="col">
-                <input type="text" class="form-control form-control-sm" value="••••••••" readonly tabindex="-1">
+                <input type="text" class="form-control form-control-sm readonly-field" value="••••••••" readonly tabindex="-1">
               </div>
             </div>
             <div class="row mb-2 align-items-center">
               <div class="col-auto text-muted small" style="width:150px;">Телефон</div>
               <div class="col">
-                <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.primary_phone_display }}{% endif %}" readonly tabindex="-1">
+                <input type="text" class="form-control form-control-sm readonly-field" value="{% if employee %}{{ employee.primary_phone_display }}{% endif %}" readonly tabindex="-1">
               </div>
             </div>
             <div class="row mb-2 align-items-center">
@@ -160,14 +160,14 @@
                 {% if request.user.is_staff %}
                   <input type="text" class="form-control form-control-sm readonly-field" value="{% if employee %}{{ employee.employment }}{% endif %}" readonly tabindex="-1">
                 {% else %}
-                  <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.organization }}{% endif %}" readonly tabindex="-1">
+                  <input type="text" class="form-control form-control-sm readonly-field" value="{% if employee %}{{ employee.organization }}{% endif %}" readonly tabindex="-1">
                 {% endif %}
               </div>
             </div>
             <div class="row mb-3 align-items-center">
               <div class="col-auto text-muted small" style="width:150px;">Должность</div>
               <div class="col">
-                <input type="text" class="form-control form-control-sm" value="{% if employee %}{{ employee.job_title }}{% endif %}" readonly tabindex="-1">
+                <input type="text" class="form-control form-control-sm readonly-field" value="{% if employee %}{{ employee.job_title }}{% endif %}" readonly tabindex="-1">
               </div>
             </div>
 

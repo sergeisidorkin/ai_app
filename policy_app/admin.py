@@ -17,6 +17,7 @@ from .models import (
     Product,
     SectionStructure,
     ReportStructure,
+    ServiceBlockClassifier,
     ServiceGoalReport,
     SpecialtyTariff,
     Tariff,
@@ -343,11 +344,14 @@ class ExpertiseDirectionAdmin(TimestampedAdmin):
         "name",
         "pricing_method",
         "specialization_area",
+        "department",
+        "organization_display",
         "owner_display",
         "updated_at",
     )
     list_editable = ("position",)
     list_display_links = ("short_name",)
+    list_select_related = ("department", "department__company")
     search_fields = ("name", "short_name", "pricing_method", "specialization_area")
     filter_horizontal = ("owners",)
     ordering = ("position", "id")
@@ -358,10 +362,52 @@ class ExpertiseDirectionAdmin(TimestampedAdmin):
                 ("short_name", "name"),
                 "pricing_method",
                 "specialization_area",
+                "department",
             ),
         }),
         ("Владельцы", {
             "fields": ("is_group_owner", "owners"),
+        }),
+        ("Служебные поля", {
+            "fields": ("created_at", "updated_at"),
+        }),
+    )
+
+
+@admin.register(ServiceBlockClassifier)
+class ServiceBlockClassifierAdmin(TimestampedAdmin):
+    list_display = (
+        "position",
+        "code",
+        "short_name",
+        "short_name_ru",
+        "accounting_type",
+        "expertise_dir",
+        "expertise_direction",
+        "updated_at",
+    )
+    list_editable = ("position",)
+    list_display_links = ("code",)
+    list_select_related = ("expertise_dir", "expertise_direction")
+    list_filter = ("accounting_type", "expertise_dir", "expertise_direction")
+    search_fields = ("code", "short_name", "short_name_ru")
+    ordering = ("position", "id")
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj is not None:
+            fields.append("code")
+        return fields
+
+    fieldsets = (
+        (None, {
+            "fields": (
+                "position",
+                "code",
+                ("short_name", "short_name_ru"),
+                "accounting_type",
+                ("expertise_dir", "expertise_direction"),
+            ),
         }),
         ("Служебные поля", {
             "fields": ("created_at", "updated_at"),

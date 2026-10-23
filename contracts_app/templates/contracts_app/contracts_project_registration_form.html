@@ -1347,11 +1347,10 @@
   #contracts-modal .contracts-customer-meta-grid > div {
     min-width: 0;
   }
+  /* Цвета заблокированных полей — общие переменные --locked-field-* (site.css). */
   #contracts-modal #reg-asset-owner-country-select.readonly-field,
   #contracts-modal #reg-asset-owner-region-select.readonly-field {
-    background-color: #f8f9fa !important;
-    color: #6c757d !important;
-    -webkit-text-fill-color: #6c757d;
+    -webkit-text-fill-color: var(--locked-field-fg);
     cursor: default;
     pointer-events: none;
   }
@@ -1360,10 +1359,10 @@
   #contracts-modal form:has([name="asset_owner_matches_customer"]:checked) #reg-asset-owner-region-select,
   #contracts-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_number"],
   #contracts-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_date"] {
-    background-color: #f8f9fa !important;
-    color: #6c757d !important;
+    background-color: var(--locked-field-bg) !important;
+    color: var(--locked-field-fg) !important;
     opacity: 1 !important;
-    -webkit-text-fill-color: #6c757d;
+    -webkit-text-fill-color: var(--locked-field-fg);
     cursor: default;
     pointer-events: none;
   }

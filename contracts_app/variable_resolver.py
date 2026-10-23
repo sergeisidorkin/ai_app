@@ -658,56 +658,31 @@ def _parse_gantt_date(value):
     return None
 
 
-def _latest_gantt_deadline_for_performers(performer, all_performers):
-    performer_list = [
-        item for item in (all_performers or [performer])
-        if getattr(item, "pk", None)
-    ]
-    if not performer_list and getattr(performer, "pk", None):
-        performer_list = [performer]
+def _latest_project_deadline_for_performers(performer, all_performers):
+    """Дедлайн из реестра проектов, позднейший по этапам пакета исполнителя."""
+    performer_list = list(all_performers or [])
+    if performer not in performer_list:
+        performer_list.append(performer)
 
     dates = []
-    by_registration = {}
+    seen_registrations = set()
     for item in performer_list:
         registration = getattr(item, "registration", None)
-        registration_id = getattr(item, "registration_id", None)
-        if not registration or not registration_id:
+        registration_id = getattr(item, "registration_id", None) or getattr(registration, "pk", None)
+        if registration_id in seen_registrations:
             continue
-        by_registration.setdefault(registration_id, {"registration": registration, "performer_ids": set()})
-        by_registration[registration_id]["performer_ids"].add(str(item.pk))
-
-    for group in by_registration.values():
-        registration = group["registration"]
-        payload = getattr(registration, "gantt_data", None)
-        task_dates = []
-        if isinstance(payload, dict):
-            performer_ids = group["performer_ids"]
-            for task in payload.get("data") or []:
-                if (
-                    not isinstance(task, dict)
-                    or not task.get("performer_id")
-                    or str(task.get("performer_id")) not in performer_ids
-                ):
-                    continue
-                deadline = _parse_gantt_date(task.get("deadline"))
-                if deadline:
-                    task_dates.append(deadline)
-
-        if task_dates:
-            dates.append(max(task_dates))
-            continue
-
-        fallback_deadline = _parse_gantt_date(getattr(registration, "deadline", None))
-        if fallback_deadline:
-            dates.append(fallback_deadline)
-
+        if registration_id:
+            seen_registrations.add(registration_id)
+        deadline = _parse_gantt_date(getattr(registration, "deadline", None))
+        if deadline:
+            dates.append(deadline)
     return max(dates) if dates else None
 
 
 def _computed_deadline_ru(_ep, p, all_performers) -> str:
     from core.dates import format_date_ru
 
-    deadline = _latest_gantt_deadline_for_performers(p, all_performers)
+    deadline = _latest_project_deadline_for_performers(p, all_performers)
     if not deadline:
         return ""
     return format_date_ru(deadline, "j E Y") + " г."

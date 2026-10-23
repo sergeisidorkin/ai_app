@@ -931,8 +931,6 @@ def _ensure_performer_rows_for_work_item(instance):
     if not sections:
         return
 
-    from users_app.models import Employee
-
     existing_unique_codes = {
         normalized_code
         for code in (
@@ -944,19 +942,16 @@ def _ensure_performer_rows_for_work_item(instance):
         if normalized_code in unique_project_role_codes
     }
 
-    direction_ids = {s.expertise_direction_id for s in sections if s.expertise_direction_id}
+    from group_app.expertise_management import ExpertiseAssignmentIndex
+
+    direction_ids = {s.expertise_dir_id for s in sections if s.expertise_dir_id}
+    assignment_index = ExpertiseAssignmentIndex(direction_ids)
+    project_group_member = getattr(instance.project, "group_member", None)
     dept_head_map = {}
-    if direction_ids:
-        heads = (
-            Employee.objects
-            .select_related("user")
-            .filter(
-                department_id__in=direction_ids,
-                role="Руководитель направления",
-            )
-        )
-        for emp in heads:
-            dept_head_map[emp.department_id] = emp
+    for direction_id in direction_ids:
+        head = assignment_index.operation_head(direction_id, project_group_member)
+        if head is not None:
+            dept_head_map[direction_id] = head
 
     # Pre-fetch expert profiles with grades for all department heads
     from experts_app.models import ExpertProfile
@@ -1053,8 +1048,8 @@ def _ensure_performer_rows_for_work_item(instance):
             existing_unique_codes.add(section_code)
         elif section_code == "PRJ":
             executor_name, employee_obj = _resolve_executor_assignment(manager_name)
-        elif section.expertise_direction_id:
-            head = dept_head_map.get(section.expertise_direction_id)
+        elif section.expertise_dir_id:
+            head = dept_head_map.get(section.expertise_dir_id)
             if head:
                 parts = [
                     head.user.last_name.strip(),
@@ -1087,7 +1082,11 @@ def _ensure_performer_rows_for_work_item(instance):
                                 estimated_costs_value = Decimal(str(result))
                                 agreed_amount_value = estimated_costs_value
                     else:
-                        Z = base_hourly_rate_map.get(section.expertise_direction_id)
+                        rate_unit = assignment_index.operation_unit(
+                            section.expertise_dir_id,
+                            project_group_member,
+                        )
+                        Z = base_hourly_rate_map.get(rate_unit.pk) if rate_unit is not None else None
                         X = tariff_hours_map.get(section.id)
                         if Z is not None and X is not None and X > 0:
                             result = math.ceil((Z * X * (1 + Y)) / 1000) * 1000

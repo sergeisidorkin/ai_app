@@ -19,6 +19,14 @@ class NextcloudApiError(Exception):
     pass
 
 
+class NextcloudNetworkError(NextcloudApiError):
+    """Transport-level failure (DNS, connect/read timeout, connection reset).
+
+    Distinguished from HTTP-level errors so callers with a safe fallback can
+    stop issuing further live lookups to a host that is currently unreachable.
+    """
+
+
 @dataclass(frozen=True)
 class NextcloudProvisionedUser:
     user_id: str
@@ -52,6 +60,12 @@ class NextcloudApiClient:
     _request_semaphore = None
     _request_semaphore_size = None
     _request_semaphore_lock = threading.Lock()
+    # Process-local marker of the last transport failure. It never blocks
+    # requests by itself: callers that have a safe fallback (e.g. registry
+    # link decoration) consult ``network_cooldown_active()`` to skip optional
+    # live lookups while the host is known to be unreachable.
+    _network_failure_lock = threading.Lock()
+    _network_failure_until = 0.0
     _share_cache_condition = threading.Condition()
     _share_cache: dict[tuple[str, str, str], tuple[float, dict[str, NextcloudShare]]] = {}
     _share_cache_errors: dict[tuple[str, str, str], tuple[float, str]] = {}
@@ -89,6 +103,34 @@ class NextcloudApiClient:
     @property
     def is_configured(self) -> bool:
         return bool(self.base_url and self.username and self.token and self.provider_id > 0)
+
+    @classmethod
+    def network_cooldown_seconds(cls) -> float:
+        return max(float(getattr(settings, "NEXTCLOUD_NETWORK_ERROR_COOLDOWN", 30) or 0), 0)
+
+    @classmethod
+    def network_cooldown_active(cls) -> bool:
+        """True while the host recently failed at transport level."""
+        with cls._network_failure_lock:
+            return time.monotonic() < cls._network_failure_until
+
+    @classmethod
+    def _record_network_failure(cls) -> None:
+        cooldown = cls.network_cooldown_seconds()
+        if cooldown <= 0:
+            return
+        with cls._network_failure_lock:
+            cls._network_failure_until = max(cls._network_failure_until, time.monotonic() + cooldown)
+
+    @classmethod
+    def _clear_network_failure(cls) -> None:
+        with cls._network_failure_lock:
+            cls._network_failure_until = 0.0
+
+    @classmethod
+    def reset_network_cooldown(cls) -> None:
+        """Forget the last transport failure (used by tests)."""
+        cls._clear_network_failure()
 
     def provision_user(self, *, user_id: str, display_name: str, email: str) -> NextcloudProvisionedUser:
         payload: dict[str, object] = {
@@ -557,7 +599,8 @@ class NextcloudApiClient:
                     and not isinstance(exc, requests.ReadTimeout)
                 )
                 if not retryable_exception or attempt == max_attempts - 1:
-                    raise NextcloudApiError(f"Nextcloud request failed: {exc}") from exc
+                    self._record_network_failure()
+                    raise NextcloudNetworkError(f"Nextcloud request failed: {exc}") from exc
                 delay = min(2.0 * (2 ** attempt), cap)
                 logger.warning(
                     "OCS %s %s network error (attempt %d/%d), retry in %.1fs: %s",
@@ -565,6 +608,7 @@ class NextcloudApiClient:
                 )
                 time.sleep(delay)
                 continue
+            self._clear_network_failure()
             if response.status_code not in self.RETRYABLE_STATUS_CODES:
                 if is_share_create and response.status_code < 400:
                     self._next_share_create_at = time.monotonic() + self.SHARE_CREATE_INTERVAL_SECONDS
@@ -616,7 +660,8 @@ class NextcloudApiClient:
                     and not isinstance(exc, requests.ReadTimeout)
                 )
                 if not retryable_exception or attempt == max_attempts - 1:
-                    raise NextcloudApiError(f"Nextcloud DAV request failed: {exc}") from exc
+                    self._record_network_failure()
+                    raise NextcloudNetworkError(f"Nextcloud DAV request failed: {exc}") from exc
                 delay = min(2.0 * (2 ** attempt), cap)
                 logger.warning(
                     "DAV %s network error (attempt %d/%d), retry in %.1fs: %s",
@@ -624,6 +669,7 @@ class NextcloudApiClient:
                 )
                 time.sleep(delay)
                 continue
+            self._clear_network_failure()
             if response.status_code not in self.DAV_RETRYABLE_STATUSES:
                 break
             if attempt == max_attempts - 1:

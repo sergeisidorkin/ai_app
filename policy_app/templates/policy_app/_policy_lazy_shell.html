@@ -39,6 +39,8 @@
       {% include "policy_app/_policy_table_placeholder.html" with table_key="expertise-directions" table_id="policy-expertise-directions-section" table_label="Направления экспертизы" table_url=table_url load_priority="deferred" %}
       {% url 'policy_expert_specialties_table' as table_url %}
       {% include "policy_app/_policy_table_placeholder.html" with table_key="expert-specialties" table_id="policy-expert-specialties-section" table_label="Специальности исполнителей" table_url=table_url load_priority="deferred" %}
+      {% url 'policy_service_block_classifiers_table' as table_url %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="service-block-classifiers" table_id="policy-service-block-classifiers-section" table_label="Классификатор типовых блоков услуг" table_url=table_url load_priority="deferred" %}
       {% url 'policy_specialty_tariffs_table' as table_url %}
       {% include "policy_app/_policy_table_placeholder.html" with table_key="specialty-tariffs" table_id="policy-specialty-tariffs-section" table_label="Тарифы специальностей" table_url=table_url load_priority="deferred" %}
       {% url 'policy_grades_table' as table_url %}

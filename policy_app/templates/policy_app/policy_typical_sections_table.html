@@ -18,7 +18,7 @@
 
 <div class="policy-table-editor">
 <div class="table-responsive">
-    <table class="table table-sm align-top typical-sections-table">
+    <table data-queued-row-order data-row-order-key="typical-section" class="table table-sm align-top typical-sections-table">
         <thead>
         <tr>
             <th style="width:1%">
@@ -56,6 +56,8 @@
                  data-service-category="{{ s.product.service_category_display }}"
                  data-service-subtype="{{ s.product.service_subtype_display }}"
                  data-system-section="{% if s.is_system_dsc %}1{% else %}0{% endif %}"
+                 data-row-order-scope="{{ s.product_id }}"
+                 {% if s.is_system_dsc %}data-row-order-locked="1"{% endif %}
                  data-edit-url="{% url 'section_form_edit' s.pk %}"
                  data-delete-url="{% url 'section_delete' s.pk %}"
                  data-move-up-url="{% url 'section_move_up' s.pk %}"
@@ -76,15 +78,15 @@
                     {% endif %}
                 </td>
                 <td class="text-nowrap policy-workspace-product-cell">{{ s.product.short_name }}</td>
-                <td class="text-nowrap typical-section-code-col"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="code" data-inline-type="text" data-inline-value="{{ s.code }}"{% endif %}>
+                <td class="text-nowrap typical-section-code-col">
                     {% if s.is_system_dsc %}
                         <span class="typical-section-dsc-code">{{ s.code }}</span>
                     {% else %}
                         {{ s.code }}
                     {% endif %}
                 </td>
-                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="short_name" data-inline-type="text" data-inline-value="{{ s.short_name }}"{% endif %}>{{ s.short_name }}</td>
-                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="short_name_ru" data-inline-type="text" data-inline-value="{{ s.short_name_ru }}"{% endif %}>{{ s.short_name_ru }}</td>
+                <td class="text-nowrap">{{ s.short_name }}</td>
+                <td class="text-nowrap">{{ s.short_name_ru }}</td>
                 <td{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ s.name_en }}"{% endif %}>{{ s.name_en }}</td>
                 <td{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ s.name_ru }}"{% endif %}>{{ s.name_ru }}</td>
                 <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="accounting_type" data-inline-type="select" data-inline-value="{{ s.accounting_type }}"{% endif %}>{% if s.is_system_dsc %}{% else %}{{ s.accounting_type }}{% endif %}</td>
@@ -123,7 +125,7 @@
                     {% endif %}
                 </td>
                 <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="expertise_dir" data-inline-type="select" data-inline-value="{{ s.expertise_dir_id|default_if_none:'' }}"{% endif %}>{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% endif %}</td>
-                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="expertise_direction" data-inline-type="select" data-inline-value="{{ s.expertise_direction_id|default_if_none:'' }}"{% endif %}>{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% endif %}</td>
+                <td class="text-nowrap">{{ s.managed_department_display }}</td>
                 <td class="text-center"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="exclude_from_tkp_autofill" data-inline-type="checkbox" data-inline-value="{% if s.exclude_from_tkp_autofill %}true{% else %}false{% endif %}"{% endif %}>
                     <input
                         class="form-check-input"

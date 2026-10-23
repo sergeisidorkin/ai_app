@@ -18,6 +18,7 @@ from phonenumbers import (
 
 from classifiers_app.models import LegalEntityRecord, OKSMCountry, PhysicalEntityIdentifier, TerritorialDivision
 from classifiers_app.numcap import lookup_ru_landline
+from core.forms import lock_field, locked_attrs
 from group_app.models import GroupMember
 from experts_app.models import ExpertSpecialty
 
@@ -272,11 +273,7 @@ class PersonRecordForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if self.instance and self.instance.pk and self.instance.user_kind in self.MANAGED_PERSON_KINDS:
             for field_name in ("last_name", "first_name", "middle_name"):
-                field = self.fields[field_name]
-                field.disabled = True
-                field.widget.attrs["readonly"] = True
-                field.widget.attrs["tabindex"] = "-1"
-                field.widget.attrs["class"] = field.widget.attrs.get("class", "") + " readonly-field"
+                lock_field(self.fields[field_name], disabled=True)
 
     def clean(self):
         cleaned_data = super().clean()
@@ -329,26 +326,14 @@ class PositionRecordForm(forms.ModelForm):
         label="Идентификатор",
         required=False,
         widget=forms.TextInput(
-            attrs={
-                "class": "form-control readonly-field",
-                "id": "psn-organization-identifier-field",
-                "placeholder": "Идентификатор",
-                "readonly": True,
-                "tabindex": "-1",
-            }
+            attrs=locked_attrs(id="psn-organization-identifier-field", placeholder="Идентификатор")
         ),
     )
     organization_registration_number = forms.CharField(
         label="Регистрационный номер",
         required=False,
         widget=forms.TextInput(
-            attrs={
-                "class": "form-control readonly-field",
-                "id": "psn-organization-registration-number-field",
-                "placeholder": "Регистрационный номер",
-                "readonly": True,
-                "tabindex": "-1",
-            }
+            attrs=locked_attrs(id="psn-organization-registration-number-field", placeholder="Регистрационный номер")
         ),
     )
 
@@ -360,12 +345,8 @@ class PositionRecordForm(forms.ModelForm):
         if not self.is_bound and not (self.instance and self.instance.pk and self.instance.valid_from):
             self.fields["valid_from"].initial = date_type.today()
         if self.instance and self.instance.pk and self.instance.is_user_managed:
-            self.fields["organization_short_name"].widget.attrs["readonly"] = True
-            self.fields["organization_short_name"].widget.attrs["tabindex"] = "-1"
-            self.fields["organization_short_name"].widget.attrs["class"] += " readonly-field"
-            self.fields["job_title"].widget.attrs["readonly"] = True
-            self.fields["job_title"].widget.attrs["tabindex"] = "-1"
-            self.fields["job_title"].widget.attrs["class"] += " readonly-field"
+            lock_field(self.fields["organization_short_name"])
+            lock_field(self.fields["job_title"])
 
         current_value = ""
         if self.is_bound:
@@ -444,15 +425,7 @@ class PhoneRecordForm(forms.ModelForm):
     region = forms.CharField(
         label="Регион",
         required=False,
-        widget=forms.TextInput(
-            attrs={
-                        "class": "form-control readonly-field",
-                "id": "tel-region-field",
-                "placeholder": "Регион",
-                        "readonly": True,
-                        "tabindex": "-1",
-            }
-        ),
+        widget=forms.TextInput(attrs=locked_attrs(id="tel-region-field", placeholder="Регион")),
     )
     is_primary = LegacyCompatibleTypedChoiceField(
         label="Основной",
@@ -599,13 +572,7 @@ class PhoneRecordForm(forms.ModelForm):
             "valid_to",
         ]
         widgets = {
-            "code": forms.TextInput(attrs={
-                "class": "form-control readonly-field",
-                "placeholder": "Код",
-                "id": "tel-code-field",
-                "readonly": True,
-                "tabindex": "-1",
-            }),
+            "code": forms.TextInput(attrs=locked_attrs(placeholder="Код", id="tel-code-field")),
             "phone_number": forms.TextInput(attrs={"class": "form-control", "id": "tel-phone-field", "autocomplete": "tel"}),
             "valid_from": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "valid_to": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
@@ -632,9 +599,7 @@ class EmailRecordForm(forms.ModelForm):
         if not self.is_bound and not (self.instance and self.instance.pk and self.instance.valid_from):
             self.fields["valid_from"].initial = date_type.today()
         if self.instance and self.instance.pk and self.instance.is_user_managed:
-            self.fields["email"].widget.attrs["readonly"] = True
-            self.fields["email"].widget.attrs["tabindex"] = "-1"
-            self.fields["email"].widget.attrs["class"] += " readonly-field"
+            lock_field(self.fields["email"])
 
     def clean(self):
         cleaned_data = super().clean()
@@ -837,15 +802,7 @@ class CitizenshipRecordForm(forms.ModelForm):
         label="Дата рождения",
         required=False,
         disabled=True,
-        widget=forms.DateInput(
-            attrs={
-                "class": "form-control readonly-field",
-                "type": "date",
-                "readonly": True,
-                "tabindex": "-1",
-                "id": "ctz-birth-date-field",
-            }
-        ),
+        widget=forms.DateInput(attrs=locked_attrs(type="date", id="ctz-birth-date-field")),
     )
     country = forms.ModelChoiceField(
         label="Страна",
@@ -940,13 +897,7 @@ class CitizenshipRecordForm(forms.ModelForm):
             "valid_to",
         ]
         widgets = {
-            "identifier": forms.TextInput(attrs={
-                "class": "form-control readonly-field",
-                "placeholder": "Идентификатор",
-                "readonly": True,
-                "tabindex": "-1",
-                "id": "ctz-identifier-field",
-            }),
+            "identifier": forms.TextInput(attrs=locked_attrs(placeholder="Идентификатор", id="ctz-identifier-field")),
             "number": forms.TextInput(attrs={"class": "form-control", "placeholder": "Номер"}),
             "valid_from": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "valid_to": forms.DateInput(attrs={"class": "form-control", "type": "date"}),

@@ -8,6 +8,7 @@
 <form
     method="post"
     enctype="multipart/form-data"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
     {% if action == "create" %}
       hx-post="{% url 'gm_form_create' %}"
     {% else %}
@@ -16,7 +17,7 @@
     hx-encoding="multipart/form-data"
     hx-target="#group-pane"
     hx-swap="outerHTML">
-  <div class="modal-body">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
     {% csrf_token %}
     <div class="mb-3">
       <label class="form-label">Наименование компании (краткое)</label>
@@ -30,41 +31,47 @@
       <label class="form-label">Наименование на английском языке</label>
       {{ form.name_en }}
     </div>
-    <div class="mb-3">
-      <label class="form-label">Порядковый номер</label>
-      {{ form.order_number }}
+    <div class="row g-3 mb-3 align-items-end">
+      <div class="col-3">
+        <label class="form-label">Порядковый номер</label>
+        {{ form.order_number }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Страна регистрации</label>
+        {{ form.country }}
+      </div>
+      <div style="flex:0 0 auto; width:12.5%; min-width:0;">
+        <label class="form-label">Код ОКСМ</label>
+        <input type="text" class="form-control readonly-field" id="gm-country-code" readonly tabindex="-1"
+               value="{% if member %}{{ member.country_code }}{% endif %}">
+      </div>
+      <div style="flex:0 0 auto; width:12.5%; min-width:0;">
+        <label class="form-label">Буквенный код</label>
+        <input type="text" class="form-control readonly-field" id="gm-country-alpha2" readonly tabindex="-1"
+               value="{% if member %}{{ member.country_alpha2 }}{% endif %}">
+      </div>
     </div>
-    <div class="mb-3">
-      <label class="form-label">Страна регистрации</label>
-      {{ form.country }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Код ОКСМ</label>
-      <input type="text" class="form-control" id="gm-country-code" readonly tabindex="-1"
-             style="background-color:#f8f9fa; color:#6c757d;"
-             value="{% if member %}{{ member.country_code }}{% endif %}">
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Буквенный код (Альфа-2)</label>
-      <input type="text" class="form-control" id="gm-country-alpha2" readonly tabindex="-1"
-             style="background-color:#f8f9fa; color:#6c757d;"
-             value="{% if member %}{{ member.country_alpha2 }}{% endif %}">
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Идентификатор</label>
-      {{ form.identifier }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Регистрационный номер</label>
-      {{ form.registration_number }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Дата регистрации</label>
-      {{ form.registration_date }}
+    <div class="row g-3 mb-3 align-items-end">
+      <div class="col-3">
+        <label class="form-label">Идентификатор</label>
+        {{ form.identifier }}
+      </div>
+      <div class="col-6">
+        <label class="form-label">Регистрационный номер</label>
+        {{ form.registration_number }}
+      </div>
+      <div class="col-3">
+        <label class="form-label">Дата регистрации</label>
+        {{ form.registration_date }}
+      </div>
     </div>
     <div class="mb-3">
       <label class="form-label">{{ form.seal_file.label }}</label>
       {{ form.seal_file }}
+    </div>
+    <div class="mb-3 form-check">
+      {{ form.is_management_company }}
+      <label class="form-check-label" for="{{ form.is_management_company.id_for_label }}">Управляющая компания</label>
     </div>
 
     {% if form.errors %}
@@ -110,6 +117,20 @@
   }
 
   if (!form) return;
+  form.addEventListener('htmx:responseError', function (event) {
+    var status = event.detail && event.detail.xhr && event.detail.xhr.status;
+    var message = status === 413
+      ? 'Файл слишком большой. Выберите изображение до 25 МБ.'
+      : 'Не удалось сохранить. Повторите попытку.';
+    var alert = form.querySelector('.seal-save-error');
+    if (!alert) {
+      alert = document.createElement('div');
+      alert.className = 'alert alert-danger seal-save-error mt-3 mb-0';
+      var body = form.querySelector('.modal-body');
+      if (body) body.appendChild(alert);
+    }
+    alert.textContent = message;
+  });
   var fileInput = form.querySelector('input[type="file"][name="seal_file"]');
   var clearCb = form.querySelector('input[type="checkbox"][name="seal_file-clear"]');
   if (fileInput && clearCb) {

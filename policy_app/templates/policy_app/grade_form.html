@@ -148,28 +148,21 @@
   var hourlyInput = document.querySelector('.js-grade-money');
   var currencySelect = document.getElementById('id_currency');
 
+  // Единый вид заблокированного поля — класс readonly-field (см. core/forms.py, site.css).
   function setDisabled(el, disabled) {
     if (!el) return;
     el.disabled = disabled;
-    el.style.backgroundColor = disabled ? '#e9ecef' : '';
-    el.style.color = disabled ? '#6c757d' : '';
+    el.tabIndex = disabled ? -1 : 0;
+    el.classList.toggle('readonly-field', disabled);
   }
 
   if (baseRateCb && shareInput) {
     function toggleShare() {
       var checked = baseRateCb.checked;
-      if (checked) {
-        shareInput.value = '';
-        shareInput.readOnly = true;
-        shareInput.tabIndex = -1;
-        shareInput.style.backgroundColor = '#e9ecef';
-        shareInput.style.color = '#6c757d';
-      } else {
-        shareInput.readOnly = false;
-        shareInput.tabIndex = 0;
-        shareInput.style.backgroundColor = '';
-        shareInput.style.color = '';
-      }
+      if (checked) shareInput.value = '';
+      shareInput.readOnly = checked;
+      shareInput.tabIndex = checked ? -1 : 0;
+      shareInput.classList.toggle('readonly-field', checked);
       setDisabled(hourlyInput, !checked);
       setDisabled(currencySelect, !checked);
       if (!checked && hourlyInput) hourlyInput.value = '';

@@ -1,3 +1,4 @@
+import re
 import json
 import os
 import subprocess
@@ -1210,3 +1211,483 @@ class DshCatalogTests(SimpleTestCase):
                 )
 
 
+
+
+# ---------------------------------------------------------------------------
+# Generic bulk row-order endpoint (core.row_order)
+# ---------------------------------------------------------------------------
+
+
+class RowOrderSaveViewTests(TestCase):
+    """Behaviour of the shared /core/row-order/<key>/ endpoint."""
+
+    @classmethod
+    def setUpTestData(cls):
+        User = get_user_model()
+        cls.user = User.objects.create_user(username="row-order-user", password="pass", is_staff=False)
+        cls.staff = User.objects.create_user(username="row-order-staff", password="pass", is_staff=True)
+        cls.superuser = User.objects.create_superuser(username="row-order-admin", password="pass")
+
+    def _url(self, key):
+        return reverse("row_order_save", args=[key])
+
+    def _post(self, key, payload, user=None):
+        client = Client()
+        if user is not None:
+            client.force_login(user)
+        return client.post(
+            self._url(key),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def _make_countries(self, count=4):
+        from classifiers_app.models import OKSMCountry
+
+        rows = []
+        for idx in range(1, count + 1):
+            rows.append(
+                OKSMCountry.objects.create(
+                    number=idx,
+                    code=f"{idx:03d}",
+                    short_name=f"Страна {idx}",
+                    alpha2=f"A{idx}",
+                    alpha3=f"AA{idx}",
+                    position=idx,
+                )
+            )
+        return rows
+
+    def _ids_in_order(self, model):
+        return list(model.objects.order_by("position", "id").values_list("pk", flat=True))
+
+    def test_every_registered_spec_resolves_and_has_position_field(self):
+        from core.row_order import get_row_order_spec, registered_row_order_keys
+
+        keys = registered_row_order_keys()
+        self.assertGreaterEqual(len(keys), 50)
+        for key in keys:
+            spec = get_row_order_spec(key)
+            self.assertIsNotNone(spec, key)
+            spec.model._meta.get_field(spec.position_field)
+            spec.only_fields()
+            self.assertEqual(reverse("row_order_save", args=[key]), f"/core/row-order/{key}/")
+
+    def test_unknown_key_returns_404(self):
+        response = self._post("no-such-table", {"ordered_ids": [1]}, user=self.staff)
+        self.assertEqual(response.status_code, 404)
+
+    def test_requires_login_and_post(self):
+        rows = self._make_countries(2)
+        response = self._post("oksm", {"ordered_ids": [rows[1].pk, rows[0].pk]})
+        # EnforceLoginMiddleware redirects anonymous users; the view itself answers 403.
+        self.assertIn(response.status_code, (302, 403))
+        client = Client()
+        client.force_login(self.user)
+        self.assertEqual(client.get(self._url("oksm")).status_code, 405)
+
+    def test_permission_hook_is_enforced(self):
+        from users_app.models import Employee
+
+        response = self._post("employee", {"ordered_ids": [1]}, user=self.user)
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Employee.objects.exists())
+
+    def test_full_reorder_renumbers_positions(self):
+        from classifiers_app.models import OKSMCountry
+
+        rows = self._make_countries(4)
+        ids = [row.pk for row in rows]
+        new_order = [ids[2], ids[0], ids[1], ids[3]]
+        response = self._post("oksm", {"ordered_ids": new_order, "base_order_ids": ids}, user=self.user)
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["order_ids"], new_order)
+        self.assertEqual(self._ids_in_order(OKSMCountry), new_order)
+        self.assertEqual(
+            list(OKSMCountry.objects.order_by("position").values_list("position", flat=True)),
+            [1, 2, 3, 4],
+        )
+
+    def test_partial_set_permutes_only_listed_slots(self):
+        from classifiers_app.models import OKSMCountry
+
+        rows = self._make_countries(5)
+        ids = [row.pk for row in rows]
+        # A filtered table shows rows 2 and 4 only; the user moves row 4 above row 2.
+        response = self._post(
+            "oksm",
+            {"ordered_ids": [ids[3], ids[1]], "base_order_ids": [ids[1], ids[3]]},
+            user=self.user,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(self._ids_in_order(OKSMCountry), [ids[0], ids[3], ids[2], ids[1], ids[4]])
+
+    def test_noop_order_is_accepted_without_changes(self):
+        from classifiers_app.models import OKSMCountry
+
+        rows = self._make_countries(3)
+        ids = [row.pk for row in rows]
+        response = self._post("oksm", {"ordered_ids": ids, "base_order_ids": ids}, user=self.user)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["moved_ids"], [])
+        self.assertEqual(self._ids_in_order(OKSMCountry), ids)
+
+    def test_conflict_when_base_order_differs_from_database(self):
+        from classifiers_app.models import OKSMCountry
+
+        rows = self._make_countries(3)
+        ids = [row.pk for row in rows]
+        # Someone else already swapped rows 1 and 2.
+        OKSMCountry.objects.filter(pk=ids[0]).update(position=2)
+        OKSMCountry.objects.filter(pk=ids[1]).update(position=1)
+        response = self._post(
+            "oksm",
+            {"ordered_ids": [ids[2], ids[0], ids[1]], "base_order_ids": ids},
+            user=self.user,
+        )
+        self.assertEqual(response.status_code, 409)
+        data = response.json()
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["current_ids"], [ids[1], ids[0], ids[2]])
+        self.assertEqual(self._ids_in_order(OKSMCountry), [ids[1], ids[0], ids[2]])
+
+    def test_conflict_when_rows_were_deleted(self):
+        rows = self._make_countries(2)
+        ids = [row.pk for row in rows]
+        rows[1].delete()
+        response = self._post("oksm", {"ordered_ids": [ids[1], ids[0]], "base_order_ids": ids}, user=self.user)
+        self.assertEqual(response.status_code, 409)
+
+    def test_invalid_payloads_return_400(self):
+        rows = self._make_countries(2)
+        ids = [row.pk for row in rows]
+        cases = [
+            {"ordered_ids": "oops"},
+            {"ordered_ids": []},
+            {"ordered_ids": [ids[0], ids[0]]},
+            {"ordered_ids": ids, "base_order_ids": [ids[0]]},
+        ]
+        for payload in cases:
+            response = self._post("oksm", payload, user=self.user)
+            self.assertEqual(response.status_code, 400, payload)
+        client = Client()
+        client.force_login(self.user)
+        response = client.post(self._url("oksm"), data="not json", content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_scoped_rows_are_reordered_inside_each_scope(self):
+        from policy_app.models import Product, TypicalSection
+        from requests_app.models import RequestItem, RequestTable
+
+        product = Product.objects.create(short_name="RO-P", name_en="P", name_ru="П")
+        section_a = TypicalSection.objects.create(product=product, code="A", short_name="A", name_en="A", name_ru="А")
+        section_b = TypicalSection.objects.create(product=product, code="B", short_name="B", name_en="B", name_ru="Б")
+        table_a = RequestTable.objects.create(product=product, section=section_a)
+        table_b = RequestTable.objects.create(product=product, section=section_b)
+        a1 = RequestItem.objects.create(table=table_a, position=1, code="A1", number=1)
+        a2 = RequestItem.objects.create(table=table_a, position=2, code="A2", number=2)
+        b1 = RequestItem.objects.create(table=table_b, position=1, code="B1", number=1)
+        b2 = RequestItem.objects.create(table=table_b, position=2, code="B2", number=2)
+
+        # The «все разделы» view lists both tables; the user swaps rows in table B only.
+        response = self._post(
+            "request-item",
+            {
+                "ordered_ids": [a1.pk, a2.pk, b2.pk, b1.pk],
+                "base_order_ids": [a1.pk, a2.pk, b1.pk, b2.pk],
+            },
+            user=self.user,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(RequestItem.objects.filter(table=table_a).order_by("position").values_list("pk", flat=True)),
+            [a1.pk, a2.pk],
+        )
+        self.assertEqual(
+            list(RequestItem.objects.filter(table=table_b).order_by("position").values_list("pk", flat=True)),
+            [b2.pk, b1.pk],
+        )
+        self.assertEqual(sorted(response.json()["moved_ids"]), sorted([b1.pk, b2.pk]))
+
+    def test_locked_rows_cannot_be_displaced(self):
+        from policy_app.models import Product, TypicalSection
+
+        product = Product.objects.create(short_name="RO-L", name_en="P", name_ru="П")
+        dsc = TypicalSection.objects.create(
+            product=product, code="DSC", short_name="DSC", name_en="DSC", name_ru="ДСХ", is_system=True, position=1
+        )
+        s1 = TypicalSection.objects.create(product=product, code="S1", short_name="S1", name_en="S1", name_ru="С1", position=2)
+        s2 = TypicalSection.objects.create(product=product, code="S2", short_name="S2", name_en="S2", name_ru="С2", position=3)
+
+        # Moving S1 above the system DSC section is refused ...
+        response = self._post(
+            "typical-section",
+            {"ordered_ids": [s1.pk, dsc.pk, s2.pk], "base_order_ids": [dsc.pk, s1.pk, s2.pk]},
+            user=self.user,
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("ДСХ", response.json()["error"])
+        self.assertEqual(
+            list(TypicalSection.objects.filter(product=product).order_by("position").values_list("pk", flat=True)),
+            [dsc.pk, s1.pk, s2.pk],
+        )
+        # ... while reordering below it works.
+        response = self._post(
+            "typical-section",
+            {"ordered_ids": [dsc.pk, s2.pk, s1.pk], "base_order_ids": [dsc.pk, s1.pk, s2.pk]},
+            user=self.user,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["events"]["policy-updated"]["reorderedTable"], "typical-sections")
+        self.assertEqual(
+            list(TypicalSection.objects.filter(product=product).order_by("position").values_list("pk", flat=True)),
+            [dsc.pk, s2.pk, s1.pk],
+        )
+
+    def test_row_permission_applies_only_to_displaced_rows(self):
+        from policy_app.models import Grade
+
+        own1 = Grade.objects.create(grade_en="o1", grade_ru="с1", created_by=self.user, position=1)
+        own2 = Grade.objects.create(grade_en="o2", grade_ru="с2", created_by=self.user, position=2)
+        other1 = Grade.objects.create(grade_en="x1", grade_ru="ч1", created_by=self.staff, position=1)
+        other2 = Grade.objects.create(grade_en="x2", grade_ru="ч2", created_by=self.staff, position=2)
+
+        # Other owners' rows are listed (the table shows them) but stay in place: allowed.
+        response = self._post(
+            "grade",
+            {
+                "ordered_ids": [own2.pk, own1.pk, other1.pk, other2.pk],
+                "base_order_ids": [own1.pk, own2.pk, other1.pk, other2.pk],
+            },
+            user=self.user,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(Grade.objects.filter(created_by=self.user).order_by("position").values_list("pk", flat=True)),
+            [own2.pk, own1.pk],
+        )
+        # Displacing another owner's rows is forbidden for a regular user ...
+        response = self._post(
+            "grade",
+            {"ordered_ids": [other2.pk, other1.pk], "base_order_ids": [other1.pk, other2.pk]},
+            user=self.user,
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            list(Grade.objects.filter(created_by=self.staff).order_by("position").values_list("pk", flat=True)),
+            [other1.pk, other2.pk],
+        )
+        # ... but allowed for a superuser.
+        response = self._post(
+            "grade",
+            {"ordered_ids": [other2.pk, other1.pk], "base_order_ids": [other1.pk, other2.pk]},
+            user=self.superuser,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(Grade.objects.filter(created_by=self.staff).order_by("position").values_list("pk", flat=True)),
+            [other2.pk, other1.pk],
+        )
+
+    def test_base_filter_restricts_universe(self):
+        from classifiers_app.models import LegalEntityRecord
+
+        legal = LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS
+        a = LegalEntityRecord.objects.create(attribute=legal, position=1)
+        b = LegalEntityRecord.objects.create(attribute=legal, position=2)
+        other = LegalEntityRecord.objects.create(attribute="Иное", position=3)
+
+        response = self._post("bea", {"ordered_ids": [b.pk, a.pk], "base_order_ids": [a.pk, b.pk]}, user=self.user)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(LegalEntityRecord.objects.filter(attribute=legal).order_by("position").values_list("pk", flat=True)),
+            [b.pk, a.pk],
+        )
+        other.refresh_from_db()
+        self.assertEqual(other.position, 3)
+        # A row outside the base filter is unknown to this key.
+        response = self._post("bea", {"ordered_ids": [other.pk, a.pk], "base_order_ids": [a.pk, other.pk]}, user=self.user)
+        self.assertEqual(response.status_code, 409)
+
+    def test_after_save_and_events_hooks(self):
+        from group_app.models import GroupMember
+
+        m1 = GroupMember.objects.create(short_name="M1", country_name="Россия", country_code="643", position=1)
+        m2 = GroupMember.objects.create(short_name="M2", country_name="Россия", country_code="643", position=2)
+        with patch("group_app.row_order.resequence_group_members") as resequence:
+            response = self._post(
+                "group-member",
+                {"ordered_ids": [m2.pk, m1.pk], "base_order_ids": [m1.pk, m2.pk]},
+                user=self.staff,
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        resequence.assert_called_once_with()
+        self.assertNotIn("events", response.json())
+
+        from contracts_app.models import ContractSubject
+        from policy_app.models import Product
+
+        product = Product.objects.create(short_name="RO-CS", name_en="P", name_ru="П")
+        c1 = ContractSubject.objects.create(product=product, position=1)
+        c2 = ContractSubject.objects.create(product=product, position=2)
+        response = self._post(
+            "contract-subject",
+            {"ordered_ids": [c2.pk, c1.pk], "base_order_ids": [c1.pk, c2.pk]},
+            user=self.staff,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["events"], {"field-params-updated": True})
+
+    def test_validation_error_rolls_back_all_scopes(self):
+        from core.row_order import RowOrderSpec, apply_row_order
+        from classifiers_app.models import OKSMCountry
+        from django.db import transaction
+        from django.test import RequestFactory
+
+        rows = self._make_countries(2)
+        ids = [row.pk for row in rows]
+        calls = []
+
+        def _validate(request, scope):
+            calls.append(scope.scope_key)
+            return "nope"
+
+        spec = RowOrderSpec(key="tmp-oksm", model=OKSMCountry, validate=_validate)
+        request = RequestFactory().post("/")
+        request.user = self.user
+        with transaction.atomic():
+            result, error = apply_row_order(request, spec, [ids[1], ids[0]], ids)
+            self.assertIsNone(result)
+            self.assertEqual(error.status_code, 409)
+        self.assertEqual(calls, [()])
+        self.assertEqual(self._ids_in_order(OKSMCountry), ids)
+
+
+class LockedFieldHelpersTests(SimpleTestCase):
+    """core.forms: единые параметры заблокированных полей."""
+
+    def test_locked_attrs_defaults(self):
+        from core.forms import locked_attrs
+
+        attrs = locked_attrs()
+        self.assertEqual(attrs["class"], "form-control readonly-field")
+        self.assertIs(attrs["readonly"], True)
+        self.assertEqual(attrs["tabindex"], "-1")
+        self.assertNotIn("style", attrs)
+        self.assertNotIn("disabled", attrs)
+
+    def test_locked_attrs_extra_classes_base_and_attrs(self):
+        from core.forms import locked_attrs
+
+        attrs = locked_attrs("js-stage1-end", id="f1", placeholder="Код", min=0)
+        self.assertEqual(attrs["class"], "form-control readonly-field js-stage1-end")
+        self.assertEqual(attrs["id"], "f1")
+        self.assertEqual(attrs["placeholder"], "Код")
+        self.assertEqual(attrs["min"], 0)
+
+        self.assertEqual(locked_attrs(base=None)["class"], "readonly-field")
+        self.assertEqual(
+            locked_attrs(base="form-control form-control-sm")["class"],
+            "form-control form-control-sm readonly-field",
+        )
+
+    def test_locked_attrs_select_uses_disabled(self):
+        from core.forms import locked_attrs
+
+        attrs = locked_attrs(base="form-select", select=True)
+        self.assertEqual(attrs["class"], "form-select readonly-field")
+        self.assertIs(attrs["disabled"], True)
+        self.assertEqual(attrs["tabindex"], "-1")
+        self.assertNotIn("readonly", attrs)
+
+    def test_lock_field_text_input(self):
+        from django import forms
+
+        from core.forms import lock_field
+
+        field = forms.CharField(widget=forms.TextInput(attrs={"class": "form-control", "style": "color:red"}))
+        lock_field(field, id="x1")
+        self.assertEqual(field.widget.attrs["class"], "form-control readonly-field")
+        self.assertIs(field.widget.attrs["readonly"], True)
+        self.assertEqual(field.widget.attrs["tabindex"], "-1")
+        self.assertEqual(field.widget.attrs["id"], "x1")
+        self.assertNotIn("style", field.widget.attrs)
+        self.assertFalse(field.disabled)
+
+        lock_field(field)  # повторный вызов не дублирует класс
+        self.assertEqual(field.widget.attrs["class"], "form-control readonly-field")
+
+    def test_lock_field_disabled_and_select(self):
+        from django import forms
+
+        from core.forms import lock_field
+
+        field = forms.ChoiceField(choices=[("a", "A")], widget=forms.Select(attrs={"class": "form-select"}))
+        lock_field(field, disabled=True, use_disabled_attr=True)
+        self.assertTrue(field.disabled)
+        self.assertEqual(field.widget.attrs["class"], "form-select readonly-field")
+        self.assertIs(field.widget.attrs["disabled"], True)
+        self.assertNotIn("readonly", field.widget.attrs)
+
+    def test_no_inline_locked_field_style_in_project_sources(self):
+        """Вид заблокированного поля задаётся только классом readonly-field."""
+        root = Path(__file__).resolve().parent.parent
+        offenders = []
+        for pattern in ("*/templates/**/*.html", "*/forms.py", "core/static/core/js/*.js"):
+            for path in root.glob(pattern):
+                if "node_modules" in path.parts or "staticfiles" in path.parts:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                # Любой инлайн «серый фон + приглушённый текст» — признак ручной блокировки поля.
+                if re.search(r"background-color:\s*#(?:f8f9fa|e9ecef);\s*color:\s*#6c757d", text):
+                    offenders.append(str(path.relative_to(root)))
+        self.assertEqual(offenders, [])
+
+    def test_site_css_defines_single_locked_field_source(self):
+        css = Path(__file__).resolve().parent.joinpath("static", "core", "css", "site.css").read_text(encoding="utf-8")
+        self.assertIn("--locked-field-bg: #f8f9fa;", css)
+        self.assertIn("--locked-field-fg: #6c757d;", css)
+        self.assertIn("background-color: var(--locked-field-bg) !important;", css)
+        self.assertNotIn("#proposals-pane .readonly-field {", css)
+        self.assertNotIn("#proposals-modal .readonly-field {", css)
+        self.assertNotIn("#policy-modal .policy-product-select-display.readonly-field {", css)
+
+
+class ModalBackdropGuardTests(SimpleTestCase):
+    """core/js/modal-backdrop-guard.js: затемнение открывающейся модалки не удаляется."""
+
+    root = Path(__file__).resolve().parent.parent
+
+    def test_base_template_loads_guard_right_after_bootstrap(self):
+        base_html = self.root.joinpath("core", "templates", "core", "base.html").read_text(encoding="utf-8")
+        bootstrap_pos = base_html.index("bootstrap.bundle.min.js")
+        guard_pos = base_html.index("core/js/modal-backdrop-guard.js")
+        cleanup_pos = base_html.index("function cleanupDanglingModalState()")
+        self.assertLess(bootstrap_pos, guard_pos)
+        self.assertLess(guard_pos, cleanup_pos)
+        self.assertNotIn("defer src=\"{% static 'core/js/modal-backdrop-guard.js'", base_html)
+        cleanup_body = base_html[cleanup_pos:base_html.index("function scheduleModalCleanup()")]
+        self.assertIn("window.ModalBackdropGuard.isAnyModalActive()", cleanup_body)
+
+    def test_guard_tracks_opening_modals_and_restores_backdrop(self):
+        js = self.root.joinpath("core", "static", "core", "js", "modal-backdrop-guard.js").read_text(encoding="utf-8")
+        self.assertIn("document.addEventListener('show.bs.modal'", js)
+        self.assertIn("instance._isShown === true", js)
+        self.assertIn("new MutationObserver(", js)
+        self.assertIn("window.ModalBackdropGuard = {", js)
+
+    def test_backdrop_cleanups_consult_guard(self):
+        """Любой код, удаляющий .modal-backdrop, обязан спрашивать ModalBackdropGuard."""
+        offenders = []
+        for pattern in ("templates/**/*.html", "*/templates/**/*.html", "core/static/core/js/*.js"):
+            for path in self.root.glob(pattern):
+                if "node_modules" in path.parts or "staticfiles" in path.parts:
+                    continue
+                if path.name == "modal-backdrop-guard.js":
+                    continue
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                if re.search(r"querySelectorAll\(['\"]\.modal-backdrop['\"]\)\.forEach", text) and "ModalBackdropGuard" not in text:
+                    offenders.append(str(path.relative_to(self.root)))
+        self.assertEqual(offenders, [])

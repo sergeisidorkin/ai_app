@@ -28,6 +28,7 @@ class GroupMember(models.Model):
         blank=True,
         default="",
     )
+    is_management_company = models.BooleanField("Управляющая компания", default=False)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -40,6 +41,15 @@ class GroupMember(models.Model):
 
     def __str__(self):
         return self.short_name
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        update_fields = kwargs.get("update_fields")
+        flag_saved = update_fields is None or "is_management_company" in update_fields
+        if self.is_management_company and flag_saved:
+            GroupMember.objects.exclude(pk=self.pk).filter(is_management_company=True).update(
+                is_management_company=False
+            )
 
     @property
     def group_code_label(self) -> str:
@@ -146,3 +156,35 @@ class OrgUnit(models.Model):
 
     def __str__(self):
         return self.department_name
+
+
+class ExpertiseManagementMode(models.Model):
+    """Режим управления направлением экспертизы: через УК или раздельно по компании проекта."""
+
+    MODE_MANAGEMENT_COMPANY = "management_company"
+    MODE_SEPARATE = "separate"
+    MODE_CHOICES = [
+        (MODE_MANAGEMENT_COMPANY, "Управление через УК"),
+        (MODE_SEPARATE, "Раздельное управление"),
+    ]
+
+    expertise_direction = models.OneToOneField(
+        "policy_app.ExpertiseDirection",
+        on_delete=models.CASCADE,
+        related_name="management_mode",
+        verbose_name="Направление экспертизы",
+    )
+    mode = models.CharField(
+        "Режим",
+        max_length=32,
+        choices=MODE_CHOICES,
+        default=MODE_MANAGEMENT_COMPANY,
+    )
+
+    class Meta:
+        verbose_name = "Режим управления"
+        verbose_name_plural = "Режим управления"
+        ordering = ["expertise_direction__position", "expertise_direction_id"]
+
+    def __str__(self):
+        return f"{self.expertise_direction} — {self.get_mode_display()}"

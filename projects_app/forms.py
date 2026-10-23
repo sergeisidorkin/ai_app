@@ -5,9 +5,11 @@ from django.utils import timezone
 from datetime import datetime
 
 from classifiers_app.models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision
+from core.forms import locked_attrs
 from group_app.models import GroupMember
 from policy_app.models import (
     DIRECTION_DIRECTOR_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
     PROJECTS_HEAD_GROUP,
     ExpertiseDirection,
     Product,
@@ -34,12 +36,7 @@ _common_date = {"class": "form-control form-control-sm", "type": "date"}
 # Форматы для дат
 DATE_FMT_UI = "%d.%m.%y"  # ДД.ММ.ГГ
 
-READONLY_INPUT = {
-    **_common_input,
-    "class": _common_input["class"] + " readonly-field",
-    "readonly": True,
-    "tabindex": "-1",
-}
+READONLY_INPUT = locked_attrs(base=_common_input["class"])
 
 # ------ Миксин для bootstrap-классов ------
 class BootstrapMixin:
@@ -105,6 +102,7 @@ def _project_region_choices_for_country(country_id, current_value="", as_of=None
     return choices
 
 PROJECT_MANAGER_ROLES = (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP)
+PROJECT_COORDINATOR_ROLES = (PROJECTS_COORDINATOR_GROUP,)
 
 
 def _employee_full_name(employee):
@@ -132,10 +130,18 @@ def _strip_prs_suffix(label):
 
 
 def _project_manager_queryset():
+    return _employees_for_roles(PROJECT_MANAGER_ROLES)
+
+
+def _project_coordinator_queryset():
+    return _employees_for_roles(PROJECT_COORDINATOR_ROLES)
+
+
+def _employees_for_roles(roles):
     return (
         Employee.objects
         .select_related("user", "person_record")
-        .filter(role__in=PROJECT_MANAGER_ROLES)
+        .filter(role__in=roles)
         .order_by("user__last_name", "user__first_name", "patronymic", "position", "id")
     )
 
@@ -180,20 +186,37 @@ def _project_manager_choices(current_value="", *, show_prs_label=True):
     )
 
 
-def _resolve_project_manager_choice(value):
+def _project_coordinator_choices(current_value="", *, show_prs_label=True):
+    return _employee_choices(
+        _project_coordinator_queryset(),
+        current_value,
+        use_prs_value=True,
+        show_prs_label=show_prs_label,
+    )
+
+
+def _match_employee_choice(value, employees):
     raw = (value or "").strip()
     if not raw:
-        return "", ""
+        return "", "", False
 
-    employees = list(_project_manager_queryset())
     normalized = " ".join(raw.replace("\xa0", " ").split()).casefold()
     for employee in employees:
         if _employee_prs_id(employee).casefold() == normalized:
-            return _employee_full_name(employee), _employee_prs_id(employee)
+            return _employee_full_name(employee), _employee_prs_id(employee), True
     for employee in employees:
         if _employee_full_name(employee).casefold() == normalized:
-            return _employee_full_name(employee), _employee_prs_id(employee)
-    return raw, ""
+            return _employee_full_name(employee), _employee_prs_id(employee), True
+    return raw, "", False
+
+
+def _resolve_project_manager_choice(value):
+    name, prs_id, _matched = _match_employee_choice(value, list(_project_manager_queryset()))
+    return name, prs_id
+
+
+def _resolve_project_coordinator_choice(value):
+    return _match_employee_choice(value, list(_project_coordinator_queryset()))
 
 
 def _typical_section_specialty_ids(typical_section_id):
@@ -303,12 +326,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(attrs={
-            "readonly": True,
-            "tabindex": "-1",
-            "class": "form-control readonly-field",
-            "id": "reg-identifier-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(id="reg-identifier-field")),
     )
     project_manager = forms.ChoiceField(
         label="Руководитель проекта",
@@ -358,12 +376,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     asset_owner_identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(attrs={
-            "readonly": True,
-            "tabindex": "-1",
-            "class": "form-control readonly-field",
-            "id": "reg-asset-owner-identifier-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(id="reg-asset-owner-identifier-field")),
     )
     asset_owner_registration_date = forms.DateField(
         label="Дата регистрации",
@@ -391,28 +404,20 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         max_digits=4,
         decimal_places=1,
         widget=forms.NumberInput(
-            attrs={
-                "min": 0,
-                "step": "0.1",
-                "class": "form-control readonly-field js-stage1-weeks",
-                "readonly": True,
-                "tabindex": "-1",
-            }
+            attrs=locked_attrs("js-stage1-weeks", min=0, step="0.1")
         ),
     )
     stage1_end = forms.DateField(
         label="Дата Предварительного отчёта",
         required=False,
         disabled=True,
-        widget=forms.TextInput(
-            attrs={"class": "form-control js-stage1-end readonly-field", "readonly": True}
-        ),
+        widget=forms.TextInput(attrs=locked_attrs("js-stage1-end")),
     )
     completion_calc = forms.DateField(
         label="Оконч., расчет",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control js-completion-calc readonly-field", "readonly": True}),
+        widget=forms.TextInput(attrs=locked_attrs("js-completion-calc")),
     )
     stage2_weeks = forms.DecimalField(
         label="Срок подготовки Итогового отчёта, нед.",
@@ -421,13 +426,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         max_digits=4,
         decimal_places=1,
         widget=forms.NumberInput(
-            attrs={
-                "min": 0,
-                "step": "0.1",
-                "class": "form-control readonly-field js-stage2-weeks",
-                "readonly": True,
-                "tabindex": "-1",
-            }
+            attrs=locked_attrs("js-stage2-weeks", min=0, step="0.1")
         ),
     )
     stage2_end = forms.DateField(
@@ -458,9 +457,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         label="Этап 3, оконч.",
         required=False,
         disabled=True,
-        widget=forms.TextInput(
-            attrs={"class": "form-control js-stage3-end readonly-field", "readonly": True}
-        ),
+        widget=forms.TextInput(attrs=locked_attrs("js-stage3-end")),
     )
     term_weeks = forms.DecimalField(
         label="Срок, недель",
@@ -468,7 +465,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         decimal_places=1,
         max_digits=5,
         disabled=True,
-        widget=forms.NumberInput(attrs={"class": "form-control js-term-weeks readonly-field", "readonly": True}),
+        widget=forms.NumberInput(attrs=locked_attrs("js-term-weeks")),
     )
     type_ids = forms.CharField(required=False, widget=forms.HiddenInput())
 
@@ -519,13 +516,15 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             current_coordinator = self.data.get("project_coordinator") or ""
         else:
             instance_coordinator = self.instance.project_coordinator if self.instance else ""
-            _coordinator_name, resolved_coordinator_prs_id = _resolve_project_manager_choice(instance_coordinator)
+            _coordinator_name, resolved_coordinator_prs_id, _matched = _resolve_project_coordinator_choice(
+                instance_coordinator
+            )
             current_coordinator = (
                 (self.instance.project_coordinator_prs_id if self.instance else "")
                 or resolved_coordinator_prs_id
                 or instance_coordinator
             )
-        self.fields["project_coordinator"].choices = _project_manager_choices(
+        self.fields["project_coordinator"].choices = _project_coordinator_choices(
             current_coordinator,
             show_prs_label=False,
         )
@@ -644,11 +643,18 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         return manager_name
 
     def clean_project_coordinator(self):
-        coordinator_name, coordinator_prs_id = _resolve_project_manager_choice(
-            self.cleaned_data.get("project_coordinator")
-        )
-        self._cleaned_project_coordinator_prs_id = coordinator_prs_id
-        return coordinator_name
+        raw = (self.cleaned_data.get("project_coordinator") or "").strip()
+        coordinator_name, coordinator_prs_id, matched = _resolve_project_coordinator_choice(raw)
+        if matched or not raw:
+            self._cleaned_project_coordinator_prs_id = coordinator_prs_id
+            return coordinator_name
+        stored_name = (getattr(self.instance, "project_coordinator", "") or "").strip()
+        stored_prs_id = (getattr(self.instance, "project_coordinator_prs_id", "") or "").strip()
+        if raw in {stored_name, stored_prs_id}:
+            self._cleaned_project_coordinator_prs_id = stored_prs_id
+            return stored_name
+        self._cleaned_project_coordinator_prs_id = ""
+        return raw
 
     def clean_input_data(self):
         return self.cleaned_data.get("input_data") or 0
@@ -743,28 +749,20 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
         max_digits=4,
         decimal_places=1,
         widget=forms.NumberInput(
-            attrs={
-                "min": 0,
-                "step": "0.1",
-                "class": "form-control readonly-field js-stage1-weeks",
-                "readonly": True,
-                "tabindex": "-1",
-            }
+            attrs=locked_attrs("js-stage1-weeks", min=0, step="0.1")
         ),
     )
     stage1_end = forms.DateField(
         label="Дата Предварительного отчёта",
         required=False,
         disabled=True,
-        widget=forms.TextInput(
-            attrs={"class": "form-control js-stage1-end readonly-field", "readonly": True}
-        ),
+        widget=forms.TextInput(attrs=locked_attrs("js-stage1-end")),
     )
     completion_calc = forms.DateField(
         label="Оконч., расчет",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control js-completion-calc readonly-field", "readonly": True}),
+        widget=forms.TextInput(attrs=locked_attrs("js-completion-calc")),
     )
     stage2_weeks = forms.DecimalField(
         label="Срок подготовки Итогового отчёта, нед.",
@@ -773,13 +771,7 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
         max_digits=4,
         decimal_places=1,
         widget=forms.NumberInput(
-            attrs={
-                "min": 0,
-                "step": "0.1",
-                "class": "form-control readonly-field js-stage2-weeks",
-                "readonly": True,
-                "tabindex": "-1",
-            }
+            attrs=locked_attrs("js-stage2-weeks", min=0, step="0.1")
         ),
     )
     stage2_end = forms.DateField(
@@ -810,9 +802,7 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
         label="Этап 3, оконч.",
         required=False,
         disabled=True,
-        widget=forms.TextInput(
-            attrs={"class": "form-control js-stage3-end readonly-field", "readonly": True}
-        ),
+        widget=forms.TextInput(attrs=locked_attrs("js-stage3-end")),
     )
     term_weeks = forms.DecimalField(
         label="Срок, недель",
@@ -820,7 +810,7 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
         decimal_places=1,
         max_digits=5,
         disabled=True,
-        widget=forms.NumberInput(attrs={"class": "form-control js-term-weeks readonly-field", "readonly": True}),
+        widget=forms.NumberInput(attrs=locked_attrs("js-term-weeks")),
     )
 
     class Meta:
@@ -978,7 +968,7 @@ class ProjectScheduleTaskForm(BootstrapMixin, forms.Form):
         # Read-only: this field only mirrors the actual link state computed from
         # gantt_data["links"]. Editing of predecessors happens in the Gantt
         # diagram (Связи panel inside the lightbox), not in the table form.
-        widget=forms.TextInput(attrs={"readonly": "readonly", "class": "readonly-field"}),
+        widget=forms.TextInput(attrs=locked_attrs(base=None)),
     )
     progress = forms.IntegerField(
         label="Прогресс",
@@ -1124,11 +1114,7 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
     identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(attrs={
-            "readonly": True, "tabindex": "-1",
-            "class": "readonly-field",
-            "id": "work-identifier-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(base=None, id="work-identifier-field")),
     )
     registration_date = forms.DateField(
         label="Дата",
@@ -1150,8 +1136,8 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
             "registration_number", "registration_date", "manager",
         ]
         widgets = {
-            "type": forms.TextInput(attrs={"readonly": True, "tabindex": "-1", "class": "readonly-field"}),
-            "name": forms.TextInput(attrs={"readonly": True, "tabindex": "-1", "class": "readonly-field"}),
+            "type": forms.TextInput(attrs=locked_attrs(base=None)),
+            "name": forms.TextInput(attrs=locked_attrs(base=None)),
             "asset_name": forms.TextInput(attrs={"placeholder": "Искать по наименованию и регистрационному номеру"}),
         }
 
@@ -1325,11 +1311,7 @@ class LegalEntityForm(BootstrapMixin, forms.ModelForm):
     identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(attrs={
-            "readonly": True, "tabindex": "-1",
-            "class": "readonly-field",
-            "id": "legal-identifier-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(base=None, id="legal-identifier-field")),
     )
     registration_date = forms.DateField(
         label="Дата регистрации",
@@ -1346,8 +1328,8 @@ class LegalEntityForm(BootstrapMixin, forms.ModelForm):
             "registration_number", "registration_date",
         ]
         widgets = {
-            "work_type": forms.TextInput(attrs={"readonly": True, "tabindex": "-1", "class": "readonly-field"}),
-            "work_name": forms.TextInput(attrs={"readonly": True, "tabindex": "-1", "class": "readonly-field"}),
+            "work_type": forms.TextInput(attrs=locked_attrs(base=None)),
+            "work_name": forms.TextInput(attrs=locked_attrs(base=None)),
             "legal_name": forms.TextInput(attrs={"placeholder": "Искать по наименованию и регистрационному номеру"}),
         }
 

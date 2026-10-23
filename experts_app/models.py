@@ -1,6 +1,7 @@
 import os
 from datetime import date as date_type
 
+from django.conf import settings
 from django.db import models
 
 from classifiers_app.models import TerritorialDivision
@@ -9,7 +10,9 @@ from policy_app.models import (
     ADMIN_GROUP,
     DIRECTION_DIRECTOR_GROUP,
     DIRECTOR_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
     PROJECTS_HEAD_GROUP,
+    ExpertiseDirection,
 )
 from users_app.models import Employee
 
@@ -59,6 +62,14 @@ class ExpertSpecialty(models.Model):
         verbose_name="Владельцы",
     )
     is_group_owner = models.BooleanField("Группа (все компании)", default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_expert_specialties",
+        verbose_name="Автор",
+    )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -66,11 +77,62 @@ class ExpertSpecialty(models.Model):
 
     class Meta:
         ordering = ["position", "id"]
-        verbose_name = "Специальность эксперта"
-        verbose_name_plural = "Специальности экспертов"
+        verbose_name = "Специальность исполнителя"
+        verbose_name_plural = "Специальности исполнителей"
 
     def __str__(self):
         return self.specialty or f"Специальность #{self.pk}"
+
+    def _managed_units(self):
+        cached = getattr(self, "_managed_display_units", None)
+        if cached is not None:
+            return cached
+        from group_app.expertise_management import display_units
+
+        direction = self.expertise_dir if self.expertise_dir_id else None
+        units = display_units(direction) if direction is not None else []
+        self._managed_display_units = units
+        return units
+
+    @property
+    def department_display(self):
+        from group_app.expertise_management import format_departments
+
+        return format_departments(self._managed_units())
+
+    @property
+    def organization_display(self):
+        from group_app.expertise_management import format_organizations
+
+        return format_organizations(self._managed_units())
+
+    @property
+    def head_job_title_display(self):
+        if hasattr(self, "_resolved_head"):
+            head = self._resolved_head
+        else:
+            from .specialty_source import resolve_head_for_direction
+
+            head = resolve_head_for_direction(self.expertise_dir if self.expertise_dir_id else None)
+        return str(getattr(head, "job_title", "") or "")
+
+    def save(self, *args, **kwargs):
+        from .specialty_source import resolve_head_for_direction
+
+        from group_app.expertise_management import display_units
+
+        direction = None
+        if self.expertise_dir_id:
+            direction = ExpertiseDirection.objects.filter(pk=self.expertise_dir_id).first()
+        units = display_units(direction) if direction is not None else []
+        self.expertise_direction = units[0] if len(units) == 1 else None
+        self.head_of_direction = resolve_head_for_direction(direction)
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = list(
+                set(update_fields) | {"expertise_direction", "head_of_direction"}
+            )
+        super().save(*args, **kwargs)
 
     @property
     def owner_display(self):
@@ -80,7 +142,23 @@ class ExpertSpecialty(models.Model):
         return ", ".join(names) if names else ""
 
 
-EXCLUDED_ROLES = (DIRECTOR_GROUP, DIRECTION_DIRECTOR_GROUP, ADMIN_GROUP, PROJECTS_HEAD_GROUP)
+class PolicyExpertSpecialty(ExpertSpecialty):
+    """Та же таблица специальностей, в админке показана в группе «ПРОДУКТЫ»."""
+
+    class Meta:
+        proxy = True
+        app_label = "policy_app"
+        verbose_name = "Специальность исполнителя"
+        verbose_name_plural = "Специальности исполнителей"
+
+
+EXCLUDED_ROLES = (
+    DIRECTOR_GROUP,
+    DIRECTION_DIRECTOR_GROUP,
+    ADMIN_GROUP,
+    PROJECTS_HEAD_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
+)
 
 
 class ExpertProfile(models.Model):

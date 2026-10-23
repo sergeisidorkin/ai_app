@@ -7,7 +7,7 @@ from datetime import date as date_type
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import models
 from django.db.models import Max, Q
-from django.http import FileResponse, Http404, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -15,8 +15,6 @@ from classifiers_app.models import TerritorialDivision
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import (
     ADMIN_GROUP,
-    DEPARTMENT_HEAD_GROUP,
-    DIRECTOR_GROUPS,
     EXPERT_GROUP,
     ExpertiseDirection,
     LAWYER_GROUP,
@@ -25,6 +23,14 @@ from policy_app.models import (
 from users_app.models import Employee
 from contacts_app.models import SpecialtyRecord
 from .forms import ExpertSpecialtyForm, ExpertProfileForm, ExpertContractDetailsForm, _active_regions_qs
+from .specialty_source import (
+    ACCESS_ADMIN,
+    ACCESS_READONLY,
+    SCOPED_SPECIALTY_ACCESS,
+    directions_for_user,
+    specialty_row_editable,
+    specialty_table_access,
+)
 from .models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 
 PARTIAL_TEMPLATE = "experts_app/experts_partial.html"
@@ -514,19 +520,50 @@ def contract_requisites_partial(request):
 #  ExpertSpecialty CRUD
 # ---------------------------------------------------------------------------
 
+def _specialty_write_denied(request, specialty=None):
+    access = specialty_table_access(request.user)
+    if access == ACCESS_READONLY:
+        return HttpResponseForbidden("Недостаточно прав.")
+    if specialty is not None and not specialty_row_editable(request.user, specialty):
+        return HttpResponseForbidden("Недостаточно прав.")
+    return None
+
+
+def _specialty_form(request, data=None, instance=None):
+    kwargs = {}
+    if data is not None:
+        kwargs["data"] = data
+    if instance is not None:
+        kwargs["instance"] = instance
+    if specialty_table_access(request.user) in SCOPED_SPECIALTY_ACCESS:
+        directions = directions_for_user(request.user)
+        kwargs["lock_expertise"] = True
+        if instance is not None and instance.expertise_dir_id:
+            kwargs["locked_expertise_dir"] = instance.expertise_dir
+        elif len(directions) == 1:
+            kwargs["locked_expertise_dir"] = directions[0]
+        else:
+            kwargs["allowed_expertise_dirs"] = directions
+    return ExpertSpecialtyForm(**kwargs)
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def specialty_form_create(request):
+    denied = _specialty_write_denied(request)
+    if denied:
+        return denied
     if request.method == "GET":
-        form = ExpertSpecialtyForm()
+        form = _specialty_form(request)
         return render(request, FORM_TEMPLATE, {"form": form, "action": "create"})
-    form = ExpertSpecialtyForm(request.POST)
+    form = _specialty_form(request, data=request.POST)
     if not form.is_valid():
         return _render_specialty_form_with_errors(
             request, FORM_TEMPLATE, {"form": form, "action": "create"}
         )
     form.instance.position = _next_position()
+    form.instance.created_by = request.user
     form.save()
     return _render_specialty_updated(request)
 
@@ -536,10 +573,13 @@ def specialty_form_create(request):
 @require_http_methods(["GET", "POST"])
 def specialty_form_edit(request, pk: int):
     specialty = get_object_or_404(ExpertSpecialty, pk=pk)
+    denied = _specialty_write_denied(request, specialty)
+    if denied:
+        return denied
     if request.method == "GET":
-        form = ExpertSpecialtyForm(instance=specialty)
+        form = _specialty_form(request, instance=specialty)
         return render(request, FORM_TEMPLATE, {"form": form, "action": "edit", "specialty": specialty})
-    form = ExpertSpecialtyForm(request.POST, instance=specialty)
+    form = _specialty_form(request, data=request.POST, instance=specialty)
     if not form.is_valid():
         return _render_specialty_form_with_errors(
             request,
@@ -554,7 +594,11 @@ def specialty_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def specialty_delete(request, pk: int):
-    get_object_or_404(ExpertSpecialty, pk=pk).delete()
+    specialty = get_object_or_404(ExpertSpecialty, pk=pk)
+    denied = _specialty_write_denied(request, specialty)
+    if denied:
+        return denied
+    specialty.delete()
     _normalize_positions()
     return _render_specialty_updated(request)
 
@@ -564,6 +608,9 @@ def specialty_delete(request, pk: int):
 @require_POST
 def specialty_move_up(request, pk: int):
     obj = get_object_or_404(ExpertSpecialty, pk=pk)
+    denied = _specialty_write_denied(request, obj)
+    if denied:
+        return denied
     prev = ExpertSpecialty.objects.filter(position__lt=obj.position).order_by("-position").first()
     if prev:
         obj.position, prev.position = prev.position, obj.position
@@ -577,6 +624,9 @@ def specialty_move_up(request, pk: int):
 @require_POST
 def specialty_move_down(request, pk: int):
     obj = get_object_or_404(ExpertSpecialty, pk=pk)
+    denied = _specialty_write_denied(request, obj)
+    if denied:
+        return denied
     nxt = ExpertSpecialty.objects.filter(position__gt=obj.position).order_by("position").first()
     if nxt:
         obj.position, nxt.position = nxt.position, obj.position
@@ -588,11 +638,11 @@ def specialty_move_down(request, pk: int):
 ESP_CSV_HEADERS = [
     "Специальность",
     "Специальность на англ. языке",
-    "Владелец",
+    "Область специализации",
     "Направление экспертизы",
     "Подразделение",
-    "Руководитель направления",
-    "Область специализации",
+    "Организация",
+    "Владелец",
 ]
 
 
@@ -604,9 +654,25 @@ def _specialties_queryset():
     return ExpertSpecialty.objects.select_related(
         "expertise_direction",
         "expertise_dir",
+        "expertise_dir__department",
+        "expertise_dir__department__company",
         "head_of_direction",
         "head_of_direction__user",
+        "created_by",
     ).prefetch_related("owners").order_by("position", "id")
+
+
+def _csv_column_index(header, name):
+    try:
+        return header.index(name)
+    except ValueError:
+        return None
+
+
+def _csv_cell(row, index):
+    if index is None or index >= len(row):
+        return ""
+    return row[index].strip()
 
 
 def _parse_experts_csv_rows(csv_file):
@@ -658,16 +724,18 @@ def esp_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(ESP_CSV_HEADERS)
 
-    for item in _specialties_queryset():
+    from .specialty_source import attach_specialty_heads
+
+    for item in attach_specialty_heads(_specialties_queryset()):
         writer.writerow(
             [
                 item.specialty,
                 item.specialty_en,
-                item.owner_display,
-                item.expertise_dir.short_name if item.expertise_dir else "",
-                item.expertise_direction.department_name if item.expertise_direction else "",
-                item.head_of_direction.job_title if item.head_of_direction else "",
                 item.specialization_area,
+                item.expertise_dir.short_name if item.expertise_dir else "",
+                item.department_display,
+                item.organization_display,
+                item.owner_display,
             ]
         )
 
@@ -680,6 +748,21 @@ def esp_csv_download(request):
 @user_passes_test(staff_required)
 @require_POST
 def esp_csv_upload(request):
+    access = specialty_table_access(request.user)
+    if access == ACCESS_READONLY:
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    forced_direction = None
+    allowed_direction_ids = None
+    if access in SCOPED_SPECIALTY_ACCESS:
+        allowed_directions = directions_for_user(request.user)
+        if not allowed_directions:
+            return JsonResponse(
+                {"ok": False, "error": "Для вашего подразделения не задано направление экспертизы."},
+                status=400,
+            )
+        allowed_direction_ids = {item.pk for item in allowed_directions}
+        if len(allowed_directions) == 1:
+            forced_direction = allowed_directions[0]
     rows, error = _parse_experts_csv_rows(request.FILES.get("csv_file"))
     if error:
         return JsonResponse(error, status=400)
@@ -694,18 +777,6 @@ def esp_csv_upload(request):
             key = _csv_lookup_key(label)
             if key:
                 expertise_dirs[key] = direction
-    org_units = {
-        key: unit
-        for unit in OrgUnit.objects.all()
-        for key in (_csv_lookup_key(unit.department_name), _csv_lookup_key(unit.short_name))
-        if key
-    }
-    employees_by_job_title = {
-        _csv_lookup_key(employee.job_title): employee
-        for employee in Employee.objects.filter(
-            role__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS),
-        ).exclude(job_title="")
-    }
     owners_by_short_name = {
         member.short_name.strip().lower(): member
         for member in GroupMember.objects.exclude(short_name="").all()
@@ -713,26 +784,30 @@ def esp_csv_upload(request):
 
     created = 0
     warnings = []
+    header = [cell.strip() for cell in rows[0]]
+    idx_specialty = _csv_column_index(header, "Специальность")
+    idx_specialty_en = _csv_column_index(header, "Специальность на англ. языке")
+    idx_owner = _csv_column_index(header, "Владелец")
+    idx_expertise = _csv_column_index(header, "Направление экспертизы")
+    idx_area = _csv_column_index(header, "Область специализации")
+    if idx_specialty is None:
+        idx_specialty, idx_specialty_en, idx_owner, idx_expertise, idx_area = 0, 1, 2, 3, 6
 
     for i, row in enumerate(rows[1:], start=2):
         if not any(cell.strip() for cell in row):
             continue
-        if len(row) < 6:
+        if idx_expertise is not None and len(row) <= idx_expertise:
             warnings.append(
-                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 6: "
-                "Специальность, Специальность на англ. языке, Владелец, "
-                "Направление экспертизы, Подразделение, Руководитель направления; "
-                "опционально 7-й столбец: Область специализации."
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается столбец "
+                "«Направление экспертизы»)."
             )
             continue
 
-        specialty = row[0].strip()
-        specialty_en = row[1].strip()
-        owner_raw = row[2].strip()
-        expertise_dir_name = row[3].strip()
-        department_name = row[4].strip()
-        head_of_direction_name = row[5].strip()
-        specialization_area = row[6].strip() if len(row) > 6 else ""
+        specialty = _csv_cell(row, idx_specialty)
+        specialty_en = _csv_cell(row, idx_specialty_en)
+        owner_raw = _csv_cell(row, idx_owner)
+        expertise_dir_name = _csv_cell(row, idx_expertise)
+        specialization_area = _csv_cell(row, idx_area)
 
         if not specialty:
             warnings.append(f"Строка {i}: не заполнены обязательные поля: Специальность.")
@@ -742,28 +817,19 @@ def esp_csv_upload(request):
             warnings.append(f"Строка {i}: специальность «{specialty}» уже существует, пропущена.")
             continue
 
-        expertise_dir = None
-        if expertise_dir_name:
+        expertise_dir = forced_direction
+        if forced_direction is None and expertise_dir_name:
             expertise_dir = expertise_dirs.get(_csv_lookup_key(expertise_dir_name))
             if expertise_dir is None:
                 warnings.append(f"Строка {i}: направление экспертизы «{expertise_dir_name}» не найдено.")
                 continue
-
-        expertise_direction = None
-        if department_name:
-            expertise_direction = org_units.get(_csv_lookup_key(department_name))
-            if expertise_direction is None:
-                warnings.append(f"Строка {i}: подразделение «{department_name}» не найдено.")
-                continue
-
-        head_of_direction = None
-        if head_of_direction_name:
-            head_of_direction = employees_by_job_title.get(_csv_lookup_key(head_of_direction_name))
-            if head_of_direction is None:
-                warnings.append(
-                    f"Строка {i}: руководитель направления «{head_of_direction_name}» не найден."
-                )
-                continue
+        if allowed_direction_ids is not None and (
+            expertise_dir is None or expertise_dir.pk not in allowed_direction_ids
+        ):
+            warnings.append(
+                f"Строка {i}: направление экспертизы не относится к вашему подразделению."
+            )
+            continue
 
         is_group_owner = not owner_raw or owner_raw == "Группа"
         owner_ids = []
@@ -782,10 +848,9 @@ def esp_csv_upload(request):
                 specialty=specialty,
                 specialty_en=specialty_en,
                 expertise_dir=expertise_dir,
-                expertise_direction=expertise_direction,
-                head_of_direction=head_of_direction,
                 specialization_area=specialization_area,
                 is_group_owner=is_group_owner,
+                created_by=request.user,
                 position=_next_position(),
             )
             if owner_ids:

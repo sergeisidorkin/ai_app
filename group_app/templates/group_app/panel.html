@@ -11,14 +11,21 @@
     </div>
 
     <div class="modal fade" id="group-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
         </div>
       </div>
     </div>
 
     <div class="modal fade" id="org-structure-modal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="expertise-mode-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
         </div>
       </div>
@@ -26,7 +33,7 @@
 
     <script>
       document.body.addEventListener('group-updated', function () {
-        ['group-modal', 'org-structure-modal'].forEach(function (id) {
+        ['group-modal', 'org-structure-modal', 'expertise-mode-modal'].forEach(function (id) {
           const el = document.getElementById(id);
           if (!el) return;
           const modal = bootstrap.Modal.getInstance(el) || bootstrap.Modal.getOrCreateInstance(el);
@@ -35,7 +42,7 @@
       });
 
       document.addEventListener('htmx:afterSwap', function (e) {
-        ['group-modal', 'org-structure-modal'].forEach(function (id) {
+        ['group-modal', 'org-structure-modal', 'expertise-mode-modal'].forEach(function (id) {
           if (e.target && e.target.matches('#' + id + ' .modal-content')) {
             var m = bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
             m.show();

@@ -1714,15 +1714,12 @@ def _is_project_manager(user, project):
 
 
 def _get_dh_expertise_section_ids(user, project):
-    """For a department head with confirmed participation, return the set of
-    TypicalSection IDs that match their expertise direction."""
+    """Разделы, для которых на этом проекте руководитель — подразделение пользователя."""
+    from group_app.expertise_management import ExpertiseAssignmentIndex
     from policy_app.models import DEPARTMENT_HEAD_GROUP, TypicalSection
     from projects_app.models import Performer
     emp = getattr(user, "employee_profile", None)
-    if not emp or emp.role != DEPARTMENT_HEAD_GROUP:
-        return set()
-    dept = emp.department
-    if not dept or not dept.expertise_id:
+    if not emp or emp.role != DEPARTMENT_HEAD_GROUP or not emp.department_id:
         return set()
     has_confirmed = Performer.objects.filter(
         employee__user=user,
@@ -1731,11 +1728,19 @@ def _get_dh_expertise_section_ids(user, project):
     ).exists()
     if not has_confirmed:
         return set()
-    return set(
-        TypicalSection.objects.filter(expertise_dir_id=dept.expertise_id)
+    sections = list(
+        TypicalSection.objects.filter(expertise_dir_id__isnull=False)
         .exclude(Q(is_system=True) | Q(code__iexact="DSC"))
-        .values_list("id", flat=True)
+        .values_list("id", "expertise_dir_id")
     )
+    index = ExpertiseAssignmentIndex(direction_id for _section_id, direction_id in sections)
+    group_member = getattr(project, "group_member", None)
+    return {
+        section_id
+        for section_id, direction_id in sections
+        if (unit := index.operation_unit(direction_id, group_member)) is not None
+        and unit.pk == emp.department_id
+    }
 
 
 @require_GET

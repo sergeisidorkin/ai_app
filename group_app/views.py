@@ -8,13 +8,15 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_http_methods, require_POST
 
 from classifiers_app.models import LegalEntityIdentifier
-from .forms import GroupMemberForm, OrgUnitForm
-from .models import GroupMember, OrgUnit, resequence_group_members
+from .expertise_management import sync_missing_modes
+from .forms import ExpertiseManagementModeForm, GroupMemberForm, OrgUnitForm
+from .models import ExpertiseManagementMode, GroupMember, OrgUnit, resequence_group_members
 
 PARTIAL_TEMPLATE = "group_app/group_partial.html"
 TABLE_TEMPLATE = "group_app/group_table_partial.html"
 FORM_TEMPLATE = "group_app/member_form.html"
 ORG_FORM_TEMPLATE = "group_app/org_structure_form.html"
+MODE_FORM_TEMPLATE = "group_app/expertise_mode_form.html"
 HX_TRIGGER_HEADER = "HX-Trigger"
 HX_EVENT = "group-updated"
 
@@ -30,6 +32,7 @@ def _group_context():
         "org_units": OrgUnit.objects.select_related(
             "company", "functional_subordination", "expertise"
         ).all(),
+        "management_modes": sync_missing_modes(),
     }
 
 
@@ -319,4 +322,22 @@ def org_move_down(request, pk: int):
         obj.position, nxt.position = nxt.position, obj.position
         OrgUnit.objects.filter(pk=obj.pk).update(position=obj.position)
         OrgUnit.objects.filter(pk=nxt.pk).update(position=nxt.position)
+    return _render_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def expertise_mode_form_edit(request, pk: int):
+    mode = get_object_or_404(
+        ExpertiseManagementMode.objects.select_related("expertise_direction"),
+        pk=pk,
+    )
+    if request.method == "GET":
+        form = ExpertiseManagementModeForm(instance=mode)
+        return render(request, MODE_FORM_TEMPLATE, {"form": form, "mode": mode})
+    form = ExpertiseManagementModeForm(request.POST, instance=mode)
+    if not form.is_valid():
+        return render(request, MODE_FORM_TEMPLATE, {"form": form, "mode": mode})
+    form.save()
     return _render_updated(request)

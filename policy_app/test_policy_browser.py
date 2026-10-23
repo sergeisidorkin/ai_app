@@ -14,6 +14,7 @@ from policy_app.models import (
     Grade,
     Product,
     ServiceGoalReport,
+    ServiceBlockClassifier,
     TypicalSection,
     TypicalSectionSpecialty,
     SectionStructure,
@@ -1323,6 +1324,12 @@ def test_product_workspace_typical_section_row_insert_saves(live_server, django_
         position=1,
     )
     ensure_system_dsc_section(product)
+    block = ServiceBlockClassifier.objects.create(
+        code="NWS",
+        short_name="sec-ins",
+        short_name_ru="разд-вст",
+        position=1,
+    )
     section = TypicalSection.objects.create(
         product=product,
         code="SEC-CUR",
@@ -1549,8 +1556,11 @@ def test_product_workspace_typical_section_row_insert_saves(live_server, django_
             editor.fill(value)
             editor.press("Enter")
 
-        fill_text("code", "SEC-INS")
-        fill_text("short_name", "sec-ins")
+        block_cell = new_row.locator('td[data-inline-field="service_block"]')
+        block_cell.click()
+        overlay = page.locator(".inline-table-select-editor")
+        overlay.wait_for()
+        overlay.select_option(value=str(block.pk), force=True)
         fill_text("name_en", "Inserted EN")
         fill_text("name_ru", "Вставленный RU")
 
@@ -1563,7 +1573,7 @@ def test_product_workspace_typical_section_row_insert_saves(live_server, django_
               ));
               const inserted = rows.find((row) => {
                 const cell = row.querySelector('td.typical-section-code-col');
-                return cell && cell.textContent.trim() === 'SEC-INS';
+                return cell && cell.textContent.trim() === 'NWS';
               });
               const current = rows.findIndex((row) => {
                 const cell = row.querySelector('td.typical-section-code-col');
@@ -1571,7 +1581,7 @@ def test_product_workspace_typical_section_row_insert_saves(live_server, django_
               });
               const insertedIndex = rows.findIndex((row) => {
                 const cell = row.querySelector('td.typical-section-code-col');
-                return cell && cell.textContent.trim() === 'SEC-INS';
+                return cell && cell.textContent.trim() === 'NWS';
               });
               const structures = document.querySelector(
                 '#policy-section-structures-section [data-policy-inline-options]'
@@ -1585,13 +1595,13 @@ def test_product_workspace_typical_section_row_insert_saves(live_server, django_
                 && current >= 0
                 && insertedIndex === current + 1
                 && structures
-                && structures.textContent.includes('SEC-INS');
+                && structures.textContent.includes('NWS');
             }"""
         )
 
         inserted_row = page.locator(
             '#policy-typical-sections-section tbody tr',
-            has=page.locator('td.typical-section-code-col', has_text="SEC-INS"),
+            has=page.locator('td.typical-section-code-col', has_text="NWS"),
         )
         inserted_row.locator('input[name="section-select"]').check()
         page.once("dialog", lambda dialog: dialog.accept())
@@ -1602,7 +1612,7 @@ def test_product_workspace_typical_section_row_insert_saves(live_server, django_
                 '#policy-typical-sections-section tbody tr td.typical-section-code-col'
               )).map((cell) => cell.textContent.trim());
               const save = document.querySelector('[data-policy-workspace-save-btn]');
-              return !codes.includes('SEC-INS') && save && !save.disabled;
+              return !codes.includes('NWS') && save && !save.disabled;
             }"""
         )
         page.locator("[data-policy-workspace-save-btn]").click()
@@ -1612,14 +1622,14 @@ def test_product_workspace_typical_section_row_insert_saves(live_server, django_
                 '#policy-typical-sections-section tbody tr td.typical-section-code-col'
               )).map((cell) => cell.textContent.trim());
               const save = document.querySelector('[data-policy-workspace-save-btn]');
-              return !codes.includes('SEC-INS') && save && save.disabled;
+              return !codes.includes('NWS') && save && save.disabled;
             }"""
         )
 
         context.close()
         browser.close()
 
-    assert not TypicalSection.objects.filter(product=product, code="SEC-INS").exists()
+    assert not TypicalSection.objects.filter(product=product, code="NWS").exists()
 
 
 def test_product_workspace_related_table_row_insert_saves(live_server, django_user_model):

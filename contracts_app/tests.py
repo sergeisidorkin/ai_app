@@ -240,6 +240,42 @@ class ContractsCloudLabelTests(TestCase):
         self.assertNotIn("Дата отправки запроса", contract_request_modal)
         self.assertNotIn('id="contract-request-sent-at"', contract_request_modal)
 
+    @override_settings(CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER=False)
+    def test_contracts_partial_hides_local_contract_folder_source(self):
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'id="contract-draft-source"', html=False)
+        self.assertNotContains(response, "Куда сохранить")
+
+    @override_settings(
+        CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER=True,
+        REPORT_CHECK_LOCAL_ROOTS=("/tmp",),
+    )
+    def test_contracts_partial_shows_local_contract_folder_source_and_download_link(self):
+        self.performer.contract_project_disk_folder = "local:/tmp/contract-local/executor"
+        self.performer.contract_project_link = ""
+        self.performer.contract_project_folder_link = ""
+        self.performer.contract_file = "Договор 7001.docx"
+        self.performer.save(update_fields=[
+            "contract_project_disk_folder",
+            "contract_project_link",
+            "contract_project_folder_link",
+            "contract_file",
+        ])
+
+        response = self.client.get(reverse("contracts_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="contract-draft-source"', html=False)
+        self.assertContains(response, "Локальная папка")
+        self.assertContains(
+            response,
+            reverse("contract_project_local_download", args=[self.performer.pk]),
+            html=False,
+        )
+        self.assertContains(response, "Скачать локальный файл DOCX")
+
     def test_contract_correction_checkbox_is_disabled_after_contract_request(self):
         self.performer.contract_sent_at = timezone.now()
         self.performer.save(update_fields=["contract_sent_at"])
@@ -1857,12 +1893,28 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(sibling.contract_file, "custom.docx")
 
     def test_contracts_partial_uses_direction_head_as_responsible(self):
+        self.group_member.is_management_company = True
+        self.group_member.save(update_fields=["is_management_company"])
+        expertise = ExpertiseDirection.objects.create(name="Геология", short_name="ГЕО", position=1)
         direction = OrgUnit.objects.create(
             company=self.group_member,
             level=2,
             department_name="Геология",
             unit_type="expertise",
+            expertise=expertise,
         )
+        section = self.product.sections.create(
+            code="GEO",
+            short_name="GEO",
+            short_name_ru="Геология",
+            name_en="Geology",
+            name_ru="Геология",
+            accounting_type="Раздел",
+            expertise_dir=expertise,
+            position=1,
+        )
+        self.performer.typical_section = section
+        self.performer.save(update_fields=["typical_section"])
         head_user = get_user_model().objects.create_user(
             username="direction-head@example.com",
             password="secret",
@@ -2132,7 +2184,9 @@ class ContractsCloudLabelTests(TestCase):
 
         response = self.client.get(reverse("contracts_partial"))
 
-        self.assertEqual(response.status_code, 503)
+        # The table must stay usable with the saved links, and the bulk failure
+        # must not be followed by per-path lookups that pay the same timeout.
+        self.assertEqual(response.status_code, 200)
         mocked_list_user_shares.assert_called_once()
         mocked_get_user_share.assert_not_called()
 
@@ -4227,8 +4281,13 @@ class ContractsCloudLabelTests(TestCase):
             html=False,
         )
 
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share")
     @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", side_effect=NextcloudApiError("temporary outage"))
-    def test_contracts_partial_returns_503_when_bulk_share_resolution_fails(self, _mocked_list_user_shares):
+    def test_contracts_partial_renders_saved_links_when_bulk_share_resolution_fails(
+        self,
+        _mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
         NextcloudUserLink.objects.create(
             user=self.user,
             nextcloud_user_id="nc-admin",
@@ -4238,7 +4297,11 @@ class ContractsCloudLabelTests(TestCase):
 
         response = self.client.get(reverse("contracts_partial"))
 
-        self.assertEqual(response.status_code, 503)
+        # A Nextcloud outage must not blank the «Исполнители: заключение договора»
+        # section: the tables are rendered from the saved links instead.
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Иванов И.И.", html=False)
+        mocked_get_user_share.assert_not_called()
 
     @patch("contracts_app.views._upload_scan_to_cloud_bytes", return_value="")
     def test_contract_signing_edit_keeps_existing_local_scan_when_cloud_upload_fails(self, _mock_upload):
@@ -4562,7 +4625,7 @@ class ContractVariableResolverTests(TestCase):
         self.assertEqual(replacements["{{day}}"], "07")
         self.assertEqual(replacements["{{month}}"], "мая")
 
-    def test_deadline_ru_uses_latest_gantt_deadline_for_performer_batch(self):
+    def test_deadline_ru_uses_project_registry_deadline_not_gantt_section(self):
         product = Product.objects.create(
             short_name="DD",
             name_en="Due Diligence",
@@ -4575,7 +4638,7 @@ class ContractVariableResolverTests(TestCase):
             number=7005,
             type=product,
             name="Проект с дедлайнами графика",
-            deadline=date(2030, 1, 1),
+            deadline=date(2026, 11, 13),
             year=2026,
         )
         performer_a = Performer.objects.create(
@@ -4607,7 +4670,7 @@ class ContractVariableResolverTests(TestCase):
                     "managed_source": "performer",
                     "performer_id": performer_b.pk,
                     "asset_name": "Фабрика",
-                    "deadline": "2026-05-20",
+                    "deadline": "2027-01-26",
                 },
                 {
                     "id": f"managed-performer-{unrelated_performer.pk}",
@@ -4633,7 +4696,7 @@ class ContractVariableResolverTests(TestCase):
         )
 
         self.assertEqual(lists, {})
-        self.assertEqual(replacements["{{deadline_ru}}"], "20 мая 2026 г.")
+        self.assertEqual(replacements["{{deadline_ru}}"], "13 ноября 2026 г.")
 
     def test_deadline_ru_falls_back_to_latest_project_deadline_for_multistage_batch(self):
         product = Product.objects.create(

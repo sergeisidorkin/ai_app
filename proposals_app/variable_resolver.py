@@ -1176,6 +1176,66 @@ def _add_decimal_weeks(value: date, weeks: Decimal) -> date:
     return value + timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
 
 
+def _add_decimal_days(value: date, days: Decimal) -> date:
+    safe_days = max(days, Decimal("0"))
+    return value + timedelta(days=int(safe_days + Decimal("0.5")))
+
+
+def _subtract_decimal_days(value: date, days: Decimal) -> date:
+    safe_days = max(days, Decimal("0"))
+    return value - timedelta(days=int(safe_days + Decimal("0.5")))
+
+
+def _normalize_preliminary_term_unit(value) -> str:
+    raw = str(value or "").strip()
+    if raw in {"months", "days", "weeks"}:
+        return raw
+    return "months"
+
+
+def _normalize_final_term_unit(value) -> str:
+    raw = str(value or "").strip()
+    if raw in {"days", "weeks", "months"}:
+        return raw
+    return "weeks"
+
+
+def _add_term(value: date, amount: Decimal, unit: str) -> date:
+    if unit == "days":
+        return _add_decimal_days(value, amount)
+    if unit == "weeks":
+        return _add_decimal_weeks(value, amount)
+    return _add_decimal_months(value, amount)
+
+
+def _subtract_term(value: date, amount: Decimal, unit: str) -> date:
+    if unit == "days":
+        return _subtract_decimal_days(value, amount)
+    if unit == "weeks":
+        return _subtract_decimal_weeks(value, amount)
+    return _subtract_decimal_months(value, amount)
+
+
+def _duration_in_unit(start: date, end: date, unit: str) -> Decimal:
+    if end <= start:
+        return Decimal("0")
+    if unit == "months":
+        return _decimal_months_between(start, end)
+    days = Decimal(max(0, (end - start).days))
+    if unit == "weeks":
+        return days / Decimal("7")
+    return days
+
+
+def _format_term_with_unit(amount: Decimal, unit: str) -> str:
+    if unit == "days":
+        days = int(max(amount, Decimal("0")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        return f"{days} дн."
+    rounded = amount.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    label = "нед." if unit == "weeks" else "мес."
+    return f"{_format_decimal(rounded, precision=1, strip_trailing_zeros=True)} {label}"
+
+
 def _proposal_base_start_date() -> date:
     current = _today() + timedelta(days=14)
     previous_monday = current - timedelta(days=current.weekday())
@@ -1215,16 +1275,19 @@ def _proposal_preliminary_report_term_month(proposal) -> str:
     if getattr(proposal, "service_term_months", None) in (None, ""):
         return ""
     try:
-        months = Decimal(str(proposal.service_term_months))
+        amount = Decimal(str(proposal.service_term_months))
     except (InvalidOperation, TypeError, ValueError):
         return ""
-    if months == Decimal("1"):
+    unit = _normalize_preliminary_term_unit(getattr(proposal, "preliminary_report_term_unit", None))
+    if unit != "months":
+        return _format_term_with_unit(amount, unit)
+    if amount == Decimal("1"):
         suffix = "месяц"
-    elif months < Decimal("5"):
+    elif amount < Decimal("5"):
         suffix = "месяца"
     else:
         suffix = "месяцев"
-    return f"{_format_decimal(months, precision=1, strip_trailing_zeros=True)} {suffix}"
+    return f"{_format_decimal(amount, precision=1, strip_trailing_zeros=True)} {suffix}"
 
 
 def _proposal_last_stage_final_report_date(proposal) -> date | None:
@@ -1253,16 +1316,20 @@ def _proposal_first_stage_start_date(proposal) -> date | None:
         final_report_date = _parse_proposal_date(source.get("final_report_date"))
         service_term_months = _parse_decimal(source.get("service_term_months"))
         final_report_term_weeks = _parse_decimal(source.get("final_report_term_weeks"))
+        preliminary_unit = _normalize_preliminary_term_unit(source.get("preliminary_report_term_unit"))
+        final_unit = _normalize_final_term_unit(source.get("final_report_term_unit"))
     else:
         preliminary_report_date = _parse_proposal_date(getattr(source, "preliminary_report_date", None))
         final_report_date = _parse_proposal_date(getattr(source, "final_report_date", None))
         service_term_months = _parse_decimal(getattr(source, "service_term_months", None))
         final_report_term_weeks = _parse_decimal(getattr(source, "final_report_term_weeks", None))
+        preliminary_unit = _normalize_preliminary_term_unit(getattr(source, "preliminary_report_term_unit", None))
+        final_unit = _normalize_final_term_unit(getattr(source, "final_report_term_unit", None))
 
     if not preliminary_report_date and final_report_date and final_report_term_weeks is not None:
-        preliminary_report_date = _subtract_decimal_weeks(final_report_date, final_report_term_weeks)
+        preliminary_report_date = _subtract_term(final_report_date, final_report_term_weeks, final_unit)
     if preliminary_report_date and service_term_months is not None:
-        return _subtract_decimal_months(preliminary_report_date, service_term_months)
+        return _subtract_term(preliminary_report_date, service_term_months, preliminary_unit)
     return None
 
 
@@ -1398,36 +1465,40 @@ def _proposal_stage_term_sources(proposal) -> list[dict[str, object]]:
 
 
 def _proposal_stage_term_values(source, fallback_start_date: date | None = None) -> dict[str, object]:
-    months = _parse_decimal(_source_value(source, "service_term_months")) or Decimal("0")
-    weeks = _parse_decimal(_source_value(source, "final_report_term_weeks")) or Decimal("0")
+    preliminary_unit = _normalize_preliminary_term_unit(_source_value(source, "preliminary_report_term_unit"))
+    final_unit = _normalize_final_term_unit(_source_value(source, "final_report_term_unit"))
+    preliminary_amount = _parse_decimal(_source_value(source, "service_term_months")) or Decimal("0")
+    final_amount = _parse_decimal(_source_value(source, "final_report_term_weeks")) or Decimal("0")
     preliminary_date = _parse_proposal_date(_source_value(source, "preliminary_report_date"))
     final_date = _parse_proposal_date(_source_value(source, "final_report_date"))
 
     start_date = None
     if preliminary_date:
-        start_date = _subtract_decimal_months(preliminary_date, months)
+        start_date = _subtract_term(preliminary_date, preliminary_amount, preliminary_unit)
     elif final_date:
-        preliminary_date = _subtract_decimal_weeks(final_date, weeks)
-        start_date = _subtract_decimal_months(preliminary_date, months)
+        preliminary_date = _subtract_term(final_date, final_amount, final_unit)
+        start_date = _subtract_term(preliminary_date, preliminary_amount, preliminary_unit)
     elif fallback_start_date:
         start_date = fallback_start_date
 
     if start_date and not preliminary_date:
-        preliminary_date = _add_decimal_months(start_date, months)
+        preliminary_date = _add_term(start_date, preliminary_amount, preliminary_unit)
     if preliminary_date and not final_date:
-        final_date = _add_decimal_weeks(preliminary_date, weeks)
+        final_date = _add_term(preliminary_date, final_amount, final_unit)
 
     if start_date and preliminary_date:
-        months = _decimal_months_between(start_date, preliminary_date)
+        preliminary_amount = _duration_in_unit(start_date, preliminary_date, preliminary_unit)
     if preliminary_date and final_date:
-        weeks = Decimal(max(0, (final_date - preliminary_date).days)) / Decimal("7")
+        final_amount = _duration_in_unit(preliminary_date, final_date, final_unit)
     total_months = _decimal_months_between(start_date, final_date) if start_date and final_date else Decimal("0")
     return {
         "start_date": start_date,
         "preliminary_date": preliminary_date,
         "final_date": final_date,
-        "preliminary_months": months,
-        "final_weeks": weeks,
+        "preliminary_amount": preliminary_amount,
+        "preliminary_unit": preliminary_unit,
+        "final_amount": final_amount,
+        "final_unit": final_unit,
         "total_months": total_months,
         "next_stage_delay_days": _parse_decimal(_source_value(source, "next_stage_delay_days")) or Decimal("0"),
     }
@@ -1458,7 +1529,7 @@ def _proposal_stage_terms(proposal) -> list[dict[str, object]]:
                     {
                         "text": (
                             "сдача Предварительного отчёта — в течение "
-                            f"{_format_month_term_short(values['preliminary_months'])} до "
+                            f"{_format_term_with_unit(values['preliminary_amount'], values['preliminary_unit'])} до "
                             f"{_format_date(values['preliminary_date'])},"
                         )
                     }
@@ -1472,7 +1543,7 @@ def _proposal_stage_terms(proposal) -> list[dict[str, object]]:
                     {
                         "text": (
                             "сдача Итогового отчёта — в течение "
-                            f"{_format_week_term_short(values['final_weeks'])} до "
+                            f"{_format_term_with_unit(values['final_amount'], values['final_unit'])} до "
                             f"{_format_date(values['final_date'])}."
                         )
                     }

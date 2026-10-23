@@ -1917,6 +1917,7 @@
     const expertiseDirs = options.expertise_dirs || [];
     const departments = options.departments || [];
     const specialties = options.specialties || [];
+    const serviceBlocks = options.service_blocks || [];
 
     function findById(items, id) {
       return items.find(function (item) { return String(item.id) === String(id || ''); });
@@ -1924,6 +1925,11 @@
 
     return {
       getSelectOptions: function (ref) {
+        if (ref.field === 'service_block') {
+          return [{ value: '', label: '—' }].concat(serviceBlocks.map(function (item) {
+            return { value: String(item.id), label: item.code };
+          }));
+        }
         if (ref.field === 'accounting_type') {
           return accountingTypes.map(function (item) {
             return { value: String(item.value), label: item.label };
@@ -1956,7 +1962,20 @@
       getSpecialtyOptions: function () {
         return specialties;
       },
+      afterChange: function (ref, value) {
+        if (ref.field !== 'service_block') return;
+        const row = ref.cell.closest('tr');
+        const item = findById(serviceBlocks, value);
+        const shortName = row && row.querySelector('td[data-service-block-name="en"]');
+        const shortNameRu = row && row.querySelector('td[data-service-block-name="ru"]');
+        if (shortName) shortName.textContent = item ? (item.short_name || '') : '';
+        if (shortNameRu) shortNameRu.textContent = item ? (item.short_name_ru || '') : '';
+      },
       normalizeValue: function (ref, value) {
+        if (ref.field === 'service_block') {
+          const item = findById(serviceBlocks, value);
+          return { value: value ? String(value) : '', label: item ? item.code : '' };
+        }
         if (ref.field === 'accounting_type') {
           const item = accountingTypes.find(function (entry) {
             return String(entry.value) === String(value || '');

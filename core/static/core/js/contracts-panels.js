@@ -141,6 +141,26 @@
   window.addEventListener('resize', scheduleTableScrollGapsUpdate);
   window.addEventListener('load', scheduleTableScrollGapsUpdate);
   window.addEventListener('contracts:section-shown', scheduleTableScrollGapsUpdate);
+
+  // htmx does not swap error responses, so a failed load would leave the
+  // section blank (only the hidden spinner remains). Show the server message
+  // (or a generic one) in the pane instead, but keep already loaded tables
+  // when a background refresh fails.
+  document.body.addEventListener('htmx:responseError', function(e) {
+    var root = pane();
+    if (!root || e.target !== root) return;
+    if (root.querySelector('table')) return;
+    var xhr = e.detail && e.detail.xhr;
+    var text = xhr && xhr.responseText ? String(xhr.responseText).trim() : '';
+    if (!text || text.length > 300 || /<[a-z!]/i.test(text)) {
+      text = 'Не удалось загрузить договоры. Обновите страницу или повторите попытку позже.';
+    }
+    var note = document.createElement('div');
+    note.className = 'alert alert-warning py-2 px-3 mb-0 small';
+    note.setAttribute('role', 'alert');
+    note.textContent = text;
+    root.replaceChildren(note);
+  });
 })();
 
 
@@ -828,9 +848,11 @@
         var tr = box.closest('tr');
         return tr && tr.dataset.deleteUrl;
       }).filter(Boolean);
+      var progress = window.TableActionProgress ? window.TableActionProgress.begin(checked) : null;
       postSequential(urls)
         .then(function() { return refreshDraftsPane(); })
-        .catch(function(err) { alert(err.message || 'Не удалось удалить строки.'); });
+        .catch(function(err) { alert(err.message || 'Не удалось удалить строки.'); })
+        .finally(function() { if (progress) progress.end(); });
       return;
     }
 
@@ -855,6 +877,7 @@
     var detail = e.detail || {};
     var table = detail.table;
     if (!root || !table || !root.contains(table)) return;
+    if (detail.generic) return; // generic tables refresh themselves
     window.__contractsDraftSel = getChecked().map(function(box) { return String(box.value); });
     refreshDraftsPane().catch(function() {});
   });
@@ -1594,6 +1617,10 @@
       var tr = first.closest('tr');
       var url = tr && tr.dataset.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__ctTableSel[name]; } catch (_) { window.__ctTableSel[name] = []; }
+      if (window.TableSelection) window.TableSelection.clearOnModalHide(config.modalId, name, root);
       htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
       ensureActionsVisibility(name);
       return;
@@ -1618,6 +1645,13 @@
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder && window.__queuedRowOrder.handleMoveAction({
+        checked: checked,
+        action: action,
+        refresh: function() { htmx.trigger(document.body, 'contract-templates-updated'); },
+      })) {
+        return;
+      }
       var moveUrls = checked
         .map(function(ch) {
           var t = ch.closest('tr');
@@ -1799,6 +1833,10 @@
       var tr = first.closest('tr');
       var url = tr && tr.dataset.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__fpTableSel[name]; } catch (_) { window.__fpTableSel[name] = []; }
+      if (window.TableSelection) window.TableSelection.clearOnModalHide(config.modalId, name, root);
       htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' }).then(function() {
         var modalEl = document.getElementById(config.modalId);
         if (modalEl && window.bootstrap) {
@@ -1828,6 +1866,13 @@
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder && window.__queuedRowOrder.handleMoveAction({
+        checked: checked,
+        action: action,
+        refresh: function() { htmx.trigger(document.body, 'field-params-updated'); },
+      })) {
+        return;
+      }
       var moveUrls = checked
         .map(function(ch) {
           var t = ch.closest('tr');

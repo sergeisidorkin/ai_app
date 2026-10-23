@@ -355,6 +355,45 @@ class ChecklistStatusPermissionTests(TestCase):
         self.assertEqual(self.item_allowed.number, 2)
         self.assertEqual(second.number, 3)
 
+    def test_row_order_endpoint_reorders_within_section_group_and_renumbers(self):
+        second = ChecklistItem.objects.create(
+            project=self.project, section=self.section_allowed, code="ALW", number=2, position=2,
+            short_name="Second item", name="Second item",
+        )
+        third = ChecklistItem.objects.create(
+            project=self.project, section=self.section_allowed, code="ALW", number=3, position=3,
+            short_name="Third item", name="Third item",
+        )
+        additional = ChecklistItem.objects.create(
+            project=self.project, section=self.section_allowed, code="ALW", number=4, position=4,
+            item_type=ChecklistItem.ItemType.ADDITIONAL, additional_number=1,
+            short_name="Additional", name="Additional",
+        )
+        self.client.force_login(self.expert_user)
+
+        response = self._post_json(
+            reverse("row_order_save", args=["checklist-item"]),
+            {
+                # The table lists basic items and the additional request; only basics are permuted.
+                "ordered_ids": [third.id, self.item_allowed.id, second.id, additional.id],
+                "base_order_ids": [self.item_allowed.id, second.id, third.id, additional.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["events"], {"checklists:saved": True})
+        self.item_allowed.refresh_from_db()
+        second.refresh_from_db()
+        third.refresh_from_db()
+        additional.refresh_from_db()
+        self.assertEqual([third.position, self.item_allowed.position, second.position], [1, 2, 3])
+        self.assertEqual((additional.position, additional.item_type), (4, ChecklistItem.ItemType.ADDITIONAL))
+        # Numbers are recomputed for the whole section exactly like item_move does.
+        self.assertEqual(third.number, 1)
+        self.assertEqual(self.item_allowed.number, 2)
+        self.assertEqual(second.number, 3)
+        self.assertEqual(additional.number, 4)
+
     def test_batch_edit_rejects_implicit_delete_payload(self):
         self.client.force_login(self.expert_user)
 

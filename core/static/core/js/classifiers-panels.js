@@ -865,6 +865,11 @@
       const tr = first.closest('tr');
       const url = tr?.dataset?.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__clTableSel[name]; } catch (_) { window.__clTableSel[name] = []; }
+      if (window.__clTableSelLast === name) window.__clTableSelLast = null;
+      window.TableSelection?.clearOnModalHide('classifiers-modal', name, paneOf(btn));
       await htmx.ajax('GET', url, { target: '#classifiers-modal .modal-content', swap: 'innerHTML' });
       ensureActionsVisibility(name);
       return;
@@ -874,34 +879,47 @@
       if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
       let hasSuccessfulMutation = false;
-      for (let i = 0; i < urls.length; i++) {
-        const resp = await fetch(urlWithFilters(urls[i]), {
-          method: 'POST',
-          headers: { 'X-CSRFToken': csrftoken, 'HX-Request': 'true' },
-        }).catch(() => {});
-        if (!resp) continue;
-        if (!resp.ok) {
-          let message = 'Операцию не удалось выполнить.';
-          try {
-            const text = await resp.text();
-            if (text && text.trim()) message = text.trim();
-          } catch (e) {}
-          window.alert(message);
-          break;
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const resp = await fetch(urlWithFilters(urls[i]), {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrftoken, 'HX-Request': 'true' },
+          }).catch(() => {});
+          if (!resp) continue;
+          if (!resp.ok) {
+            let message = 'Операцию не удалось выполнить.';
+            try {
+              const text = await resp.text();
+              if (text && text.trim()) message = text.trim();
+            } catch (e) {}
+            window.alert(message);
+            break;
+          }
+          hasSuccessfulMutation = true;
         }
-        hasSuccessfulMutation = true;
-      }
-      await refreshTable(name);
-      if (hasSuccessfulMutation && name === 'ber-select') {
-        await initBusinessEntityMasterFilter(true);
-      }
-      if (hasSuccessfulMutation && BUSINESS_REGISTRY_TABLES.includes(name)) {
-        await refreshTables(getManualRefreshTargets(name, 'delete'));
+        await refreshTable(name);
+        if (hasSuccessfulMutation && name === 'ber-select') {
+          await initBusinessEntityMasterFilter(true);
+        }
+        if (hasSuccessfulMutation && BUSINESS_REGISTRY_TABLES.includes(name)) {
+          await refreshTables(getManualRefreshTargets(name, 'delete'));
+        }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        refresh: () => refreshTable(name),
+      })) {
+        ensureActionsVisibility(name);
+        return;
+      }
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);

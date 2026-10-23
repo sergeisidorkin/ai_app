@@ -825,6 +825,26 @@
     return addProposalPaymentDays(date, Math.round(safeWeeks * 7));
   }
 
+  function parseProposalPaymentTerm(value, defaultUnit) {
+    const raw = String(value || '').trim();
+    if (!raw) return { value: null, unit: defaultUnit, label: '' };
+    const match = raw.match(/^([+-]?\d+(?:[.,]\d+)?)\s*(дн\.|нед\.|мес\.)?$/);
+    const numberText = match ? match[1] : raw;
+    const parsed = parseProposalPaymentDecimal(numberText);
+    const unitLabel = match && match[2] ? match[2] : '';
+    const unit = unitLabel === 'дн.' ? 'days' : unitLabel === 'нед.' ? 'weeks' : unitLabel === 'мес.' ? 'months' : defaultUnit;
+    const label = unitLabel
+      ? raw.replace(/\s+/g, ' ')
+      : formatProposalPaymentDurationLabel(raw, defaultUnit === 'weeks' ? 'нед.' : defaultUnit === 'days' ? 'дн.' : 'мес.');
+    return { value: parsed, unit: unit, label: label };
+  }
+
+  function addProposalPaymentTerm(date, amount, unit) {
+    if (unit === 'days') return addProposalPaymentDays(date, Math.round(Math.max(amount, 0)));
+    if (unit === 'weeks') return addProposalPaymentWeeks(date, amount);
+    return addProposalPaymentMonths(date, amount);
+  }
+
   function formatProposalPaymentDurationLabel(value, unit) {
     const raw = String(value || '').trim();
     if (!raw) return '';
@@ -998,10 +1018,12 @@
       const type = getProposalPaymentCellText(row, 'type');
       const preliminaryTermMonthsText = getProposalPaymentCellText(row, 'term');
       const finalReportTermWeeksText = getProposalPaymentCellText(row, 'final-report-weeks');
-      const preliminaryDurationLabel = formatProposalPaymentDurationLabel(preliminaryTermMonthsText, 'мес.');
-      const finalReportDurationLabel = formatProposalPaymentDurationLabel(finalReportTermWeeksText, 'нед.');
-      const preliminaryTermMonths = parseProposalPaymentDecimal(preliminaryTermMonthsText);
-      const finalReportTermWeeks = parseProposalPaymentDecimal(finalReportTermWeeksText);
+      const preliminaryTerm = parseProposalPaymentTerm(preliminaryTermMonthsText, 'months');
+      const finalTerm = parseProposalPaymentTerm(finalReportTermWeeksText, 'weeks');
+      const preliminaryDurationLabel = preliminaryTerm.label;
+      const finalReportDurationLabel = finalTerm.label;
+      const preliminaryTermMonths = preliminaryTerm.value;
+      const finalReportTermWeeks = finalTerm.value;
       const advancePercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'advance-percent'));
       const preliminaryPaymentPercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'preliminary-report-percent'));
       const finalPaymentPercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'final-report-percent'));
@@ -1010,9 +1032,9 @@
       const finalPaymentTermDays = parseProposalPaymentInteger(getProposalPaymentCellText(row, 'final-report-term'));
       const hideStageBarLabel = Boolean(stage && (stageLabelsByProposalId.get(proposalId)?.size || 0) <= 1);
       const advanceDate = addProposalPaymentDays(startDate, advanceTermDays || 0);
-      const preliminaryDate = addProposalPaymentMonths(startDate, preliminaryTermMonths || 0);
+      const preliminaryDate = addProposalPaymentTerm(startDate, preliminaryTermMonths || 0, preliminaryTerm.unit);
       const preliminaryPaymentDate = addProposalPaymentDays(preliminaryDate, preliminaryPaymentTermDays || 0);
-      const finalDate = addProposalPaymentWeeks(preliminaryDate, finalReportTermWeeks || 0);
+      const finalDate = addProposalPaymentTerm(preliminaryDate, finalReportTermWeeks || 0, finalTerm.unit);
       const finalPaymentDate = addProposalPaymentDays(finalDate, finalPaymentTermDays || 0);
       const groupStartDate = startDate;
       const groupEndDate = finalDate;
@@ -3308,7 +3330,13 @@
     const owningForm = getProposalOwningForm(form) || form;
     const template = String(owningForm?.dataset?.productAutofillUrlTemplate || '');
     if (!template || !productId) return '';
-    return template.replace('/0/', '/' + encodeURIComponent(productId) + '/');
+    let url = template.replace('/0/', '/' + encodeURIComponent(productId) + '/');
+    const select = owningForm.querySelector('[name="group_member"]');
+    const groupId = select && String(select.value || '').trim();
+    if (groupId) {
+      url += (url.indexOf('?') === -1 ? '?' : '&') + 'group_member=' + encodeURIComponent(groupId);
+    }
+    return url;
   }
 
   function applyProposalProductAutofillPayload(form, productId, payload) {
@@ -3510,21 +3538,28 @@
     return String(Math.round(days));
   }
 
+  function formatProposalStoredTermValue(value, unit) {
+    const parsed = parseProposalTermDecimal(value);
+    if (parsed === null) return '';
+    if (unit === 'days') return String(Math.round(Math.max(parsed, 0)));
+    return formatProposalTermDecimal(parsed);
+  }
+
   function getProposalTypicalServiceTermEntry(form) {
     const entriesMap = getProposalTypicalServiceTermsMap(form);
     const entry = entriesMap[getProposalTypeId(form)] || null;
     if (!entry || typeof entry !== 'object') return null;
+    const preliminaryUnit = ['days', 'weeks', 'months'].includes(entry.preliminary_report_term_unit)
+      ? entry.preliminary_report_term_unit
+      : 'months';
+    const finalUnit = ['days', 'weeks', 'months'].includes(entry.final_report_term_unit)
+      ? entry.final_report_term_unit
+      : 'weeks';
     return {
-      preliminary_report_months: proposalTermValueForUnit(
-        entry.preliminary_report_months,
-        entry.preliminary_report_term_unit || 'months',
-        'months'
-      ),
-      final_report_weeks: proposalTermValueForUnit(
-        entry.final_report_weeks,
-        entry.final_report_term_unit || 'weeks',
-        'weeks'
-      ),
+      preliminary_report_months: formatProposalStoredTermValue(entry.preliminary_report_months, preliminaryUnit),
+      preliminary_report_term_unit: preliminaryUnit,
+      final_report_weeks: formatProposalStoredTermValue(entry.final_report_weeks, finalUnit),
+      final_report_term_unit: finalUnit,
     };
   }
 
@@ -9260,12 +9295,24 @@
       const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
       const entry = getProposalTypicalServiceTermEntry(form);
       if (!entry) return;
+      const preliminaryUnitSelect = serviceTermInput
+        ?.closest('.proposal-stage-terms-row')
+        ?.querySelector('.proposal-stage-preliminary-term-unit');
+      const finalUnitSelect = finalReportWeeksInput
+        ?.closest('.proposal-stage-terms-row')
+        ?.querySelector('.proposal-stage-final-term-unit');
       if (force || !String(serviceTermInput?.value || '').trim()) {
+        if (preliminaryUnitSelect && entry.preliminary_report_term_unit) {
+          preliminaryUnitSelect.value = entry.preliminary_report_term_unit;
+        }
         if (serviceTermInput) {
           serviceTermInput.value = entry.preliminary_report_months;
         }
       }
       if (force || !String(finalReportWeeksInput?.value || '').trim()) {
+        if (finalUnitSelect && entry.final_report_term_unit) {
+          finalUnitSelect.value = entry.final_report_term_unit;
+        }
         if (finalReportWeeksInput) {
           finalReportWeeksInput.value = entry.final_report_weeks;
         }
@@ -9358,6 +9405,80 @@
     function subtractDecimalWeeks(date, weeks) {
       const safeWeeks = Number.isFinite(weeks) ? Math.max(weeks, 0) : 0;
       return addDays(date, -Math.round(safeWeeks * 7));
+    }
+
+    const proposalPreliminaryTermUnits = new Set(['months', 'days', 'weeks']);
+    const proposalFinalTermUnits = new Set(['days', 'weeks', 'months']);
+
+    function getProposalPreliminaryTermUnit(select) {
+      const raw = String(select?.value || '').trim();
+      return proposalPreliminaryTermUnits.has(raw) ? raw : 'months';
+    }
+
+    function getProposalFinalTermUnit(select) {
+      const raw = String(select?.value || '').trim();
+      return proposalFinalTermUnits.has(raw) ? raw : 'weeks';
+    }
+
+    function formatProposalTermAmount(value, unit) {
+      if (!Number.isFinite(value)) return '';
+      if (unit === 'days') return String(Math.round(Math.max(value, 0)));
+      return formatProposalDecimal(value);
+    }
+
+    function normalizeProposalTermInput(input, unit) {
+      if (!input) return null;
+      const parsed = parseProposalDecimal(input.value);
+      input.step = unit === 'days' ? '1' : '0.1';
+      input.inputMode = unit === 'days' ? 'numeric' : 'decimal';
+      if (parsed === null) {
+        input.value = '';
+        return null;
+      }
+      const normalized = unit === 'days' ? Math.round(Math.max(parsed, 0)) : parsed;
+      input.value = formatProposalTermAmount(normalized, unit);
+      return normalized;
+    }
+
+    function addProposalTerm(date, value, unit) {
+      if (unit === 'days') return addDays(date, Math.round(Math.max(value, 0)));
+      if (unit === 'weeks') return addDecimalWeeks(date, value);
+      return addDecimalMonths(date, value);
+    }
+
+    function subtractProposalTerm(date, value, unit) {
+      if (unit === 'days') return addDays(date, -Math.round(Math.max(value, 0)));
+      if (unit === 'weeks') return subtractDecimalWeeks(date, value);
+      return subtractDecimalMonths(date, value);
+    }
+
+    function proposalStageTermValueToDays(value, unit) {
+      const safeValue = Number.isFinite(value) ? Math.max(value, 0) : 0;
+      if (unit === 'months') return safeValue * 30;
+      if (unit === 'weeks') return safeValue * 7;
+      return Math.round(safeValue);
+    }
+
+    function setProposalTotalTermValue(input, totalDays, unit) {
+      if (!input) return;
+      input.step = unit === 'days' ? '1' : '0.1';
+      input.inputMode = unit === 'days' ? 'numeric' : 'decimal';
+      if (!Number.isFinite(totalDays)) {
+        input.value = '';
+        return;
+      }
+      if (unit === 'months') input.value = formatProposalDecimal(totalDays / 30);
+      else if (unit === 'weeks') input.value = formatProposalDecimal(totalDays / 7);
+      else input.value = String(Math.round(totalDays));
+    }
+
+    function setProposalTermUnitLocked(select, shell, locked) {
+      if (select) {
+        select.tabIndex = locked ? -1 : 0;
+        select.style.pointerEvents = locked ? 'none' : '';
+        select.setAttribute('aria-disabled', locked ? 'true' : 'false');
+      }
+      shell?.classList.toggle('readonly-field', locked);
     }
 
     function diffProposalDays(start, end) {
@@ -9535,6 +9656,16 @@
           setProposalReadonly(row.querySelector('.proposal-stage-final-report-date'), proposalReportTermsEditMode, { lockPicker: true });
           setProposalReadonly(row.querySelector('.proposal-stage-service-term-months'), !proposalReportTermsEditMode);
           setProposalReadonly(row.querySelector('.proposal-stage-final-report-term-weeks'), !proposalReportTermsEditMode);
+          setProposalTermUnitLocked(
+            row.querySelector('.proposal-stage-preliminary-term-unit'),
+            row.querySelector('.proposal-stage-preliminary-term-shell'),
+            !proposalReportTermsEditMode
+          );
+          setProposalTermUnitLocked(
+            row.querySelector('.proposal-stage-final-term-unit'),
+            row.querySelector('.proposal-stage-final-term-shell'),
+            !proposalReportTermsEditMode
+          );
         });
         lockIcons.forEach(function (icon) {
           icon.classList.toggle('bi-lock-fill', !proposalReportTermsEditMode);
@@ -10083,19 +10214,33 @@
           });
           const monthsInput = row.querySelector('.proposal-stage-service-term-months');
           const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
-          normalizeProposalDecimalInputValue(monthsInput);
-          normalizeProposalDecimalInputValue(weeksInput);
+          const preliminaryUnitSelect = row.querySelector('.proposal-stage-preliminary-term-unit');
+          const finalUnitSelect = row.querySelector('.proposal-stage-final-term-unit');
+          normalizeProposalTermInput(monthsInput, getProposalPreliminaryTermUnit(preliminaryUnitSelect));
+          normalizeProposalTermInput(weeksInput, getProposalFinalTermUnit(finalUnitSelect));
           ['input', 'change'].forEach(function (eventName) {
             row.querySelector('.proposal-stage-evaluation-date')?.addEventListener(eventName, function () {
               syncStageEvaluationDates(row.querySelector('.proposal-stage-evaluation-date')?.value || '');
             });
             monthsInput?.addEventListener(eventName, function () {
               syncStageTerms();
-              if (eventName === 'change') normalizeProposalDecimalInputValue(monthsInput);
+              if (eventName === 'change') {
+                normalizeProposalTermInput(monthsInput, getProposalPreliminaryTermUnit(preliminaryUnitSelect));
+              }
             });
             weeksInput?.addEventListener(eventName, function () {
               syncStageTerms();
-              if (eventName === 'change') normalizeProposalDecimalInputValue(weeksInput);
+              if (eventName === 'change') {
+                normalizeProposalTermInput(weeksInput, getProposalFinalTermUnit(finalUnitSelect));
+              }
+            });
+            preliminaryUnitSelect?.addEventListener(eventName, function () {
+              normalizeProposalTermInput(monthsInput, getProposalPreliminaryTermUnit(preliminaryUnitSelect));
+              syncStageTerms();
+            });
+            finalUnitSelect?.addEventListener(eventName, function () {
+              normalizeProposalTermInput(weeksInput, getProposalFinalTermUnit(finalUnitSelect));
+              syncStageTerms();
             });
             row.querySelector('.proposal-stage-preliminary-report-date')?.addEventListener(eventName, function () {
               if (!proposalReportTermsEditMode) {
@@ -10109,6 +10254,17 @@
                 syncStageTerms();
               }
             });
+          });
+        });
+      }
+
+      function bindStageTotalsUnits() {
+        const totalsRow = getTotalsRow();
+        if (!totalsRow || totalsRow.dataset.eventsBound === '1') return;
+        totalsRow.dataset.eventsBound = '1';
+        totalsRow.querySelectorAll('.proposal-stage-total-preliminary-term-unit, .proposal-stage-total-final-term-unit').forEach(function (select) {
+          select.addEventListener('change', function () {
+            syncStageTerms();
           });
         });
       }
@@ -10592,9 +10748,11 @@
         const states = termRows.map(function (row) {
           const monthsInput = row.querySelector('.proposal-stage-service-term-months');
           const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
+          const preliminaryUnit = getProposalPreliminaryTermUnit(row.querySelector('.proposal-stage-preliminary-term-unit'));
+          const finalUnit = getProposalFinalTermUnit(row.querySelector('.proposal-stage-final-term-unit'));
           const delayInput = getStageDelayRowForTermRow(row)?.querySelector('.proposal-stage-next-delay-days');
-          const months = normalizeProposalDecimalInputValue(monthsInput);
-          const weeks = normalizeProposalDecimalInputValue(weeksInput);
+          const months = normalizeProposalTermInput(monthsInput, preliminaryUnit);
+          const weeks = normalizeProposalTermInput(weeksInput, finalUnit);
           return {
             row: row,
             monthsInput: monthsInput,
@@ -10604,6 +10762,8 @@
             delayInput: delayInput,
             months: months,
             weeks: weeks,
+            preliminaryUnit: preliminaryUnit,
+            finalUnit: finalUnit,
             nextDelayDays: parseProposalInteger(delayInput?.value) || 0,
             preliminaryDate: parseProposalDate(row.querySelector('.proposal-stage-preliminary-report-date')?.value),
             finalDate: parseProposalDate(row.querySelector('.proposal-stage-final-report-date')?.value),
@@ -10636,12 +10796,12 @@
             state.calculatedFinalDate = null;
             return applyNextStageDelay(startDate, state);
           }
-          state.calculatedPreliminaryDate = addDecimalMonths(startDate, state.months);
+          state.calculatedPreliminaryDate = addProposalTerm(startDate, state.months, state.preliminaryUnit);
           if (state.weeks === null) {
             state.calculatedFinalDate = null;
             return applyNextStageDelay(state.calculatedPreliminaryDate, state);
           }
-          state.calculatedFinalDate = addDecimalWeeks(state.calculatedPreliminaryDate, state.weeks);
+          state.calculatedFinalDate = addProposalTerm(state.calculatedPreliminaryDate, state.weeks, state.finalUnit);
           return applyNextStageDelay(state.calculatedFinalDate, state);
         }
 
@@ -10667,18 +10827,18 @@
             if (manualState.manualDateSource === 'preliminary') {
               manualState.calculatedPreliminaryDate = manualState.preliminaryDate;
               manualState.calculatedFinalDate = manualState.weeks !== null
-                ? addDecimalWeeks(manualState.preliminaryDate, manualState.weeks)
+                ? addProposalTerm(manualState.preliminaryDate, manualState.weeks, manualState.finalUnit)
                 : null;
               manualStageStartDate = manualState.preliminaryDate && manualState.months !== null
-                ? subtractDecimalMonths(manualState.preliminaryDate, manualState.months)
+                ? subtractProposalTerm(manualState.preliminaryDate, manualState.months, manualState.preliminaryUnit)
                 : null;
             } else {
               manualState.calculatedFinalDate = manualState.finalDate;
               manualState.calculatedPreliminaryDate = manualState.weeks !== null
-                ? subtractDecimalWeeks(manualState.finalDate, manualState.weeks)
+                ? subtractProposalTerm(manualState.finalDate, manualState.weeks, manualState.finalUnit)
                 : null;
               manualStageStartDate = manualState.calculatedPreliminaryDate && manualState.months !== null
-                ? subtractDecimalMonths(manualState.calculatedPreliminaryDate, manualState.months)
+                ? subtractProposalTerm(manualState.calculatedPreliminaryDate, manualState.months, manualState.preliminaryUnit)
                 : null;
             }
 
@@ -10691,10 +10851,10 @@
                 : rollingStartDate;
               state.calculatedFinalDate = stageEndDate;
               state.calculatedPreliminaryDate = stageEndDate && state.weeks !== null
-                ? subtractDecimalWeeks(stageEndDate, state.weeks)
+                ? subtractProposalTerm(stageEndDate, state.weeks, state.finalUnit)
                 : null;
               rollingStartDate = state.calculatedPreliminaryDate && state.months !== null
-                ? subtractDecimalMonths(state.calculatedPreliminaryDate, state.months)
+                ? subtractProposalTerm(state.calculatedPreliminaryDate, state.months, state.preliminaryUnit)
                 : rollingStartDate;
             }
 
@@ -10733,16 +10893,36 @@
         }
         const totalsRow = getTotalsRow();
         if (!totalsRow) return;
-        const totalMonths = termRows.reduce(function (sum, row) {
-          return sum + (parseProposalDecimal(row.querySelector('.proposal-stage-service-term-months')?.value) || 0);
+        const totalPreliminaryUnit = getProposalPreliminaryTermUnit(
+          totalsRow.querySelector('.proposal-stage-total-preliminary-term-unit')
+        );
+        const totalFinalUnit = getProposalFinalTermUnit(
+          totalsRow.querySelector('.proposal-stage-total-final-term-unit')
+        );
+        const totalPreliminaryDays = termRows.reduce(function (sum, row) {
+          const unit = getProposalPreliminaryTermUnit(row.querySelector('.proposal-stage-preliminary-term-unit'));
+          return sum + proposalStageTermValueToDays(
+            parseProposalDecimal(row.querySelector('.proposal-stage-service-term-months')?.value),
+            unit
+          );
         }, 0);
-        const totalWeeks = termRows.reduce(function (sum, row) {
-          return sum + (parseProposalDecimal(row.querySelector('.proposal-stage-final-report-term-weeks')?.value) || 0);
+        const totalFinalDays = termRows.reduce(function (sum, row) {
+          const unit = getProposalFinalTermUnit(row.querySelector('.proposal-stage-final-term-unit'));
+          return sum + proposalStageTermValueToDays(
+            parseProposalDecimal(row.querySelector('.proposal-stage-final-report-term-weeks')?.value),
+            unit
+          );
         }, 0);
-        const totalMonthsInput = totalsRow.querySelector('.proposal-stage-total-service-term-months');
-        const totalWeeksInput = totalsRow.querySelector('.proposal-stage-total-final-report-term-weeks');
-        if (totalMonthsInput) totalMonthsInput.value = termRows.length > 1 ? formatProposalDecimal(totalMonths) : '';
-        if (totalWeeksInput) totalWeeksInput.value = termRows.length > 1 ? formatProposalDecimal(totalWeeks) : '';
+        setProposalTotalTermValue(
+          totalsRow.querySelector('.proposal-stage-total-service-term-months'),
+          termRows.length > 1 ? totalPreliminaryDays : null,
+          totalPreliminaryUnit
+        );
+        setProposalTotalTermValue(
+          totalsRow.querySelector('.proposal-stage-total-final-report-term-weeks'),
+          termRows.length > 1 ? totalFinalDays : null,
+          totalFinalUnit
+        );
       }
 
       function syncStageContent() {
@@ -10752,6 +10932,7 @@
         ensureStageEditorsInitialized();
         bindSummaryCommercialSync();
         bindTermsRows();
+        bindStageTotalsUnits();
         bindStageDelayRows();
         getProductRows().forEach(function (row, index) {
           const productId = String(row.querySelector('.proposal-product-select')?.value || '').trim();
@@ -10785,16 +10966,24 @@
             const evaluationInput = termsRow.querySelector('.proposal-stage-evaluation-date');
             const monthsInput = termsRow.querySelector('.proposal-stage-service-term-months');
             const weeksInput = termsRow.querySelector('.proposal-stage-final-report-term-weeks');
+            const preliminaryUnitSelect = termsRow.querySelector('.proposal-stage-preliminary-term-unit');
+            const finalUnitSelect = termsRow.querySelector('.proposal-stage-final-term-unit');
             const previousProductId = String(termsRow.dataset.productId || '');
             if (evaluationInput && (!String(evaluationInput.value || '').trim() || productId !== String(termsRow.dataset.productId || ''))) {
               setDateFieldValue(evaluationInput, getSharedEvaluationDateValue());
             }
             if (termEntry && monthsInput && weeksInput) {
               if (!String(monthsInput.value || '').trim() || productId !== previousProductId) {
-                monthsInput.value = formatProposalDecimal(parseProposalDecimal(termEntry.preliminary_report_months) || 0);
+                if (preliminaryUnitSelect && termEntry.preliminary_report_term_unit) {
+                  preliminaryUnitSelect.value = termEntry.preliminary_report_term_unit;
+                }
+                monthsInput.value = termEntry.preliminary_report_months;
               }
               if (!String(weeksInput.value || '').trim() || productId !== previousProductId) {
-                weeksInput.value = formatProposalDecimal(parseProposalDecimal(termEntry.final_report_weeks) || 0);
+                if (finalUnitSelect && termEntry.final_report_term_unit) {
+                  finalUnitSelect.value = termEntry.final_report_term_unit;
+                }
+                weeksInput.value = termEntry.final_report_weeks;
               }
             }
             if (productId !== previousProductId) {
@@ -11273,13 +11462,18 @@
     if (action === 'delete') {
       if (!window.confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
       const urls = checked.map((box) => box.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i += 1) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i += 1) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
@@ -11296,7 +11490,7 @@
         if (isLast) {
           await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
         }
       }
       syncSelectionState('proposal-select');
@@ -11381,6 +11575,11 @@
     if (action === 'edit') {
       const url = checked[0].closest('tr')?.dataset?.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы перерисовка после «Сохранить» его не восстановила.
+      try { delete window.__tableSel['proposal-template-select']; } catch (_) { window.__tableSel['proposal-template-select'] = []; }
+      if (window.__tableSelLast === 'proposal-template-select') window.__tableSelLast = null;
+      window.TableSelection?.clearOnModalHide('proposals-modal', 'proposal-template-select', root);
       await htmx.ajax('GET', url, { target: '#proposals-modal .modal-content', swap: 'innerHTML' });
       return;
     }
@@ -11388,18 +11587,30 @@
     if (action === 'delete') {
       if (!window.confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
       const urls = checked.map((box) => box.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i += 1) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i += 1) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        refresh: () => loadProposalCatalogShell(),
+      })) {
+        return;
+      }
       let urls = checked
         .map((box) => box.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -11409,7 +11620,7 @@
         if (isLast) {
           await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
         }
       }
     }
@@ -11434,6 +11645,11 @@
     if (action === 'edit') {
       const url = checked[0].closest('tr')?.dataset?.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы перерисовка после «Сохранить» его не восстановила.
+      try { delete window.__tableSel['proposal-variable-select']; } catch (_) { window.__tableSel['proposal-variable-select'] = []; }
+      if (window.__tableSelLast === 'proposal-variable-select') window.__tableSelLast = null;
+      window.TableSelection?.clearOnModalHide('proposals-modal', 'proposal-variable-select', root);
       await htmx.ajax('GET', url, { target: '#proposals-modal .modal-content', swap: 'innerHTML' });
       return;
     }
@@ -11441,18 +11657,33 @@
     if (action === 'delete') {
       if (!window.confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
       const urls = checked.map((box) => box.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i += 1) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i += 1) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            // Сервер отдаёт только секцию переменных (без реестра ТКП и
+            // резолва ссылок Nextcloud) — меняем её, как при up/down.
+            await htmx.ajax('POST', urls[i], { target: '#proposal-variables-section', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        refresh: () => loadProposalCatalogShell(),
+      })) {
+        if (typeof btn.blur === 'function') btn.blur();
+        return;
+      }
       const scrollX = window.scrollX;
       const scrollY = window.scrollY;
       const actionsPanel = root.querySelector('#proposal-variable-actions');
@@ -11477,7 +11708,7 @@
             awaitingSettle = true;
             await htmx.ajax('POST', urls[i], { target: '#proposal-variables-section', swap: 'outerHTML' });
           } else {
-            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
           }
         }
       } catch (error) {
@@ -11798,6 +12029,7 @@
     const root = pane();
     const table = event.detail?.table;
     if (!root || !table || !root.contains(table)) return;
+    if (event.detail?.generic) return; // generic tables refresh themselves
     const url = root.getAttribute('hx-get') || '';
     if (!url || !window.htmx) return;
     window.htmx.ajax('GET', url, { target: '#proposals-pane', swap: 'outerHTML' });

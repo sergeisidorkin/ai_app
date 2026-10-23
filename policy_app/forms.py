@@ -1,11 +1,13 @@
 from django import forms
 from django.contrib.auth.models import User
+from django.core.validators import MaxLengthValidator, MinLengthValidator
 from django.db.models import Q
 from django.utils import timezone
 from decimal import Decimal
 import json
 
 from classifiers_app.models import OKVCurrency
+from core.forms import lock_field, locked_attrs
 from experts_app.models import ExpertSpecialty
 from group_app.models import OrgUnit
 from group_app.models import GroupMember
@@ -19,6 +21,7 @@ from .models import (
     TypicalSection,
     SectionStructure,
     ReportStructure,
+    ServiceBlockClassifier,
     ServiceGoalReport,
     TypicalServiceComposition,
     TypicalServiceTerm,
@@ -28,7 +31,9 @@ from .models import (
     Tariff,
     DEPARTMENT_HEAD_GROUP,
     DIRECTOR_GROUPS,
+    SERVICE_BLOCK_CODE_FORMAT_MESSAGE,
     is_system_dsc_code,
+    normalize_service_block_code,
 )
 
 OWNER_GROUP_VALUE = "__group__"
@@ -493,7 +498,31 @@ class ConsultingDirectionForm(forms.ModelForm):
             product.save()
         return direction
 
+class ServiceBlockChoiceSelect(forms.Select):
+    """Код блока: у опции краткие имена из классификатора."""
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        block = getattr(value, "instance", None)
+        if block is not None:
+            option["attrs"]["data-code"] = block.code or ""
+            option["attrs"]["data-short-name"] = block.short_name or ""
+            option["attrs"]["data-short-name-ru"] = block.short_name_ru or ""
+        return option
+
+
 class TypicalSectionForm(forms.ModelForm):
+    department_display = forms.CharField(
+        label="Подразделение",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="sec-department")),
+    )
+    service_block = forms.ModelChoiceField(
+        label="Код",
+        queryset=ServiceBlockClassifier.objects.none(),
+        required=False,
+        widget=ServiceBlockChoiceSelect(attrs={"class": "form-select", "id": "sec-service-block"}),
+    )
     product = forms.ModelChoiceField(
         label="Продукт",
         queryset=Product.objects.all(),
@@ -503,21 +532,14 @@ class TypicalSectionForm(forms.ModelForm):
         label="Экспертиза",
         queryset=ExpertiseDirection.objects.all(),
         required=False,
-        widget=forms.Select(attrs={"class": "form-select"}),
-    )
-    expertise_direction = forms.ModelChoiceField(
-        label="Направление экспертизы",
-        queryset=OrgUnit.objects.filter(
-            Q(unit_type="expertise") | Q(unit_type="administrative", level=1)
-        ),
-        required=False,
-        widget=forms.Select(attrs={"class": "form-select"}),
+        widget=forms.Select(attrs={"class": "form-select", "id": "sec-expertise-dir"}),
     )
 
     class Meta:
         model = TypicalSection
         fields = [
             "product",
+            "service_block",
             "code",
             "short_name",
             "short_name_ru",
@@ -525,13 +547,12 @@ class TypicalSectionForm(forms.ModelForm):
             "name_ru",
             "accounting_type",
             "expertise_dir",
-            "expertise_direction",
             "exclude_from_tkp_autofill",
         ]
         widgets = {
-            "code": forms.TextInput(attrs={"class": "form-control", "placeholder": "Код"}),
-            "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Short name EN"}),
-            "short_name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя RU"}),
+            "code": forms.TextInput(attrs=locked_attrs(id="sec-code")),
+            "short_name": forms.TextInput(attrs=locked_attrs(id="sec-short-name")),
+            "short_name_ru": forms.TextInput(attrs=locked_attrs(id="sec-short-name-ru")),
             "name_en": forms.TextInput(attrs={"class": "form-control", "placeholder": "English section name"}),
             "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование раздела"}),
             "accounting_type": forms.Select(attrs={"class": "form-select"}),
@@ -540,16 +561,47 @@ class TypicalSectionForm(forms.ModelForm):
 
     def __init__(self, *args, request_user=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.choose_service_block = not getattr(self.instance, "pk", None) and not getattr(
+            self.instance, "is_system_dsc", False
+        )
+        block_qs = ServiceBlockClassifier.objects.order_by("position", "id")
+        if self.choose_service_block:
+            block_qs = block_qs.exclude(code="DSC")
+        self.fields["service_block"].queryset = block_qs
+        self.fields["service_block"].label_from_instance = lambda obj: obj.code
+        self.fields["service_block"].empty_label = "---------"
+        for field_name in ("code", "short_name", "short_name_ru"):
+            lock_field(self.fields[field_name])
+        if self.choose_service_block:
+            self.fields["service_block"].required = True
+            self.fields["code"].required = False
+            self.fields["short_name"].required = False
+        elif self.instance.pk and self.instance.service_block_id:
+            self.fields["service_block"].initial = self.instance.service_block_id
+            lock_field(self.fields["service_block"], disabled=True, use_disabled_attr=True)
         _configure_policy_product_field(self.fields["product"])
-        self.fields["expertise_dir"].queryset = ExpertiseDirection.objects.order_by("position", "id")
+        expertise_qs = ExpertiseDirection.objects.order_by("position", "id")
+        self.fields["expertise_dir"].queryset = expertise_qs
         self.fields["expertise_dir"].label_from_instance = (
             lambda obj: f"{obj.short_name} {obj.name}"
         )
-        qs = OrgUnit.objects.filter(
-            Q(unit_type="expertise") | Q(unit_type="administrative", level=1)
+        from group_app.expertise_management import catalog_labels
+
+        pairs = catalog_labels(list(expertise_qs.values_list("pk", flat=True)))
+        self.fields["expertise_dir"].widget = ExpertiseDirectionDepartmentSelect(
+            attrs={"class": "form-select", "id": "sec-expertise-dir"},
+            pairs=pairs,
         )
-        self.fields["expertise_direction"].queryset = qs
-        self.fields["expertise_direction"].label_from_instance = lambda obj: obj.department_name
+        direction_id = None
+        if self.is_bound:
+            direction_id = _coerce_positive_int(self.data.get(self.add_prefix("expertise_dir")))
+        elif self.instance and self.instance.pk:
+            direction_id = self.instance.expertise_dir_id
+        department = (pairs.get(direction_id) or {}).get("department", "") if direction_id else ""
+        self.fields["department_display"].initial = department
+        if self.is_bound:
+            self.data = self.data.copy()
+            self.data[self.add_prefix("department_display")] = department
         if getattr(self.instance, "is_system_dsc", False):
             for field_name, value in SYSTEM_DSC_SECTION_DEFAULTS.items():
                 if field_name in self.fields:
@@ -563,7 +615,7 @@ class TypicalSectionForm(forms.ModelForm):
                 "name_ru",
                 "accounting_type",
                 "expertise_dir",
-                "expertise_direction",
+                "department_display",
                 "exclude_from_tkp_autofill",
             ):
                 self.fields[field_name].disabled = True
@@ -576,6 +628,43 @@ class TypicalSectionForm(forms.ModelForm):
             )
         return code
 
+    def clean(self):
+        cleaned = super().clean()
+        if getattr(self.instance, "is_system_dsc", False):
+            return cleaned
+        block = cleaned.get("service_block")
+        if self.instance.pk and self.instance.service_block_id and block is None:
+            block = self.instance.service_block
+            cleaned["service_block"] = block
+        if block is None:
+            if not self.instance.pk:
+                self.add_error(
+                    "service_block",
+                    "Выберите код из классификатора типовых блоков услуг.",
+                )
+            else:
+                cleaned["code"] = self.instance.code
+                cleaned["short_name"] = self.instance.short_name
+                cleaned["short_name_ru"] = self.instance.short_name_ru
+            return cleaned
+        if is_system_dsc_code(block.code) and not getattr(self.instance, "is_system_dsc", False):
+            self.add_error(
+                "service_block",
+                "Раздел DSC является системным и создаётся автоматически.",
+            )
+            return cleaned
+        product = cleaned.get("product")
+        if product is None and self.instance.pk:
+            product = self.instance.product
+        if product and TypicalSection.objects.filter(product=product, code=block.code).exclude(
+            pk=self.instance.pk or 0
+        ).exists():
+            self.add_error("service_block", "У этого продукта уже есть раздел с таким кодом.")
+        cleaned["code"] = block.code
+        cleaned["short_name"] = block.short_name
+        cleaned["short_name_ru"] = block.short_name_ru
+        return cleaned
+
 
 class SectionStructureForm(forms.ModelForm):
     product = forms.ModelChoiceField(
@@ -586,7 +675,7 @@ class SectionStructureForm(forms.ModelForm):
     section_code = forms.CharField(
         label="Код",
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     section = forms.ModelChoiceField(
         label="Раздел",
@@ -663,11 +752,7 @@ class ReportStructureForm(forms.ModelForm):
         label="Номер",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={
-            "class": "form-control readonly-field",
-            "readonly": True,
-            "tabindex": "-1",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
 
     def __init__(self, *args, request_user=None, **kwargs):
@@ -735,7 +820,7 @@ class TypicalServiceCompositionForm(forms.ModelForm):
     section_code = forms.CharField(
         label="Код",
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     section = forms.ModelChoiceField(
         label="Раздел (услуга)",
@@ -952,6 +1037,26 @@ class TypicalServiceTermForm(forms.ModelForm):
         return raw if raw in TypicalServiceTerm.TermUnit.values else default
 
 
+class OrgUnitCompanySelect(forms.Select):
+    """Select подразделений, у каждой опции — краткое имя компании в data-company.
+
+    Используется для автозаполнения заблокированного поля «Организация» в модалке.
+    """
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        unit = getattr(value, "instance", None)
+        company = getattr(unit, "company", None) if unit is not None else None
+        option["attrs"]["data-company"] = str(getattr(company, "short_name", "") or "")
+        return option
+
+
+def _service_block_department_queryset():
+    return OrgUnit.objects.filter(
+        Q(unit_type="expertise") | Q(unit_type="administrative", level=1)
+    ).select_related("company")
+
+
 class ExpertiseDirectionForm(forms.ModelForm):
     specialization_area_suffix = forms.CharField(
         label="Область специализации",
@@ -960,6 +1065,17 @@ class ExpertiseDirectionForm(forms.ModelForm):
             "class": "form-control",
             "placeholder": "область специализации",
         }),
+    )
+
+    department = forms.CharField(
+        label="Подразделение",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="expdir-department")),
+    )
+    organization = forms.CharField(
+        label="Организация",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="expdir-organization")),
     )
 
     class Meta:
@@ -983,6 +1099,18 @@ class ExpertiseDirectionForm(forms.ModelForm):
                 len(EXPERTISE_DIRECTION_SPECIALIZATION_AREA_PREFIX):
             ].strip()
         self.fields["specialization_area_suffix"].initial = current_specialization_area
+        pairs = self._managed_pairs()
+        self.managed_pairs = [
+            {"department": department, "organization": organization}
+            for department, organization in pairs
+        ]
+        department, organization = pairs[0]
+        self.fields["department"].initial = department
+        self.fields["organization"].initial = organization
+        if self.is_bound:
+            self.data = self.data.copy()
+            self.data[self.add_prefix("department")] = department
+            self.data[self.add_prefix("organization")] = organization
 
         self.owner_options = list(GroupMember.objects.order_by("position", "id").values("pk", "short_name"))
         self.selected_owner_ids = []
@@ -1016,6 +1144,131 @@ class ExpertiseDirectionForm(forms.ModelForm):
                 member_ids = [int(v) for v in owner_values if v != OWNER_GROUP_VALUE and v.isdigit()]
                 obj.owners.set(member_ids)
         return obj
+
+    def _managed_pairs(self):
+        """Пары подразделение/организация для модалки, по одной на строку группы."""
+        direction = self.instance if self.instance and self.instance.pk else None
+        if direction is None:
+            return [("", "")]
+        from group_app.expertise_management import display_units
+
+        units = display_units(direction)
+        pairs = []
+        for unit in units:
+            company = getattr(unit, "company", None)
+            pairs.append((
+                str(getattr(unit, "department_name", "") or "").strip(),
+                str(getattr(company, "short_name", "") or "").strip(),
+            ))
+        return pairs or [("", "")]
+
+
+class ExpertiseDirectionDepartmentSelect(forms.Select):
+    """Select экспертиз: у опции подразделение и организация по режиму управления."""
+
+    def __init__(self, *args, pairs=None, **kwargs):
+        self.pairs = pairs or {}
+        super().__init__(*args, **kwargs)
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        direction = getattr(value, "instance", None)
+        pair = self.pairs.get(getattr(direction, "pk", None), {})
+        option["attrs"]["data-department"] = pair.get("department", "")
+        option["attrs"]["data-organization"] = pair.get("organization", "")
+        return option
+
+
+class ServiceBlockClassifierForm(forms.ModelForm):
+    expertise_dir = forms.ModelChoiceField(
+        label="Направление экспертизы",
+        queryset=ExpertiseDirection.objects.none(),
+        required=False,
+        widget=ExpertiseDirectionDepartmentSelect(attrs={
+            "class": "form-select",
+            "id": "sbc-expertise-select",
+        }),
+    )
+    # Подразделение и организация не редактируются: их задаёт выбранная экспертиза.
+    department = forms.CharField(
+        label="Подразделение",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="sbc-department")),
+    )
+    organization = forms.CharField(
+        label="Организация",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="sbc-organization")),
+    )
+
+    class Meta:
+        model = ServiceBlockClassifier
+        fields = [
+            "code",
+            "short_name",
+            "short_name_ru",
+            "accounting_type",
+            "expertise_dir",
+        ]
+        widgets = {
+            "code": forms.TextInput(attrs={
+                "class": "form-control",
+                "placeholder": "Код (три латинские буквы)",
+                "maxlength": "3",
+                "autocomplete": "off",
+            }),
+            "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Short name EN"}),
+            "short_name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя RU"}),
+            "accounting_type": forms.Select(attrs={"class": "form-select"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if getattr(self.instance, "pk", None):
+            lock_field(self.fields["code"], disabled=True)
+        code_field = self.fields["code"]
+        code_field.error_messages["max_length"] = SERVICE_BLOCK_CODE_FORMAT_MESSAGE
+        code_field.error_messages["min_length"] = SERVICE_BLOCK_CODE_FORMAT_MESSAGE
+        for validator in code_field.validators:
+            if isinstance(validator, (MaxLengthValidator, MinLengthValidator)):
+                validator.message = SERVICE_BLOCK_CODE_FORMAT_MESSAGE
+        expertise_qs = ExpertiseDirection.objects.order_by("position", "id")
+        self.fields["expertise_dir"].queryset = expertise_qs
+        self.fields["expertise_dir"].label_from_instance = (
+            lambda obj: f"{obj.short_name} {obj.name}"
+        )
+        from group_app.expertise_management import catalog_labels
+
+        self.fields["expertise_dir"].widget.pairs = catalog_labels(
+            list(expertise_qs.values_list("pk", flat=True))
+        )
+        department, organization = self._derived_department_and_organization()
+        self.fields["department"].initial = department
+        self.fields["organization"].initial = organization
+        if self.is_bound:
+            # Значения всегда берутся из выбранной экспертизы, а не из POST.
+            self.data = self.data.copy()
+            self.data[self.add_prefix("department")] = department
+            self.data[self.add_prefix("organization")] = organization
+
+    def _derived_department_and_organization(self):
+        """Подразделение и организация выбранного направления по режиму управления."""
+        from group_app.expertise_management import catalog_labels
+
+        direction_id = None
+        if self.is_bound:
+            direction_id = _coerce_positive_int(self.data.get(self.add_prefix("expertise_dir")))
+        elif self.instance and self.instance.pk and self.instance.expertise_dir_id:
+            direction_id = self.instance.expertise_dir_id
+        if not direction_id:
+            return "", ""
+        info = catalog_labels([direction_id]).get(direction_id) or {}
+        return info.get("department", ""), info.get("organization", "")
+
+    def clean_code(self):
+        # Нормализуем в верхний регистр до проверки уникальности ModelForm,
+        # чтобы «abc» и «ABC» считались одним кодом.
+        return normalize_service_block_code(self.cleaned_data.get("code"))
 
 
 class GradeForm(forms.ModelForm):
@@ -1130,12 +1383,7 @@ class SpecialtyTariffForm(forms.ModelForm):
     expertise_direction_display = forms.CharField(
         label="Направления экспертизы",
         required=False,
-        widget=forms.TextInput(attrs={
-            "readonly": True,
-            "tabindex": "-1",
-            "class": "form-control readonly-field",
-            "id": "specialty-tariff-expertise-direction-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(id="specialty-tariff-expertise-direction-field")),
     )
     currency = forms.ModelChoiceField(
         label="Валюта",
@@ -1272,7 +1520,7 @@ class TariffForm(forms.ModelForm):
     section_code = forms.CharField(
         label="Код",
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     section = forms.ModelChoiceField(
         label="Раздел",

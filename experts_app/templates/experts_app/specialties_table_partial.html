@@ -1,4 +1,4 @@
-<table class="table table-sm align-top" id="esp-table">
+<table data-queued-row-order data-row-order-key="expert-specialty" class="table table-sm align-top" id="esp-table">
     <thead>
     <tr>
         <th style="width:1%">
@@ -9,48 +9,56 @@
                            id="esp-master"
                            data-target-name="esp-select"
                            data-actions-id="esp-actions"
+                           {% if not esp_can_edit %}disabled{% endif %}
                            aria-label="Выделить все строки">
                 </div>
             {% endif %}
         </th>
         <th data-col="specialty">Специальность</th>
         <th data-col="specialty-en">Специальность на англ. языке</th>
-        <th data-col="owner">Владелец</th>
-        <th data-col="expertise-dir">Направление экспертизы</th>
-        <th data-col="expertise-direction">Подразделение</th>
-        <th data-col="head-of-direction">Руководитель направления</th>
         <th data-col="specialization-area">Область специализации</th>
+        <th data-col="expertise-dir">Экспертиза</th>
+        <th data-col="expertise-direction">Подразделение</th>
+        <th data-col="organization">Организация</th>
+        <th data-col="owner">Владелец</th>
     </tr>
     </thead>
     <tbody>
-    {% for s in specialties %}
-        <tr data-edit-url="{% url 'esp_form_edit' s.pk %}"
-            data-delete-url="{% url 'esp_delete' s.pk %}"
-            data-move-up-url="{% url 'esp_move_up' s.pk %}"
-            data-move-down-url="{% url 'esp_move_down' s.pk %}">
+        {% for row in specialty_rows %}
+        <tr data-row-group="{{ row.group_key }}"
+            {% if row.is_continuation %}data-row-group-continuation="1"{% endif %}
+            data-edit-url="{% url 'esp_form_edit' row.specialty.pk %}"
+            {% if row.is_first %}
+            data-delete-url="{% url 'esp_delete' row.specialty.pk %}"
+            data-move-up-url="{% url 'esp_move_up' row.specialty.pk %}"
+            data-move-down-url="{% url 'esp_move_down' row.specialty.pk %}"
+            {% if not row.specialty.esp_row_editable %}data-row-order-locked="1"{% endif %}
+            {% endif %}
+            {% if row.has_next or row.is_continuation %}class="{% if row.has_next %}esp-group-has-next{% endif %}{% if row.is_continuation %}{% if row.has_next %} {% endif %}esp-group-continuation{% endif %}"{% endif %}>
 
-            <td class="text-nowrap">
-                {% if request.user.is_authenticated and request.user.is_staff %}
+            <td class="text-nowrap" data-col="checkbox">
+                {% if row.is_first and request.user.is_authenticated and request.user.is_staff %}
                     <div class="form-check">
                         <input class="form-check-input"
                                type="checkbox"
-                               id="esp-sel-{{ s.id }}"
+                               id="esp-sel-{{ row.specialty.id }}"
                                name="esp-select"
-                               value="{{ s.id }}"
+                               value="{{ row.specialty.id }}"
+                               {% if not row.specialty.esp_row_editable %}disabled{% endif %}
                                aria-label="Выделить строку">
                     </div>
                 {% endif %}
             </td>
-            <td data-col="specialty">{{ s.specialty }}</td>
-            <td data-col="specialty-en">{{ s.specialty_en }}</td>
-            <td data-col="owner">{{ s.owner_display }}</td>
-            <td data-col="expertise-dir">{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% else %}—{% endif %}</td>
-            <td data-col="expertise-direction">{% if s.expertise_direction %}{{ s.expertise_direction.department_name }}{% else %}—{% endif %}</td>
-            <td data-col="head-of-direction">{% if s.head_of_direction %}{{ s.head_of_direction.job_title }}{% else %}—{% endif %}</td>
-            <td data-col="specialization-area">{{ s.specialization_area|default:"—" }}</td>
+            <td data-col="specialty">{% if row.is_first %}{{ row.specialty.specialty }}{% endif %}</td>
+            <td data-col="specialty-en">{% if row.is_first %}{{ row.specialty.specialty_en }}{% endif %}</td>
+            <td data-col="specialization-area">{% if row.is_first %}{{ row.specialty.specialization_area|default:"—" }}{% endif %}</td>
+            <td data-col="expertise-dir">{% if row.is_first %}{% if row.specialty.expertise_dir %}{{ row.specialty.expertise_dir.short_name }}{% else %}—{% endif %}{% endif %}</td>
+            <td data-col="expertise-direction">{% if row.department %}{{ row.department }}{% elif row.is_first %}—{% endif %}</td>
+            <td data-col="organization">{% if row.organization %}{{ row.organization }}{% elif row.is_first %}—{% endif %}</td>
+            <td data-col="owner">{% if row.is_first %}{{ row.specialty.owner_display }}{% endif %}</td>
         </tr>
-    {% empty %}
+        {% empty %}
         <tr><td colspan="8" class="text-muted">Пока нет данных.</td></tr>
-    {% endfor %}
+        {% endfor %}
     </tbody>
 </table>

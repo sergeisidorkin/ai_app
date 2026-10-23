@@ -2,12 +2,14 @@ import csv
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 from datetime import date
 from pathlib import Path
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.template.loader import render_to_string
@@ -19,7 +21,14 @@ from experts_app.forms import ExpertContractDetailsForm
 from contacts_app.models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord, SpecialtyRecord
 from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
-from policy_app.models import DEPARTMENT_HEAD_GROUP, ExpertiseDirection, Grade
+from policy_app.models import (
+    ADMIN_GROUP,
+    DEPARTMENT_HEAD_GROUP,
+    DIRECTION_DIRECTOR_GROUP,
+    DIRECTOR_GROUP,
+    ExpertiseDirection,
+    Grade,
+)
 from users_app.models import Employee
 
 
@@ -792,6 +801,7 @@ class ExpertSpecialtyCsvTests(TestCase):
             username="experts-csv-admin",
             password="secret123",
             is_staff=True,
+            is_superuser=True,
         )
         self.client.force_login(self.user)
         self.owner = GroupMember.objects.create(
@@ -800,6 +810,7 @@ class ExpertSpecialtyCsvTests(TestCase):
             country_code="643",
             country_alpha2="RU",
             position=1,
+            is_management_company=True,
         )
         self.expertise_dir = ExpertiseDirection.objects.create(
             name="Горная экспертиза",
@@ -812,6 +823,7 @@ class ExpertSpecialtyCsvTests(TestCase):
             short_name="OGE",
             expertise=self.expertise_dir,
             unit_type="expertise",
+            level=2,
             position=1,
         )
         head_user = get_user_model().objects.create_user(
@@ -819,10 +831,13 @@ class ExpertSpecialtyCsvTests(TestCase):
             password="secret123",
             is_staff=True,
         )
+        self.expertise_dir.department = self.org_unit
+        self.expertise_dir.save(update_fields=["department"])
         self.head = Employee.objects.create(
             user=head_user,
             job_title="Руководитель горной экспертизы",
             role=DEPARTMENT_HEAD_GROUP,
+            department=self.org_unit,
         )
 
     def test_experts_partial_no_longer_renders_specialties_table(self):
@@ -844,14 +859,109 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertContains(response, 'id="esp-colpicker-btn"', html=False)
         self.assertContains(response, 'id="esp-col-all"', html=False)
         self.assertContains(response, 'id="esp-table"', html=False)
+        self.assertContains(response, 'data-col="expertise-dir">Экспертиза</th>', html=False)
+        self.assertContains(response, 'for="esp-col-expertise-dir">Экспертиза</label>', html=False)
+        self.assertNotContains(response, ">Направление экспертизы<", html=False)
         self.assertContains(response, 'data-col="specialty"', html=False)
-        self.assertContains(response, 'data-col="head-of-direction"', html=False)
+        self.assertContains(response, 'data-col="organization"', html=False)
+        self.assertNotContains(response, 'data-col="head-of-direction"', html=False)
         self.assertContains(response, 'data-col="specialization-area"', html=False)
         self.assertContains(response, "Область специализации")
         self.assertContains(response, 'id="esp-csv-download-btn"', html=False)
         self.assertContains(response, 'id="esp-csv-upload-btn"', html=False)
         self.assertContains(response, 'hx-target="#policy-modal .modal-content"', html=False)
         self.assertContains(response, 'id="policy-expert-specialties-section"', html=False)
+
+    def test_specialty_table_splits_department_pairs_into_grouped_rows(self):
+        OrgUnit.objects.create(
+            company=self.owner,
+            department_name="Экологический сектор",
+            short_name="ECO",
+            expertise=self.expertise_dir,
+            unit_type="expertise",
+            level=2,
+            position=2,
+        )
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            specialty_en="Geologist",
+            expertise_dir=self.expertise_dir,
+            position=1,
+        )
+        response = self.client.get(reverse("policy_expert_specialties_table"))
+        html = response.content.decode()
+        group_rows = re.findall(
+            r'<tr[^>]*data-row-group="%s"[^>]*>.*?</tr>' % specialty.pk,
+            html,
+            flags=re.S,
+        )
+        self.assertEqual(len(group_rows), 2)
+        self.assertIn("esp-group-has-next", group_rows[0])
+        self.assertIn("esp-group-continuation", group_rows[1])
+        self.assertEqual(group_rows[0].count('name="esp-select"'), 1)
+        self.assertNotIn('name="esp-select"', group_rows[1])
+        self.assertIn("Отдел горной экспертизы", group_rows[0])
+        self.assertIn("Экологический сектор", group_rows[1])
+        self.assertIn(">Геолог<", group_rows[0])
+        self.assertNotIn(">Геолог<", group_rows[1])
+        self.assertNotIn("Руководитель направления", html)
+
+        edit = self.client.get(reverse("esp_form_edit", args=[specialty.pk]))
+        form_html = edit.content.decode()
+        self.assertIn(">1</span>", form_html)
+        self.assertIn(">2</span>", form_html)
+        self.assertIn('value="Отдел горной экспертизы"', form_html)
+        self.assertIn('value="Экологический сектор"', form_html)
+        self.assertNotIn("Руководитель направления", form_html)
+
+    def test_separate_mode_puts_management_company_pair_first(self):
+        from group_app.models import ExpertiseManagementMode
+
+        other = GroupMember.objects.create(
+            short_name="ТОО «IMC Montan»",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+            position=0,
+        )
+        OrgUnit.objects.create(
+            company=other,
+            department_name="Отдел Казахстана",
+            short_name="KZ",
+            expertise=self.expertise_dir,
+            unit_type="expertise",
+            level=2,
+            position=0,
+        )
+        ExpertiseManagementMode.objects.filter(expertise_direction=self.expertise_dir).update(
+            mode=ExpertiseManagementMode.MODE_SEPARATE,
+        )
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            expertise_dir=self.expertise_dir,
+            position=1,
+        )
+        response = self.client.get(reverse("policy_expert_specialties_table"))
+        html = response.content.decode()
+        group_rows = re.findall(
+            r'<tr[^>]*data-row-group="%s"[^>]*>.*?</tr>' % specialty.pk,
+            html,
+            flags=re.S,
+        )
+        self.assertEqual(len(group_rows), 2)
+        self.assertIn("Отдел горной экспертизы", group_rows[0])
+        self.assertIn("IMC Montan", group_rows[0])
+        self.assertIn("Отдел Казахстана", group_rows[1])
+        self.assertIn("ТОО «IMC Montan»", group_rows[1])
+
+        edit = self.client.get(reverse("esp_form_edit", args=[specialty.pk]))
+        form_html = edit.content.decode()
+        first_pair = form_html.index(">1</span>")
+        second_pair = form_html.index(">2</span>")
+        self.assertLess(first_pair, form_html.index('value="Отдел горной экспертизы"'))
+        self.assertLess(form_html.index('value="Отдел горной экспертизы"'), second_pair)
+        self.assertLess(second_pair, form_html.index('value="Отдел Казахстана"'))
+
         self.assertContains(response, 'class="policy-table-editor"', html=False)
         self.assertContains(response, 'class="policy-table-footer"', html=False)
         self.assertContains(response, 'class="policy-table-footer-actions products-actions-row"', html=False)
@@ -951,8 +1061,19 @@ class ExpertSpecialtyCsvTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'class="row g-3"', html=False)
-        self.assertContains(response, 'class="col-md-6"', count=6, html=False)
+        self.assertContains(response, 'class="col-md-6"', count=4, html=False)
+        self.assertContains(response, 'id="esp-department"', html=False)
+        self.assertContains(response, 'id="esp-organization"', html=False)
+        self.assertNotContains(response, 'id="esp-head"', html=False)
+        self.assertContains(response, 'data-department="Отдел горной экспертизы"', html=False)
+        self.assertContains(response, 'data-organization="IMC Montan"', html=False)
+        self.assertNotContains(response, 'data-head="Руководитель горной экспертизы"', html=False)
+        self.assertContains(response, "Связи со структурными подразделениями")
+        self.assertContains(response, 'class="esp-pair-row"', html=False)
+        self.assertContains(response, 'class="esp-pair-labels"', html=False)
+        self.assertContains(response, ">1</span>", html=False)
         self.assertContains(response, 'class="col-12"', html=False)
+        self.assertContains(response, "Направление экспертизы")
         self.assertContains(response, "Область специализации")
         self.assertContains(response, "Специалист по")
         self.assertContains(response, 'name="specialization_area_suffix"', html=False)
@@ -975,6 +1096,7 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertEqual(response.status_code, 200)
         specialty = ExpertSpecialty.objects.get(specialty="Геолог")
         self.assertEqual(specialty.specialization_area, "Специалист по подземным водам")
+        self.assertEqual(specialty.created_by_id, self.user.pk)
         self.assertEqual(response.content, b"")
         self.assertEqual(response["HX-Reswap"], "none")
         self.assertEqual(
@@ -1042,11 +1164,11 @@ class ExpertSpecialtyCsvTests(TestCase):
             [
                 "Специальность",
                 "Специальность на англ. языке",
-                "Владелец",
+                "Область специализации",
                 "Направление экспертизы",
                 "Подразделение",
-                "Руководитель направления",
-                "Область специализации",
+                "Организация",
+                "Владелец",
             ],
         )
         self.assertEqual(
@@ -1054,11 +1176,11 @@ class ExpertSpecialtyCsvTests(TestCase):
             [
                 "Геолог",
                 "Geologist",
-                "IMC Montan",
+                "Специалист по подземным водам",
                 "ГЭ",
                 "Отдел горной экспертизы",
-                "Руководитель горной экспертизы",
-                "Специалист по подземным водам",
+                "IMC Montan",
+                "IMC Montan",
             ],
         )
 
@@ -1089,6 +1211,7 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertEqual(specialty.expertise_dir_id, self.expertise_dir.pk)
         self.assertEqual(specialty.expertise_direction_id, self.org_unit.pk)
         self.assertEqual(specialty.head_of_direction_id, self.head.pk)
+        self.assertEqual(specialty.created_by_id, self.user.pk)
         self.assertFalse(specialty.is_group_owner)
         self.assertEqual(list(specialty.owners.values_list("short_name", flat=True)), ["IMC Montan"])
 
@@ -1129,6 +1252,153 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertEqual(response.json()["created"], 0)
         self.assertEqual(ExpertSpecialty.objects.filter(specialty="Геолог").count(), 1)
         self.assertTrue(any("уже существует" in item for item in response.json()["warnings"]))
+
+    def test_specialty_form_derives_locked_fields_and_ignores_posted_values(self):
+        response = self.client.post(
+            reverse("esp_form_create"),
+            {
+                "specialty": "Маркшейдер",
+                "specialty_en": "Surveyor",
+                "owner_ids": "__group__",
+                "expertise_dir": str(self.expertise_dir.pk),
+                "department": "Чужое подразделение",
+                "organization": "Чужая организация",
+                "head_of_direction_display": "Чужой руководитель",
+                "specialization_area_suffix": "",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        specialty = ExpertSpecialty.objects.get(specialty="Маркшейдер")
+        self.assertEqual(specialty.expertise_direction_id, self.org_unit.pk)
+        self.assertEqual(specialty.head_of_direction_id, self.head.pk)
+        self.assertEqual(specialty.department_display, "Отдел горной экспертизы")
+        self.assertEqual(specialty.organization_display, "IMC Montan")
+        self.assertEqual(specialty.head_job_title_display, "Руководитель горной экспертизы")
+
+    def test_specialty_edit_keeps_author(self):
+        author = get_user_model().objects.create_user(
+            username="specialty-author",
+            password="secret123",
+            is_staff=True,
+        )
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            expertise_dir=self.expertise_dir,
+            created_by=author,
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("esp_form_edit", args=[specialty.pk]),
+            {
+                "specialty": "Геолог",
+                "specialty_en": "Geologist",
+                "owner_ids": "__group__",
+                "expertise_dir": str(self.expertise_dir.pk),
+                "specialization_area_suffix": "",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        specialty.refresh_from_db()
+        self.assertEqual(specialty.created_by_id, author.pk)
+
+    def test_several_department_heads_use_lowest_position(self):
+        self.head.position = 3
+        self.head.save(update_fields=["position"])
+        earlier_user = get_user_model().objects.create_user(
+            username="experts-csv-head-earlier",
+            password="secret123",
+        )
+        earlier = Employee.objects.create(
+            user=earlier_user,
+            job_title="Первый руководитель",
+            role=DEPARTMENT_HEAD_GROUP,
+            department=self.org_unit,
+            position=1,
+        )
+
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Маркшейдер",
+            expertise_dir=self.expertise_dir,
+            position=2,
+        )
+
+        self.assertEqual(specialty.head_of_direction_id, earlier.pk)
+
+    def test_management_company_level_one_unit_uses_director(self):
+        self.org_unit.level = 1
+        self.org_unit.save(update_fields=["level"])
+        self.owner.is_management_company = True
+        self.owner.save(update_fields=["is_management_company"])
+        director_user = get_user_model().objects.create_user(username="experts-director", password="secret123")
+        director = Employee.objects.create(
+            user=director_user,
+            job_title="Директор компании",
+            role=DIRECTOR_GROUP,
+            department=self.org_unit,
+            position=5,
+        )
+        lawyer_user = get_user_model().objects.create_user(username="experts-lawyer", password="secret123")
+        Employee.objects.create(
+            user=lawyer_user,
+            job_title="Юрист компании",
+            role="Юрист",
+            department=self.org_unit,
+            position=0,
+        )
+        other_company = GroupMember.objects.create(
+            short_name="Другая компания",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=2,
+        )
+        other_unit = OrgUnit.objects.create(
+            company=other_company,
+            department_name="Директор",
+            level=1,
+            unit_type="administrative",
+            position=1,
+        )
+        other_user = get_user_model().objects.create_user(username="experts-other-director", password="secret123")
+        Employee.objects.create(
+            user=other_user,
+            job_title="Другой директор",
+            role=DIRECTOR_GROUP,
+            department=other_unit,
+            position=0,
+        )
+
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Координатор теста",
+            expertise_dir=self.expertise_dir,
+            position=4,
+        )
+
+        self.assertEqual(specialty.head_of_direction_id, director.pk)
+        self.assertEqual(specialty.organization_display, "IMC Montan")
+
+    def test_director_is_not_used_without_management_company_flag(self):
+        director_user = get_user_model().objects.create_user(username="experts-director-plain", password="secret123")
+        Employee.objects.create(
+            user=director_user,
+            job_title="Директор компании",
+            role=DIRECTOR_GROUP,
+            department=self.org_unit,
+            position=0,
+        )
+
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Координатор теста",
+            expertise_dir=self.expertise_dir,
+            position=4,
+        )
+
+        self.assertEqual(specialty.head_of_direction_id, self.head.pk)
 
 
 class ExpertProfileCsvTests(TestCase):
@@ -1306,3 +1576,429 @@ class ExpertProfileCsvTests(TestCase):
         self.assertTrue(any("не найден" in item for item in response.json()["warnings"]))
         self.profile.refresh_from_db()
         self.assertEqual(self.profile.professional_status, "Статус 1")
+
+
+class ExpertSpecialtyAdminTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_superuser(
+            username="specialty-admin",
+            email="specialty-admin@example.com",
+            password="secret123",
+        )
+        self.client.force_login(self.user)
+        self.specialty = ExpertSpecialty.objects.create(
+            specialty="Геолог",
+            specialty_en="Geologist",
+            specialization_area="Специалист по подземным водам",
+            created_by=self.user,
+            position=1,
+        )
+
+    def test_changelist_shows_table_columns_and_author(self):
+        response = self.client.get(reverse("admin:policy_app_policyexpertspecialty_changelist"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Специальности исполнителей")
+        self.assertNotContains(response, "Специальность раздела")
+        self.assertNotContains(response, "Специальности экспертов")
+        index = self.client.get(reverse("admin:index"))
+        self.assertContains(index, "ПРОДУКТЫ")
+        self.assertContains(index, "/admin/policy_app/policyexpertspecialty/")
+        self.assertNotContains(index, "/admin/experts_app/expertspecialty/")
+        for label in (
+            "Специальность на англ. языке",
+            "Владелец",
+            "Направление экспертизы",
+            "Подразделение",
+            "Организация",
+            "Область специализации",
+            "Автор",
+        ):
+            self.assertContains(response, label)
+        self.assertContains(response, "Геолог")
+        self.assertContains(response, "specialty-admin")
+
+    def test_change_form_shows_derived_fields_and_author(self):
+        response = self.client.get(
+            reverse("admin:policy_app_policyexpertspecialty_change", args=[self.specialty.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Специальность исполнителя")
+        self.assertContains(response, "Подразделение")
+        self.assertContains(response, "Организация")
+        self.assertNotContains(response, "Руководитель направления")
+        self.assertContains(response, "Автор")
+        self.assertContains(response, "specialty-admin")
+
+    def test_admin_create_stores_author(self):
+        response = self.client.post(
+            reverse("admin:policy_app_policyexpertspecialty_add"),
+            {
+                "specialty": "Маркшейдер",
+                "specialty_en": "Surveyor",
+                "specialization_area": "",
+                "is_group_owner": "on",
+                "expertise_dir": "",
+                "_save": "Save",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        specialty = ExpertSpecialty.objects.get(specialty="Маркшейдер")
+        self.assertEqual(specialty.created_by_id, self.user.pk)
+
+
+class ExpertSpecialtyRoleAccessTests(TestCase):
+    def setUp(self):
+        self.company = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+            is_management_company=True,
+        )
+        self.direction = ExpertiseDirection.objects.create(
+            name="Горная экспертиза",
+            short_name="ГЭ",
+            position=1,
+        )
+        self.unit = OrgUnit.objects.create(
+            company=self.company,
+            department_name="Отдел горной экспертизы",
+            short_name="OGE",
+            expertise=self.direction,
+            unit_type="expertise",
+            level=2,
+            position=2,
+        )
+        self.direction.department = self.unit
+        self.direction.save(update_fields=["department"])
+        self.other_direction = ExpertiseDirection.objects.create(
+            name="Не установлено",
+            short_name="—",
+            position=2,
+        )
+        self.director_unit = OrgUnit.objects.create(
+            company=self.company,
+            department_name="Директор",
+            short_name="DIR",
+            expertise=self.other_direction,
+            unit_type="administrative",
+            level=1,
+            position=1,
+        )
+        self.other_direction.department = self.director_unit
+        self.other_direction.save(update_fields=["department"])
+
+        self.head_user = self._user("esp-head", DEPARTMENT_HEAD_GROUP, self.unit, "Руководитель горной экспертизы")
+        self.director_user = self._user("esp-director", DIRECTOR_GROUP, self.director_unit, "Директор")
+        self.admin_user = self._user("esp-admin", ADMIN_GROUP, None, "Администратор")
+        self.expert_user = self._user("esp-expert", "Эксперт", self.unit, "Эксперт")
+        self.direction_director_user = self._user(
+            "esp-direction-director",
+            DIRECTION_DIRECTOR_GROUP,
+            self.unit,
+            "Директор направления",
+        )
+        Employee.objects.create(
+            user=get_user_model().objects.create_user(username="esp-other", password="secret123", is_staff=True),
+            job_title="Другой руководитель",
+            role=DEPARTMENT_HEAD_GROUP,
+            department=self.unit,
+            position=5,
+        )
+        self.other_user = get_user_model().objects.get(username="esp-other")
+        self.own = ExpertSpecialty.objects.create(
+            specialty="Своя",
+            expertise_dir=self.direction,
+            created_by=self.head_user,
+            position=1,
+        )
+        self.foreign = ExpertSpecialty.objects.create(
+            specialty="Чужая",
+            expertise_dir=self.other_direction,
+            created_by=self.other_user,
+            position=2,
+        )
+        self.unowned = ExpertSpecialty.objects.create(
+            specialty="Без автора",
+            expertise_dir=self.direction,
+            position=3,
+        )
+
+    def _user(self, username, role, department, job_title):
+        user = get_user_model().objects.create_user(
+            username=username,
+            password="secret123",
+            is_staff=True,
+        )
+        Employee.objects.create(
+            user=user,
+            job_title=job_title,
+            role=role,
+            department=department,
+            position=1,
+        )
+        return user
+
+    def _checkbox(self, html, pk):
+        import re
+
+        match = re.search(rf'id="esp-sel-{pk}".*?>', html, re.S)
+        self.assertIsNotNone(match)
+        return match.group(0)
+
+    def test_other_roles_see_readonly_table_without_actions(self):
+        self.direction_director_user.is_superuser = True
+        self.direction_director_user.save(update_fields=["is_superuser"])
+        for user in (self.expert_user, self.direction_director_user):
+            self.client.force_login(user)
+            response = self.client.get(reverse("policy_expert_specialties_table"))
+            html = response.content.decode()
+            self.assertEqual(response.status_code, 200)
+            self.assertNotContains(response, "Добавить строку")
+            self.assertNotContains(response, 'id="esp-csv-upload-btn"', html=False)
+            self.assertNotContains(response, 'id="esp-csv-download-btn"', html=False)
+            self.assertContains(response, 'class="policy-table-footer-actions"></div>', html=False)
+            self.assertIn("disabled", html[html.index('id="esp-master"'):html.index('id="esp-master"') + 250])
+            self.assertIn("disabled", self._checkbox(html, self.own.pk))
+            self.assertIn("disabled", self._checkbox(html, self.foreign.pk))
+            self.assertEqual(self.client.get(reverse("esp_form_create")).status_code, 403)
+            self.assertEqual(
+                self.client.post(reverse("esp_delete", args=[self.own.pk])).status_code,
+                403,
+            )
+
+    def test_department_head_edits_only_own_rows_and_locked_direction(self):
+        self.client.force_login(self.head_user)
+        response = self.client.get(reverse("policy_expert_specialties_table"))
+        html = response.content.decode()
+        self.assertContains(response, "Добавить строку")
+        self.assertNotIn("disabled", self._checkbox(html, self.own.pk))
+        self.assertNotIn("disabled", self._checkbox(html, self.unowned.pk))
+        self.assertIn("disabled", self._checkbox(html, self.foreign.pk))
+        self.assertIn('data-row-order-locked="1"', html)
+
+        form = self.client.get(reverse("esp_form_create"))
+        self.assertContains(form, "disabled")
+        self.assertContains(form, "readonly-field")
+        self.assertContains(form, "ГЭ Горная экспертиза")
+        self.assertContains(form, 'data-department="Отдел горной экспертизы"', html=False)
+        self.assertContains(form, 'data-organization="IMC Montan"', html=False)
+        self.assertNotContains(form, "Не установлено")
+
+        created = self.client.post(
+            reverse("esp_form_create"),
+            {
+                "specialty": "Геолог",
+                "specialty_en": "Geologist",
+                "owner_ids": "__group__",
+                "expertise_dir": str(self.other_direction.pk),
+                "specialization_area_suffix": "",
+            },
+        )
+        self.assertEqual(created.status_code, 200)
+        specialty = ExpertSpecialty.objects.get(specialty="Геолог")
+        self.assertEqual(specialty.expertise_dir_id, self.direction.pk)
+        self.assertEqual(specialty.created_by_id, self.head_user.pk)
+        self.assertEqual(specialty.head_of_direction.role, DEPARTMENT_HEAD_GROUP)
+
+        authored_elsewhere = ExpertSpecialty.objects.create(
+            specialty="Создана руководителем в чужом направлении",
+            expertise_dir=self.other_direction,
+            created_by=self.head_user,
+            position=4,
+        )
+        table_after = self.client.get(reverse("policy_expert_specialties_table"))
+        self.assertIn("disabled", self._checkbox(table_after.content.decode(), authored_elsewhere.pk))
+        self.assertEqual(self.client.get(reverse("esp_form_edit", args=[self.foreign.pk])).status_code, 403)
+        self.assertEqual(self.client.get(reverse("esp_form_edit", args=[self.unowned.pk])).status_code, 200)
+        self.assertEqual(self.client.post(reverse("esp_delete", args=[self.foreign.pk])).status_code, 403)
+        self.assertEqual(self.client.post(reverse("esp_move_up", args=[self.foreign.pk])).status_code, 403)
+        own_edit = self.client.get(reverse("esp_form_edit", args=[self.own.pk]))
+        self.assertEqual(own_edit.status_code, 200)
+        self.assertContains(own_edit, "disabled")
+        self.assertContains(own_edit, "ГЭ Горная экспертиза")
+
+    def test_director_create_locks_management_direction(self):
+        self.director_user.is_superuser = True
+        self.director_user.save(update_fields=["is_superuser"])
+        self.client.force_login(self.director_user)
+        table = self.client.get(reverse("policy_expert_specialties_table"))
+        html = table.content.decode()
+        self.assertNotIn("disabled", self._checkbox(html, self.foreign.pk))
+        self.assertIn("disabled", self._checkbox(html, self.own.pk))
+        self.assertIn("disabled", self._checkbox(html, self.unowned.pk))
+        self.assertEqual(self.client.get(reverse("esp_form_edit", args=[self.own.pk])).status_code, 403)
+        self.assertEqual(self.client.get(reverse("esp_form_edit", args=[self.foreign.pk])).status_code, 200)
+
+        form = self.client.get(reverse("esp_form_create"))
+        self.assertContains(form, "disabled")
+        self.assertContains(form, "— Не установлено")
+        self.assertContains(form, 'value="Директор"', html=False)
+        self.assertContains(form, 'data-department="Директор"', html=False)
+        self.assertNotContains(form, "ГЭ Горная экспертиза")
+
+        created = self.client.post(
+            reverse("esp_form_create"),
+            {
+                "specialty": "Координатор",
+                "specialty_en": "Coordinator",
+                "owner_ids": "__group__",
+                "expertise_dir": str(self.direction.pk),
+                "specialization_area_suffix": "",
+            },
+        )
+        self.assertEqual(created.status_code, 200)
+        specialty = ExpertSpecialty.objects.get(specialty="Координатор")
+        self.assertEqual(specialty.expertise_dir_id, self.other_direction.pk)
+        self.assertEqual(specialty.head_of_direction.role, DIRECTOR_GROUP)
+        self.assertEqual(specialty.created_by_id, self.director_user.pk)
+
+    def test_director_of_unlisted_department_cannot_edit_rows(self):
+        other_company = GroupMember.objects.create(
+            short_name="Другая компания",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+            position=2,
+        )
+        other_unit = OrgUnit.objects.create(
+            company=other_company,
+            department_name="Директор",
+            short_name="DIR2",
+            unit_type="administrative",
+            level=1,
+            position=3,
+        )
+        user = self._user("esp-other-director", DIRECTOR_GROUP, other_unit, "Директор")
+        user.is_superuser = True
+        user.save(update_fields=["is_superuser"])
+        self.client.force_login(user)
+        response = self.client.get(reverse("policy_expert_specialties_table"))
+        html = response.content.decode()
+        self.assertContains(response, "Добавить строку")
+        self.assertIn("disabled", self._checkbox(html, self.foreign.pk))
+        self.assertIn("disabled", self._checkbox(html, self.own.pk))
+        self.assertEqual(self.client.get(reverse("esp_form_edit", args=[self.foreign.pk])).status_code, 403)
+        form = self.client.get(reverse("esp_form_create"))
+        self.assertContains(form, "Для вашего подразделения не задано направление экспертизы.")
+
+    def test_same_department_name_in_another_organization_stays_locked(self):
+        other_company = GroupMember.objects.create(
+            short_name="ТОО «IMC Montan»",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+            position=3,
+        )
+        other_unit = OrgUnit.objects.create(
+            company=other_company,
+            department_name="Директор",
+            short_name="DIR-KZ",
+            unit_type="administrative",
+            level=1,
+            position=4,
+        )
+        other_direction = ExpertiseDirection.objects.create(
+            name="Дирекция Казахстана",
+            short_name="KZ",
+            position=3,
+            department=other_unit,
+        )
+        other_unit.expertise = other_direction
+        other_unit.save(update_fields=["expertise"])
+        from group_app.models import ExpertiseManagementMode
+        ExpertiseManagementMode.objects.filter(expertise_direction=other_direction).update(
+            mode=ExpertiseManagementMode.MODE_SEPARATE,
+        )
+        other_specialty = ExpertSpecialty.objects.create(
+            specialty="Координатор Казахстана",
+            expertise_dir=other_direction,
+            position=5,
+        )
+        other_director = self._user("esp-kz-director", DIRECTOR_GROUP, other_unit, "Директор")
+        other_director.is_superuser = True
+        other_director.save(update_fields=["is_superuser"])
+
+        self.client.force_login(self.director_user)
+        own_html = self.client.get(reverse("policy_expert_specialties_table")).content.decode()
+        self.assertNotIn("disabled", self._checkbox(own_html, self.foreign.pk))
+        self.assertIn("disabled", self._checkbox(own_html, other_specialty.pk))
+
+        self.client.force_login(other_director)
+        other_html = self.client.get(reverse("policy_expert_specialties_table")).content.decode()
+        self.assertNotIn("disabled", self._checkbox(other_html, other_specialty.pk))
+        self.assertIn("disabled", self._checkbox(other_html, self.foreign.pk))
+        self.assertIn("disabled", self._checkbox(other_html, self.own.pk))
+
+    def test_admin_edits_every_row_and_chooses_any_direction(self):
+        self.client.force_login(self.admin_user)
+        response = self.client.get(reverse("policy_expert_specialties_table"))
+        html = response.content.decode()
+        self.assertContains(response, "Добавить строку")
+        self.assertNotIn("disabled", self._checkbox(html, self.own.pk))
+        self.assertNotIn("disabled", self._checkbox(html, self.foreign.pk))
+        self.assertNotIn("disabled", self._checkbox(html, self.unowned.pk))
+
+        form = self.client.get(reverse("esp_form_create"))
+        self.assertContains(form, "ГЭ Горная экспертиза")
+        self.assertContains(form, "— Не установлено")
+        html = form.content.decode()
+        tag_start = html.rfind("<select", 0, html.index('id="esp-dir-select"'))
+        tag_end = html.index(">", html.index('id="esp-dir-select"'))
+        self.assertNotIn("disabled", html[tag_start:tag_end])
+
+        self.assertEqual(self.client.get(reverse("esp_form_edit", args=[self.foreign.pk])).status_code, 200)
+        created = self.client.post(
+            reverse("esp_form_create"),
+            {
+                "specialty": "Маркшейдер",
+                "specialty_en": "Surveyor",
+                "owner_ids": "__group__",
+                "expertise_dir": str(self.other_direction.pk),
+                "specialization_area_suffix": "",
+            },
+        )
+        self.assertEqual(created.status_code, 200)
+        specialty = ExpertSpecialty.objects.get(specialty="Маркшейдер")
+        self.assertEqual(specialty.expertise_dir_id, self.other_direction.pk)
+
+    def test_department_head_csv_upload_uses_own_direction(self):
+        self.client.force_login(self.head_user)
+        csv_file = SimpleUploadedFile(
+            "specialties.csv",
+            (
+                "Специальность;Специальность на англ. языке;Область специализации;"
+                "Направление экспертизы;Руководитель направления;Подразделение;Организация;Владелец\n"
+                "Геолог;Geologist;;—;;;Группа\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("esp_csv_upload"), {"csv_file": csv_file})
+        self.assertEqual(response.status_code, 200)
+        specialty = ExpertSpecialty.objects.get(specialty="Геолог")
+        self.assertEqual(specialty.expertise_dir_id, self.direction.pk)
+        self.assertEqual(specialty.created_by_id, self.head_user.pk)
+
+        self.client.force_login(self.expert_user)
+        denied = self.client.post(reverse("esp_csv_upload"), {"csv_file": csv_file})
+        self.assertEqual(denied.status_code, 403)
+
+    def test_group_membership_grants_department_head_when_role_is_empty(self):
+        user = get_user_model().objects.create_user(
+            username="esp-group-head",
+            password="secret123",
+            is_staff=True,
+        )
+        Employee.objects.create(user=user, job_title="Руководитель", role="", department=self.unit)
+        group, _created = Group.objects.get_or_create(name=DEPARTMENT_HEAD_GROUP)
+        user.groups.add(group)
+        self.client.force_login(user)
+        form = self.client.get(reverse("esp_form_create"))
+        self.assertEqual(form.status_code, 200)
+        self.assertContains(form, "disabled")
+        self.assertContains(form, "ГЭ Горная экспертиза")
+        self.assertNotContains(form, "Не установлено")

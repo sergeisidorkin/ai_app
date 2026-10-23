@@ -18,7 +18,8 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.cache import caches
-from django.db import connection, transaction
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -46,6 +47,10 @@ from policy_app.forms import (
     TariffForm,
     TypicalServiceCompositionForm,
 )
+from policy_app.service_block_link import (
+    backfill_service_block_executors,
+    link_typical_sections_to_service_blocks,
+)
 from policy_app.models import (
     ConsultingDirection,
     ConsultingDirectionType,
@@ -56,6 +61,8 @@ from policy_app.models import (
     Product,
     ReportStructure,
     SectionStructure,
+    ServiceBlockClassifier,
+    ServiceBlockClassifierSpecialty,
     ServiceGoalReport,
     SpecialtyTariff,
     Tariff,
@@ -290,6 +297,11 @@ class PolicyTablePartialEndpointsTests(TestCase):
     endpoint_cases = (
         ("policy_consulting_directions_table", "policy-consulting-directions-section", "Направления консалтинга"),
         ("policy_expertise_directions_table", "policy-expertise-directions-section", "Направления экспертизы"),
+        (
+            "policy_service_block_classifiers_table",
+            "policy-service-block-classifiers-section",
+            "Классификатор типовых блоков услуг",
+        ),
         ("policy_expert_specialties_table", "policy-expert-specialties-section", "Специальности исполнителей"),
         ("policy_products_table", "policy-products-section", "Типовые продукты"),
         ("policy_service_goal_reports_table", "policy-service-goal-reports-section", "Цели услуг и названия отчетов"),
@@ -476,7 +488,7 @@ class PolicyStageFiveQueryBudgetTests(TestCase):
         create_directions(2, 51)
         fifty_count, _ = self._endpoint_query_count("policy_expertise_directions_table")
 
-        self.assertEqual((one_count, fifty_count), (4, 4))
+        self.assertEqual((one_count, fifty_count), (7, 7))
 
     def test_consulting_query_budget_is_constant_for_one_and_fifty_rows(self):
         def create_directions(start, stop):
@@ -725,6 +737,7 @@ class PolicyLazyLoadingContractTests(TestCase):
         "consulting-directions",
         "expertise-directions",
         "expert-specialties",
+        "service-block-classifiers",
         "specialty-tariffs",
         "grades",
     ]
@@ -753,16 +766,16 @@ class PolicyLazyLoadingContractTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-policy-lazy-shell="1"', html=False)
-        self.assertEqual(html.count('data-policy-lazy-placeholder="1"'), 13)
+        self.assertEqual(html.count('data-policy-lazy-placeholder="1"'), 14)
         self.assertNotIn("<table", html)
         self.assertNotIn('data-policy-filter-row="1"', html)
         self.assertNotIn("data-edit-url=", html)
         keys = re.findall(r'data-policy-table-key="([^"]+)"', html)
         self.assertEqual(keys, self.ordered_keys)
         self.assertEqual(html.count('data-policy-lazy-priority="immediate"'), 1)
-        self.assertEqual(html.count('data-policy-lazy-priority="deferred"'), 12)
-        self.assertEqual(html.count("table-section-title"), 13)
-        self.assertEqual(html.count("bi-table me-2"), 13)
+        self.assertEqual(html.count('data-policy-lazy-priority="deferred"'), 13)
+        self.assertEqual(html.count("table-section-title"), 14)
+        self.assertEqual(html.count("bi-table me-2"), 14)
         self.assertEqual(html.count('class="card shadow-sm policy-group-card"'), 2)
         self.assertEqual(html.count("bi-box-seam me-2"), 1)
         self.assertEqual(html.count("bi-sliders me-2"), 1)
@@ -887,25 +900,38 @@ class PolicyLazyLoadingContractTests(TestCase):
             source,
         )
 
-    def test_product_edit_modal_clears_row_selection_on_hide(self):
-        source = (
-            Path(__file__).resolve().parents[1]
-            / "core"
-            / "static"
-            / "core"
-            / "js"
-            / "policy-panels.js"
-        ).read_text()
+    def test_edit_modal_clears_row_selection_on_hide_via_shared_module(self):
+        js_dir = Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js"
+        source = (js_dir / "policy-panels.js").read_text()
+        shared = (js_dir / "table-selection.js").read_text()
 
+        # Общий модуль: пометка модалки + глобальный hidden.bs.modal.
+        self.assertIn("window.TableSelection = {", shared)
+        self.assertIn("clearOnModalHide: clearOnModalHide", shared)
+        self.assertIn("document.addEventListener('hidden.bs.modal'", shared)
+        self.assertIn("new CustomEvent('table-selection:cleared'", shared)
+
+        # Политики: «Редактировать» помечает модалку для любой таблицы,
+        # а не только для product-select; кэш выделения забывается.
         self.assertIn("function forgetPolicyTableSelection(name)", source)
-        self.assertIn("function clearPolicyTableSelectionByName(name)", source)
         self.assertIn("function markPolicyModalClearSelectionOnHide(name)", source)
-        self.assertIn("modalEl.dataset.policyClearSelectionName = name", source)
-        self.assertIn("if (name === 'product-select') {", source)
-        self.assertIn("markPolicyModalClearSelectionOnHide(name)", source)
-        self.assertIn("document.addEventListener('hidden.bs.modal'", source)
-        self.assertIn("modalEl.id !== 'policy-modal'", source)
-        self.assertIn("clearPolicyTableSelectionByName(name)", source)
+        self.assertIn(
+            "window.TableSelection.clearOnModalHide('policy-modal', name, pane())",
+            source,
+        )
+        self.assertNotIn("if (name === 'product-select') {", source)
+        self.assertNotIn("modalEl.dataset.policyClearSelectionName", source)
+        self.assertIn("document.addEventListener('table-selection:cleared'", source)
+
+    def test_base_template_loads_table_selection_module(self):
+        base_html = (
+            Path(__file__).resolve().parents[1] / "core" / "templates" / "core" / "base.html"
+        ).read_text()
+        self.assertIn("core/js/table-selection.js", base_html)
+        self.assertLess(
+            base_html.index("core/js/table-selection.js"),
+            base_html.index("core/js/policy-panels.js"),
+        )
 
 
 class PolicyProductWorkspaceTests(TestCase):
@@ -1076,7 +1102,10 @@ class PolicyProductWorkspaceTests(TestCase):
         self.assertIn("params.set('workspace', '1')", source)
         self.assertIn("function loadPolicyCatalogShell()", source)
         self.assertIn("display.classList.toggle('readonly-field', !!select.disabled)", source)
-        self.assertIn("#policy-modal .policy-product-select-display.readonly-field", css)
+        # Заблокированный вид .policy-product-select-display даёт общее правило .readonly-field
+        # (единый источник цветов — переменные --locked-field-*), отдельного правила быть не должно.
+        self.assertIn("background-color: var(--locked-field-bg) !important;", css)
+        self.assertNotIn("#policy-modal .policy-product-select-display.readonly-field", css)
         self.assertIn("function scrollPolicyWorkspaceToTop(root)", source)
         self.assertIn('a.nav-link[href="#policy"][data-bs-toggle="tab"]', source)
         self.assertIn("data-policy-workspace-save-btn", source)
@@ -1505,12 +1534,14 @@ class PolicyProductWorkspaceTests(TestCase):
         sections_html = sections.content.decode()
         self.assertTrue(sections.context["policy_inline_edit"])
         self.assertContains(sections, 'data-policy-inline="1"', html=False)
-        self.assertContains(sections, 'data-inline-field="code"', html=False)
-        self.assertContains(sections, 'data-inline-field="short_name"', html=False)
+        self.assertNotContains(sections, 'data-inline-field="code"', html=False)
+        self.assertNotContains(sections, 'data-inline-field="short_name"', html=False)
+        self.assertNotContains(sections, 'data-inline-field="short_name_ru"', html=False)
+        self.assertIn('"service_blocks"', sections.context["policy_inline_options_json"])
         self.assertContains(sections, 'data-inline-field="name_ru"', html=False)
         self.assertContains(sections, 'data-inline-field="accounting_type"', html=False)
         self.assertContains(sections, 'data-inline-field="expertise_dir"', html=False)
-        self.assertContains(sections, 'data-inline-field="expertise_direction"', html=False)
+        self.assertNotContains(sections, 'data-inline-field="expertise_direction"', html=False)
         self.assertContains(sections, 'data-inline-field="exclude_from_tkp_autofill"', html=False)
         self.assertContains(sections, 'data-inline-type="checkbox"', html=False)
         self.assertContains(sections, 'data-inline-type="select"', html=False)
@@ -1959,20 +1990,24 @@ class PolicyProductWorkspaceTests(TestCase):
         self.assertNotIn("readonly-field", form["product"].as_widget())
 
     def test_workspace_create_ignores_tampered_product(self):
+        block = ServiceBlockClassifier.objects.create(
+            code="LWS",
+            short_name="lock-en",
+            short_name_ru="lock-ru",
+            position=1,
+        )
         response = self.client.post(
             reverse("section_form_create") + f"?workspace=1&product={self.product.pk}",
             {
                 "product": self.other_product.pk,
-                "code": "SEC-LOCK-WS",
-                "short_name": "lock-en",
-                "short_name_ru": "lock-ru",
+                "service_block": block.pk,
                 "name_en": "Locked EN",
                 "name_ru": "Locked RU",
                 "accounting_type": "Раздел",
             },
         )
         self.assertEqual(response.status_code, 200, response.content)
-        created = TypicalSection.objects.get(code="SEC-LOCK-WS")
+        created = TypicalSection.objects.get(code="LWS")
         self.assertEqual(created.product_id, self.product.pk)
 
 
@@ -2327,14 +2362,14 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         self.assertTrue(payload["ok"])
         self.assertIn("typical-sections", payload["tables"])
         section.refresh_from_db()
-        self.assertEqual(section.code, "SEC-NEW")
-        self.assertEqual(section.short_name, "sec-new")
-        self.assertEqual(section.short_name_ru, "разд-new")
+        self.assertEqual(section.code, "SEC-WS")
+        self.assertEqual(section.short_name, "sec-ws")
+        self.assertEqual(section.short_name_ru, "разд-ws")
         self.assertEqual(section.name_en, "New EN")
         self.assertEqual(section.name_ru, "Новый RU")
         self.assertEqual(section.accounting_type, "Услуги")
         self.assertEqual(section.expertise_dir_id, other_expertise.pk)
-        self.assertEqual(section.expertise_direction_id, other_department.pk)
+        self.assertEqual(section.expertise_direction_id, department.pk)
         self.assertEqual(section.product_id, self.product.pk)
         self.assertTrue(section.exclude_from_tkp_autofill)
         self.assertEqual(
@@ -2513,6 +2548,12 @@ class PolicyProductWorkspaceSaveTests(TestCase):
 
     def test_workspace_save_creates_typical_section_after_existing(self):
         ensure_system_dsc_section(self.product)
+        block = ServiceBlockClassifier.objects.create(
+            code="INS",
+            short_name="sec-ins",
+            short_name_ru="разд-вст",
+            position=1,
+        )
         current = TypicalSection.objects.create(
             product=self.product,
             code="SEC-CUR",
@@ -2534,9 +2575,7 @@ class PolicyProductWorkspaceSaveTests(TestCase):
                             "new": True,
                             "after_id": current.pk,
                             "fields": {
-                                "code": "SEC-INS",
-                                "short_name": "sec-ins",
-                                "short_name_ru": "разд-вст",
+                                "service_block": block.pk,
                                 "name_en": "Inserted EN",
                                 "name_ru": "Вставленный RU",
                                 "accounting_type": "Раздел",
@@ -2553,7 +2592,7 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         self.assertIn("section-structures", payload["tables"])
         self.assertIn("typical-service-compositions", payload["tables"])
         self.assertIn("tariffs", payload["tables"])
-        created = TypicalSection.objects.get(product=self.product, code="SEC-INS")
+        created = TypicalSection.objects.get(product=self.product, code="INS")
         current.refresh_from_db()
         self.assertEqual(created.name_ru, "Вставленный RU")
         self.assertEqual(created.product_id, self.product.pk)
@@ -3676,7 +3715,9 @@ class PolicyFragmentMutationContractTests(TestCase):
             "expertise-directions",
             "typical-sections",
             "specialty-tariffs",
+            "service-block-classifiers",
         ],
+        "service-block-classifier": ["service-block-classifiers"],
         "grade": ["grades"],
         "expert-specialty": [
             "expert-specialties",
@@ -3844,6 +3885,7 @@ class PolicyFragmentMutationContractTests(TestCase):
             "typical_service_term_form.html",
             "consulting_direction_form.html",
             "expertise_direction_form.html",
+            "service_block_classifier_form.html",
             "grade_form.html",
             "specialty_tariff_form.html",
             "tariff_form.html",
@@ -3878,6 +3920,1242 @@ class PolicyFragmentMutationContractTests(TestCase):
         self.assertIn("POLICY_MANAGED_REFRESH_CONCURRENCY = 2", policy_js)
         self.assertNotIn("#policy-pane tbody tr[data-product-id]", index_html)
         self.assertEqual(index_html.count("event?.detail?.catalog || window.__policyProductCatalog"), 2)
+
+
+class ServiceBlockClassifierTableTests(TestCase):
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(
+            username="sbc-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.staff)
+        self.expertise = ExpertiseDirection.objects.create(
+            short_name="ГЭ",
+            name="Горная экспертиза",
+            position=1,
+        )
+        self.company = GroupMember.objects.create(
+            short_name="SBC Co",
+            country_name="Россия",
+            position=1,
+            is_management_company=True,
+        )
+        self.department = OrgUnit.objects.create(
+            company=self.company,
+            unit_type="expertise",
+            department_name="Горное направление",
+            short_name="MINE",
+            level=1,
+            expertise=self.expertise,
+            position=1,
+        )
+        self.expertise.department = self.department
+        self.expertise.save(update_fields=["department"])
+        self.first = ServiceBlockClassifier.objects.create(
+            code="ABC",
+            short_name="first",
+            short_name_ru="первый",
+            accounting_type="Разделы",
+            expertise_dir=self.expertise,
+            expertise_direction=self.department,
+            position=1,
+        )
+        self.second = ServiceBlockClassifier.objects.create(
+            code="DEF",
+            short_name="second",
+            short_name_ru="второй",
+            accounting_type="Материалы",
+            position=2,
+        )
+
+    def _ordered_codes(self):
+        return list(
+            ServiceBlockClassifier.objects.order_by("position", "id").values_list("code", flat=True)
+        )
+
+    def test_accounting_type_choices_match_requirements(self):
+        self.assertEqual(
+            [value for value, _ in ServiceBlockClassifier.ACCOUNTING_TYPE_CHOICES],
+            ["Разделы", "Управление", "Материалы"],
+        )
+        self.assertEqual(
+            ServiceBlockClassifier._meta.get_field("accounting_type").default,
+            "Разделы",
+        )
+
+    def test_table_renders_rows_master_checkbox_and_actions(self):
+        response = self.client.get(reverse("policy_service_block_classifiers_table"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="policy-service-block-classifiers-section"', html=False)
+        self.assertContains(response, 'data-policy-table-key="service-block-classifiers"', html=False)
+        self.assertContains(response, 'data-row-order-key="service-block-classifier"', html=False)
+        self.assertContains(response, 'id="sbc-master"', html=False)
+        self.assertContains(response, 'data-target-name="sbc-select"', html=False)
+        self.assertContains(response, 'data-actions-id="sbc-actions"', html=False)
+        self.assertContains(response, 'id="sbc-actions"', html=False)
+        for action in ("up", "down", "edit", "delete"):
+            self.assertContains(response, f'data-panel-action="{action}"', html=False)
+        self.assertContains(response, reverse("service_block_classifier_form_create"), html=False)
+        self.assertContains(response, reverse("service_block_classifier_form_edit", args=[self.first.pk]), html=False)
+        self.assertContains(response, reverse("service_block_classifier_delete", args=[self.first.pk]), html=False)
+        self.assertContains(response, reverse("service_block_classifier_move_up", args=[self.first.pk]), html=False)
+        self.assertContains(response, reverse("service_block_classifier_move_down", args=[self.first.pk]), html=False)
+        for heading in (
+            "Классификатор типовых блоков услуг",
+            "Код",
+            "Краткое имя EN",
+            "Краткое имя RU",
+            "Тип учета",
+            "Направление экспертизы",
+            "Подразделение",
+            "Организация",
+        ):
+            self.assertContains(response, heading)
+        self.assertContains(response, "ABC")
+        self.assertContains(response, "первый")
+        self.assertContains(response, "Материалы")
+        self.assertContains(response, "ГЭ")
+        self.assertContains(response, "Горное направление")
+        self.assertContains(response, "SBC Co")
+        html = response.content.decode()
+        self.assertLess(html.index("ABC"), html.index("DEF"))
+        headers = re.findall(r"<th[^>]*>(.*?)</th>", html, flags=re.S)
+        self.assertEqual([re.sub(r"\s+", " ", h).strip() for h in headers][-2:], ["Подразделение", "Организация"])
+        first_row = html[html.index("ABC"):html.index("DEF")]
+        self.assertIn("SBC Co", first_row)
+        second_row = html[html.index("DEF"):html.index("</tbody>")]
+        self.assertNotIn("SBC Co", second_row)
+
+    def test_form_locks_department_and_organization_from_expertise(self):
+        create = self.client.get(reverse("service_block_classifier_form_create"))
+        self.assertEqual(create.status_code, 200)
+        self.assertContains(create, "Подразделение")
+        self.assertContains(create, "Организация")
+        self.assertContains(create, 'id="sbc-expertise-select"', html=False)
+        self.assertContains(create, 'id="sbc-department"', html=False)
+        self.assertContains(create, 'id="sbc-organization"', html=False)
+        self.assertNotContains(create, 'id="sbc-department-select"', html=False)
+        self.assertContains(
+            create,
+            f'data-department="Горное направление" data-organization="SBC Co"',
+            html=False,
+        )
+        html = create.content.decode()
+        for field_id in ("sbc-department", "sbc-organization"):
+            field_input = re.search(rf'<input[^>]*id="{field_id}"[^>]*>', html).group(0)
+            self.assertIn("readonly", field_input)
+            self.assertIn("readonly-field", field_input)
+            self.assertIn('tabindex="-1"', field_input)
+            self.assertNotIn("disabled", field_input)
+        department_input = re.search(r'<input[^>]*id="sbc-department"[^>]*>', html).group(0)
+        organization_input = re.search(r'<input[^>]*id="sbc-organization"[^>]*>', html).group(0)
+        self.assertNotIn('value="Горное направление"', department_input)
+        self.assertNotIn('value="SBC Co"', organization_input)
+        self.assertIn("syncFromExpertise", html)
+
+        edit = self.client.get(reverse("service_block_classifier_form_edit", args=[self.first.pk]))
+        html = edit.content.decode()
+        department_input = re.search(r'<input[^>]*id="sbc-department"[^>]*>', html).group(0)
+        organization_input = re.search(r'<input[^>]*id="sbc-organization"[^>]*>', html).group(0)
+        self.assertIn('value="Горное направление"', department_input)
+        self.assertIn('value="SBC Co"', organization_input)
+
+        invalid = self.client.post(
+            reverse("service_block_classifier_form_create"),
+            {
+                "code": "",
+                "short_name": "x",
+                "accounting_type": "Разделы",
+                "expertise_dir": self.expertise.pk,
+                "department": "Чужое подразделение",
+                "organization": "Попытка переопределить",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        html = invalid.content.decode()
+        department_input = re.search(r'<input[^>]*id="sbc-department"[^>]*>', html).group(0)
+        organization_input = re.search(r'<input[^>]*id="sbc-organization"[^>]*>', html).group(0)
+        self.assertIn('value="Горное направление"', department_input)
+        self.assertIn('value="SBC Co"', organization_input)
+        self.assertNotIn("Чужое подразделение", department_input)
+        self.assertNotIn("Попытка переопределить", organization_input)
+
+    def test_organization_display_follows_department_company(self):
+        self.assertEqual(self.first.organization_display, "SBC Co")
+        self.assertEqual(self.second.organization_display, "")
+        self.company.short_name = "SBC Renamed"
+        self.company.save(update_fields=["short_name"])
+        self.first.refresh_from_db()
+        self.assertEqual(self.first.organization_display, "SBC Renamed")
+        response = self.client.post(
+            reverse("service_block_classifier_form_create"),
+            {
+                "code": "ORG",
+                "short_name": "org",
+                "accounting_type": "Разделы",
+                "expertise_dir": self.expertise.pk,
+                "department": "Чужое подразделение",
+                "organization": "Попытка переопределить",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        created = ServiceBlockClassifier.objects.get(code="ORG")
+        self.assertIsNone(created.expertise_direction_id)
+        self.assertEqual(created.department_display, "Горное направление")
+        self.assertEqual(created.organization_display, "SBC Renamed")
+
+        other_company = GroupMember.objects.create(
+            short_name="Other Co",
+            country_name="Россия",
+            position=2,
+        )
+        other_department = OrgUnit.objects.create(
+            company=other_company,
+            unit_type="expertise",
+            department_name="Другое направление",
+            short_name="OTHER",
+            level=1,
+            position=2,
+        )
+        ServiceBlockClassifier.objects.filter(pk=created.pk).update(expertise_direction=other_department)
+        created.refresh_from_db()
+        self.assertEqual(created.department_display, "Горное направление")
+        self.assertEqual(created.organization_display, "SBC Renamed")
+        self.department.expertise = None
+        self.department.save(update_fields=["expertise"])
+        other_company.is_management_company = True
+        other_company.save()
+        other_department.expertise = self.expertise
+        other_department.save(update_fields=["expertise"])
+        created.refresh_from_db()
+        self.assertEqual(created.department_display, "Другое направление")
+        self.assertEqual(created.organization_display, "Other Co")
+
+    def test_specialties_follow_expertise_directions_and_precede_classifiers(self):
+        response = self.client.get(reverse("policy_partial"))
+        html = response.content.decode()
+        self.assertLess(
+            html.index('id="policy-expertise-directions-section"'),
+            html.index('id="policy-expert-specialties-section"'),
+        )
+        self.assertLess(
+            html.index('id="policy-expert-specialties-section"'),
+            html.index('id="policy-service-block-classifiers-section"'),
+        )
+
+    def test_create_form_renders_fields_and_three_accounting_types(self):
+        response = self.client.get(reverse("service_block_classifier_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Добавить строку")
+        form_html = response.content.decode()
+        self.assertLess(form_html.index(">Тип учета<"), form_html.index(">Направление экспертизы<"))
+        self.assertLess(form_html.index(">Направление экспертизы<"), form_html.index(">Исполнитель<"))
+        for field in (
+            "code",
+            "short_name",
+            "short_name_ru",
+            "accounting_type",
+            "expertise_dir",
+            "department",
+            "organization",
+        ):
+            self.assertContains(response, f'name="{field}"', html=False)
+        for value in ("Разделы", "Управление", "Материалы"):
+            self.assertContains(response, f'<option value="{value}"', html=False)
+        self.assertNotContains(response, '<option value="Раздел"', html=False)
+        self.assertNotContains(response, '<option value="Услуги"', html=False)
+        self.assertContains(response, "ГЭ Горная экспертиза")
+        self.assertContains(response, "Горное направление")
+        self.assertContains(response, 'hx-target="#policy-modal .modal-content"', html=False)
+
+    def test_create_assigns_next_position_and_returns_fragment_contract(self):
+        response = self.client.post(
+            reverse("service_block_classifier_form_create"),
+            {
+                "code": " ghi ",
+                "short_name": "third",
+                "short_name_ru": "третий",
+                "accounting_type": "Управление",
+                "expertise_dir": self.expertise.pk,
+                "expertise_direction": self.department.pk,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["HX-Reswap"], "none")
+        self.assertEqual(
+            json.loads(response["HX-Trigger"]),
+            {"policy-updated": {"tables": ["service-block-classifiers"], "refreshFilters": False}},
+        )
+        created = ServiceBlockClassifier.objects.get(code="GHI")
+        self.assertEqual(created.position, 3)
+        self.assertEqual(created.accounting_type, "Управление")
+        self.assertEqual(created.expertise_dir, self.expertise)
+        self.assertIsNone(created.expertise_direction_id)
+
+    def test_invalid_create_rerenders_form_in_modal(self):
+        response = self.client.post(
+            reverse("service_block_classifier_form_create"),
+            {"code": "", "short_name": "", "accounting_type": "Раздел"},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["HX-Retarget"], "#policy-modal .modal-content")
+        self.assertContains(response, "Проверьте введённые данные.")
+        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+
+    def test_code_must_be_unique_case_insensitively_on_create_and_edit(self):
+        self.assertTrue(ServiceBlockClassifier._meta.get_field("code").unique)
+        unique_message = "Блок услуг с таким кодом уже существует (без учёта регистра)."
+
+        for duplicate in ("ABC", "abc", " aBc "):
+            with self.subTest(code=duplicate):
+                create = self.client.post(
+                    reverse("service_block_classifier_form_create"),
+                    {"code": duplicate, "short_name": "dup", "accounting_type": "Разделы"},
+                    HTTP_HX_REQUEST="true",
+                )
+                self.assertEqual(create.status_code, 200)
+                self.assertEqual(create["HX-Retarget"], "#policy-modal .modal-content")
+                self.assertContains(create, unique_message)
+        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+
+        edit = self.client.post(
+            reverse("service_block_classifier_form_edit", args=[self.second.pk]),
+            {"code": "abc", "short_name": "second", "accounting_type": "Материалы"},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(edit.status_code, 200)
+        self.assertNotIn("HX-Retarget", edit)
+        self.second.refresh_from_db()
+        self.assertEqual(self.second.code, "DEF")
+        self.assertEqual(self.second.short_name, "second")
+
+        same_row = self.client.post(
+            reverse("service_block_classifier_form_edit", args=[self.second.pk]),
+            {"code": "def", "short_name": "second-kept", "accounting_type": "Материалы"},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(same_row.status_code, 200)
+        self.assertNotIn("HX-Retarget", same_row)
+        self.second.refresh_from_db()
+        self.assertEqual(self.second.short_name, "second-kept")
+        self.assertEqual(self.second.code, "DEF")
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                ServiceBlockClassifier.objects.create(code="abc", short_name="raw", position=9)
+
+    def test_code_is_stored_uppercase(self):
+        created = ServiceBlockClassifier.objects.create(code=" xyz ", short_name="raw", position=9)
+        self.assertEqual(created.code, "XYZ")
+        self.assertEqual(ServiceBlockClassifier.objects.get(pk=created.pk).code, "XYZ")
+
+        response = self.client.post(
+            reverse("service_block_classifier_form_create"),
+            {"code": "qwe", "short_name": "lower", "accounting_type": "Разделы"},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(ServiceBlockClassifier.objects.filter(code="QWE").exists())
+        self.assertFalse(ServiceBlockClassifier.objects.filter(code="qwe").exists())
+
+    def test_code_must_be_exactly_three_latin_letters(self):
+        format_message = "Код должен состоять ровно из трёх латинских букв."
+        for bad_code in ("AB", "ABCD", "AB1", "A-B", "A B", "123", "AБ", "ab_", "АБВ"):
+            with self.subTest(code=bad_code):
+                response = self.client.post(
+                    reverse("service_block_classifier_form_create"),
+                    {"code": bad_code, "short_name": "bad", "accounting_type": "Разделы"},
+                    HTTP_HX_REQUEST="true",
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response["HX-Retarget"], "#policy-modal .modal-content")
+                self.assertContains(response, format_message)
+        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+
+        for good_code in ("XYZ", "qwe"):
+            with self.subTest(code=good_code):
+                response = self.client.post(
+                    reverse("service_block_classifier_form_create"),
+                    {"code": good_code, "short_name": "good", "accounting_type": "Разделы"},
+                    HTTP_HX_REQUEST="true",
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn("HX-Retarget", response)
+                self.assertTrue(ServiceBlockClassifier.objects.filter(code=good_code.upper()).exists())
+
+        with self.assertRaises(ValidationError):
+            ServiceBlockClassifier(code="ABCD", short_name="too long").full_clean()
+
+    def test_form_code_widget_hints_three_letter_format(self):
+        response = self.client.get(reverse("service_block_classifier_form_create"))
+        self.assertContains(response, 'maxlength="3"', html=False)
+        self.assertContains(response, 'placeholder="Код (три латинские буквы)"', html=False)
+        self.assertNotContains(response, "text-uppercase")
+
+    def test_edit_updates_row(self):
+        edit_url = reverse("service_block_classifier_form_edit", args=[self.second.pk])
+        get_response = self.client.get(edit_url)
+        self.assertContains(get_response, "Изменить строку")
+        self.assertContains(get_response, 'value="DEF"', html=False)
+
+        response = self.client.post(
+            edit_url,
+            {
+                "code": "DEF",
+                "short_name": "second-upd",
+                "short_name_ru": "второй-обн",
+                "accounting_type": "Разделы",
+                "expertise_dir": self.expertise.pk,
+                "expertise_direction": "",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.second.refresh_from_db()
+        self.assertEqual(self.second.short_name, "second-upd")
+        self.assertEqual(self.second.accounting_type, "Разделы")
+        self.assertEqual(self.second.expertise_dir, self.expertise)
+        self.assertIsNone(self.second.expertise_direction_id)
+        self.assertEqual(self.second.department_display, "Горное направление")
+        self.assertEqual(self.second.organization_display, "SBC Co")
+        self.assertEqual(self.second.position, 2)
+
+    def test_delete_and_move_endpoints(self):
+        move_up = self.client.post(
+            reverse("service_block_classifier_move_up", args=[self.second.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(move_up.status_code, 200)
+        self.assertEqual(
+            json.loads(move_up["HX-Trigger"])["policy-updated"]["reorderedTable"],
+            "service-block-classifiers",
+        )
+        self.assertEqual(self._ordered_codes(), ["DEF", "ABC"])
+
+        move_down = self.client.post(
+            reverse("service_block_classifier_move_down", args=[self.second.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(move_down.status_code, 200)
+        self.assertEqual(self._ordered_codes(), ["ABC", "DEF"])
+
+        delete = self.client.post(
+            reverse("service_block_classifier_delete", args=[self.first.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(delete.status_code, 200)
+        self.assertEqual(self._ordered_codes(), ["DEF"])
+
+    def test_bulk_row_order_endpoint_reorders_rows(self):
+        response = self.client.post(
+            reverse("row_order_save", args=["service-block-classifier"]),
+            data=json.dumps(
+                {
+                    "ordered_ids": [self.second.pk, self.first.pk],
+                    "base_order_ids": [self.first.pk, self.second.pk],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(
+            data["events"]["policy-updated"]["reorderedTable"],
+            "service-block-classifiers",
+        )
+        self.assertEqual(self._ordered_codes(), ["DEF", "ABC"])
+
+    def test_deleting_expertise_direction_keeps_classifier_row(self):
+        self.expertise.delete()
+        self.first.refresh_from_db()
+        self.assertIsNone(self.first.expertise_dir)
+
+    def test_non_staff_cannot_mutate(self):
+        viewer = get_user_model().objects.create_user(
+            username="sbc-viewer",
+            password="secret123",
+            is_staff=False,
+        )
+        self.client.force_login(viewer)
+
+        table = self.client.get(reverse("policy_service_block_classifiers_table"))
+        self.assertEqual(table.status_code, 200)
+        self.assertNotContains(table, 'id="sbc-master"', html=False)
+        self.assertNotContains(table, 'id="sbc-actions"', html=False)
+
+        for url in (
+            reverse("service_block_classifier_form_create"),
+            reverse("service_block_classifier_delete", args=[self.first.pk]),
+            reverse("service_block_classifier_move_up", args=[self.second.pk]),
+        ):
+            response = self.client.post(url, {"code": "X", "short_name": "x", "accounting_type": "Разделы"})
+            self.assertEqual(response.status_code, 302, url)
+        bulk = self.client.post(
+            reverse("row_order_save", args=["service-block-classifier"]),
+            data=json.dumps({"ordered_ids": [self.second.pk, self.first.pk]}),
+            content_type="application/json",
+        )
+        self.assertEqual(bulk.status_code, 403)
+        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._ordered_codes(), ["ABC", "DEF"])
+
+
+class ServiceBlockSectionLinkTests(TestCase):
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(
+            username="sbc-link-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.staff)
+        self.product = Product.objects.create(
+            short_name="LNK",
+            name_en="Link",
+            display_name="Link",
+            name_ru="Связь",
+            position=1,
+        )
+        self.other_product = Product.objects.create(
+            short_name="LNK2",
+            name_en="Link 2",
+            display_name="Link 2",
+            name_ru="Связь 2",
+            position=2,
+        )
+
+    def _section(self, product, code, short_name, short_name_ru, **extra):
+        return TypicalSection.objects.create(
+            product=product,
+            code=code,
+            short_name=short_name,
+            short_name_ru=short_name_ru,
+            name_en=extra.pop("name_en", "Name EN"),
+            name_ru=extra.pop("name_ru", "Имя RU"),
+            accounting_type="Раздел",
+            position=extra.pop("position", 1),
+            **extra,
+        )
+
+    def test_link_reuses_one_block_when_names_match_and_keeps_columns(self):
+        first = self._section(self.product, "aud", "audit", "аудит")
+        second = self._section(self.other_product, "AUD", "audit", "аудит")
+
+        link_typical_sections_to_service_blocks(TypicalSection, ServiceBlockClassifier)
+        link_typical_sections_to_service_blocks(TypicalSection, ServiceBlockClassifier)
+
+        self.assertEqual(ServiceBlockClassifier.objects.filter(code="AUD").count(), 1)
+        block = ServiceBlockClassifier.objects.get(code="AUD")
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.service_block_id, block.pk)
+        self.assertEqual(second.service_block_id, block.pk)
+        self.assertEqual(first.code, "aud")
+        self.assertEqual(second.code, "AUD")
+        self.assertEqual(first.short_name, "audit")
+        self.assertEqual(second.short_name_ru, "аудит")
+
+    def test_link_leaves_conflicting_names_and_long_codes_untouched(self):
+        left = self._section(self.product, "XYZ", "left", "лево")
+        right = self._section(self.other_product, "XYZ", "right", "право")
+        legacy = self._section(self.product, "SEC-1", "legacy", "старый", position=2)
+
+        link_typical_sections_to_service_blocks(TypicalSection, ServiceBlockClassifier)
+
+        left.refresh_from_db()
+        right.refresh_from_db()
+        legacy.refresh_from_db()
+        self.assertFalse(ServiceBlockClassifier.objects.filter(code="XYZ").exists())
+        self.assertIsNone(left.service_block_id)
+        self.assertIsNone(right.service_block_id)
+        self.assertIsNone(legacy.service_block_id)
+        self.assertEqual(left.short_name, "left")
+        self.assertEqual(right.short_name_ru, "право")
+        self.assertEqual(legacy.code, "SEC-1")
+
+    def test_link_uses_existing_block_only_for_exact_names(self):
+        block = ServiceBlockClassifier.objects.create(
+            code="ABC",
+            short_name="match",
+            short_name_ru="совпало",
+            position=1,
+        )
+        matched = self._section(self.product, "abc", "match", "совпало")
+        different = self._section(self.other_product, "ABC", "other", "другое")
+
+        link_typical_sections_to_service_blocks(TypicalSection, ServiceBlockClassifier)
+
+        matched.refresh_from_db()
+        different.refresh_from_db()
+        self.assertEqual(ServiceBlockClassifier.objects.filter(code="ABC").count(), 1)
+        self.assertEqual(matched.service_block_id, block.pk)
+        self.assertIsNone(different.service_block_id)
+        self.assertEqual(different.short_name, "other")
+        self.assertEqual(different.code, "ABC")
+
+    def test_link_attaches_system_dsc_without_rewriting_names(self):
+        section = self._section(
+            self.product,
+            "dsc",
+            short_name="Своё",
+            short_name_ru="Свой",
+            is_system=True,
+        )
+
+        link_typical_sections_to_service_blocks(TypicalSection, ServiceBlockClassifier)
+
+        section.refresh_from_db()
+        block = ServiceBlockClassifier.objects.get(code="DSC")
+        self.assertEqual(section.service_block_id, block.pk)
+        self.assertEqual(section.code, "dsc")
+        self.assertEqual(section.short_name, "Своё")
+        self.assertEqual(section.short_name_ru, "Свой")
+        self.assertEqual(block.short_name, "Description")
+
+    def test_create_copies_classifier_and_can_repeat_on_another_product(self):
+        block = ServiceBlockClassifier.objects.create(
+            code="AUD",
+            short_name="audit",
+            short_name_ru="аудит",
+            position=1,
+        )
+        payload = {
+            "service_block": block.pk,
+            "code": "HACK",
+            "short_name": "hacked",
+            "short_name_ru": "взлом",
+            "name_en": "Audit EN",
+            "name_ru": "Аудит RU",
+            "accounting_type": "Раздел",
+        }
+        first = self.client.post(
+            reverse("section_form_create"),
+            {"product": self.product.pk, **payload},
+        )
+        second = self.client.post(
+            reverse("section_form_create"),
+            {"product": self.other_product.pk, **payload},
+        )
+        duplicate = self.client.post(
+            reverse("section_form_create"),
+            {"product": self.product.pk, **payload},
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertContains(duplicate, "У этого продукта уже есть раздел с таким кодом.")
+        created = list(TypicalSection.objects.filter(service_block=block).order_by("product_id"))
+        self.assertEqual([item.product_id for item in created], [self.product.pk, self.other_product.pk])
+        self.assertEqual({item.code for item in created}, {"AUD"})
+        self.assertEqual({item.short_name for item in created}, {"audit"})
+        self.assertEqual({item.short_name_ru for item in created}, {"аудит"})
+
+    def test_edit_keeps_identity_of_unlinked_section(self):
+        section = self._section(self.product, "SEC-OLD", "old-en", "old-ru")
+        response = self.client.post(
+            reverse("section_form_edit", args=[section.pk]),
+            {
+                "product": self.product.pk,
+                "code": "NEW",
+                "short_name": "hacked",
+                "short_name_ru": "взлом",
+                "name_en": "Updated EN",
+                "name_ru": "Обновлённый RU",
+                "accounting_type": "Услуги",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        section.refresh_from_db()
+        self.assertIsNone(section.service_block_id)
+        self.assertEqual(section.code, "SEC-OLD")
+        self.assertEqual(section.short_name, "old-en")
+        self.assertEqual(section.short_name_ru, "old-ru")
+        self.assertEqual(section.name_en, "Updated EN")
+        self.assertEqual(section.accounting_type, "Услуги")
+
+    def test_classifier_rename_updates_linked_short_names_only(self):
+        block = ServiceBlockClassifier.objects.create(
+            code="AUD",
+            short_name="audit",
+            short_name_ru="аудит",
+            position=1,
+        )
+        section = self._section(self.product, "AUD", "audit", "аудит", service_block=block)
+        TypicalSection.objects.filter(pk=section.pk).update(code="aud")
+        block.short_name = "reviewed"
+        block.short_name_ru = "проверено"
+        block.code = "ZZZ"
+        block.save()
+
+        block.refresh_from_db()
+        section.refresh_from_db()
+        self.assertEqual(block.code, "AUD")
+        self.assertEqual(section.code, "aud")
+        self.assertEqual(section.short_name, "reviewed")
+        self.assertEqual(section.short_name_ru, "проверено")
+
+    def test_linked_classifier_cannot_be_deleted(self):
+        block = ServiceBlockClassifier.objects.create(
+            code="AUD",
+            short_name="audit",
+            short_name_ru="аудит",
+            position=1,
+        )
+        self._section(self.product, "AUD", "audit", "аудит", service_block=block)
+        response = self.client.post(reverse("service_block_classifier_delete", args=[block.pk]))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+        self.assertTrue(ServiceBlockClassifier.objects.filter(pk=block.pk).exists())
+        self.assertTrue(TypicalSection.objects.filter(service_block=block).exists())
+
+    def test_csv_upload_skips_unknown_code_without_creating_section(self):
+        csv_file = SimpleUploadedFile(
+            "sections.csv",
+            (
+                "Продукт;Код;Краткое имя EN;Краткое имя RU;"
+                "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
+                "Тип учета\n"
+                "LNK;ZZZ;free;свободный;Free EN;Свободный RU;Раздел\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertIn("не найден в классификаторе", response.json()["warnings"][0])
+        self.assertFalse(TypicalSection.objects.filter(code="ZZZ").exists())
+
+    def test_csv_upload_keeps_identity_of_existing_unlinked_section(self):
+        section = self._section(self.product, "SEC-OLD", "kept-en", "kept-ru", name_en="Old EN", name_ru="Старый RU")
+        csv_file = SimpleUploadedFile(
+            "sections.csv",
+            (
+                "Продукт;Код;Краткое имя EN;Краткое имя RU;"
+                "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
+                "Тип учета\n"
+                "LNK;SEC-OLD;other-en;другое;New EN;Новый RU;Услуги\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 1)
+        self.assertEqual(response.json()["created"], 0)
+        section.refresh_from_db()
+        self.assertIsNone(section.service_block_id)
+        self.assertEqual(section.code, "SEC-OLD")
+        self.assertEqual(section.short_name, "kept-en")
+        self.assertEqual(section.short_name_ru, "kept-ru")
+        self.assertEqual(section.name_en, "New EN")
+        self.assertEqual(section.name_ru, "Новый RU")
+        self.assertEqual(section.accounting_type, "Услуги")
+
+
+class ServiceBlockClassifierExecutorTests(TestCase):
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(
+            username="sbc-executor-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.staff)
+        self.product = Product.objects.create(
+            short_name="EXC",
+            name_en="Executor",
+            display_name="Executor",
+            name_ru="Исполнитель",
+            position=1,
+        )
+        self.other_product = Product.objects.create(
+            short_name="EXC2",
+            name_en="Executor 2",
+            display_name="Executor 2",
+            name_ru="Исполнитель 2",
+            position=2,
+        )
+        self.direction = ExpertiseDirection.objects.create(
+            short_name="ГЭ",
+            name="Горная экспертиза",
+            position=1,
+        )
+        self.other_direction = ExpertiseDirection.objects.create(
+            short_name="ЭЭ",
+            name="Экологическая экспертиза",
+            position=2,
+        )
+        self.geology = ExpertSpecialty.objects.create(
+            specialty="Геология блока",
+            position=1,
+            expertise_dir=self.direction,
+        )
+        self.mining = ExpertSpecialty.objects.create(
+            specialty="Горное дело блока",
+            position=2,
+            expertise_dir=self.direction,
+        )
+        self.ecology = ExpertSpecialty.objects.create(
+            specialty="Экология блока",
+            position=3,
+            expertise_dir=self.other_direction,
+        )
+        self.block = ServiceBlockClassifier.objects.create(
+            code="EXC",
+            short_name="executor",
+            short_name_ru="исполнитель",
+            expertise_dir=self.direction,
+            position=1,
+        )
+
+    def _section(self, product, code="EXC"):
+        return TypicalSection.objects.create(
+            product=product,
+            service_block=self.block,
+            code=code,
+            short_name="executor",
+            short_name_ru="исполнитель",
+            name_en="Name EN",
+            name_ru="Имя RU",
+            accounting_type="Раздел",
+            position=1,
+        )
+
+    def _ranks(self, owner, related="ranked_specialties"):
+        return list(getattr(owner, related).order_by("rank", "id").values_list("specialty_id", "rank"))
+
+    def test_executor_column_follows_accounting_type_and_uses_section_editor(self):
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.block,
+            specialty=self.geology,
+            rank=1,
+        )
+        response = self.client.get(reverse("policy_service_block_classifiers_table"))
+        html = response.content.decode()
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(html.index(">Тип учета<"), html.index(">Направление экспертизы<"))
+        self.assertLess(html.index(">Направление экспертизы<"), html.index(">Исполнитель<"))
+        self.assertContains(response, 'data-inline-type="specialties"', html=False)
+        self.assertContains(response, 'data-specialty-action="add"', html=False)
+        self.assertContains(response, 'data-specialty-action="move"', html=False)
+        self.assertContains(response, 'data-specialty-action="remove"', html=False)
+        self.assertContains(
+            response,
+            reverse("service_block_classifier_specialties_save", args=[self.block.pk]),
+            html=False,
+        )
+        self.assertContains(response, "Геология блока")
+        self.assertContains(response, '"label": "Геология блока"', html=False)
+        self.assertContains(response, '"label": "Горное дело блока"', html=False)
+        self.assertContains(response, f'"expertise_dir": {self.direction.pk}', html=False)
+        self.assertContains(response, f'data-expertise-dir="{self.direction.pk}"', html=False)
+
+    def test_cell_save_replaces_order_without_touching_sections(self):
+        section = self._section(self.product)
+        TypicalSectionSpecialty.objects.create(section=section, specialty=self.mining, rank=1)
+        response = self.client.post(
+            reverse("service_block_classifier_specialties_save", args=[self.block.pk]),
+            {"specialty_id": [self.mining.pk, self.geology.pk, self.ecology.pk, self.mining.pk, ""]},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertEqual(
+            self._ranks(self.block),
+            [(self.mining.pk, 1), (self.geology.pk, 2)],
+        )
+        section.refresh_from_db()
+        self.assertEqual(self._ranks(section), [(self.mining.pk, 1)])
+
+    def test_form_saves_executor_without_changing_linked_section(self):
+        section = self._section(self.product)
+        TypicalSectionSpecialty.objects.create(section=section, specialty=self.geology, rank=1)
+        response = self.client.post(
+            reverse("service_block_classifier_form_edit", args=[self.block.pk]),
+            {
+                "code": "ZZZ",
+                "short_name": "executor",
+                "short_name_ru": "исполнитель",
+                "accounting_type": "Разделы",
+                "expertise_dir": self.direction.pk,
+                "specialty_id": [self.geology.pk, self.ecology.pk, self.mining.pk],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.block.refresh_from_db()
+        self.assertEqual(self.block.code, "EXC")
+        self.assertEqual(
+            self._ranks(self.block),
+            [(self.geology.pk, 1), (self.mining.pk, 2)],
+        )
+        self.assertEqual(self._ranks(section), [(self.geology.pk, 1)])
+
+    def test_executor_list_is_empty_until_expertise_is_chosen(self):
+        create = self.client.get(reverse("service_block_classifier_form_create"))
+        create_selects = re.findall(
+            r'<select name="specialty_id".*?</select>',
+            create.content.decode(),
+            flags=re.S,
+        )
+        self.assertEqual(len(create_selects), 1)
+        self.assertIn("---------", create_selects[0])
+        self.assertNotIn("Геология блока", create_selects[0])
+        self.assertNotIn("Экология блока", create_selects[0])
+
+        self.block.expertise_dir = None
+        self.block.save(update_fields=["expertise_dir"])
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.block,
+            specialty=self.geology,
+            rank=1,
+        )
+        response = self.client.post(
+            reverse("service_block_classifier_specialties_save", args=[self.block.pk]),
+            {"specialty_id": [self.geology.pk, self.mining.pk]},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._ranks(self.block), [])
+
+    def test_executor_choices_belong_to_selected_expertise(self):
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.block,
+            specialty=self.geology,
+            rank=1,
+        )
+        edit = self.client.get(reverse("service_block_classifier_form_edit", args=[self.block.pk]))
+        selects = re.findall(
+            r'<select name="specialty_id".*?</select>',
+            edit.content.decode(),
+            flags=re.S,
+        )
+        self.assertEqual(len(selects), 1)
+        self.assertIn("Геология блока", selects[0])
+        self.assertIn("Горное дело блока", selects[0])
+        self.assertNotIn("Экология блока", selects[0])
+        self.assertIn("selected", selects[0])
+
+        response = self.client.post(
+            reverse("service_block_classifier_form_edit", args=[self.block.pk]),
+            {
+                "code": "EXC",
+                "short_name": "executor",
+                "short_name_ru": "исполнитель",
+                "accounting_type": "Разделы",
+                "expertise_dir": self.other_direction.pk,
+                "specialty_id": [self.geology.pk, self.ecology.pk],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.block.refresh_from_db()
+        self.assertEqual(self.block.expertise_dir_id, self.other_direction.pk)
+        self.assertEqual(self._ranks(self.block), [(self.ecology.pk, 1)])
+
+    def test_backfill_copies_only_unanimous_order_and_keeps_sections(self):
+        same_left = self._section(self.product)
+        same_right = self._section(self.other_product)
+        TypicalSectionSpecialty.objects.create(section=same_left, specialty=self.geology, rank=1)
+        TypicalSectionSpecialty.objects.create(section=same_left, specialty=self.mining, rank=2)
+        TypicalSectionSpecialty.objects.create(section=same_right, specialty=self.geology, rank=1)
+        TypicalSectionSpecialty.objects.create(section=same_right, specialty=self.mining, rank=2)
+        backfill_service_block_executors(
+            TypicalSection,
+            TypicalSectionSpecialty,
+            ServiceBlockClassifierSpecialty,
+        )
+        self.assertEqual(
+            self._ranks(self.block),
+            [(self.geology.pk, 1), (self.mining.pk, 2)],
+        )
+        self.assertEqual(self._ranks(same_left), [(self.geology.pk, 1), (self.mining.pk, 2)])
+
+        conflict = ServiceBlockClassifier.objects.create(
+            code="CNF",
+            short_name="conflict",
+            short_name_ru="конфликт",
+            position=2,
+        )
+        first = TypicalSection.objects.create(
+            product=self.product,
+            service_block=conflict,
+            code="CNF",
+            short_name="conflict",
+            short_name_ru="конфликт",
+            name_en="Conflict",
+            name_ru="Конфликт",
+            accounting_type="Раздел",
+            position=2,
+        )
+        second = TypicalSection.objects.create(
+            product=self.other_product,
+            service_block=conflict,
+            code="CNF",
+            short_name="conflict",
+            short_name_ru="конфликт",
+            name_en="Conflict",
+            name_ru="Конфликт",
+            accounting_type="Раздел",
+            position=1,
+        )
+        TypicalSectionSpecialty.objects.create(section=first, specialty=self.geology, rank=1)
+        TypicalSectionSpecialty.objects.create(section=second, specialty=self.mining, rank=1)
+        backfill_service_block_executors(
+            TypicalSection,
+            TypicalSectionSpecialty,
+            ServiceBlockClassifierSpecialty,
+        )
+        self.assertFalse(conflict.ranked_specialties.exists())
+        self.assertEqual(self._ranks(self.block), [(self.geology.pk, 1), (self.mining.pk, 2)])
+        ServiceBlockClassifierSpecialty.objects.filter(classifier=self.block).delete()
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.block,
+            specialty=self.mining,
+            rank=1,
+        )
+        backfill_service_block_executors(
+            TypicalSection,
+            TypicalSectionSpecialty,
+            ServiceBlockClassifierSpecialty,
+        )
+        self.assertEqual(self._ranks(self.block), [(self.mining.pk, 1)])
+        self.assertEqual(self._ranks(same_left), [(self.geology.pk, 1), (self.mining.pk, 2)])
+
+
+class ExpertiseDirectionDepartmentTests(TestCase):
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(
+            username="expdir-dept-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.staff)
+        self.company = GroupMember.objects.create(
+            short_name="ED Co",
+            country_name="Россия",
+            position=1,
+            is_management_company=True,
+        )
+        self.direction = ExpertiseDirection.objects.create(
+            short_name="ГЭ",
+            name="Горная экспертиза",
+            pricing_method="vpm",
+            position=1,
+        )
+        self.department = OrgUnit.objects.create(
+            company=self.company,
+            unit_type="expertise",
+            department_name="Горное направление",
+            short_name="MINE",
+            level=1,
+            expertise=self.direction,
+            position=1,
+        )
+        self.direction.department = self.department
+        self.direction.save(update_fields=["department"])
+        ExpertiseDirection.objects.create(
+            short_name="ЭК",
+            name="Экология",
+            position=2,
+        )
+
+    def test_table_places_department_and_organization_before_owner(self):
+        response = self.client.get(reverse("policy_expertise_directions_table"))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        headers = [
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", header)).strip()
+            for header in re.findall(r"<th[^>]*>(.*?)</th>", html, flags=re.S)
+        ]
+        self.assertEqual(headers[-3:], ["Подразделение", "Организация", "Владелец"])
+        header_tags = re.findall(r"<th\b([^>]*)>", html, flags=re.S)
+        self.assertGreaterEqual(len(header_tags), 7)
+        self.assertTrue(all("text-nowrap" in tag for tag in header_tags[1:]))
+        self.assertNotIn('class="text-nowrap">ГЭ<', html)
+        self.assertContains(response, "Горное направление")
+        self.assertContains(response, "ED Co")
+        first_row = html[html.index(">ГЭ<"):html.index(">ЭК<")]
+        self.assertIn("Горное направление", first_row)
+        self.assertIn("ED Co", first_row)
+        second_row = html[html.index(">ЭК<"):html.index("</tbody>")]
+        self.assertNotIn("ED Co", second_row)
+
+    def test_direction_with_several_units_splits_pairs_and_groups_the_rest(self):
+        OrgUnit.objects.create(
+            company=self.company,
+            unit_type="expertise",
+            department_name="Экологический сектор",
+            short_name="ECO",
+            level=2,
+            expertise=self.direction,
+            position=2,
+        )
+        response = self.client.get(reverse("policy_expertise_directions_table"))
+        html = response.content.decode()
+        group_rows = re.findall(
+            r'<tr[^>]*data-expdir-group="%s"[^>]*>.*?</tr>' % self.direction.pk,
+            html,
+            flags=re.S,
+        )
+        self.assertEqual(len(group_rows), 2)
+        self.assertIn("expdir-group-has-next", group_rows[0])
+        self.assertIn("expdir-group-continuation", group_rows[1])
+        self.assertEqual(group_rows[0].count('name="expdir-select"'), 1)
+        self.assertNotIn('name="expdir-select"', group_rows[1])
+        self.assertEqual(html.count(">ГЭ<"), 1)
+        self.assertIn("Горное направление", group_rows[0])
+        self.assertIn("Экологический сектор", group_rows[1])
+        self.assertIn("ED Co", group_rows[0])
+        self.assertIn("ED Co", group_rows[1])
+        self.assertIn("Горная экспертиза", group_rows[0])
+        self.assertNotIn("Горная экспертиза", group_rows[1])
+
+        edit = self.client.get(reverse("expertise_dir_form_edit", args=[self.direction.pk]))
+        form_html = edit.content.decode()
+        self.assertIn(">1</span>", form_html)
+        self.assertIn(">2</span>", form_html)
+        self.assertIn('id="expdir-department-2"', form_html)
+        self.assertIn('value="Экологический сектор"', form_html)
+        self.assertIn('value="Горное направление"', form_html)
+        badge_one = form_html.index(">1</span>")
+        department = form_html.index('id="expdir-department"')
+        organization = form_html.index('id="expdir-organization"')
+        badge_two = form_html.index(">2</span>")
+        self.assertLess(badge_one, department)
+        self.assertLess(department, organization)
+        self.assertLess(organization, badge_two)
+
+    def test_separate_mode_puts_management_company_pair_above_earlier_company(self):
+        from group_app.models import ExpertiseManagementMode
+
+        other = GroupMember.objects.create(
+            short_name="Другая организация",
+            country_name="Казахстан",
+            position=0,
+        )
+        OrgUnit.objects.create(
+            company=other,
+            unit_type="expertise",
+            department_name="Отдел другой организации",
+            short_name="OTH",
+            level=2,
+            expertise=self.direction,
+            position=0,
+        )
+        ExpertiseManagementMode.objects.filter(expertise_direction=self.direction).update(
+            mode=ExpertiseManagementMode.MODE_SEPARATE,
+        )
+        response = self.client.get(reverse("policy_expertise_directions_table"))
+        html = response.content.decode()
+        group_rows = re.findall(
+            r'<tr[^>]*data-expdir-group="%s"[^>]*>.*?</tr>' % self.direction.pk,
+            html,
+            flags=re.S,
+        )
+        self.assertEqual(len(group_rows), 2)
+        self.assertIn("Горное направление", group_rows[0])
+        self.assertIn("ED Co", group_rows[0])
+        self.assertIn("Отдел другой организации", group_rows[1])
+        self.assertIn("Другая организация", group_rows[1])
+
+    def test_form_has_locked_organization_field_filled_from_department(self):
+        create = self.client.get(reverse("expertise_dir_form_create"))
+        self.assertEqual(create.status_code, 200)
+        self.assertContains(create, "Связи со структурными подразделениями")
+        self.assertContains(create, "Подразделение")
+        self.assertContains(create, "Организация")
+        self.assertContains(create, 'name="department"', html=False)
+        self.assertContains(create, 'id="expdir-department"', html=False)
+        self.assertNotContains(create, 'id="expdir-department-select"', html=False)
+        html = create.content.decode()
+        department_input = re.search(r'<input[^>]*id="expdir-department"[^>]*>', html).group(0)
+        organization_input = re.search(r'<input[^>]*id="expdir-organization"[^>]*>', html).group(0)
+        self.assertIn("readonly", department_input)
+        self.assertIn("readonly", organization_input)
+        self.assertIn("readonly-field", organization_input)
+        self.assertIn('tabindex="-1"', organization_input)
+        self.assertNotIn('value="ED Co"', organization_input)
+        self.assertNotIn("setExpanded(true)", html)
+
+        edit = self.client.get(reverse("expertise_dir_form_edit", args=[self.direction.pk]))
+        html = edit.content.decode()
+        department_input = re.search(r'<input[^>]*id="expdir-department"[^>]*>', html).group(0)
+        organization_input = re.search(r'<input[^>]*id="expdir-organization"[^>]*>', html).group(0)
+        self.assertIn('value="Горное направление"', department_input)
+        self.assertIn('value="ED Co"', organization_input)
+
+        invalid = self.client.post(
+            reverse("expertise_dir_form_create"),
+            {
+                "short_name": "",
+                "name": "",
+                "department": self.department.pk,
+                "organization": "Попытка переопределить",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        html = invalid.content.decode()
+        organization_input = re.search(r'<input[^>]*id="expdir-organization"[^>]*>', html).group(0)
+        self.assertNotIn("Попытка переопределить", organization_input)
+        self.assertNotIn('value="ED Co"', organization_input)
+
+    def test_organization_display_follows_department_company(self):
+        self.assertEqual(self.direction.organization_display, "ED Co")
+        plain = ExpertiseDirection.objects.get(short_name="ЭК")
+        self.assertEqual(plain.organization_display, "")
+        self.company.short_name = "ED Renamed"
+        self.company.save(update_fields=["short_name"])
+        direction = ExpertiseDirection.objects.get(pk=self.direction.pk)
+        self.assertEqual(direction.organization_display, "ED Renamed")
+
+        response = self.client.post(
+            reverse("expertise_dir_form_create"),
+            {
+                "short_name": "НВ",
+                "name": "Новое направление",
+                "pricing_method": "hours",
+                "specialization_area_suffix": "",
+                "department": self.department.pk,
+                "organization": "Попытка переопределить",
+                "owner_ids": "__group__",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        created = ExpertiseDirection.objects.get(short_name="НВ")
+        self.assertIsNone(created.department_id)
+        self.assertEqual(created.organization_display, "")
+
+    def test_edit_can_clear_department(self):
+        response = self.client.post(
+            reverse("expertise_dir_form_edit", args=[self.direction.pk]),
+            {
+                "short_name": "ГЭ",
+                "name": "Горная экспертиза",
+                "pricing_method": "vpm",
+                "specialization_area_suffix": "",
+                "department": "",
+                "owner_ids": "__group__",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.direction.refresh_from_db()
+        self.assertEqual(self.direction.department_id, self.department.pk)
+        self.assertEqual(self.direction.department_display, "Горное направление")
+        self.assertEqual(self.direction.organization_display, "ED Co")
 
 
 class TypicalSectionPaginationTests(TestCase):
@@ -5162,13 +6440,17 @@ class TypicalSectionViewsTests(TestCase):
         self.assertContains(response, 'id="sections-csv-download-btn"', html=False)
 
     def test_create_section_saves_tkp_exclusion_flag(self):
+        block = ServiceBlockClassifier.objects.create(
+            code="AUD",
+            short_name="audit-en",
+            short_name_ru="audit-ru",
+            position=1,
+        )
         response = self.client.post(
             reverse("section_form_create"),
             {
                 "product": self.product.pk,
-                "code": "SEC-2",
-                "short_name": "audit-en",
-                "short_name_ru": "audit-ru",
+                "service_block": block.pk,
                 "name_en": "Audit EN",
                 "name_ru": "Аудит RU",
                 "accounting_type": "Раздел",
@@ -5177,17 +6459,23 @@ class TypicalSectionViewsTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        section = TypicalSection.objects.get(code="SEC-2")
+        section = TypicalSection.objects.get(code="AUD")
+        self.assertEqual(section.service_block_id, block.pk)
+        self.assertEqual(section.short_name, "audit-en")
         self.assertTrue(section.exclude_from_tkp_autofill)
 
     def test_create_section_auto_creates_system_dsc_first(self):
+        block = ServiceBlockClassifier.objects.create(
+            code="AUT",
+            short_name="auto-en",
+            short_name_ru="auto-ru",
+            position=1,
+        )
         response = self.client.post(
             reverse("section_form_create"),
             {
                 "product": self.product.pk,
-                "code": "SEC-AUTO",
-                "short_name": "auto-en",
-                "short_name_ru": "auto-ru",
+                "service_block": block.pk,
                 "name_en": "Auto EN",
                 "name_ru": "Авто RU",
                 "accounting_type": "Раздел",
@@ -5196,7 +6484,7 @@ class TypicalSectionViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         sections = list(self.product.sections.order_by("position", "id"))
-        self.assertEqual([section.code for section in sections], ["DSC", "SEC-AUTO"])
+        self.assertEqual([section.code for section in sections], ["DSC", "AUT"])
         dsc = sections[0]
         self.assertTrue(dsc.is_system)
         self.assertEqual(dsc.short_name, "Description")
@@ -5296,11 +6584,17 @@ class TypicalSectionViewsTests(TestCase):
         self.assertContains(response, "SEC Sections")
 
     def test_section_csv_upload_accepts_rows_without_legacy_executor_column(self):
+        ServiceBlockClassifier.objects.create(
+            code="SC3",
+            short_name="section-3",
+            short_name_ru="section-3-ru",
+            position=1,
+        )
         csv_file = SimpleUploadedFile(
             "sections.csv",
             (
                 "Продукт;Код;Краткое имя EN;Краткое имя RU;Наименование EN;Наименование RU;Тип учета;Направление экспертизы\n"
-                "SEC;SEC-3;section-3;section-3-ru;Section 3;Раздел 3;Раздел;\n"
+                "SEC;SC3;чужое;чужое;Section 3;Раздел 3;Раздел;\n"
             ).encode("utf-8"),
             content_type="text/csv",
         )
@@ -5310,7 +6604,9 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
-        self.assertTrue(TypicalSection.objects.filter(code="SEC-3").exists())
+        section = TypicalSection.objects.get(code="SC3")
+        self.assertEqual(section.short_name, "section-3")
+        self.assertEqual(section.short_name_ru, "section-3-ru")
 
     def test_section_csv_upload_skips_manual_dsc_and_updates_system_row(self):
         csv_file = SimpleUploadedFile(
@@ -5339,6 +6635,12 @@ class TypicalSectionViewsTests(TestCase):
             country_code="643",
             country_alpha2="RU",
             position=1,
+            is_management_company=True,
+        )
+        expertise = ExpertiseDirection.objects.create(
+            name="Налоги",
+            short_name="TAX",
+            position=1,
         )
         department = OrgUnit.objects.create(
             company=owner,
@@ -5346,11 +6648,7 @@ class TypicalSectionViewsTests(TestCase):
             department_name="Налоговый департамент",
             short_name="TAX-DEPT",
             unit_type="expertise",
-            position=1,
-        )
-        expertise = ExpertiseDirection.objects.create(
-            name="Налоги",
-            short_name="TAX",
+            expertise=expertise,
             position=1,
         )
         specialty = ExpertSpecialty.objects.create(
@@ -5488,13 +6786,19 @@ class TypicalSectionViewsTests(TestCase):
             specialty="Трансфертное ценообразование",
             position=2,
         )
+        ServiceBlockClassifier.objects.create(
+            code="SC5",
+            short_name="tax-dd",
+            short_name_ru="нал-dd",
+            position=1,
+        )
         csv_file = SimpleUploadedFile(
             "sections.csv",
             (
                 "Продукт;Код;Краткое имя EN;Краткое имя RU;"
                 "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
                 "Тип учета;Исполнитель;Экспертиза;Подразделение;ТКП\n"
-                "SEC;SEC-5;tax-dd;нал-dd;Tax DD;Налоговый ДД;Услуги;"
+                "SEC;SC5;tax-dd;нал-dd;Tax DD;Налоговый ДД;Услуги;"
                 "Налоговый due diligence, Трансфертное ценообразование;TAX;Налоговый департамент;Да\n"
             ).encode("utf-8"),
             content_type="text/csv",
@@ -5505,9 +6809,9 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
-        section = TypicalSection.objects.get(code="SEC-5")
+        section = TypicalSection.objects.get(code="SC5")
         self.assertEqual(section.expertise_dir, expertise)
-        self.assertEqual(section.expertise_direction, department)
+        self.assertIsNone(section.expertise_direction_id)
         self.assertTrue(section.exclude_from_tkp_autofill)
         self.assertEqual(
             list(section.ranked_specialties.values_list("specialty", flat=True)),
@@ -5515,9 +6819,15 @@ class TypicalSectionViewsTests(TestCase):
         )
 
     def test_section_csv_upload_updates_existing_section_by_product_and_code(self):
+        block = ServiceBlockClassifier.objects.create(
+            code="UPD",
+            short_name="new-en",
+            short_name_ru="new-ru",
+            position=1,
+        )
         section = TypicalSection.objects.create(
             product=self.product,
-            code="SEC-UPD",
+            code="UPD",
             short_name="old-en",
             short_name_ru="old-ru",
             name_en="Old EN",
@@ -5532,7 +6842,7 @@ class TypicalSectionViewsTests(TestCase):
                 "Продукт;Код;Краткое имя EN;Краткое имя RU;"
                 "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
                 "Тип учета;Исполнитель;Экспертиза;Подразделение;ТКП\n"
-                "SEC;SEC-UPD;new-en;new-ru;New EN;Новый раздел;Услуги;;;;Да\n"
+                "SEC;UPD;ignored-en;ignored-ru;New EN;Новый раздел;Услуги;;;;Да\n"
             ).encode("utf-8"),
             content_type="text/csv",
         )
@@ -5543,6 +6853,7 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 0)
         self.assertEqual(response.json()["updated"], 1)
         section.refresh_from_db()
+        self.assertEqual(section.service_block_id, block.pk)
         self.assertEqual(section.short_name, "new-en")
         self.assertEqual(section.short_name_ru, "new-ru")
         self.assertEqual(section.name_en, "New EN")
@@ -5577,13 +6888,19 @@ class TypicalSectionViewsTests(TestCase):
             specialty="Налоговый due diligence",
             position=1,
         )
+        ServiceBlockClassifier.objects.create(
+            code="SC6",
+            short_name="tax-dd",
+            short_name_ru="нал-dd",
+            position=1,
+        )
         csv_file = SimpleUploadedFile(
             "sections.csv",
             (
                 "Продукт;Код;Краткое имя EN;Краткое имя RU;"
                 "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
                 "Тип учета;Исполнитель;Экспертиза;Подразделение;ТКП\n"
-                "SEC;SEC-6;tax-dd;нал-dd;Tax DD;Налоговый ДД;Услуги;"
+                "SEC;SC6;tax-dd;нал-dd;Tax DD;Налоговый ДД;Услуги;"
                 "Налоговый due diligence, Налоговый due diligence;TAX;Налоговый департамент;Да\n"
             ).encode("utf-8"),
             content_type="text/csv",
@@ -5595,7 +6912,7 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 0)
         self.assertEqual(len(response.json()["warnings"]), 1)
         self.assertIn("ошибка сохранения", response.json()["warnings"][0])
-        self.assertFalse(TypicalSection.objects.filter(code="SEC-6").exists())
+        self.assertFalse(TypicalSection.objects.filter(code="SC6").exists())
         self.assertFalse(TypicalSectionSpecialty.objects.filter(specialty=specialty).exists())
 
 
@@ -6652,7 +7969,12 @@ class TypicalServiceCompositionViewsTests(TestCase):
             '<span class="ql-font-calibri" style="color: #ff0000; background-color: rgb(1, 2, 3)">Безопасно</span>',
             html=False,
         )
-        self.assertNotContains(response, "<script", html=False)
+        self.assertContains(
+            response,
+            '<script type="application/json" data-policy-inline-options>',
+            html=False,
+        )
+        self.assertNotContains(response, "<script>alert(1)</script>", html=False)
         self.assertNotContains(response, "alert(1)", html=False)
         self.assertNotContains(response, "onclick", html=False)
         self.assertNotContains(response, "bad-class", html=False)
@@ -7355,9 +8677,24 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertContains(response, "Сроки предоставления исходных данных")
         self.assertContains(response, "Срок подготовки Предварительного отчёта")
         self.assertContains(response, "Срок подготовки Итогового отчёта")
-        self.assertContains(response, ">0,0 нед.<", html=False)
-        self.assertContains(response, ">1,5 мес.<", html=False)
-        self.assertContains(response, ">3,0 нед.<", html=False)
+        self.assertContains(response, 'data-inline-value="0.0">0,0</td>', html=False)
+        self.assertContains(
+            response,
+            'data-inline-field="source_data_term_unit" data-inline-type="select" data-inline-value="weeks">нед.</td>',
+            html=False,
+        )
+        self.assertContains(response, 'data-inline-value="1.5">1,5</td>', html=False)
+        self.assertContains(
+            response,
+            'data-inline-field="preliminary_report_term_unit" data-inline-type="select" data-inline-value="months">мес.</td>',
+            html=False,
+        )
+        self.assertContains(response, 'data-inline-value="3.0">3,0</td>', html=False)
+        self.assertContains(
+            response,
+            'data-inline-field="final_report_term_unit" data-inline-type="select" data-inline-value="weeks">нед.</td>',
+            html=False,
+        )
         self.assertContains(response, 'id="typical-service-terms-actions"', html=False)
         self.assertContains(response, 'id="typical-service-terms-gantt-edit-btn"', html=False)
         self.assertContains(response, 'id="typical-service-term-gantt-editor"', html=False)

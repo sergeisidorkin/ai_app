@@ -8,7 +8,7 @@
 <form
     method="post"
     hx-post="{% if action == 'create' %}{% url 'proposal_variable_form_create' %}{% else %}{% url 'proposal_variable_form_edit' variable.pk %}{% endif %}"
-    hx-target="#proposals-pane"
+    hx-target="#proposal-variables-section"
     hx-swap="outerHTML">
   <div class="modal-body">
     {% csrf_token %}
@@ -28,16 +28,14 @@
     {% if form.is_computed %}
     <div class="mb-3">
       <label class="form-label">Тип</label>
-      <input type="text" class="form-control" readonly tabindex="-1"
-             style="background-color:#f8f9fa; color:#6c757d;"
+      <input type="text" class="form-control readonly-field" readonly tabindex="-1"
              value="Расчётное поле">
     </div>
     {% endif %}
 
     <div class="mb-3">
       <label class="form-label">Связь</label>
-      <input type="text" class="form-control" id="id_proposal_var_binding_display" readonly tabindex="-1"
-             style="background-color:#f8f9fa; color:#6c757d;"
+      <input type="text" class="form-control readonly-field" id="id_proposal_var_binding_display" readonly tabindex="-1"
              value="{% if form.is_computed %}Расчётное поле{% else %}{{ variable.binding_display|default:'' }}{% endif %}">
     </div>
 

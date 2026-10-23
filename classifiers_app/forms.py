@@ -5,6 +5,8 @@ import re
 from django import forms
 from django.db.models import Max, Q
 
+from core.forms import locked_attrs
+
 from .models import (
     OKSMCountry,
     OKVCurrency,
@@ -313,13 +315,7 @@ class LegalEntityIdentifierForm(forms.ModelForm):
     code = forms.CharField(
         label="Код",
         required=False,
-        widget=forms.TextInput(attrs={
-            "class": "form-control",
-            "readonly": True,
-            "tabindex": "-1",
-            "style": "background-color:#e9ecef; color:#6c757d;",
-            "id": "lei-code-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(id="lei-code-field")),
     )
 
     def __init__(self, *args, **kwargs):
@@ -352,13 +348,7 @@ class PhysicalEntityIdentifierForm(forms.ModelForm):
     code = forms.CharField(
         label="Код",
         required=False,
-        widget=forms.TextInput(attrs={
-            "class": "form-control",
-            "readonly": True,
-            "tabindex": "-1",
-            "style": "background-color:#e9ecef; color:#6c757d;",
-            "id": "pei-code-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(id="pei-code-field")),
     )
 
     def __init__(self, *args, **kwargs):
@@ -475,12 +465,7 @@ class RussianFederationSubjectCodeForm(forms.ModelForm):
     oktmo_code = forms.CharField(
         label="Код региона ОКТМО",
         required=False,
-        widget=forms.TextInput(attrs={
-            "class": "form-control",
-            "readonly": True,
-            "tabindex": "-1",
-            "style": "background-color:#f8f9fa; color:#6c757d;",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
 
     def __init__(self, *args, **kwargs):
@@ -548,7 +533,7 @@ class BusinessEntityIdentifierRecordForm(forms.ModelForm):
         label="Актуален",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control", "readonly": True, "tabindex": "-1", "style": "background-color:#f8f9fa; color:#6c757d;"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     registration_date = forms.DateField(
         label="Дата регистрации",
@@ -723,7 +708,7 @@ class BusinessEntityLegalAddressRecordForm(forms.ModelForm):
         label="Актуален",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control", "readonly": True, "tabindex": "-1", "style": "background-color:#f8f9fa; color:#6c757d;"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
 
     def __init__(self, *args, **kwargs):
@@ -894,27 +879,13 @@ class BusinessEntityRelationRecordForm(forms.ModelForm):
         label="ID-REO",
         required=False,
         disabled=True,
-        widget=forms.TextInput(
-            attrs={
-                "class": "form-control",
-                "readonly": True,
-                "tabindex": "-1",
-                "style": "background-color:#f8f9fa; color:#6c757d;",
-            }
-        ),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     merge_target_preview = forms.CharField(
         label="К ID-BSN",
         required=False,
         disabled=True,
-        widget=forms.TextInput(
-            attrs={
-                "class": "form-control",
-                "readonly": True,
-                "tabindex": "-1",
-                "style": "background-color:#f8f9fa; color:#6c757d;",
-            }
-        ),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     merge_target_name = forms.CharField(
         label="Наименование",
@@ -1157,7 +1128,7 @@ class LivingWageForm(forms.ModelForm):
         model = LivingWage
         fields = ["country", "region", "amount", "currency", "approval_date", "expiry_date", "source"]
         widgets = {
-            "currency": forms.TextInput(attrs={"class": "form-control", "placeholder": "Валюта", "readonly": True, "tabindex": "-1", "style": "background-color:#f8f9fa; color:#6c757d;"}),
+            "currency": forms.TextInput(attrs=locked_attrs(placeholder="Валюта")),
             "approval_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "expiry_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "source": forms.Textarea(attrs={"class": "form-control", "placeholder": "Источник", "rows": 3}),

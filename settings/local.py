@@ -48,6 +48,13 @@ if not DSH_SORT_LOCAL_ROOTS:
         str(BASE_DIR / "tmp"),
     )
 REPORT_CHECK_ALLOW_LOCAL_FOLDER = True
+CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER = True
+# Под тестами раскладка строк оценивается по метрикам: ONLYOFFICE и LibreOffice не запускаются.
+# Медиа тестов пишется во временный каталог, чтобы загрузка образцов не затирала файлы локальной базы.
+if "test" in sys.argv or any("pytest" in arg for arg in sys.argv):
+    import tempfile
+    REPORT_LAYOUT_RENDERER = "estimate"
+    MEDIA_ROOT = tempfile.mkdtemp(prefix="ai-app-test-media-")
 if not REPORT_CHECK_LOCAL_ROOTS:
     REPORT_CHECK_LOCAL_ROOTS = (
         str(Path.home()),

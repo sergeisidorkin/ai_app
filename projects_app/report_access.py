@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from experts_app.models import ExpertProfile
 from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP
 
 from .models import Performer, ProjectRegistration
-
-_UNSET_DIRECTION_LABEL = "не установлено"
 
 
 def _staff_user(user) -> bool:
@@ -79,16 +76,6 @@ def is_project_manager_of(user, registration) -> bool:
     return bool(name) and _normalize(getattr(registration, "project_manager", "")) == name
 
 
-def _is_unset_direction(direction) -> bool:
-    if direction is None:
-        return True
-    labels = (
-        getattr(direction, "department_name", ""),
-        getattr(direction, "short_name", ""),
-    )
-    return any(str(label or "").strip().casefold() == _UNSET_DIRECTION_LABEL for label in labels)
-
-
 def _is_own_assignment(employee, performer) -> bool:
     if not employee or not performer:
         return False
@@ -98,43 +85,54 @@ def _is_own_assignment(employee, performer) -> bool:
     return bool(name) and _normalize(performer.executor) == name
 
 
-def _direction_expert_employee_ids(head_employee) -> set[int]:
-    department_id = getattr(head_employee, "department_id", None)
-    if not department_id:
+def _performer_operation_unit(performer):
+    from group_app.expertise_management import operation_unit
+
+    section = getattr(performer, "typical_section", None)
+    direction_id = getattr(section, "expertise_dir_id", None)
+    if not direction_id:
+        return None
+    registration = getattr(performer, "registration", None)
+    return operation_unit(direction_id, getattr(registration, "group_member", None))
+
+
+def _direction_head_registration_ids(head_employee) -> set[int]:
+    """Проекты, где подразделение руководителя вернулось для экспертизы раздела."""
+    from group_app.expertise_management import ExpertiseAssignmentIndex
+    from group_app.models import ExpertiseManagementMode
+
+    unit = getattr(head_employee, "department", None)
+    if unit is None or not unit.expertise_id or (unit.level or 1) == 1:
         return set()
-    ids = set()
-    profiles = (
-        ExpertProfile.objects
-        .select_related("expertise_direction")
-        .filter(expertise_direction_id=department_id)
+    direction_id = unit.expertise_id
+    index = ExpertiseAssignmentIndex([direction_id])
+    if index.mode_for(direction_id) == ExpertiseManagementMode.MODE_MANAGEMENT_COMPANY:
+        resolved = index.operation_unit(direction_id, None)
+        if resolved is None or resolved.pk != unit.pk:
+            return set()
+        return set(
+            Performer.objects.filter(typical_section__expertise_dir_id=direction_id)
+            .values_list("registration_id", flat=True)
+        )
+    resolved = index.operation_unit(direction_id, unit.company)
+    if resolved is None or resolved.pk != unit.pk:
+        return set()
+    return set(
+        Performer.objects.filter(
+            typical_section__expertise_dir_id=direction_id,
+            registration__group_member_id=unit.company_id,
+        ).values_list("registration_id", flat=True)
     )
-    for profile in profiles:
-        if _is_unset_direction(profile.expertise_direction):
-            continue
-        if profile.employee_id:
-            ids.add(profile.employee_id)
-    return ids
 
 
 def _is_direction_expert_assignment(head_employee, performer) -> bool:
-    if not head_employee or not performer or not performer.employee_id:
+    if not head_employee or not performer:
         return False
     department_id = getattr(head_employee, "department_id", None)
     if not department_id:
         return False
-    profile = getattr(getattr(performer, "employee", None), "expert_profile", None)
-    if profile is None:
-        profile = (
-            ExpertProfile.objects
-            .select_related("expertise_direction")
-            .filter(employee_id=performer.employee_id)
-            .first()
-        )
-    if profile is None or not profile.expertise_direction_id:
-        return False
-    if _is_unset_direction(profile.expertise_direction):
-        return False
-    return profile.expertise_direction_id == department_id
+    unit = _performer_operation_unit(performer)
+    return bool(unit and unit.pk == department_id)
 
 
 def _can_act_on_performer(user, performer) -> bool:
@@ -240,13 +238,7 @@ def report_visible_registration_ids(user):
                 name_qs = name_qs.filter(participation_response=Performer.ParticipationResponse.CONFIRMED)
             ids.update(name_qs.values_list("registration_id", flat=True))
         if is_direction_head_user(user):
-            expert_ids = _direction_expert_employee_ids(employee)
-            if expert_ids:
-                ids.update(
-                    Performer.objects
-                    .filter(employee_id__in=expert_ids)
-                    .values_list("registration_id", flat=True)
-                )
+            ids.update(_direction_head_registration_ids(employee))
         pm_q = None
         prs = _normalize(getattr(employee, "formatted_prs_id", "") or "")
         if prs:
@@ -291,23 +283,37 @@ def can_adjust_report_findings(user, upload) -> bool:
     return int(department_id) in upload_org_direction_ids(upload)
 
 
-def _row_direction_ids(row) -> set[int]:
+def _operation_unit_ids_for_sections(sections, group_member):
+    from group_app.expertise_management import ExpertiseAssignmentIndex
+
+    sections = [section for section in sections if section is not None and getattr(section, "expertise_dir_id", None)]
+    index = ExpertiseAssignmentIndex(section.expertise_dir_id for section in sections)
     ids = set()
+    for section in sections:
+        unit = index.operation_unit(section.expertise_dir_id, group_member)
+        if unit is not None:
+            ids.add(unit.pk)
+    return ids
+
+
+def _row_direction_ids(row) -> set[int]:
+    registration = getattr(row, "registration", None)
+    group_member = getattr(registration, "group_member", None)
     performer = getattr(row, "performer", None)
     section = getattr(performer, "typical_section", None) if performer is not None else getattr(row, "typical_section", None)
-    direction_id = getattr(section, "expertise_direction_id", None)
-    if direction_id:
-        ids.add(int(direction_id))
-    if ids and not getattr(row, "is_all_sections", False) and not getattr(row, "is_full_report", False):
-        return ids
+    if section is not None and getattr(section, "expertise_dir_id", None) and not getattr(row, "is_all_sections", False) and not getattr(row, "is_full_report", False):
+        return _operation_unit_ids_for_sections([section], group_member)
     performer_ids = list(getattr(row, "performer_ids", None) or [])
+    sections = []
     if performer_ids:
-        ids.update(
-            Performer.objects.filter(pk__in=performer_ids)
-            .exclude(typical_section__expertise_direction_id=None)
-            .values_list("typical_section__expertise_direction_id", flat=True)
-        )
-    return {int(item) for item in ids if item}
+        sections = [
+            item.typical_section
+            for item in Performer.objects.select_related("typical_section").filter(pk__in=performer_ids)
+            if item.typical_section_id
+        ]
+    elif section is not None:
+        sections = [section]
+    return _operation_unit_ids_for_sections(sections, group_member)
 
 
 def _direction_head_sees_row(user, row) -> bool:

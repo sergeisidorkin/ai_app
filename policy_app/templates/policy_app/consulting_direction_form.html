@@ -443,7 +443,7 @@
       + '<div class="catalog-editor-row-grid subtype-grid">'
       + '<select class="form-select js-subtype-kind">' + buildKindOptions(item.consulting_type) + '</select>'
       + '<select class="form-select js-subtype-service-type">' + buildServiceTypeOptions(item.consulting_type, item.service_type) + '</select>'
-      + '<input type="text" class="form-control js-subtype-code" placeholder="Код" value="' + (item.code || '').replace(/"/g, '&quot;') + '" readonly>'
+      + '<input type="text" class="form-control js-subtype-code readonly-field" placeholder="Код" value="' + (item.code || '').replace(/"/g, '&quot;') + '" readonly tabindex="-1">'
       + '<input type="text" class="form-control js-subtype-name" placeholder="Подтип услуги" value="' + (item.name || '').replace(/"/g, '&quot;') + '">'
       + '</div>'
       + '</div>'

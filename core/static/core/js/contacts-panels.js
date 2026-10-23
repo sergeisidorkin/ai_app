@@ -1402,6 +1402,9 @@
     if (action === 'edit') {
       var editUrl = checked[0].closest('tr') && checked[0].closest('tr').dataset ? checked[0].closest('tr').dataset.editUrl : '';
       if (!editUrl) return;
+      // После закрытия модалки выделение снимается (table-selection.js).
+      try { delete window.__contactsTableSel[name]; } catch (_) { window.__contactsTableSel[name] = []; }
+      if (window.TableSelection) window.TableSelection.clearOnModalHide('contacts-modal', name, paneOf(panel));
       openModalContent(editUrl, '#contacts-modal .modal-content');
       return;
     }
@@ -1412,6 +1415,7 @@
         var row = item.closest('tr');
         return row && row.dataset ? row.dataset.deleteUrl : '';
       }).filter(Boolean);
+      var progress = window.TableActionProgress ? window.TableActionProgress.begin(checked) : null;
       Promise.resolve().then(async function () {
         for (var i = 0; i < deleteUrls.length; i++) {
           var response = await fetch(deleteUrls[i], {
@@ -1431,11 +1435,21 @@
         if (name === 'prs-select') await refreshTable('tel-select');
         if (name === 'prs-select') await refreshTable('eml-select');
         if (name === 'prs-select') await refreshTable('spc-select');
-      });
+      }).finally(function () { if (progress) progress.end(); });
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder && window.__queuedRowOrder.handleMoveAction({
+        checked: checked,
+        action: action,
+        refresh: function () {
+          rememberSelection(name);
+          return refreshTable(name).then(function () { restoreSelection(name); });
+        },
+      })) {
+        return;
+      }
       rememberSelection(name);
       var urls = checked.map(function (item) {
         var row = item.closest('tr');

@@ -1,10 +1,11 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models, transaction
 
 DEPARTMENT_HEAD_GROUP = "Руководитель направления"
 PROJECTS_HEAD_GROUP = "Руководитель проектов"
+PROJECTS_COORDINATOR_GROUP = "Координатор проектов"
 ADMIN_GROUP = "Администратор"
 DIRECTOR_GROUP = "Директор"
 DIRECTION_DIRECTOR_GROUP = "Директор направления"
@@ -13,6 +14,7 @@ LAWYER_GROUP = "Юрист"
 MANAGER_GROUPS = (
     DEPARTMENT_HEAD_GROUP,
     PROJECTS_HEAD_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
 )
 DIRECTOR_GROUPS = (
     DIRECTOR_GROUP,
@@ -21,6 +23,7 @@ DIRECTOR_GROUPS = (
 ROLE_GROUPS_ORDER = (
     DEPARTMENT_HEAD_GROUP,
     PROJECTS_HEAD_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
     ADMIN_GROUP,
     EXPERT_GROUP,
     DIRECTOR_GROUP,
@@ -494,6 +497,14 @@ class TypicalSection(models.Model):
         "Исключить из автозаполнения в ТКП",
         default=False,
     )
+    service_block = models.ForeignKey(
+        "policy_app.ServiceBlockClassifier",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="typical_sections",
+        verbose_name="Блок услуг",
+    )
     is_system = models.BooleanField("Системный раздел", default=False, db_index=True)
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
@@ -512,9 +523,29 @@ class TypicalSection(models.Model):
     def __str__(self):
         return f"{self.product.short_name}:{self.code}"
 
+    def save(self, *args, **kwargs):
+        if self.service_block_id:
+            block = self.service_block
+            self.code = block.code
+            self.short_name = block.short_name
+            self.short_name_ru = block.short_name_ru
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = list(
+                    set(update_fields) | {"service_block", "code", "short_name", "short_name_ru"}
+                )
+        super().save(*args, **kwargs)
+
     @property
     def is_system_dsc(self):
         return self.is_system and is_system_dsc_code(self.code)
+
+    @property
+    def managed_department_display(self):
+        direction = self.expertise_dir if self.expertise_dir_id else None
+        if direction is None:
+            return ""
+        return direction.department_display
 
 
 class TypicalSectionSpecialty(models.Model):
@@ -559,8 +590,16 @@ def ensure_system_dsc_section(product):
             )
             sections.append(section)
 
+        block = ensure_dsc_service_block()
+        defaults = dict(SYSTEM_DSC_SECTION_DEFAULTS)
+        defaults["code"] = block.code
+        defaults["short_name"] = block.short_name
+        defaults["short_name_ru"] = block.short_name_ru
         changed_fields = []
-        for field, value in SYSTEM_DSC_SECTION_DEFAULTS.items():
+        if section.service_block_id != block.pk:
+            section.service_block = block
+            changed_fields.append("service_block")
+        for field, value in defaults.items():
             if getattr(section, field) != value:
                 setattr(section, field, value)
                 changed_fields.append(field)
@@ -839,6 +878,14 @@ class ExpertiseDirection(models.Model):
     specialization_area = models.CharField(
         "Область специализации", max_length=512, blank=True, default=""
     )
+    department = models.ForeignKey(
+        "group_app.OrgUnit",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="department_expertise_directions",
+        verbose_name="Подразделение",
+    )
     owners = models.ManyToManyField(
         "group_app.GroupMember",
         blank=True,
@@ -859,6 +906,29 @@ class ExpertiseDirection(models.Model):
     def __str__(self):
         return self.name
 
+    def _managed_units(self):
+        cached = getattr(self, "_managed_display_units", None)
+        if cached is not None:
+            return cached
+        from group_app.expertise_management import display_units
+
+        units = display_units(self)
+        self._managed_display_units = units
+        return units
+
+    @property
+    def department_display(self):
+        from group_app.expertise_management import format_departments
+
+        return format_departments(self._managed_units())
+
+    @property
+    def organization_display(self):
+        """Компании подразделений, связанных с направлением в оргструктуре, с учётом режима."""
+        from group_app.expertise_management import format_organizations
+
+        return format_organizations(self._managed_units())
+
     @property
     def owner_display(self):
         if self.is_group_owner:
@@ -868,6 +938,159 @@ class ExpertiseDirection(models.Model):
             owners = self.owners.only("id", "short_name", "position").order_by("position", "id")
         names = [owner.short_name for owner in owners]
         return ", ".join(names) if names else ""
+
+
+SERVICE_BLOCK_CODE_FORMAT_MESSAGE = "Код должен состоять ровно из трёх латинских букв."
+SERVICE_BLOCK_CODE_UNIQUE_MESSAGE = "Блок услуг с таким кодом уже существует (без учёта регистра)."
+
+
+def normalize_service_block_code(value):
+    """Код хранится в верхнем регистре, поэтому уникальность в БД не зависит от регистра."""
+    return str(value or "").strip().upper()
+
+
+class ServiceBlockClassifier(models.Model):
+    """Единый классификатор типовых блоков услуг (будущий источник истины для TypicalSection)."""
+
+    ACCOUNTING_TYPE_CHOICES = [
+        ("Разделы", "Разделы"),
+        ("Управление", "Управление"),
+        ("Материалы", "Материалы"),
+    ]
+
+    # Ровно три латинские буквы (без цифр, пробелов и знаков).
+    code_validator = RegexValidator(
+        regex=r"^[A-Za-z]{3}$",
+        message=SERVICE_BLOCK_CODE_FORMAT_MESSAGE,
+    )
+
+    code = models.CharField(
+        "Код",
+        max_length=3,
+        unique=True,
+        validators=[code_validator],
+        help_text="Ровно три латинские буквы; сравнение без учёта регистра.",
+        error_messages={
+            "unique": SERVICE_BLOCK_CODE_UNIQUE_MESSAGE,
+            "max_length": SERVICE_BLOCK_CODE_FORMAT_MESSAGE,
+        },
+    )
+    short_name = models.CharField("Краткое имя EN", max_length=64)
+    short_name_ru = models.CharField("Краткое имя RU", max_length=128, blank=True, default="")
+    accounting_type = models.CharField(
+        "Тип учета", max_length=128, choices=ACCOUNTING_TYPE_CHOICES, default="Разделы"
+    )
+    expertise_dir = models.ForeignKey(
+        "policy_app.ExpertiseDirection",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="service_block_classifiers",
+        verbose_name="Экспертиза",
+    )
+    expertise_direction = models.ForeignKey(
+        "group_app.OrgUnit",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="service_block_classifiers",
+        verbose_name="Подразделение",
+    )
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        verbose_name = "Классификатор типовых блоков услуг"
+        verbose_name_plural = "Классификатор типовых блоков услуг"
+
+    def __str__(self):
+        return f"{self.code} {self.short_name}".strip()
+
+    @property
+    def department_display(self):
+        direction = self.expertise_dir if self.expertise_dir_id else None
+        return direction.department_display if direction is not None else ""
+
+    @property
+    def organization_display(self):
+        direction = self.expertise_dir if self.expertise_dir_id else None
+        return direction.organization_display if direction is not None else ""
+
+    def clean(self):
+        self.code = normalize_service_block_code(self.code)
+        super().clean()
+
+    def save(self, *args, **kwargs):
+        stored_code = None
+        if self.pk:
+            stored_code = (
+                type(self).objects.filter(pk=self.pk).values_list("code", flat=True).first()
+            )
+        self.code = stored_code or normalize_service_block_code(self.code)
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = list(set(update_fields) | {"code"})
+        super().save(*args, **kwargs)
+        self.sync_linked_section_names()
+
+    def sync_linked_section_names(self):
+        """Краткие имена связанных разделов повторяют классификатор. Код раздела не меняется."""
+        from django.utils import timezone
+
+        TypicalSection.objects.filter(service_block_id=self.pk).exclude(
+            short_name=self.short_name,
+            short_name_ru=self.short_name_ru,
+        ).update(
+            short_name=self.short_name,
+            short_name_ru=self.short_name_ru,
+            updated_at=timezone.now(),
+        )
+
+
+class ServiceBlockClassifierSpecialty(models.Model):
+    """Упорядоченный исполнитель блока. Не записывается в типовые разделы."""
+
+    classifier = models.ForeignKey(
+        ServiceBlockClassifier,
+        on_delete=models.CASCADE,
+        related_name="ranked_specialties",
+    )
+    specialty = models.ForeignKey(
+        "experts_app.ExpertSpecialty",
+        on_delete=models.CASCADE,
+        related_name="service_block_classifier_links",
+    )
+    rank = models.PositiveIntegerField("Ранг", default=1)
+
+    class Meta:
+        ordering = ["rank", "id"]
+        unique_together = [("classifier", "specialty")]
+        verbose_name = "Специальность блока услуг"
+        verbose_name_plural = "Специальности блока услуг"
+
+    def __str__(self):
+        return f"{self.classifier} — {self.specialty} (#{self.rank})"
+
+
+def ensure_dsc_service_block():
+    """Одна строка классификатора для системного раздела DSC."""
+    from django.db.models import Max
+
+    code = normalize_service_block_code(SYSTEM_DSC_SECTION_CODE)
+    block = ServiceBlockClassifier.objects.filter(code=code).first()
+    if block is not None:
+        return block
+    position = (ServiceBlockClassifier.objects.aggregate(m=Max("position"))["m"] or 0) + 1
+    return ServiceBlockClassifier.objects.create(
+        code=code,
+        short_name=SYSTEM_DSC_SECTION_DEFAULTS["short_name"],
+        short_name_ru=SYSTEM_DSC_SECTION_DEFAULTS["short_name_ru"],
+        accounting_type="Разделы",
+        position=position,
+    )
 
 
 class Grade(models.Model):

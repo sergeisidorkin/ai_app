@@ -16,6 +16,7 @@ from policy_app.models import (
     DIRECTOR_GROUPS,
     EXPERT_GROUP,
     LAWYER_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
     PROJECTS_HEAD_GROUP,
 )
 from users_app.models import Employee
@@ -62,7 +63,7 @@ def home_entry(request):
         or employee_role == ADMIN_GROUP
     )
     can_access_connections = (not is_expert) or (
-        employee_role in {PROJECTS_HEAD_GROUP, DEPARTMENT_HEAD_GROUP}
+        employee_role in {PROJECTS_HEAD_GROUP, PROJECTS_COORDINATOR_GROUP, DEPARTMENT_HEAD_GROUP}
     )
     smtp_only_connections = is_department_head
     context = {

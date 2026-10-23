@@ -89,11 +89,10 @@
               <span class="badge rounded-circle d-flex align-items-center justify-content-center brl-split-badge"
                     style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ forloop.counter }}</span>
               <input type="text"
-                     class="form-control"
+                     class="form-control readonly-field"
                      value="{{ row.preview }}"
                      readonly
-                     tabindex="-1"
-                     style="background-color:#f8f9fa; color:#6c757d;">
+                     tabindex="-1">
               <input type="hidden" name="split_target_existing_ids" value="{{ row.existing_id }}">
             </div>
             <div style="margin-left:26px;">
@@ -195,7 +194,7 @@
       '<div class="d-flex align-items-center gap-2 mb-2">'
       + '<span class="badge rounded-circle d-flex align-items-center justify-content-center brl-split-badge" '
       + 'style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:\'SF Pro Text\',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;"></span>'
-      + '<input type="text" class="form-control" value="' + (previewValue || nextSplitPreview()) + '" readonly tabindex="-1" style="background-color:#f8f9fa; color:#6c757d;">'
+      + '<input type="text" class="form-control readonly-field" value="' + (previewValue || nextSplitPreview()) + '" readonly tabindex="-1">'
       + '<input type="hidden" name="split_target_existing_ids" value="' + (existingId || '') + '">'
       + '</div>'
       + '<div style="margin-left:26px;">'

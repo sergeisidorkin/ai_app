@@ -66,14 +66,12 @@
       </div>
       <div class="col-md-6">
         <label class="form-label">Дата записи</label>
-        <input type="text" class="form-control" readonly tabindex="-1"
-               style="background-color:#f8f9fa; color:#6c757d;"
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
                value="{% if record and record.record_date %}{{ record.record_date|date:'d.m.Y' }}{% endif %}">
       </div>
       <div class="col-md-6">
         <label class="form-label">Автор записи</label>
-        <input type="text" class="form-control" readonly tabindex="-1"
-               style="background-color:#f8f9fa; color:#6c757d;"
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1"
                value="{% if record and record.record_author %}{{ record.record_author }}{% endif %}">
       </div>
       <div class="col-md-6">

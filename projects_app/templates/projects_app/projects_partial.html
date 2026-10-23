@@ -66,6 +66,7 @@
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="evaluation-date" id="registration-col-evaluation-date" checked><label class="form-check-label" for="registration-col-evaluation-date">Дата оценки</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="deadline" id="registration-col-deadline" checked><label class="form-check-label" for="registration-col-deadline">Дедлайн</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="manager" id="registration-col-manager" checked><label class="form-check-label" for="registration-col-manager">Руководитель проекта</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="coordinator" id="registration-col-coordinator" checked><label class="form-check-label" for="registration-col-coordinator">Координатор проекта</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="launch" id="registration-col-launch" checked><label class="form-check-label" for="registration-col-launch">Иконки статуса</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="registration-col-status" checked><label class="form-check-label" for="registration-col-status">Статус</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="registration-col-customer" checked><label class="form-check-label" for="registration-col-customer">Заказчик: наименование</label></div></div>
@@ -87,7 +88,7 @@
 
   <div class="registration-table-wrap">
 
-    <table id="registration-registry-table" class="table table-sm align-middle reg-table">
+    <table data-queued-row-order data-row-order-key="project-registration" id="registration-registry-table" class="table table-sm align-middle reg-table">
         <colgroup>
           <col class="checkbox">         <!-- 1: чекбокс -->
           <col class="project-number" data-col="number">   <!-- 2: Номер -->
@@ -102,6 +103,7 @@
           <col class="reg-evaluation-date" data-col="evaluation-date">     <!-- 10: Дата оценки -->
           <col class="reg-deadline" data-col="deadline">     <!-- 11: Дедлайн -->
           <col class="reg-manager" data-col="manager">      <!-- 12: Руководитель проекта -->
+          <col class="reg-coordinator" data-col="coordinator"> <!-- 13: Координатор проекта -->
           <col class="reg-launch" data-col="launch">       <!-- 13: Запуск -->
           <col class="reg-status" data-col="status">       <!-- 14: Статус -->
           <col class="reg-customer" data-col="customer">     <!-- 15: Заказчик -->
@@ -144,6 +146,7 @@
         <th data-col="evaluation-date">Дата оценки</th>
         <th data-col="deadline">Дедлайн</th>
         <th data-col="manager">Руководитель проекта</th>
+        <th data-col="coordinator">Координатор проекта</th>
         <th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>
         <th data-col="status">Статус</th>
         <th class="reg-customer-cell proposal-split-header proposal-split-header-inline" data-col="customer"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">наименование</span></th>
@@ -174,6 +177,7 @@
           data-delete-url="{% url 'registration_delete' r.pk %}"
           data-status-url="{% url 'registration_status_update' r.pk %}"
           data-manager-url="{% url 'registration_manager_update' r.pk %}"
+          data-coordinator-url="{% url 'registration_coordinator_update' r.pk %}"
           data-deadline-url="{% url 'registration_deadline_update' r.pk %}"
           data-evaluation-date-url="{% url 'registration_evaluation_date_update' r.pk %}"
           data-move-up-url="{% url 'registration_move_up' r.pk %}"
@@ -255,6 +259,21 @@
               </button>
             {% else %}
               {{ r.project_manager|short_fio }}
+            {% endif %}
+          </td>
+          <td data-reg-coordinator-cell data-coordinator-value="{{ r.project_coordinator_prs_id|default:r.project_coordinator }}" data-col="coordinator">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-coordinator-btn"
+                      data-registration-coordinator
+                      data-coordinator-url="{% url 'registration_coordinator_update' r.pk %}"
+                      data-coordinator-value="{{ r.project_coordinator_prs_id|default:r.project_coordinator }}"
+                      data-coordinator-label="{{ r.project_coordinator }}"
+                      title="Изменить координатора проекта">
+                {{ r.project_coordinator|short_fio }}
+              </button>
+            {% else %}
+              {{ r.project_coordinator|short_fio }}
             {% endif %}
           </td>
           <td class="reg-launch-cell text-center" data-reg-launch-cell data-col="launch">
@@ -382,6 +401,13 @@
               class="form-select form-select-sm d-none"
               aria-label="Руководитель проекта">
         {% for value, label in registration_manager_choices %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select id="registration-coordinator-editor"
+              class="form-select form-select-sm d-none"
+              aria-label="Координатор проекта">
+        {% for value, label in registration_coordinator_choices %}
           <option value="{{ value }}">{{ label }}</option>
         {% endfor %}
       </select>
@@ -970,7 +996,7 @@
   </div>
 
   <div class="work-table-wrap">
-    <table class="table table-sm align-middle work-table">
+    <table data-queued-row-order data-row-order-key="work-volume" class="table table-sm align-middle work-table">
       <colgroup>
           <col class="col-checkbox">    <!-- чекбокс -->
           <col class="col-project">     <!-- Номер проекта -->
@@ -1019,6 +1045,9 @@
           data-delete-url="{% url 'work_delete' w.pk %}"
           data-move-up-url="{% url 'work_move_up' w.pk %}"
           data-move-down-url="{% url 'work_move_down' w.pk %}"
+          data-row-order-scope="{{ w.project_id }}"
+          {% if w.order_locked %}data-row-order-locked="1"{% endif %}
+          data-order-locked="{% if w.order_locked %}1{% else %}0{% endif %}"
           data-report-folder-locked="{% if w.report_folder_locked %}1{% else %}0{% endif %}"
           data-report-upload-locked="{% if w.report_upload_locked %}1{% else %}0{% endif %}">
           <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
@@ -1038,7 +1067,7 @@
           <td class="text-nowrap">{{ w.project.type_short_display|default:w.type }}</td>
           <td>{{ w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
-          <td class="text-nowrap">{{ w.asset_code }}</td>
+          <td class="text-nowrap js-asset-code">{{ w.asset_code }}</td>
           <td class="text-nowrap">{{ w.country.short_name|default:"" }}</td>
           <td class="text-nowrap">{{ w.identifier }}</td>
           <td class="text-nowrap">{{ w.registration_number }}</td>
@@ -1114,7 +1143,7 @@
   </div>
 
   <div class="legal-table-wrap">
-    <table class="table table-sm align-middle legal-table">
+    <table data-queued-row-order data-row-order-key="legal-entity" class="table table-sm align-middle legal-table">
       <colgroup>
         <col class="col-checkbox">       <!-- чекбокс -->
         <col class="col-project">        <!-- Проект -->
@@ -1160,6 +1189,7 @@
           data-delete-url="{% url 'legal_entity_delete' entity.pk %}"
           data-move-up-url="{% url 'legal_entity_move_up' entity.pk %}"
           data-move-down-url="{% url 'legal_entity_move_down' entity.pk %}"
+          data-row-order-scope="{{ entity.project_id }}"
           data-project-id="{{ entity.project_id }}">
           <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}

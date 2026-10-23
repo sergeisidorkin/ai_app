@@ -385,13 +385,49 @@
                       <input type="text" name="evaluation_date" class="form-control js-date proposal-stage-evaluation-date" value="{{ stage.evaluation_date }}">
                     </td>
                     <td>
-                      <input type="number" name="service_term_months" min="0" step="0.1" class="form-control readonly-field proposal-stage-service-term-months" value="{{ stage.service_term_months|floatformat:'1' }}" readonly tabindex="-1">
+                      <div class="form-control readonly-field proposal-stage-preliminary-term-shell">
+                        <input type="number"
+                               name="service_term_months"
+                               min="0"
+                               step="0.1"
+                               inputmode="decimal"
+                               class="proposal-stage-service-term-months"
+                               value="{{ stage.service_term_months }}"
+                               readonly
+                               tabindex="-1">
+                        <select name="preliminary_report_term_unit"
+                                class="form-select proposal-stage-preliminary-term-unit"
+                                aria-label="Единица срока подготовки Предварительного отчёта"
+                                tabindex="-1">
+                          <option value="months"{% if stage.preliminary_report_term_unit == "months" %} selected{% endif %}>мес.</option>
+                          <option value="days"{% if stage.preliminary_report_term_unit == "days" %} selected{% endif %}>дн.</option>
+                          <option value="weeks"{% if stage.preliminary_report_term_unit == "weeks" %} selected{% endif %}>нед.</option>
+                        </select>
+                      </div>
                     </td>
                     <td>
                       <input type="text" name="preliminary_report_date" class="form-control js-date proposal-stage-preliminary-report-date" value="{{ stage.preliminary_report_date }}">
                     </td>
                     <td>
-                      <input type="number" name="final_report_term_weeks" min="0" step="0.1" class="form-control readonly-field proposal-stage-final-report-term-weeks" value="{{ stage.final_report_term_weeks|floatformat:'1' }}" readonly tabindex="-1">
+                      <div class="form-control readonly-field proposal-stage-final-term-shell">
+                        <input type="number"
+                               name="final_report_term_weeks"
+                               min="0"
+                               step="0.1"
+                               inputmode="decimal"
+                               class="proposal-stage-final-report-term-weeks"
+                               value="{{ stage.final_report_term_weeks }}"
+                               readonly
+                               tabindex="-1">
+                        <select name="final_report_term_unit"
+                                class="form-select proposal-stage-final-term-unit"
+                                aria-label="Единица срока подготовки Итогового отчёта"
+                                tabindex="-1">
+                          <option value="days"{% if stage.final_report_term_unit == "days" %} selected{% endif %}>дн.</option>
+                          <option value="weeks"{% if stage.final_report_term_unit == "weeks" %} selected{% endif %}>нед.</option>
+                          <option value="months"{% if stage.final_report_term_unit == "months" %} selected{% endif %}>мес.</option>
+                        </select>
+                      </div>
                     </td>
                     <td class="proposal-stage-final-report-cell">
                       <div class="proposal-stage-final-report-wrap">
@@ -444,13 +480,27 @@
                     <input type="text" class="form-control readonly-field proposal-stage-total-evaluation-date" value="" readonly tabindex="-1">
                   </td>
                   <td>
-                    <input type="number" class="form-control readonly-field proposal-stage-total-service-term-months" value="" readonly tabindex="-1">
+                    <div class="form-control readonly-field proposal-stage-total-term-shell proposal-stage-total-preliminary-term-shell">
+                      <input type="number" class="proposal-stage-total-service-term-months" value="" readonly tabindex="-1">
+                      <select class="form-select proposal-stage-total-preliminary-term-unit" aria-label="Единица итогового срока подготовки Предварительного отчёта">
+                        <option value="months" selected>мес.</option>
+                        <option value="days">дн.</option>
+                        <option value="weeks">нед.</option>
+                      </select>
+                    </div>
                   </td>
                   <td>
                     <input type="text" class="form-control readonly-field proposal-stage-total-preliminary-report-date" value="" readonly tabindex="-1">
                   </td>
                   <td>
-                    <input type="number" class="form-control readonly-field proposal-stage-total-final-report-term-weeks" value="" readonly tabindex="-1">
+                    <div class="form-control readonly-field proposal-stage-total-term-shell proposal-stage-total-final-term-shell">
+                      <input type="number" class="proposal-stage-total-final-report-term-weeks" value="" readonly tabindex="-1">
+                      <select class="form-select proposal-stage-total-final-term-unit" aria-label="Единица итогового срока подготовки Итогового отчёта">
+                        <option value="days">дн.</option>
+                        <option value="weeks" selected>нед.</option>
+                        <option value="months">мес.</option>
+                      </select>
+                    </div>
                   </td>
                   <td>
                     <input type="text" class="form-control readonly-field proposal-stage-total-final-report-date" value="" readonly tabindex="-1">
