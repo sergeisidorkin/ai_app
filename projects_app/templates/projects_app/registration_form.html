@@ -344,11 +344,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Цвета заблокированных полей — общие переменные --locked-field-* (site.css). */
   #projects-modal #reg-asset-owner-country-select.readonly-field,
   #projects-modal #reg-asset-owner-region-select.readonly-field {
-    background-color: #f8f9fa !important;
-    color: #6c757d !important;
-    -webkit-text-fill-color: #6c757d;
+    -webkit-text-fill-color: var(--locked-field-fg);
     cursor: default;
     pointer-events: none;
   }
@@ -357,10 +356,10 @@
   #projects-modal form:has([name="asset_owner_matches_customer"]:checked) #reg-asset-owner-region-select,
   #projects-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_number"],
   #projects-modal form:has([name="asset_owner_matches_customer"]:checked) input[name="asset_owner_registration_date"] {
-    background-color: #f8f9fa !important;
-    color: #6c757d !important;
+    background-color: var(--locked-field-bg) !important;
+    color: var(--locked-field-fg) !important;
     opacity: 1 !important;
-    -webkit-text-fill-color: #6c757d;
+    -webkit-text-fill-color: var(--locked-field-fg);
     cursor: default;
     pointer-events: none;
   }

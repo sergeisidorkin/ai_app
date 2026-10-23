@@ -5,7 +5,14 @@ from django.urls import reverse
 
 from contacts_app.models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord, PositionRecord
 from group_app.models import GroupMember
-from policy_app.models import DIRECTION_DIRECTOR_GROUP, DIRECTOR_GROUP, LAWYER_GROUP, ROLE_GROUPS_ORDER
+from policy_app.models import (
+    DIRECTION_DIRECTOR_GROUP,
+    DIRECTOR_GROUP,
+    LAWYER_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
+    PROJECTS_HEAD_GROUP,
+    ROLE_GROUPS_ORDER,
+)
 
 from .forms import EmployeeForm, ExternalRegistrationForm, FREELANCER_LABEL
 from .models import Employee, PendingRegistration
@@ -65,6 +72,35 @@ class UsersContactsSyncTests(TestCase):
 
         director_index = role_names.index(DIRECTOR_GROUP)
         self.assertEqual(role_names[director_index + 1], DIRECTION_DIRECTOR_GROUP)
+        head_index = role_names.index(PROJECTS_HEAD_GROUP)
+        self.assertEqual(role_names[head_index + 1], PROJECTS_COORDINATOR_GROUP)
+
+    def test_employee_form_gives_projects_coordinator_same_access_flag_as_projects_head(self):
+        coordinator_group, _ = Group.objects.get_or_create(name=PROJECTS_COORDINATOR_GROUP)
+        head_group, _ = Group.objects.get_or_create(name=PROJECTS_HEAD_GROUP)
+        coordinator_form = EmployeeForm(
+            self._employee_payload(
+                email="projects-coordinator@example.com",
+                role=str(coordinator_group.pk),
+            )
+        )
+        head_form = EmployeeForm(
+            self._employee_payload(
+                email="projects-head@example.com",
+                role=str(head_group.pk),
+            )
+        )
+
+        self.assertTrue(coordinator_form.is_valid(), coordinator_form.errors)
+        self.assertTrue(head_form.is_valid(), head_form.errors)
+        coordinator = coordinator_form.save()
+        head = head_form.save()
+
+        self.assertEqual(coordinator.role, PROJECTS_COORDINATOR_GROUP)
+        self.assertEqual(head.role, PROJECTS_HEAD_GROUP)
+        self.assertEqual(coordinator.user.is_superuser, head.user.is_superuser)
+        self.assertEqual(coordinator.user.is_staff, head.user.is_staff)
+        self.assertFalse(coordinator.user.is_superuser)
 
     def test_employee_form_grants_direction_director_superuser_rights(self):
         group, _ = Group.objects.get_or_create(name=DIRECTION_DIRECTOR_GROUP)

@@ -297,16 +297,7 @@ def apply_report_macro_checks(
         )
         return file_bytes
 
-    try:
-        line_end_spaces = extract_line_end_spaces(
-            file_bytes,
-            progress=_layout_progress(upload, total),
-        )
-    except ReportCheckAborted:
-        raise
-    except Exception:
-        log.exception("Failed to estimate visual line wraps for upload %s", upload.pk)
-        line_end_spaces = frozenset()
+    line_end_spaces, layout_warning = _resolve_line_end_spaces(upload, file_bytes, text, total)
 
     try:
         tab_offsets = extract_tab_offsets(file_bytes)
@@ -387,6 +378,10 @@ def apply_report_macro_checks(
         status = PerformerReportUpload.CheckStatus.ERROR
     else:
         status = PerformerReportUpload.CheckStatus.DONE
+    if layout_warning:
+        # A fallback to the font-metric estimate is worth knowing about, but it
+        # is not a failed check.
+        errors.append(layout_warning)
     finding_count = len(findings)
     by_author: dict[str, int] = {}
     if status == PerformerReportUpload.CheckStatus.DONE:
@@ -624,6 +619,58 @@ def store_report_check_status(
 def _publish_check_progress(upload, index: int, total: int, name: str) -> None:
     if not store_report_macro_progress(upload, index, total, name):
         raise ReportCheckAborted()
+
+
+def _resolve_line_end_spaces(upload, file_bytes: bytes, text: str, total: int) -> tuple[frozenset[int], str]:
+    """Переносы визуальных строк документа и предупреждение, если они оценены приблизительно.
+
+    Точный источник — PDF, отрисованный ONLYOFFICE или LibreOffice. Оценка по
+    метрикам шрифтов используется, только когда рендерер не настроен или не
+    смог отрисовать документ.
+    """
+    warning = ""
+    try:
+        rendered = rendered_line_end_spaces(upload, file_bytes, text, total)
+    except ReportCheckAborted:
+        raise
+    except Exception as exc:
+        log.exception("Failed to render visual line wraps for upload %s", upload.pk)
+        warning = (
+            "Раскладка строк: документ не отрисован "
+            f"({exc}); переносы строк оценены по метрикам шрифтов."
+        )
+        rendered = None
+    if rendered is not None:
+        return rendered, ""
+    try:
+        estimate = extract_line_end_spaces(
+            file_bytes,
+            progress=_layout_progress(upload, total),
+        )
+    except ReportCheckAborted:
+        raise
+    except Exception:
+        log.exception("Failed to estimate visual line wraps for upload %s", upload.pk)
+        estimate = frozenset()
+    return estimate, warning
+
+
+def rendered_line_end_spaces(upload, file_bytes: bytes, text: str, total: int) -> frozenset[int] | None:
+    """Переносы строк из отрисованного PDF; None, если рендерер не настроен."""
+    from .docx_render import render_docx_to_pdf
+    from .docx_rendered_layout import line_end_spaces_from_pdf
+
+    pdf_bytes = render_docx_to_pdf(
+        file_bytes,
+        file_name=upload.file_name or "",
+        on_start=lambda name: _publish_check_progress(upload, 0, total, f"Отрисовка документа ({name})"),
+    )
+    if pdf_bytes is None:
+        return None
+    _publish_check_progress(upload, 0, total, "Раскладка строк")
+    ends = line_end_spaces_from_pdf(text, pdf_bytes)
+    _publish_check_progress(upload, 0, total, "Подготовка документа")
+    return ends
 
 
 def _layout_progress(upload, total: int):

@@ -2,7 +2,7 @@
 <tr class="{% if row.is_full_report %}report-row-full{% elif row.is_all_sections %}report-row-all{% else %}report-row-section{% endif %}{% if not row.is_current %} report-row-history{% endif %}"
     data-row-id="{{ row.row_id }}"
     data-upload-id="{% if row.upload %}{{ row.upload.pk }}{% endif %}"
-    data-check-status="{% if row.upload %}{{ row.upload.check_status }}{% endif %}"
+    data-check-status="{{ row.check_status }}"
     data-workflow-status="{{ row.workflow_status }}"
     data-project-id="{{ row.registration_id }}"
     data-executor="{{ row.executor }}"
@@ -24,7 +24,7 @@
                id="report-sel-{{ row.row_id }}"
                name="report-select"
                value="{{ row.row_id }}"
-               {% if not row.review_entry or not row.review_entry.remarks_notice_pending or row.conceal_pending_remarks %}{% if not row.can_send or not row.is_current or not row.upload or row.upload.check_status == "done" or row.upload.check_status == "running" %}disabled{% endif %}{% endif %}
+               {% if not row.review_entry or not row.review_entry.remarks_notice_pending or row.conceal_pending_remarks %}{% if not row.can_send or not row.is_current or not row.upload or row.check_status == "done" or row.check_status == "running" %}disabled{% endif %}{% endif %}
                aria-label="Выделить строку отчета">
       </div>
     {% endif %}
@@ -166,7 +166,7 @@
         <span class="report-file-name-text">{{ row.upload.review_file_name }}</span>
       </a>
     {% endif %}
-    {% if not row.review_entry and row.upload and row.upload.check_status == "error" %}
+    {% if not row.review_entry and row.upload and row.check_status == "error" %}
       <span class="report-check-error-label" title="{{ row.upload.check_error }}"{% if row.upload.check_error %} data-reason="{{ row.upload.check_error|report_check_error_brief }}"{% endif %}>
         <i class="bi bi-exclamation-circle" aria-hidden="true"></i>
         <span class="report-check-error-text">Ошибка проверки{% if row.upload.check_error %}: {{ row.upload.check_error|report_check_error_brief }}{% endif %}</span>
@@ -204,9 +204,9 @@
           <i class="bi bi-x-lg"></i>
         </button>
       {% endif %}
-    {% elif not row.review_entry and row.upload and row.upload.check_status == "running" %}
+    {% elif not row.review_entry and row.upload and row.check_status == "running" %}
       <span class="report-upload-icon-spacer" aria-hidden="true"></span>
-      <span class="text-muted js-report-check-badge report-check-pending-text">Идет проверка...{% if row.upload.check_progress_label %} {{ row.upload.check_progress_label }}{% endif %}</span>
+      <span class="text-muted js-report-check-badge report-check-pending-text">Идет проверка...{% if row.check_progress_label %} {{ row.check_progress_label }}{% endif %}</span>
     {% elif not row.can_review_upload and not row.review_entry %}
       <span class="report-check-result-empty">—</span>
     {% elif row.review_entry and not row.review_entry.review_file_name and not row.can_review_upload %}

@@ -23,8 +23,13 @@
         {{ form.product }}
       </div>
       <div class="col-6">
-        <label class="form-label">Код</label>
-        {{ form.code }}
+        <label class="form-label" for="{% if form.choose_service_block %}sec-service-block{% else %}sec-code{% endif %}">Код</label>
+        {% if form.choose_service_block %}
+          {{ form.service_block }}
+          <div class="d-none">{{ form.code }}</div>
+        {% else %}
+          {{ form.code }}
+        {% endif %}
       </div>
     </div>
     <div class="row mb-3">
@@ -97,7 +102,7 @@
     </div>
     <div class="mb-3">
       <label class="form-label">Подразделение</label>
-      {{ form.expertise_direction }}
+      {{ form.department_display }}
     </div>
     <div class="mb-3 form-check">
       {{ form.exclude_from_tkp_autofill }}
@@ -156,6 +161,33 @@
       div.innerHTML = html;
       specContainer.appendChild(div);
     });
+  }
+
+  var blockSelect = document.getElementById('sec-service-block');
+  var codeInput = document.getElementById('sec-code');
+  var shortNameInput = document.getElementById('sec-short-name');
+  var shortNameRuInput = document.getElementById('sec-short-name-ru');
+  if (blockSelect) {
+    function syncServiceBlock() {
+      var option = blockSelect.options[blockSelect.selectedIndex];
+      if (!option) return;
+      if (codeInput) codeInput.value = option.getAttribute('data-code') || '';
+      if (shortNameInput) shortNameInput.value = option.getAttribute('data-short-name') || '';
+      if (shortNameRuInput) shortNameRuInput.value = option.getAttribute('data-short-name-ru') || '';
+    }
+    blockSelect.addEventListener('change', syncServiceBlock);
+    syncServiceBlock();
+  }
+
+  var expertiseSelect = document.getElementById('sec-expertise-dir');
+  var departmentInput = document.getElementById('sec-department');
+  if (expertiseSelect && departmentInput) {
+    function syncSectionDepartment() {
+      var option = expertiseSelect.options[expertiseSelect.selectedIndex];
+      departmentInput.value = (option && option.getAttribute('data-department')) || '';
+    }
+    expertiseSelect.addEventListener('change', syncSectionDepartment);
+    syncSectionDepartment();
   }
 
   if (specContainer) {

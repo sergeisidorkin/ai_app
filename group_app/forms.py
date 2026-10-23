@@ -5,8 +5,9 @@ from django.db.models import Q
 
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry
 from contracts_app.forms import _ContractFileInput
+from core.forms import lock_field, locked_attrs
 from policy_app.models import ExpertiseDirection
-from .models import GroupMember, OrgUnit
+from .models import ExpertiseManagementMode, GroupMember, OrgUnit
 
 
 def _active_countries_qs():
@@ -30,15 +31,7 @@ class GroupMemberForm(forms.ModelForm):
         label="Порядковый номер",
         required=False,
         disabled=True,
-        widget=forms.NumberInput(
-            attrs={
-                "class": "form-control",
-                "id": "gm-order-number",
-                "readonly": True,
-                "tabindex": "-1",
-                "style": "background-color:#f8f9fa; color:#6c757d;",
-            }
-        ),
+        widget=forms.NumberInput(attrs=locked_attrs(id="gm-order-number")),
     )
 
     country = forms.ModelChoiceField(
@@ -61,12 +54,7 @@ class GroupMemberForm(forms.ModelForm):
                 self.initial["country"] = OKSMCountry.objects.get(code=self.instance.country_code).pk
             except OKSMCountry.DoesNotExist:
                 pass
-        self.fields["identifier"].widget.attrs.update({
-            "readonly": True,
-            "tabindex": "-1",
-            "style": "background-color:#f8f9fa; color:#6c757d;",
-            "id": "gm-identifier",
-        })
+        lock_field(self.fields["identifier"], id="gm-identifier")
         if self.instance and self.instance.pk:
             self.initial["identifier"] = self.instance.identifier or _identifier_for_country_code(self.instance.country_code)
 
@@ -75,7 +63,7 @@ class GroupMemberForm(forms.ModelForm):
         fields = [
             "short_name", "full_name", "name_en",
             "identifier", "registration_number", "registration_date",
-            "seal_file",
+            "seal_file", "is_management_company",
         ]
         widgets = {
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое наименование"}),
@@ -85,6 +73,7 @@ class GroupMemberForm(forms.ModelForm):
             "registration_number": forms.TextInput(attrs={"class": "form-control", "placeholder": "Регистрационный номер"}),
             "registration_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "seal_file": _ContractFileInput(attrs={"class": "form-control"}),
+            "is_management_company": forms.CheckboxInput(attrs={"class": "form-check-input"}),
         }
 
     def save(self, commit=True):
@@ -167,3 +156,12 @@ class OrgUnitForm(forms.ModelForm):
         if level is not None and level < 1:
             raise forms.ValidationError("Уровень не может быть меньше 1.")
         return level
+
+
+class ExpertiseManagementModeForm(forms.ModelForm):
+    class Meta:
+        model = ExpertiseManagementMode
+        fields = ["mode"]
+        widgets = {
+            "mode": forms.Select(attrs={"class": "form-select"}),
+        }

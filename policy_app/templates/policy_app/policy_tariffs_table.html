@@ -18,7 +18,7 @@
 
 <div class="policy-table-editor">
 <div class="table-responsive">
-    <table class="table table-sm align-middle tariffs-table">
+    <table data-queued-row-order data-row-order-key="tariff" class="table table-sm align-middle tariffs-table">
         <thead>
         <tr>
             <th style="width:1%">
@@ -54,7 +54,9 @@
                 data-edit-url="{% url 'tariff_form_edit' t.pk %}"
                 data-delete-url="{% url 'tariff_delete' t.pk %}"
                 data-move-up-url="{% url 'tariff_move_up' t.pk %}"
-                data-move-down-url="{% url 'tariff_move_down' t.pk %}">
+                data-move-down-url="{% url 'tariff_move_down' t.pk %}"
+                data-row-order-scope="{{ t.created_by_id|default_if_none:'' }}"
+                {% if not request.user.is_superuser and t.created_by_id != request.user.id %}data-row-order-locked="1"{% endif %}>
 
                 <td class="text-nowrap policy-row-check-cell">
                     <div class="form-check">

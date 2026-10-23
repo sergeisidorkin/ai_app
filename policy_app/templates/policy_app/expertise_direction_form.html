@@ -40,6 +40,39 @@
       {% endif %}
     </div>
     <div class="mb-3">
+      <label class="form-label">Связи со структурными подразделениями</label>
+      <div class="d-flex gap-2 mb-1" style="padding-left: 26px;">
+        <label class="form-label mb-0 flex-fill" for="expdir-department">Подразделение</label>
+        <label class="form-label mb-0 flex-fill" for="expdir-organization">Организация</label>
+      </div>
+      {% for pair in form.managed_pairs %}
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="badge rounded-circle d-flex align-items-center justify-content-center"
+                style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ forloop.counter }}</span>
+          <div class="flex-fill">
+            {% if forloop.first %}
+              {{ form.department }}
+            {% else %}
+              <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+                     id="expdir-department-{{ forloop.counter }}"
+                     value="{{ pair.department }}"
+                     aria-label="Подразделение">
+            {% endif %}
+          </div>
+          <div class="flex-fill">
+            {% if forloop.first %}
+              {{ form.organization }}
+            {% else %}
+              <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+                     id="expdir-organization-{{ forloop.counter }}"
+                     value="{{ pair.organization }}"
+                     aria-label="Организация">
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="mb-3">
       <label class="form-label">Владелец</label>
       <div class="dropdown" id="expdir-owner-dropdown">
         <button class="form-select text-start" type="button"

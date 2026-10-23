@@ -100,6 +100,11 @@
       const id = tr?.dataset?.id;
       const url = tr?.dataset?.editUrl || (id ? `/requests/row/${id}/edit/` : null);
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__tableSel[name]; } catch (_) { window.__tableSel[name] = []; }
+      if (window.__tableSelLast === name) window.__tableSelLast = null;
+      window.TableSelection?.clearOnModalHide('requests-modal', name, root);
       await htmx.ajax('GET', url + allSuffix, { target: '#requests-modal .modal-content', swap: 'innerHTML' });
       ensureActionsVisibility(name);
       return;
@@ -112,19 +117,43 @@
         const id = tr?.dataset?.id;
         return tr?.dataset?.deleteUrl || (id ? `/requests/row/${id}/delete/` : null);
       }).filter(Boolean);
-      for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i] + allSuffix, { target: '#requests-pane', swap: 'innerHTML' });
-        } else {
-          await fetch(urls[i] + allSuffix, { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i] + allSuffix, { target: '#requests-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i] + allSuffix, { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
         }
+      } finally {
+        progress?.end();
       }
       window.__tableLastClicked[name] = null;
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        refresh: () => {
+          const paneEl = document.getElementById('requests-pane');
+          const paneUrl = paneEl?.getAttribute('data-url');
+          if (!paneUrl) return;
+          const tab = document.querySelector('#requests-tabs .nav-link.active');
+          const sectionId = tab?.dataset?.sectionId || '';
+          const sb = document.querySelector('#requests-second-sidebar-list .list-group-item.active');
+          const productShort = sb?.dataset?.product || '';
+          window.__tableSel[name] = getCheckedByName(name).map(ch => String(ch.value));
+          window.__tableSelLast = name;
+          return htmx.ajax('GET', paneUrl + '?product=' + encodeURIComponent(productShort) + '&section=' + encodeURIComponent(sectionId), { target: '#requests-pane', swap: 'innerHTML' });
+        },
+      })) {
+        ensureActionsVisibility(name);
+        return;
+      }
       let urls = checked.map(ch => {
         const tr = ch.closest('tr');
         const id = tr?.dataset?.id;

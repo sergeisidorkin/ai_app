@@ -1,0 +1,35 @@
+<div class="modal-header">
+  <h5 class="modal-title">Изменить строку</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form
+    method="post"
+    hx-post="{% url 'expertise_mode_form_edit' mode.pk %}"
+    hx-target="#group-pane"
+    hx-swap="outerHTML">
+  <div class="modal-body">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">Направление экспертизы</label>
+      <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+             value="{{ mode.expertise_direction.short_name }}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Наименование направления</label>
+      <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+             value="{{ mode.expertise_direction.name }}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Режим</label>
+      {{ form.mode }}
+    </div>
+    {% if form.errors %}
+      <div class="alert alert-danger mb-0">Проверьте введённые данные.</div>
+    {% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </div>
+</form>

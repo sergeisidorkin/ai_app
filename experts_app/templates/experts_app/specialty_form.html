@@ -29,6 +29,61 @@
         <label class="form-label">Специальность на англ. языке</label>
         {{ form.specialty_en }}
       </div>
+      <div class="col-12">
+        <label class="form-label">Область специализации</label>
+        <div class="input-group">
+          <span class="input-group-text">{{ form.specialization_area_prefix }}</span>
+          {{ form.specialization_area_suffix }}
+        </div>
+        {% if form.specialization_area_suffix.errors %}
+          <div class="text-danger small mt-1">{{ form.specialization_area_suffix.errors.0 }}</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Направление экспертизы</label>
+        {{ form.expertise_dir }}
+        {% if form.expertise_dir.errors %}
+          <div class="text-danger small mt-1">{{ form.expertise_dir.errors.0 }}</div>
+        {% elif form.missing_locked_direction %}
+          <div class="text-danger small mt-1">Для вашего подразделения не задано направление экспертизы.</div>
+        {% endif %}
+      </div>
+      <div class="col-12">
+        <label class="form-label">Связи со структурными подразделениями</label>
+        <div class="esp-pair-labels">
+          <span aria-hidden="true"></span>
+          <label class="form-label mb-0" for="esp-department">Подразделение</label>
+          <label class="form-label mb-0" for="esp-organization">Организация</label>
+        </div>
+        <div id="esp-pair-rows">
+          {% for pair in form.managed_pairs %}
+            <div class="esp-pair-row">
+              <span class="badge rounded-circle d-flex align-items-center justify-content-center"
+                    style="width:18px; height:18px; font-size:.65rem; flex-shrink:0; border:1px solid #6c757d; color:#6c757d; background:transparent; font-weight:400; font-family:'SF Pro Text',system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums;">{{ forloop.counter }}</span>
+              <div>
+                {% if forloop.first %}
+                  {{ form.department }}
+                {% else %}
+                  <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+                         id="esp-department-{{ forloop.counter }}"
+                         value="{{ pair.department }}"
+                         aria-label="Подразделение">
+                {% endif %}
+              </div>
+              <div>
+                {% if forloop.first %}
+                  {{ form.organization }}
+                {% else %}
+                  <input type="text" class="form-control readonly-field" readonly tabindex="-1"
+                         id="esp-organization-{{ forloop.counter }}"
+                         value="{{ pair.organization }}"
+                         aria-label="Организация">
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
       <div class="col-md-6">
         <label class="form-label">Владелец</label>
         <div class="dropdown" id="esp-owner-dropdown">
@@ -61,28 +116,6 @@
           </div>
         </div>
       </div>
-      <div class="col-md-6">
-        <label class="form-label">Направление экспертизы</label>
-        {{ form.expertise_dir }}
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">Подразделение</label>
-        {{ form.expertise_direction }}
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">Руководитель направления</label>
-        {{ form.head_of_direction }}
-      </div>
-      <div class="col-12">
-        <label class="form-label">Область специализации</label>
-        <div class="input-group">
-          <span class="input-group-text">{{ form.specialization_area_prefix }}</span>
-          {{ form.specialization_area_suffix }}
-        </div>
-        {% if form.specialization_area_suffix.errors %}
-          <div class="text-danger small mt-1">{{ form.specialization_area_suffix.errors.0 }}</div>
-        {% endif %}
-      </div>
     </div>
 
     {% if form.errors %}
@@ -101,7 +134,6 @@
 (function() {
   const GROUP_VAL = "__group__";
   const DIR_OWNERS = {{ form.dir_owners_json|safe }};
-  const ORG_UNIT_INFO = {{ form.org_unit_info_json|safe }};
 
   const dropdown = document.getElementById("esp-owner-dropdown");
   if (!dropdown) return;
@@ -110,13 +142,15 @@
   const groupCb = document.getElementById("esp-owner-group");
 
   const dirSelect = document.getElementById("esp-dir-select");
+  const pairRows = document.getElementById("esp-pair-rows");
   const allDirOptions = dirSelect
-    ? Array.from(dirSelect.options).slice(1).map(o => ({ value: o.value, text: o.textContent }))
-    : [];
-
-  const deptSelect = document.getElementById("esp-dept-select");
-  const allDeptOptions = deptSelect
-    ? Array.from(deptSelect.options).slice(1).map(o => ({ value: o.value, text: o.textContent }))
+    ? Array.from(dirSelect.options).slice(1).map(o => ({
+        value: o.value,
+        text: o.textContent,
+        department: o.getAttribute("data-department") || "",
+        organization: o.getAttribute("data-organization") || "",
+        pairs: o.getAttribute("data-pairs") || "[]",
+      }))
     : [];
 
   function updateLabel() {
@@ -131,7 +165,10 @@
   }
 
   function filterDirections() {
-    if (!dirSelect) return;
+    if (!dirSelect || dirSelect.disabled) {
+      syncFromExpertise();
+      return;
+    }
     const isGroup = groupCb && groupCb.checked;
     const selectedIds = new Set(
       Array.from(checks)
@@ -156,52 +193,70 @@
         const el = document.createElement("option");
         el.value = opt.value;
         el.textContent = opt.text;
+        el.setAttribute("data-department", opt.department);
+        el.setAttribute("data-organization", opt.organization);
+        el.setAttribute("data-pairs", opt.pairs);
         if (opt.value === currentVal) el.selected = true;
         dirSelect.appendChild(el);
       }
     });
 
-    filterDepartments();
+    syncFromExpertise();
   }
 
-  function filterDepartments() {
-    if (!deptSelect) return;
-    const dirVal = dirSelect ? dirSelect.value : "";
-    const hasDirection = dirVal !== "";
-    const dirId = hasDirection ? parseInt(dirVal) : null;
-    const isGroup = groupCb && groupCb.checked;
-    const selectedOwnerIds = new Set(
-      Array.from(checks)
-        .filter(cb => cb.checked && cb.value !== GROUP_VAL)
-        .map(cb => parseInt(cb.value))
-    );
-    const currentVal = deptSelect.value;
-    while (deptSelect.options.length > 1) deptSelect.remove(1);
+  function pairsFromOption(option) {
+    const raw = option ? option.getAttribute("data-pairs") : "";
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      } catch (error) {}
+    }
+    return [{
+      department: (option && option.getAttribute("data-department")) || "",
+      organization: (option && option.getAttribute("data-organization")) || "",
+    }];
+  }
 
-    allDeptOptions.forEach(opt => {
-      const info = ORG_UNIT_INFO[opt.value];
-      if (!info) return;
-      const unitType = info.type || "";
-      if (hasDirection) {
-        if (unitType !== "expertise") return;
-        if (info.expertise_id !== dirId) return;
-      } else {
-        if (unitType === "expertise") return;
-      }
-      let showByOwner = isGroup || selectedOwnerIds.size === 0
-        || selectedOwnerIds.has(info.company_id);
-      if (showByOwner) {
-        const el = document.createElement("option");
-        el.value = opt.value;
-        el.textContent = opt.text;
-        if (opt.value === currentVal) el.selected = true;
-        deptSelect.appendChild(el);
-      }
+  function renderPairs(pairs) {
+    if (!pairRows) return;
+    pairRows.replaceChildren();
+    pairs.forEach(function (pair, index) {
+      const number = index + 1;
+      const row = document.createElement("div");
+      row.className = "esp-pair-row";
+      const badge = document.createElement("span");
+      badge.className = "badge rounded-circle d-flex align-items-center justify-content-center";
+      badge.style.cssText = "width:18px;height:18px;font-size:.65rem;flex-shrink:0;border:1px solid #6c757d;color:#6c757d;background:transparent;font-weight:400;font-variant-numeric:tabular-nums;";
+      badge.textContent = String(number);
+      row.appendChild(badge);
+      [["Подразделение", number === 1 ? "esp-department" : "esp-department-" + number, number === 1 ? "department" : "", pair.department],
+       ["Организация", number === 1 ? "esp-organization" : "esp-organization-" + number, number === 1 ? "organization" : "", pair.organization]
+      ].forEach(function (spec) {
+        const wrap = document.createElement("div");
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "form-control readonly-field";
+        input.readOnly = true;
+        input.tabIndex = -1;
+        input.id = spec[1];
+        if (spec[2]) input.name = spec[2];
+        input.value = spec[3] || "";
+        input.setAttribute("aria-label", spec[0]);
+        wrap.appendChild(input);
+        row.appendChild(wrap);
+      });
+      pairRows.appendChild(row);
     });
   }
 
+  function syncFromExpertise() {
+    const option = dirSelect ? dirSelect.options[dirSelect.selectedIndex] : null;
+    renderPairs(pairsFromOption(option));
+  }
+
   if (dirSelect) {
-    dirSelect.addEventListener("change", filterDepartments);
+    dirSelect.addEventListener("change", syncFromExpertise);
   }
 
   checks.forEach(cb => {

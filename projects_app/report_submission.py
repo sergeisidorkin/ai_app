@@ -352,6 +352,29 @@ def work_item_report_folder_locked(work_item) -> bool:
     return (work_item.project_id, asset) in report_folder_locked_asset_keys([work_item.project_id])
 
 
+def workspace_project_ids(project_ids) -> set[int]:
+    """Projects whose cloud workspace has already been created.
+
+    Asset codes (A1, A2, …) and report section codes (01, 02, …) are derived from
+    the row order and are baked into report folder and file names once the
+    workspace exists, so the order of coded rows is frozen from that moment.
+    """
+    ids = {project_id for project_id in project_ids if project_id}
+    if not ids:
+        return set()
+    return set(
+        ProjectWorkspace.objects.filter(project_id__in=ids).values_list("project_id", flat=True)
+    )
+
+
+def work_item_order_locked(work_item) -> bool:
+    if work_item is None or not getattr(work_item, "project_id", None):
+        return False
+    if work_item.project_id in workspace_project_ids([work_item.project_id]):
+        return True
+    return work_item_report_folder_locked(work_item)
+
+
 def report_upload_locked_asset_keys(project_ids) -> set[tuple[int, str]]:
     ids = [project_id for project_id in project_ids if project_id]
     if not ids:
@@ -446,11 +469,16 @@ def annotate_performers_report_section_lock(performers):
             PerformerReportUpload.objects.filter(performer_id__in=performer_ids)
             .values_list("performer_id", flat=True)
         )
+    workspace_ids = workspace_project_ids(
+        {getattr(item, "registration_id", None) for item in items}
+    )
     for item in items:
+        is_section = is_report_section_accounting(getattr(item, "typical_section", None))
         item.report_section_locked = (
-            is_report_section_accounting(getattr(item, "typical_section", None))
-            and (item.registration_id, item.asset_name or "") in locked
+            is_section and (item.registration_id, item.asset_name or "") in locked
         )
+        # Rows with a section code cannot change position once the workspace exists.
+        item.order_locked = item.report_section_locked or (is_section and item.registration_id in workspace_ids)
         item.report_upload_locked = item.pk in uploads
     return items
 
@@ -491,16 +519,16 @@ def performer_section_code_ids_by_asset(performers=None) -> dict:
 
 
 def locked_report_section_sequences(items) -> dict[tuple[int, str], list[int]]:
-    locked = report_section_locked_asset_keys(
-        {item.get("registration_id") for item in items}
-    )
+    registration_ids = {item.get("registration_id") for item in items}
+    locked = report_section_locked_asset_keys(registration_ids)
+    workspace_ids = workspace_project_ids(registration_ids)
     sequences = {}
     for item in items:
         accounting = str(item.get("accounting_type") or "").strip()
         if accounting != REPORT_SECTION_ACCOUNTING_TYPE:
             continue
         key = (item.get("registration_id"), item.get("asset_name") or "")
-        if key not in locked:
+        if key not in locked and item.get("registration_id") not in workspace_ids:
             continue
         sequences.setdefault(key, []).append(item["id"])
     return sequences
@@ -512,6 +540,7 @@ def annotate_work_volumes_for_projects_table(work_items):
     for item in items:
         grouped.setdefault(item.project_id, []).append(item)
     locked_keys = report_folder_locked_asset_keys(grouped.keys())
+    workspace_ids = workspace_project_ids(grouped.keys())
     upload_locked_ids = work_items_with_report_uploads(items)
     for group in grouped.values():
         ordered = sorted(group, key=lambda item: (item.position or 0, item.pk or 0))
@@ -524,6 +553,9 @@ def annotate_work_volumes_for_projects_table(work_items):
         for item in ordered:
             asset = (item.asset_name or "").strip()
             item.report_folder_locked = (item.project_id, asset) in locked_keys
+            # Every asset row carries a code, so the whole project order is frozen
+            # once the workspace exists.
+            item.order_locked = item.report_folder_locked or item.project_id in workspace_ids
             item.report_upload_locked = item.pk in upload_locked_ids
     return items
 
@@ -1628,6 +1660,7 @@ def _make_report_row(
 ):
     calculated_count_display = "—"
     corrected_count_display = "—"
+    pending_result = None if review_entry is not None else pending_report_check_payload(upload)
     if review_entry is not None:
         from .report_review import entry_status
 
@@ -1675,6 +1708,17 @@ def _make_report_row(
     else:
         public_groups = finding_groups
         edit_groups = {}
+    if pending_result:
+        workflow_status = pending_result["workflow_status"]
+        finding_count_display = pending_result["finding_count_display"]
+        calculated_count_display = "—"
+        corrected_count_display = "—"
+        show_finding_info = False
+        displayed_check_status = pending_result["check_status"]
+        displayed_check_progress = pending_result["check_progress"]
+    else:
+        displayed_check_status = (getattr(upload, "check_status", "") or "") if upload else ""
+        displayed_check_progress = (getattr(upload, "check_progress_label", "") or "") if upload else ""
     return SimpleNamespace(
         row_id=row_id,
         performer=performer,
@@ -1712,6 +1756,8 @@ def _make_report_row(
             else format_report_status_date(upload, workflow_status)
         ),
         review_entry=review_entry,
+        check_status=displayed_check_status,
+        check_progress_label=displayed_check_progress,
         finding_count_display=finding_count_display,
         calculated_count_display=calculated_count_display,
         corrected_count_display=corrected_count_display,
@@ -1783,6 +1829,7 @@ def _append_slot_rows(rows, *, row_id, uploads, entries=None, **kwargs):
             ReportReviewEntry.objects.filter(upload_id__in=upload_ids).select_related("basis_entry", "upload")
         ) if upload_ids else []
     entries = _without_rework_waiting_for_remarks(entries)
+    entries = _without_pending_result_entries(uploads, entries)
     timeline = _slot_timeline(uploads, entries)
     current = timeline[0] if timeline else None
     history = timeline[1:]
@@ -2653,6 +2700,9 @@ def read_report_stored_bytes(upload, user) -> bytes:
     return data
 
 
+REPORT_CHECK_RESULT_PROGRESS = "Сохранение результата"
+
+
 def report_check_result_pending(upload) -> bool:
     """A finished check whose result file is still being saved.
 
@@ -2670,6 +2720,39 @@ def report_check_result_pending(upload) -> bool:
     if checked_at is None:
         return False
     return timezone.now() - checked_at < REPORT_CHECK_RESULT_WAIT
+
+
+def pending_report_check_payload(upload) -> dict | None:
+    """Status-endpoint fields while the result file is still being saved."""
+    if not report_check_result_pending(upload):
+        return None
+    status = REPORT_STATUS_SENT
+    return {
+        "check_status": PerformerReportUpload.CheckStatus.RUNNING,
+        "check_progress": REPORT_CHECK_RESULT_PROGRESS,
+        "check_file_name": "",
+        "check_download_url": "",
+        "workflow_status": status,
+        "workflow_status_class": report_workflow_status_class(status),
+        "status_date": format_report_status_date(upload, status),
+        "finding_count_display": "—",
+    }
+
+
+def _without_pending_result_entries(uploads, entries):
+    """Скрыть шаг проверки, пока файл результата ещё сохраняется."""
+    pending_ids = {
+        item.pk
+        for item in uploads or []
+        if getattr(item, "pk", None) and report_check_result_pending(item)
+    }
+    if not pending_ids:
+        return list(entries or [])
+    return [
+        entry
+        for entry in entries or []
+        if getattr(entry, "upload_id", None) not in pending_ids
+    ]
 
 
 def run_saved_report_check(user, upload):

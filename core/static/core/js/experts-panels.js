@@ -133,6 +133,10 @@
     const tr = first.closest('tr');
     const url = tr?.dataset?.editUrl;
     if (!url) return;
+    // После закрытия модалки выделение снимается (table-selection.js);
+    // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+    try { delete window.__espTableSel[name]; } catch (_) { window.__espTableSel[name] = []; }
+    window.TableSelection?.clearOnModalHide(config.modalId, name, pane());
     await htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
     const modalEl = document.getElementById(config.modalId);
     if (modalEl && window.bootstrap) {
@@ -164,9 +168,12 @@
       const url = tr?.dataset?.editUrl;
       if (!url) return;
 
-      window.__espTableSel['ecd-select'] = checked.map(ch => String(ch.value));
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш не запоминаем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__espTableSel['ecd-select']; } catch (_) { window.__espTableSel['ecd-select'] = []; }
 
       const config = PANELS['ecd-actions'];
+      window.TableSelection?.clearOnModalHide(config.modalId, 'ecd-select', root);
       await htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
       const modalEl = document.getElementById(config.modalId);
       if (modalEl && window.bootstrap) {
@@ -198,18 +205,31 @@
     if (action === 'delete') {
       if (!confirm(`Удалить ${checked.length} ${config.deleteLabel}?`)) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#experts-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#experts-pane', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        refresh: () => htmx.ajax('GET', '/experts/partial/', { target: '#experts-pane', swap: 'outerHTML' }),
+      })) {
+        ensureActionsVisibility(name);
+        return;
+      }
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -277,6 +297,14 @@
     window.__espTableSel = {};
     initWrapToggle();
     scheduleExpertsTableScrollGapsUpdate();
+  });
+
+  // Снятие выделения выполняет общий модуль table-selection.js (hidden.bs.modal);
+  // здесь досинхронизируем состояние кнопок редактирования.
+  document.addEventListener('table-selection:cleared', function (e) {
+    const name = e.detail && e.detail.name;
+    if (name === 'epr-select') updateEditBtnState();
+    if (name === 'ecd-select') updateContractDetailsEditBtn();
   });
 
   document.body.addEventListener('contacts-updated', function () {

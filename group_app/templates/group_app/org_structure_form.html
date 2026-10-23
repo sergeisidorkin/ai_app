@@ -7,6 +7,7 @@
 
 <form
     method="post"
+    style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;"
     {% if action == "create" %}
       hx-post="{% url 'org_form_create' %}"
     {% else %}
@@ -14,7 +15,7 @@
     {% endif %}
     hx-target="#group-pane"
     hx-swap="outerHTML">
-  <div class="modal-body">
+  <div class="modal-body" style="overflow-y:auto; flex:1 1 auto; min-height:0;">
     {% csrf_token %}
     <div class="mb-3">
       <label class="form-label">Наименование компании (краткое)</label>
@@ -75,10 +76,11 @@
 
     subEl.innerHTML = '';
 
+    // Единый вид заблокированного поля — класс readonly-field (site.css).
     if (isNaN(level) || level <= 1 || isNaN(companyId)) {
       subEl.disabled = true;
-      subEl.style.backgroundColor = '#f8f9fa';
-      subEl.style.color = '#6c757d';
+      subEl.tabIndex = -1;
+      subEl.classList.add('readonly-field');
       var opt = document.createElement('option');
       opt.value = '';
       opt.textContent = '---------';
@@ -87,8 +89,8 @@
     }
 
     subEl.disabled = false;
-    subEl.style.backgroundColor = '';
-    subEl.style.color = '';
+    subEl.tabIndex = 0;
+    subEl.classList.remove('readonly-field');
 
     var empty = document.createElement('option');
     empty.value = '';

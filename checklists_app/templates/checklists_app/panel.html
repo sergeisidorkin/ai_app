@@ -1796,6 +1796,10 @@
             if (action === 'edit') {
                 const editUrl = firstTr.dataset.editUrl;
                 if (!editUrl) return;
+                // После закрытия модалки выделение снимается (core/js/table-selection.js);
+                // сохранённый выбор сбрасываем, чтобы перерисовка таблицы его не восстановила.
+                __savedSelection = [];
+                window.TableSelection?.clearOnModalHide('checklists-item-modal', 'chk-items-select', tableWrap);
                 const modalTarget = document.querySelector('#checklists-item-modal .modal-content');
                 const resp = await fetch(editUrl, { headers: { 'X-Requested-With': 'fetch' } });
                 modalTarget.innerHTML = await resp.text();
@@ -1805,17 +1809,35 @@
             }
             if (action === 'delete') {
                 if (!confirm('Удалить выбранные записи?')) return;
-                for (const cb of checked) {
-                    const tr = cb.closest('tr');
-                    const url = tr?.dataset.deleteUrl;
-                    if (url) {
-                        await fetch(url, { method: 'POST', headers: { 'X-CSRFToken': getCsrf() } });
+                const progress = window.TableActionProgress?.begin(checked);
+                try {
+                    for (const cb of checked) {
+                        const tr = cb.closest('tr');
+                        const url = tr?.dataset.deleteUrl;
+                        if (url) {
+                            await fetch(url, { method: 'POST', headers: { 'X-CSRFToken': getCsrf() } });
+                        }
                     }
+                    await reloadTable();
+                } finally {
+                    progress?.end();
                 }
-                await reloadTable();
                 return;
             }
             if (action === 'up' || action === 'down') {
+                if (window.__queuedRowOrder?.handleMoveAction({
+                    checked,
+                    action,
+                    // Codes/numbers are recomputed on the server after a move.
+                    refreshAfterSave: true,
+                    refresh: async () => {
+                        saveSelection();
+                        await reloadTable();
+                        restoreSelection();
+                    },
+                })) {
+                    return;
+                }
                 saveSelection();
                 const rows = action === 'up' ? checked : [...checked].reverse();
                 for (const cb of rows) {

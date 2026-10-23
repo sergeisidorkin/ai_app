@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry, OKVCurrency, TerritorialDivision
 from contracts_app.forms import _ContractFileInput
+from core.forms import lock_field, locked_attrs
 from group_app.models import GroupMember
 from policy_app.models import (
     Product,
@@ -347,6 +348,22 @@ def _format_stage_date(value):
     return value.strftime("%d.%m.%Y")
 
 
+def _normalize_proposal_preliminary_term_unit(value):
+    raw = str(value or "").strip()
+    valid_units = {choice[0] for choice in ProposalRegistration.PreliminaryReportTermUnit.choices}
+    if raw in valid_units:
+        return raw
+    return ProposalRegistration.PreliminaryReportTermUnit.MONTHS
+
+
+def _normalize_proposal_final_term_unit(value):
+    raw = str(value or "").strip()
+    valid_units = {choice[0] for choice in ProposalRegistration.FinalReportTermUnit.choices}
+    if raw in valid_units:
+        return raw
+    return ProposalRegistration.FinalReportTermUnit.WEEKS
+
+
 class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     number = forms.IntegerField(
         label="Номер",
@@ -407,14 +424,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(
-            attrs={
-                "readonly": True,
-                "tabindex": "-1",
-                "class": "form-control readonly-field",
-                "id": "proposal-identifier-field",
-            }
-        ),
+        widget=forms.TextInput(attrs=locked_attrs(id="proposal-identifier-field")),
     )
     registration_date = forms.DateField(
         label="Дата регистрации",
@@ -447,14 +457,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     asset_owner_identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(
-            attrs={
-                "readonly": True,
-                "tabindex": "-1",
-                "class": "form-control readonly-field",
-                "id": "proposal-asset-owner-identifier-field",
-            }
-        ),
+        widget=forms.TextInput(attrs=locked_attrs(id="proposal-asset-owner-identifier-field")),
     )
     asset_owner_registration_number = forms.CharField(
         label="Регистрационный номер",
@@ -493,20 +496,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         input_formats=DATE_INPUT_FORMATS,
     )
     service_term_months = forms.DecimalField(
-        label="Срок подготовки Предварительного отчёта, мес.",
+        label="Предварительный отчёт",
         required=False,
         min_value=0,
         max_digits=5,
         decimal_places=1,
-        widget=forms.NumberInput(
-            attrs={
-                "min": 0,
-                "step": "0.1",
-                "readonly": True,
-                "tabindex": "-1",
-                "class": "readonly-field",
-            }
-        ),
+        widget=forms.NumberInput(attrs=locked_attrs(base=None, min=0, step="0.1")),
     )
     preliminary_report_date = forms.DateField(
         label="Дата Предварительного отчёта",
@@ -515,20 +510,12 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         input_formats=DATE_INPUT_FORMATS,
     )
     final_report_term_weeks = forms.DecimalField(
-        label="Срок подготовки Итогового отчёта, нед.",
+        label="Итоговый отчёт",
         required=False,
         min_value=0,
         max_digits=5,
         decimal_places=1,
-        widget=forms.NumberInput(
-            attrs={
-                "min": 0,
-                "step": "0.1",
-                "readonly": True,
-                "tabindex": "-1",
-                "class": "readonly-field",
-            }
-        ),
+        widget=forms.NumberInput(attrs=locked_attrs(base=None, min=0, step="0.1")),
     )
     final_report_date = forms.DateField(
         label="Дата Итогового отчёта",
@@ -596,16 +583,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         max_value=100,
         max_digits=5,
         decimal_places=2,
-        widget=forms.NumberInput(
-            attrs={
-                "min": 0,
-                "max": 100,
-                "step": "0.01",
-                "readonly": True,
-                "tabindex": "-1",
-                "class": "readonly-field",
-            }
-        ),
+        widget=forms.NumberInput(attrs=locked_attrs(base=None, min=0, max=100, step="0.01")),
     )
     final_report_term_days = forms.IntegerField(
         label="Срок оплаты Итогового отчёта в календарных днях",
@@ -1182,8 +1160,10 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             ),
             "evaluation_date": _format_stage_date(self.fields["evaluation_date"].initial),
             "service_term_months": "",
+            "preliminary_report_term_unit": ProposalRegistration.PreliminaryReportTermUnit.MONTHS,
             "preliminary_report_date": "",
             "final_report_term_weeks": "",
+            "final_report_term_unit": ProposalRegistration.FinalReportTermUnit.WEEKS,
             "final_report_date": "",
             "next_stage_delay_days": "",
             "advance_percent": str(self.fields["advance_percent"].initial or ""),
@@ -1210,8 +1190,10 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "commercial_totals_payload",
             "evaluation_date",
             "service_term_months",
+            "preliminary_report_term_unit",
             "preliminary_report_date",
             "final_report_term_weeks",
+            "final_report_term_unit",
             "final_report_date",
             "next_stage_delay_days",
             "advance_percent",
@@ -1291,6 +1273,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "service_term_months": (
                     rows_map["service_term_months"][index] if index < len(rows_map["service_term_months"]) else ""
                 ).strip(),
+                "preliminary_report_term_unit": _normalize_proposal_preliminary_term_unit(
+                    rows_map["preliminary_report_term_unit"][index]
+                    if index < len(rows_map["preliminary_report_term_unit"])
+                    else ""
+                ),
                 "preliminary_report_date": (
                     rows_map["preliminary_report_date"][index]
                     if index < len(rows_map["preliminary_report_date"])
@@ -1301,6 +1288,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     if index < len(rows_map["final_report_term_weeks"])
                     else ""
                 ).strip(),
+                "final_report_term_unit": _normalize_proposal_final_term_unit(
+                    rows_map["final_report_term_unit"][index]
+                    if index < len(rows_map["final_report_term_unit"])
+                    else ""
+                ),
                 "final_report_date": (
                     rows_map["final_report_date"][index] if index < len(rows_map["final_report_date"]) else ""
                 ).strip(),
@@ -1411,8 +1403,14 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         ),
                         "evaluation_date": str(payload.get("evaluation_date") or ""),
                         "service_term_months": str(payload.get("service_term_months") or ""),
+                        "preliminary_report_term_unit": _normalize_proposal_preliminary_term_unit(
+                            payload.get("preliminary_report_term_unit")
+                        ),
                         "preliminary_report_date": str(payload.get("preliminary_report_date") or ""),
                         "final_report_term_weeks": str(payload.get("final_report_term_weeks") or ""),
+                        "final_report_term_unit": _normalize_proposal_final_term_unit(
+                            payload.get("final_report_term_unit")
+                        ),
                         "final_report_date": str(payload.get("final_report_date") or ""),
                         "next_stage_delay_days": str(payload.get("next_stage_delay_days") or ""),
                         "advance_percent": self._stage_display_value(
@@ -1487,8 +1485,14 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 ),
                 "evaluation_date": _format_stage_date(instance.evaluation_date),
                 "service_term_months": str(instance.service_term_months or ""),
+                "preliminary_report_term_unit": _normalize_proposal_preliminary_term_unit(
+                    instance.preliminary_report_term_unit
+                ),
                 "preliminary_report_date": _format_stage_date(instance.preliminary_report_date),
                 "final_report_term_weeks": str(instance.final_report_term_weeks or ""),
+                "final_report_term_unit": _normalize_proposal_final_term_unit(
+                    instance.final_report_term_unit
+                ),
                 "final_report_date": _format_stage_date(instance.final_report_date),
                 "next_stage_delay_days": "",
                 "advance_percent": self._stage_display_value(
@@ -1565,6 +1569,34 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if not raw:
             return None
         return self._parse_payload_decimal(raw, f"Этап {row_index}: поле «{field_label}» заполнено некорректно.")
+
+    def _parse_stage_preliminary_term_unit(self, value, *, row_index):
+        raw = str(value or "").strip()
+        if not raw:
+            return ProposalRegistration.PreliminaryReportTermUnit.MONTHS
+        if raw not in {choice[0] for choice in ProposalRegistration.PreliminaryReportTermUnit.choices}:
+            raise forms.ValidationError(
+                f"Этап {row_index}: поле «Единица срока подготовки Предварительного отчёта» заполнено некорректно."
+            )
+        return raw
+
+    def _parse_stage_final_term_unit(self, value, *, row_index):
+        raw = str(value or "").strip()
+        if not raw:
+            return ProposalRegistration.FinalReportTermUnit.WEEKS
+        if raw not in {choice[0] for choice in ProposalRegistration.FinalReportTermUnit.choices}:
+            raise forms.ValidationError(
+                f"Этап {row_index}: поле «Единица срока подготовки Итогового отчёта» заполнено некорректно."
+            )
+        return raw
+
+    def _parse_stage_term_amount(self, value, *, unit, row_index, field_label):
+        parsed = self._parse_stage_decimal(value, row_index=row_index, field_label=field_label)
+        if unit == "days" and parsed is not None and parsed != parsed.to_integral_value():
+            raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть целым числом.")
+        if unit == "days" and parsed is not None:
+            return parsed.to_integral_value()
+        return parsed
 
     def _parse_stage_percent(self, value, *, row_index, field_label):
         parsed = self._parse_stage_decimal(value, row_index=row_index, field_label=field_label)
@@ -2285,20 +2317,36 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row_index=rank,
                         field_label="Дата оценки",
                     ),
-                    "service_term_months": self._parse_stage_decimal(
-                        row.get("service_term_months"),
+                    "preliminary_report_term_unit": self._parse_stage_preliminary_term_unit(
+                        row.get("preliminary_report_term_unit"),
                         row_index=rank,
-                        field_label="Срок подготовки Предварительного отчёта, мес.",
+                    ),
+                    "service_term_months": self._parse_stage_term_amount(
+                        row.get("service_term_months"),
+                        unit=self._parse_stage_preliminary_term_unit(
+                            row.get("preliminary_report_term_unit"),
+                            row_index=rank,
+                        ),
+                        row_index=rank,
+                        field_label="Предварительный отчёт",
                     ),
                     "preliminary_report_date": self._parse_stage_date(
                         row.get("preliminary_report_date"),
                         row_index=rank,
                         field_label="Дата Предварительного отчёта",
                     ),
-                    "final_report_term_weeks": self._parse_stage_decimal(
-                        row.get("final_report_term_weeks"),
+                    "final_report_term_unit": self._parse_stage_final_term_unit(
+                        row.get("final_report_term_unit"),
                         row_index=rank,
-                        field_label="Срок подготовки Итогового отчёта, нед.",
+                    ),
+                    "final_report_term_weeks": self._parse_stage_term_amount(
+                        row.get("final_report_term_weeks"),
+                        unit=self._parse_stage_final_term_unit(
+                            row.get("final_report_term_unit"),
+                            row_index=rank,
+                        ),
+                        row_index=rank,
+                        field_label="Итоговый отчёт",
                     ),
                     "final_report_date": self._parse_stage_date(
                         row.get("final_report_date"),
@@ -2415,8 +2463,10 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             cleaned["service_composition_customer_tz"] = last_stage["service_composition_customer_tz"]
             cleaned["evaluation_date"] = last_stage["evaluation_date"]
             cleaned["service_term_months"] = last_stage["service_term_months"]
+            cleaned["preliminary_report_term_unit"] = last_stage["preliminary_report_term_unit"]
             cleaned["preliminary_report_date"] = last_stage["preliminary_report_date"]
             cleaned["final_report_term_weeks"] = last_stage["final_report_term_weeks"]
+            cleaned["final_report_term_unit"] = last_stage["final_report_term_unit"]
             cleaned["final_report_date"] = last_stage["final_report_date"]
             if not self.payment_schedule_common_enabled:
                 cleaned["advance_percent"] = last_stage["advance_percent"]
@@ -2443,8 +2493,10 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             instance.commercial_totals_json = dict(last_stage["commercial_totals_json"])
             instance.evaluation_date = last_stage["evaluation_date"]
             instance.service_term_months = last_stage["service_term_months"]
+            instance.preliminary_report_term_unit = last_stage["preliminary_report_term_unit"]
             instance.preliminary_report_date = last_stage["preliminary_report_date"]
             instance.final_report_term_weeks = last_stage["final_report_term_weeks"]
+            instance.final_report_term_unit = last_stage["final_report_term_unit"]
             instance.final_report_date = last_stage["final_report_date"]
             self.cleaned_service_sections = list(last_stage["service_sections_json"])
             self.cleaned_service_sections_editor_state = list(last_stage["service_sections_editor_state"])
@@ -2495,8 +2547,10 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "commercial_totals_json": dict(item["commercial_totals_json"]),
                 "evaluation_date": _format_stage_date(item["evaluation_date"]),
                 "service_term_months": str(item["service_term_months"] or ""),
+                "preliminary_report_term_unit": item["preliminary_report_term_unit"],
                 "preliminary_report_date": _format_stage_date(item["preliminary_report_date"]),
                 "final_report_term_weeks": str(item["final_report_term_weeks"] or ""),
+                "final_report_term_unit": item["final_report_term_unit"],
                 "final_report_date": _format_stage_date(item["final_report_date"]),
                 "next_stage_delay_days": item["next_stage_delay_days"] or 0,
                 "payment_schedule_common": self.payment_schedule_common_enabled,
@@ -3214,14 +3268,7 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
     recipient_identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(
-            attrs={
-                "readonly": True,
-                "tabindex": "-1",
-                "class": "form-control readonly-field",
-                "id": "proposal-dispatch-recipient-identifier-field",
-            }
-        ),
+        widget=forms.TextInput(attrs=locked_attrs(id="proposal-dispatch-recipient-identifier-field")),
     )
     recipient_registration_date = forms.DateField(
         label="Дата регистрации",
@@ -3269,13 +3316,7 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
             "docx_file_link": forms.TextInput(),
             "pdf_file_name": forms.TextInput(),
             "pdf_file_link": forms.TextInput(),
-            "sent_date": forms.TextInput(
-                attrs={
-                    "readonly": True,
-                    "tabindex": "-1",
-                    "class": "readonly-field",
-                }
-            ),
+            "sent_date": forms.TextInput(attrs=locked_attrs(base=None)),
             "recipient": forms.TextInput(
                 attrs={
                     "placeholder": "Искать по наименованию и регистрационному номеру",
@@ -3344,12 +3385,8 @@ class ProposalTemplateForm(forms.ModelForm):
             "file",
         ]
         widgets = {
-            "sample_name": forms.TextInput(
-                attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}
-            ),
-            "version": forms.TextInput(
-                attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}
-            ),
+            "sample_name": forms.TextInput(attrs=locked_attrs()),
+            "version": forms.TextInput(attrs=locked_attrs()),
             "file": _ProposalFileInput(attrs={"class": "form-control"}),
         }
 
@@ -3623,19 +3660,9 @@ class ProposalVariableForm(forms.ModelForm):
             self.fields["source_section"].choices = [("", "---")]
             self.fields["source_table"].choices = [("", "---")]
             self.fields["source_column"].choices = [("", "---")]
-            locked_style = "background-color:#f8f9fa; color:#6c757d;"
-            self.fields["key"].widget.attrs.update({
-                "readonly": True,
-                "tabindex": "-1",
-                "style": locked_style,
-            })
-            self.fields["key"].disabled = True
+            lock_field(self.fields["key"], disabled=True)
             for field_name in ("source_section", "source_table", "source_column"):
-                self.fields[field_name].disabled = True
-                self.fields[field_name].widget.attrs.update({
-                    "disabled": True,
-                    "style": locked_style,
-                })
+                lock_field(self.fields[field_name], disabled=True, use_disabled_attr=True)
         else:
             section_value = section_value or default_section
             table_value = table_value or default_table

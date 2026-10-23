@@ -1,0 +1,142 @@
+{% load classifiers_filters %}
+<section id="policy-service-block-classifiers-section"
+         data-policy-table-key="service-block-classifiers"
+         data-policy-table-url="{% url 'policy_service_block_classifiers_table' %}"
+         data-policy-table-page="1"
+         {% if policy_inline_edit %}data-policy-inline="1"{% endif %}>
+{% if policy_inline_edit %}
+<script type="application/json" data-policy-inline-options>{{ policy_inline_options_json|safe }}</script>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title">
+        <i class="bi bi-table me-2"></i>
+        Классификатор типовых блоков услуг
+    </h5>
+</div>
+
+<div class="policy-table-editor">
+<div class="table-responsive">
+    <table data-queued-row-order data-row-order-key="service-block-classifier" class="table table-sm align-top">
+        <thead>
+        <tr>
+            <th style="width:1%; vertical-align: top;">
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    <div class="form-check m-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="sbc-master"
+                               data-target-name="sbc-select"
+                               data-actions-id="sbc-actions"
+                               aria-label="Выделить все строки классификатора типовых блоков услуг">
+                    </div>
+                {% endif %}
+            </th>
+            <th style="width:12%">Код</th>
+            <th>Краткое имя EN</th>
+            <th>Краткое имя RU</th>
+            <th style="width:12%">Тип учета</th>
+            <th>Направление экспертизы</th>
+            <th>Исполнитель</th>
+            <th style="width:20%">Подразделение</th>
+            <th style="width:14%">Организация</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for sbc in service_block_classifiers %}
+            <tr data-edit-url="{% url 'service_block_classifier_form_edit' sbc.pk %}"
+                data-delete-url="{% url 'service_block_classifier_delete' sbc.pk %}"
+                data-move-up-url="{% url 'service_block_classifier_move_up' sbc.pk %}"
+                data-move-down-url="{% url 'service_block_classifier_move_down' sbc.pk %}"
+                {% if policy_inline_edit %}data-inline-row-id="{{ sbc.id }}" data-expertise-dir="{{ sbc.expertise_dir_id|default_if_none:'' }}" data-specialties-save-url="{% url 'service_block_classifier_specialties_save' sbc.pk %}"{% endif %}>
+
+                <td class="text-nowrap">
+                    {% if request.user.is_authenticated and request.user.is_staff %}
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="sbc-sel-{{ sbc.id }}"
+                                   name="sbc-select"
+                                   value="{{ sbc.id }}"
+                                   aria-label="Выделить строку">
+                        </div>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap">{{ sbc.code }}</td>
+                <td class="text-nowrap">{{ sbc.short_name }}</td>
+                <td class="text-nowrap">{{ sbc.short_name_ru }}</td>
+                <td class="text-nowrap">{{ sbc.accounting_type }}</td>
+                <td class="text-nowrap">{% if sbc.expertise_dir %}{{ sbc.expertise_dir.short_name }}{% endif %}</td>
+                <td class="text-nowrap typical-section-executor-col{% if policy_inline_edit %} inline-specialties-cell{% endif %}"{% if policy_inline_edit %} data-inline-field="specialty_ids" data-inline-type="specialties" data-inline-value="[{% for rs in sbc.ranked_specialties.all %}{% if not forloop.first %},{% endif %}{{ rs.specialty_id }}{% endfor %}]"{% endif %}>
+                    {% if policy_inline_edit %}
+                        {% with specs=sbc.ranked_specialties.all %}
+                        <div class="inline-specialties" data-count="{{ specs|length }}">
+                            {% for rs in specs %}
+                            <div class="inline-specialty-row" data-index="{{ forloop.counter0 }}" data-id="{{ rs.specialty_id }}">
+                                <span class="inline-specialty-label">{{ rs.specialty.specialty }}</span>
+                                <span class="inline-specialty-icons">
+                                    <span class="inline-specialty-actions">
+                                        <button type="button" class="inline-specialty-btn" data-specialty-action="move" data-dir="-1" title="Выше" aria-label="Выше"{% if forloop.first %} disabled{% endif %}><i class="bi bi-arrow-up"></i></button>
+                                        <button type="button" class="inline-specialty-btn" data-specialty-action="move" data-dir="1" title="Ниже" aria-label="Ниже"{% if forloop.last %} disabled{% endif %}><i class="bi bi-arrow-down"></i></button>
+                                        <button type="button" class="inline-specialty-btn" data-specialty-action="remove" title="Удалить" aria-label="Удалить"><i class="bi bi-x-lg"></i></button>
+                                    </span>
+                                    <span class="inline-specialty-chevron" aria-hidden="true"></span>
+                                    <button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>
+                                </span>
+                            </div>
+                            {% empty %}
+                            <div class="inline-specialty-row" data-index="0" data-id="">
+                                <span class="inline-specialty-label">—</span>
+                                <span class="inline-specialty-icons">
+                                    <span class="inline-specialty-actions"></span>
+                                    <span class="inline-specialty-chevron" aria-hidden="true"></span>
+                                    <button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>
+                                </span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endwith %}
+                    {% else %}
+                        {% for rs in sbc.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}
+                    {% endif %}
+                </td>
+                <td class="text-nowrap">{{ sbc.department_display }}</td>
+                <td class="text-nowrap">{{ sbc.organization_display }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+    {% if request.user.is_authenticated and request.user.is_staff %}
+        <div class="policy-table-footer">
+        <div class="policy-table-footer-actions products-actions-row">
+            <button
+                    class="btn btn-primary btn-sm d-flex align-items-center"
+                    hx-get="{% url 'service_block_classifier_form_create' %}"
+                    hx-target="#policy-modal .modal-content"
+                    hx-swap="innerHTML">
+                <i class="bi bi-plus-circle me-2"></i>Добавить строку
+            </button>
+            <div id="sbc-actions" class="d-none d-flex">
+                <div class="btn-group">
+                    <button type="button" id="sbc-actions-up" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх" aria-label="Переместить вверх">
+                        <i class="bi bi-arrow-up-square"></i>
+                    </button>
+                    <button type="button" id="sbc-actions-down" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз" aria-label="Переместить вниз">
+                        <i class="bi bi-arrow-down-square"></i>
+                    </button>
+                    <button type="button" id="sbc-actions-edit" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить" aria-label="Изменить">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button type="button" id="sbc-actions-delete" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить" aria-label="Удалить">
+                        <i class="bi bi-x-square"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        </div>
+    {% endif %}
+</div>
+</section>

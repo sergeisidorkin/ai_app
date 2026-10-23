@@ -1802,9 +1802,20 @@
       return td;
     }
 
-    row.appendChild(textCell('code', 'text-nowrap typical-section-code-col'));
-    row.appendChild(textCell('short_name', 'text-nowrap'));
-    row.appendChild(textCell('short_name_ru', 'text-nowrap'));
+    const blockTd = document.createElement('td');
+    blockTd.className = 'text-nowrap typical-section-code-col';
+    blockTd.setAttribute('data-inline-field', 'service_block');
+    blockTd.setAttribute('data-inline-type', 'select');
+    blockTd.setAttribute('data-inline-value', '');
+    row.appendChild(blockTd);
+    const shortNameTd = document.createElement('td');
+    shortNameTd.className = 'text-nowrap';
+    shortNameTd.setAttribute('data-service-block-name', 'en');
+    row.appendChild(shortNameTd);
+    const shortNameRuTd = document.createElement('td');
+    shortNameRuTd.className = 'text-nowrap';
+    shortNameRuTd.setAttribute('data-service-block-name', 'ru');
+    row.appendChild(shortNameRuTd);
     row.appendChild(textCell('name_en'));
     row.appendChild(textCell('name_ru'));
 
@@ -1955,7 +1966,7 @@
   const POLICY_WORKSPACE_ROW_INSERT = {
     'typical-sections': {
       skipBeforeSystem: true,
-      focusField: 'code',
+      focusField: 'service_block',
       createRow: createTypicalSectionWorkspaceRow,
     },
     'section-structures': {
@@ -3170,10 +3181,27 @@
   function getCheckedByName(name) {
     return getVisibleRowChecksByName(name).filter(b => b.checked);
   }
+  function groupedRowKey(tr) {
+    if (!tr) return '';
+    return tr.getAttribute('data-row-group') || tr.getAttribute('data-expdir-group') || '';
+  }
+  function highlightExpdirGroup(tr, active) {
+    const group = groupedRowKey(tr);
+    if (!group || !tr.parentElement) return;
+    const key = CSS.escape(group);
+    tr.parentElement.querySelectorAll(
+      'tr[data-row-group="' + key + '"], tr[data-expdir-group="' + key + '"]'
+    ).forEach(function (row) {
+      row.classList.toggle('table-active', active);
+    });
+  }
   function updateRowHighlightFor(name) {
     getRowChecksByName(name).forEach(b => {
       const tr = b.closest('tr');
-      if (tr) tr.classList.toggle('table-active', !!b.checked);
+      if (!tr) return;
+      const active = !!b.checked;
+      tr.classList.toggle('table-active', active);
+      highlightExpdirGroup(tr, active);
     });
   }
   function syncPolicySelectionToVisible(name) {
@@ -3214,22 +3242,15 @@
     if (window.__tableSelLast === name) window.__tableSelLast = null;
   }
 
-  function clearPolicyTableSelectionByName(name) {
-    getRowChecksByName(name).forEach(function (checkbox) {
-      checkbox.checked = false;
-    });
-    forgetPolicyTableSelection(name);
-    updateMasterStateFor(name);
-    updateRowHighlightFor(name);
-    ensureActionsVisibility(name);
-    if (name === TYPICAL_SERVICE_TERM_GANTT_SELECTION_NAME) syncTypicalServiceTermGanttEditButton();
-  }
-
   function markPolicyModalClearSelectionOnHide(name) {
-    const modalEl = document.getElementById('policy-modal');
-    if (!modalEl || !name) return;
-    modalEl.dataset.policyClearSelectionName = name;
+    if (!name) return;
+    // Общий механизм (core/js/table-selection.js): после закрытия модалки
+    // выделение строк таблицы снимается; кэш забываем, чтобы afterSettle
+    // после «Сохранить» не восстановил галочки.
     forgetPolicyTableSelection(name);
+    if (window.TableSelection) {
+      window.TableSelection.clearOnModalHide('policy-modal', name, pane());
+    }
   }
 
   function typicalServiceTermSectionIn(root) {
@@ -11194,9 +11215,7 @@
           // Keep the original edit URL if it cannot be rewritten.
         }
       }
-      if (name === 'product-select') {
-        markPolicyModalClearSelectionOnHide(name);
-      }
+      markPolicyModalClearSelectionOnHide(name);
       await htmx.ajax('GET', url, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
       // На случай если модалка не перерисовывает pane — поддержим видимость панели
       ensureActionsVisibility(name);
@@ -11239,21 +11258,26 @@
         ensureActionsVisibility(name);
         return;
       }
-      for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], {
-            target: fragmentScopedPolicy ? '#' + managedWrapper.id : '#policy-pane',
-            swap: fragmentScopedPolicy ? 'none' : 'outerHTML',
-          });
-        } else {
-          const headers = { 'X-CSRFToken': csrftoken };
-          if (fragmentScopedPolicy) headers['HX-Request'] = 'true';
-          await fetch(urls[i], { method: 'POST', headers: headers }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(persisted);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], {
+              target: fragmentScopedPolicy ? '#' + managedWrapper.id : '#policy-pane',
+              swap: fragmentScopedPolicy ? 'none' : 'outerHTML',
+            });
+          } else {
+            const headers = { 'X-CSRFToken': csrftoken };
+            if (fragmentScopedPolicy) headers['HX-Request'] = 'true';
+            await fetch(urls[i], { method: 'POST', headers: headers }).catch(() => {});
+          }
         }
-      }
-      if (leavingWorkspace) {
-        await loadPolicyCatalogShell();
+        if (leavingWorkspace) {
+          await loadPolicyCatalogShell();
+        }
+      } finally {
+        progress?.end();
       }
       return;
     }
@@ -11261,6 +11285,41 @@
     if (action === 'up' || action === 'down') {
       btn.blur();
       if (!fragmentScopedPolicy) rememberPolicyScrollPosition();
+      {
+        // Shared optimistic reorder + single debounced bulk save (core/row_order.py).
+        const queuedTableKey = fragmentScopedPolicy
+          ? normalizeFilterValue(managedWrapper.dataset.policyTableKey)
+          : '';
+        const handledByQueue = !!window.__queuedRowOrder?.handleMoveAction({
+          checked,
+          action,
+          canCross: queuedTableKey ? makePolicyReorderCanCross(queuedTableKey) : null,
+          onAfterMove: (table) => {
+            if (queuedTableKey && POLICY_WORKSPACE_ROW_INSERT_KEYS[queuedTableKey]) {
+              syncPolicyWorkspaceNewRowAfterIds(table.tBodies[0], queuedTableKey);
+            }
+          },
+          // The server returns the policy-updated detail; dependent tables are refreshed
+          // exactly like after the legacy per-row persist, skipping the reordered table.
+          suppressEvents: true,
+          onSaved: (data) => {
+            const detail = data && data.events && data.events['policy-updated'];
+            if (!detail || typeof detail !== 'object') return;
+            handlePolicyUpdated(queuedTableKey
+              ? Object.assign({}, detail, { skipTable: queuedTableKey })
+              : detail);
+          },
+          refresh: () => {
+            if (queuedTableKey) return refreshLoadedPolicyFragment(queuedTableKey);
+            rememberPolicyScrollPosition();
+            return loadPolicyCatalogShell();
+          },
+        });
+        if (handledByQueue) {
+          ensureActionsVisibility(name);
+          return;
+        }
+      }
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -11311,10 +11370,15 @@
     const modalEl = e.target;
     if (!modalEl || modalEl.id !== 'policy-modal') return;
     restorePolicyModalSize(modalEl);
-    const name = modalEl.dataset.policyClearSelectionName;
+  });
+
+  // Снятие выделения выполняет общий модуль table-selection.js (hidden.bs.modal);
+  // здесь досинхронизируем состояние, зависящее от выделения в политиках.
+  document.addEventListener('table-selection:cleared', function (e) {
+    const name = e.detail && e.detail.name;
     if (!name) return;
-    delete modalEl.dataset.policyClearSelectionName;
-    clearPolicyTableSelectionByName(name);
+    forgetPolicyTableSelection(name);
+    if (name === TYPICAL_SERVICE_TERM_GANTT_SELECTION_NAME) syncTypicalServiceTermGanttEditButton();
   });
 
   // Делегирование: мастер-чекбокс
@@ -11695,6 +11759,115 @@
     if (root) updateExpertSpecialtiesTableScrollGaps(root);
   }
 
+  let classifierSpecialtySession = null;
+  const classifierSpecialtySaveTokens = new Map();
+
+  function createServiceBlockClassifierSpecialtyAdapter(section) {
+    let specialties = [];
+    try {
+      const node = section.querySelector('[data-policy-inline-options]');
+      const parsed = JSON.parse(node ? node.textContent : '{}');
+      specialties = parsed.specialties || [];
+    } catch (err) {
+      specialties = [];
+    }
+    return {
+      getSelectOptions: function (ref) {
+        if (ref.field !== 'specialty_ids') return [];
+        let selected = [];
+        try {
+          const parsed = JSON.parse(ref.cell.getAttribute('data-inline-value') || '[]');
+          selected = Array.isArray(parsed) ? parsed.map(function (id) { return String(id); }) : [];
+        } catch (err) {
+          selected = [];
+        }
+        const currentId = ref.cell.dataset.inlineActiveIndex != null
+          ? (selected[Number(ref.cell.dataset.inlineActiveIndex)] || '')
+          : '';
+        const row = ref.cell.closest('tr');
+        const directionId = row ? String(row.dataset.expertiseDir || '') : '';
+        return [{ value: '', label: '—' }].concat(specialties.filter(function (item) {
+          const id = String(item.id);
+          const isCurrent = currentId && id === String(currentId);
+          const sameDirection = directionId && String(item.expertise_dir || '') === directionId;
+          if (!sameDirection && !isCurrent) return false;
+          return isCurrent || selected.indexOf(id) === -1;
+        }).map(function (item) {
+          return { value: String(item.id), label: item.label || '' };
+        }));
+      },
+      getSpecialtyOptions: function () {
+        return specialties;
+      },
+      normalizeValue: function (ref, value) {
+        if (ref.field === 'specialty_ids') {
+          return { value: Array.isArray(value) ? value : [], label: '' };
+        }
+        return { value: value, label: value };
+      },
+      afterChange: function (ref, value, session) {
+        if (ref.field !== 'specialty_ids') return;
+        const row = ref.cell.closest('tr');
+        const url = row && row.dataset.specialtiesSaveUrl;
+        const rowId = row && row.dataset.inlineRowId;
+        if (!url || !rowId || !session) return;
+        const token = (classifierSpecialtySaveTokens.get(rowId) || 0) + 1;
+        classifierSpecialtySaveTokens.set(rowId, token);
+        const body = new URLSearchParams();
+        (value || []).forEach(function (id) {
+          const text = String(id || '').trim();
+          if (text) body.append('specialty_id', text);
+        });
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'X-CSRFToken': csrftoken,
+            'X-Requested-With': 'fetch',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: body.toString(),
+        }).then(function (response) {
+          if (classifierSpecialtySaveTokens.get(rowId) !== token) return null;
+          if (!response.ok) throw new Error('save failed');
+          return response.json();
+        }).then(function (data) {
+          if (!data || classifierSpecialtySaveTokens.get(rowId) !== token) return;
+          if (data.ok === false) throw new Error(data.error || 'save failed');
+          session.clearFieldError('service-block-classifiers', rowId, 'specialty_ids');
+          session.snapshotRow('service-block-classifiers', rowId, { specialty_ids: value });
+          if (window.WorkspaceInlineEditor) {
+            window.WorkspaceInlineEditor.applyErrorsToDom(session, section);
+          }
+        }).catch(function () {
+          if (classifierSpecialtySaveTokens.get(rowId) !== token) return;
+          session.setErrors([{
+            table: 'service-block-classifiers',
+            id: rowId,
+            field: 'specialty_ids',
+            message: 'Не удалось сохранить исполнителей.',
+          }]);
+          if (window.WorkspaceInlineEditor) {
+            window.WorkspaceInlineEditor.applyErrorsToDom(session, section);
+          }
+        });
+      },
+    };
+  }
+
+  function bindServiceBlockClassifierSpecialties(section) {
+    if (!section || section.dataset.policyTableKey !== 'service-block-classifiers') return;
+    if (section.dataset.policyInline !== '1' || !window.WorkspaceInlineEditor) return;
+    if (policyPane()?.dataset?.policyWorkspace === '1') return;
+    if (classifierSpecialtySession && classifierSpecialtySession.hasSection(section)) return;
+    classifierSpecialtySession = window.WorkspaceInlineEditor.createSession();
+    window.WorkspaceInlineEditor.attach(classifierSpecialtySession);
+    window.WorkspaceInlineEditor.bindSection(
+      classifierSpecialtySession,
+      section,
+      createServiceBlockClassifierSpecialtyAdapter(section)
+    );
+  }
+
   function initializeArrivingPolicyFragment(fragment) {
     if (!fragment?.matches?.('[data-policy-table-key][data-policy-table-url]')) return;
     clearManagedPolicyTableSelection(fragment);
@@ -11716,6 +11889,7 @@
     initPolicyTableFooterStickyState(fragment);
     initPolicyTableHeaderStickyState(fragment);
     bindPolicyWorkspaceInlineTables(policyPane());
+    bindServiceBlockClassifierSpecialties(fragment);
   }
 
   // Восстановление выбора только для таблицы, где было действие
@@ -11874,6 +12048,12 @@
     isOpen: function () {
       var editor = typicalServiceTermGanttEditorEl();
       return !!(editor && !editor.classList.contains('d-none'));
+    },
+    // Read-only access to the live DHTMLX instance (null until created).
+    // Used by project-schedule-gantt.js to restore the timeline scroll
+    // position after a pane re-render via gantt.scrollTo().
+    getInstance: function () {
+      return window.__policyTypicalServiceTermGantt || null;
     },
     refresh: function () {
       var pane2 = pane();

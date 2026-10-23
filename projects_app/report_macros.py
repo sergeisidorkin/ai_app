@@ -215,7 +215,7 @@ def check(ctx):
         "part": "01",
         "number": "15",
         "name": "Длинное тире",
-        "description": "Для разделения слов, слова и числа, сокращения с точкой и числа — длинное тире с пробелами, не дефис и не короткое тире.",
+        "description": "Для разделения слов, слова и числа, сокращения с точкой и числа — длинное тире с пробелами, не дефис и не короткое тире. Висячий дефис перед союзом «и» (макро- и микроменеджмент) допустим.",
         "code": _code(
             r"""
 def check(ctx):
@@ -227,6 +227,8 @@ def check(ctx):
     # Длинное тире вплотную к цифре справа — ошибка: нужны пробелы с обеих сторон.
     # «буква-буква» без пробелов — дефис в сложном слове, не ошибка.
     # Слитый дефис в коде (COVID-19, А-Д-12131231, TPGR-TR-01.15) — не ошибка.
+    # «буква- и буква»: дефис вплотную слева, пробелы, союз «и», пробелы и слово.
+    # «макро- и микроменеджмент» — висячий дефис, не ошибка.
     text = ctx.text or ""
     findings = []
     msg = "TPGR-TR-01.15: Для разделения слов и предложений используется длинное тире с отбивкой пробелами"
@@ -295,6 +297,26 @@ def check(ctx):
             return len(run) == 1 and run.isupper()
         return True
 
+    def hyphen_and_pair(i):
+        # Висячий дефис: буква сразу слева, затем пробелы, союз «и», пробелы и слово.
+        if text[i] != "-" or i == 0 or not text[i - 1].isalpha():
+            return False
+        k = i + 1
+        if k >= len(text) or text[k] not in spaces:
+            return False
+        while k < len(text) and text[k] in spaces:
+            k += 1
+        if k >= len(text) or text[k] not in "иИ":
+            return False
+        if k + 1 < len(text) and text[k + 1].isalpha():
+            return False
+        k += 1
+        if k >= len(text) or text[k] not in spaces:
+            return False
+        while k < len(text) and text[k] in spaces:
+            k += 1
+        return k < len(text) and text[k].isalpha()
+
     def add(i):
         if in_angles(text, i):
             return
@@ -336,6 +358,9 @@ def check(ctx):
             i += 1
             continue
         if kind == "word" and glued_code(i):
+            i += 1
+            continue
+        if hyphen_and_pair(i):
             i += 1
             continue
         add(i)

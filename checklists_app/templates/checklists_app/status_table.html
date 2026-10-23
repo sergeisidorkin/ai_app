@@ -9,7 +9,7 @@
 {% elif not rows %}
   <div class="alert alert-info mb-0">Для выбранного продукта и раздела нет запросов.</div>
 {% else %}
-  <table class="table table-sm align-middle table-bordered" id="chk-items-table">
+  <table data-queued-row-order data-row-order-key="checklist-item" class="table table-sm align-middle table-bordered" id="chk-items-table">
     <colgroup>
         {% if show_actions %}<col style="width:1%">{% endif %}
         <col> <!-- Код -->
@@ -102,6 +102,7 @@
         </tr>
         {% endif %}
         <tr data-item-id="{{ row.item.id }}"
+            data-row-order-scope="{{ row.item.section_id }}:{{ row.item.item_type }}:{% if row.item.item_type == 'additional' %}{{ row.item.additional_number|default_if_none:'' }}{% endif %}"
             {% if show_actions %}
             data-edit-url="{% url 'checklists_app:item_form_edit' row.item.id %}"
             data-delete-url="{% url 'checklists_app:item_delete' row.item.id %}"

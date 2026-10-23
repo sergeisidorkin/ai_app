@@ -16,7 +16,7 @@ from core.models import CloudStorageSettings
 from contracts_app.models import ContractProjectRegistration
 from experts_app.models import ExpertProfile
 from group_app.models import GroupMember, OrgUnit
-from policy_app.models import DEPARTMENT_HEAD_GROUP, Product
+from policy_app.models import DEPARTMENT_HEAD_GROUP, ExpertiseDirection, Product, TypicalSection
 from proposals_app.models import ProposalRegistration
 from projects_app.models import Performer, ProjectRegistration, RegistrationWorkspaceFolder
 from users_app.models import Employee
@@ -991,11 +991,19 @@ class NextcloudWorkspaceTests(TestCase):
             country_name="Россия",
             country_code="643",
             country_alpha2="RU",
+            is_management_company=True,
+        )
+        expertise = ExpertiseDirection.objects.create(
+            name=direction_name,
+            short_name=direction_name[:32],
+            position=1,
         )
         direction = OrgUnit.objects.create(
             company=company,
             department_name=direction_name,
             unit_type="expertise",
+            level=2,
+            expertise=expertise,
         )
         head_user = User.objects.create_user(
             username=f"head-{direction.pk}@example.com",
@@ -1018,6 +1026,17 @@ class NextcloudWorkspaceTests(TestCase):
             nextcloud_email=head_user.email,
         )
         return direction, head_user, head_employee
+
+    def _section_for_direction(self, direction, code):
+        return TypicalSection.objects.create(
+            product=self.product,
+            code=code,
+            short_name=code,
+            name_en=code,
+            name_ru=code,
+            expertise_dir=direction.expertise,
+            position=1,
+        )
 
     def test_create_basic_project_workspace_creates_folders_and_grants_editor_access(self):
         project_folder = _build_project_folder_name(self.project)
@@ -1072,6 +1091,7 @@ class NextcloudWorkspaceTests(TestCase):
             registration=self.project,
             employee=performer_employee,
             executor="Петров Петр Петрович",
+            typical_section=self._section_for_direction(direction, "GEO"),
             participation_response=Performer.ParticipationResponse.CONFIRMED,
         )
         ExpertProfile.objects.create(
@@ -1169,6 +1189,7 @@ class NextcloudWorkspaceTests(TestCase):
             registration=self.project,
             employee=performer_employee,
             executor="Сергеев Сергей Сергеевич",
+            typical_section=self._section_for_direction(direction, "GEO"),
             participation_response=Performer.ParticipationResponse.CONFIRMED,
         )
         NextcloudUserLink.objects.create(
@@ -1232,6 +1253,7 @@ class NextcloudWorkspaceTests(TestCase):
                 registration=self.project,
                 employee=performer_employee,
                 executor=performer_user.username,
+                typical_section=self._section_for_direction(direction, f"GEO{index}"),
                 participation_response=Performer.ParticipationResponse.CONFIRMED,
             )
             performer_ids.append(performer.pk)

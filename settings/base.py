@@ -28,6 +28,12 @@ elif env.bool("READ_DOTENV", False) or (
 ):
     environ.Env.read_env(BASE_DIR / ".env")
 
+# Сканы печати и файлы договоров больше стандартных 2.5 МБ Django.
+DATA_UPLOAD_MAX_MEMORY_SIZE = env.int(
+    "DATA_UPLOAD_MAX_MEMORY_SIZE",
+    default=25 * 1024 * 1024,
+)
+
 # On local macOS development, make Python SMTP TLS use certifi by default.
 # This avoids per-shell manual exports while leaving server environments unchanged.
 if sys.platform == "darwin" and os.environ.get("DJANGO_ENV", "local") == "local":
@@ -236,6 +242,7 @@ ENFORCE_LOGIN_EXEMPT = (
     "/media/",
     "/proposals/docx-source/",
     "/projects/performers/contract-docx-source/",
+    "/projects/reports/render-source/",
     "/o/authorize/",
     "/o/token/",
     "/o/revoke_token/",
@@ -490,12 +497,22 @@ DSH_SORT_LOCAL_ROOTS = tuple(
     for root in env.list("DSH_SORT_LOCAL_ROOTS", default=[])
     if str(root).strip()
 )
+# Раскладка строк для проверки отчётов (висячие предлоги): auto | onlyoffice | libreoffice | estimate.
+# auto — ONLYOFFICE, если настроен; иначе LibreOffice, если установлен; иначе оценка по метрикам шрифтов.
+REPORT_LAYOUT_RENDERER = env("REPORT_LAYOUT_RENDERER", default="auto")
+REPORT_RENDER_TIMEOUT = env.int("REPORT_RENDER_TIMEOUT", default=180)
+# Каталог вне MEDIA_ROOT: сюда на время конвертации кладётся DOCX для ONLYOFFICE Document Server.
+REPORT_RENDER_CACHE_DIR = env("REPORT_RENDER_CACHE_DIR", default="")
+LIBREOFFICE_BINARY = env("LIBREOFFICE_BINARY", default="")
 REPORT_CHECK_ALLOW_LOCAL_FOLDER = env.bool("REPORT_CHECK_ALLOW_LOCAL_FOLDER", default=False)
 REPORT_CHECK_LOCAL_ROOTS = tuple(
     root
     for root in env.list("REPORT_CHECK_LOCAL_ROOTS", default=[])
     if str(root).strip()
 )
+# Локальный корень для кнопки «Создать проект договора» на стенде разработчика.
+# Разрешённые каталоги — те же, что у сдачи отчётов (REPORT_CHECK_LOCAL_ROOTS).
+CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER = env.bool("CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER", default=False)
 
 # === OIDC Provider ===
 OIDC_RSA_PRIVATE_KEY = _read_text_setting_from_env_or_file("OIDC_RSA_PRIVATE_KEY", default="").strip()

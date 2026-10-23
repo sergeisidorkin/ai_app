@@ -32,8 +32,31 @@
           {% endfor %}
         </div>
       </div>
+      {% if allow_local_contract_folder and request.user.is_authenticated and request.user.is_staff %}
+      <div class="report-source-group">
+        <span class="small text-muted">Куда сохранить:</span>
+        <select id="contract-draft-source" class="form-select form-select-sm">
+          <option value="cloud">Облако</option>
+          <option value="local">Локальная папка</option>
+        </select>
+      </div>
+      {% endif %}
     </div>
   </div>
+  {% if allow_local_contract_folder and request.user.is_authenticated and request.user.is_staff %}
+  <div id="contract-draft-local-wrap" class="mb-3 d-none">
+    <label class="small text-muted mb-1" for="contract-draft-local-path">Локальная папка</label>
+    <input type="text" id="contract-draft-local-path" class="form-control form-control-sm"
+           placeholder="{{ local_contract_folder_placeholder }}"
+           spellcheck="false"
+           autocomplete="off">
+    <div class="form-text">
+      Абсолютный путь к папке, которая локально заменяет корневой каталог облака.
+      Внутри неё будет создана структура «02 Договоры / год / проект / договор / 02 Исполнители / исполнитель».
+      Системный диалог выбора папки браузер серверу не отдаёт — путь вставьте вручную. Папка должна уже существовать.
+    </div>
+  </div>
+  {% endif %}
 
   <div class="contract-conclusion-table-wrap">
     <table id="contract-drafting-table" class="table table-sm align-middle performers-table">
@@ -151,7 +174,7 @@
                    target="_blank"
                    rel="noopener"
                    class="proposal-file-name-link proposal-docx-file-name d-inline-flex align-items-center gap-1"
-                   title="Открыть файл DOCX на {{ primary_cloud_storage_label }}">
+                   title="{% if p.contract_project_local_docx %}Скачать локальный файл DOCX{% else %}Открыть файл DOCX на {{ primary_cloud_storage_label }}{% endif %}">
                   <i class="bi bi-file-word-fill" style="color: var(--bs-primary, #075D94);"></i>
                   <span class="proposal-file-name-text">{{ p.contract_file|default:'DOCX файл' }}</span>
                 </a>
@@ -382,7 +405,9 @@
               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
             </div>
             <div class="modal-body">
-              <p class="mb-3">
+              <p class="mb-3" id="create-contract-destination-note"
+                 data-cloud-text="На {{ primary_cloud_storage_label }} будут созданы папки договоров в структуре «02 Договоры / год проекта / проект / 02 Исполнители / исполнитель»."
+                 data-local-text="В указанной локальной папке будут созданы папки договоров в структуре «02 Договоры / год проекта / проект / 02 Исполнители / исполнитель».">
                 На {{ primary_cloud_storage_label }} будут созданы папки договоров в структуре
                 «02 Договоры / год проекта / проект / 02 Исполнители / исполнитель».
               </p>

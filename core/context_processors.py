@@ -5,6 +5,7 @@ from .navigation import NAV_ITEMS
 POLICY_LIGHTWEIGHT_ROUTE_NAMES = {
     "policy_filter_catalog",
     "policy_expertise_directions_table",
+    "policy_service_block_classifiers_table",
     "policy_consulting_directions_table",
     "policy_products_table",
     "policy_service_goal_reports_table",

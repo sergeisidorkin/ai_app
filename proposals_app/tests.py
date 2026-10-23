@@ -34,7 +34,7 @@ from core.proposal_registry_columns import (
 from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 from letters_app.models import LetterTemplate
-from nextcloud_app.api import NextcloudApiError, NextcloudShare
+from nextcloud_app.api import NextcloudApiClient, NextcloudApiError, NextcloudNetworkError, NextcloudShare
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.email_delivery import EmailDeliveryError
 from policy_app.models import (
@@ -3472,10 +3472,10 @@ class ProposalRegistrationFormTests(TestCase):
     def test_form_includes_final_report_term_weeks_decimal_field(self):
         form = ProposalRegistrationForm()
 
-        self.assertEqual(form.fields["service_term_months"].label, "Срок подготовки Предварительного отчёта, мес.")
+        self.assertEqual(form.fields["service_term_months"].label, "Предварительный отчёт")
         self.assertEqual(form.fields["preliminary_report_date"].label, "Дата Предварительного отчёта")
         self.assertEqual(form.fields["final_report_date"].label, "Дата Итогового отчёта")
-        self.assertEqual(form.fields["final_report_term_weeks"].label, "Срок подготовки Итогового отчёта, нед.")
+        self.assertEqual(form.fields["final_report_term_weeks"].label, "Итоговый отчёт")
         self.assertTrue(form.fields["service_term_months"].widget.attrs["readonly"])
         self.assertEqual(form.fields["service_term_months"].widget.attrs["tabindex"], "-1")
         self.assertIn("readonly-field", form.fields["service_term_months"].widget.attrs["class"])
@@ -3491,6 +3491,37 @@ class ProposalRegistrationFormTests(TestCase):
 
         self.assertTrue(form.is_valid(), form.errors)
         self.assertEqual(form.cleaned_data["final_report_term_weeks"], Decimal("2.5"))
+
+    def test_form_saves_report_term_units_for_each_stage(self):
+        form = ProposalRegistrationForm(
+            data=self._base_form_payload(
+                service_term_months="10",
+                preliminary_report_term_unit="days",
+                final_report_term_weeks="1,5",
+                final_report_term_unit="months",
+            )
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save(commit=False)
+
+        self.assertEqual(proposal.preliminary_report_term_unit, "days")
+        self.assertEqual(proposal.final_report_term_unit, "months")
+        self.assertEqual(proposal.service_term_months, Decimal("10"))
+        self.assertEqual(proposal.final_report_term_weeks, Decimal("1.5"))
+        self.assertEqual(proposal.stage_payloads_json[0]["preliminary_report_term_unit"], "days")
+        self.assertEqual(proposal.stage_payloads_json[0]["final_report_term_unit"], "months")
+
+    def test_form_rejects_fractional_day_report_term(self):
+        form = ProposalRegistrationForm(
+            data=self._base_form_payload(
+                service_term_months="1.5",
+                preliminary_report_term_unit="days",
+            )
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("целым числом", str(form.errors))
 
     def test_form_accepts_formatted_service_cost_without_js_raw_submit(self):
         form = ProposalRegistrationForm(
@@ -3647,9 +3678,9 @@ class ProposalRegistrationFormTests(TestCase):
                 "Этап",
                 "Дата оценки",
                 "Дата начала",
-                "Срок предв. отчёта, мес.",
+                "Срок предв. отчёта",
                 "Дата предв. отчёта",
-                "Срок итог. отчёта, нед.",
+                "Срок итог. отчёта",
                 "Дата итог. отчёта",
                 "Предоплата, проц.",
                 "Предоплата, срок дн.",
@@ -4787,6 +4818,62 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertNotIn("list_type", items[3])
         self.assertEqual(items[4]["list_type"], "bullet")
         self.assertEqual(items[5]["list_type"], "bullet")
+
+    def test_resolve_stage_terms_uses_selected_units(self):
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        proposal = ProposalRegistration(
+            type=product,
+            service_term_months="10",
+            preliminary_report_term_unit="days",
+            preliminary_report_date=date(2026, 2, 9),
+            final_report_term_weeks="1.5",
+            final_report_term_unit="months",
+            final_report_date=date(2026, 3, 24),
+        )
+
+        _, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[stage_terms]]", is_computed=True)],
+        )
+        texts = [item["runs"][0]["text"] for item in lists["[[stage_terms]]"]]
+
+        self.assertEqual(
+            texts,
+            [
+                "сдача Предварительного отчёта — в течение 10 дн. до 09.02.2026,",
+                "сдача Итогового отчёта — в течение 1,5 мес. до 24.03.2026.",
+            ],
+        )
+
+    def test_resolve_preliminary_report_term_month_uses_short_unit_for_days_and_weeks(self):
+        days_proposal = ProposalRegistration(
+            service_term_months="10",
+            preliminary_report_term_unit="days",
+        )
+        weeks_proposal = ProposalRegistration(
+            service_term_months="2",
+            preliminary_report_term_unit="weeks",
+        )
+
+        days_replacements, _, _ = resolve_variables(
+            days_proposal,
+            [ProposalVariable(key="{{preliminary_report_term_month}}", is_computed=True)],
+        )
+        weeks_replacements, _, _ = resolve_variables(
+            weeks_proposal,
+            [ProposalVariable(key="{{preliminary_report_term_month}}", is_computed=True)],
+        )
+
+        self.assertEqual(days_replacements["{{preliminary_report_term_month}}"], "10 дн.")
+        self.assertEqual(weeks_replacements["{{preliminary_report_term_month}}"], "2 нед.")
 
     def test_resolve_payment_schedule_for_common_multistage_schedule(self):
         group_member = GroupMember.objects.create(
@@ -6653,8 +6740,8 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, "Этап 2", html=False)
         self.assertContains(response, "01.01.2026", html=False)
         self.assertContains(response, "05.02.2026", html=False)
-        self.assertContains(response, "1,0", html=False)
-        self.assertContains(response, "3,0", html=False)
+        self.assertContains(response, "1 мес.", html=False)
+        self.assertContains(response, "3 нед.", html=False)
         self.assertContains(response, "15.01.2026", html=False)
         self.assertContains(response, "15.03.2026", html=False)
         self.assertContains(response, "30%", html=False)
@@ -7029,12 +7116,15 @@ class ProposalFormContextTests(TestCase):
             short_name="FIN",
             position=1,
         )
+        self.group_member.is_management_company = True
+        self.group_member.save(update_fields=["is_management_company"])
         direction = OrgUnit.objects.create(
             company=self.group_member,
             department_name="Финансовое направление",
             short_name="Финансы",
             expertise=expertise,
             unit_type="expertise",
+            level=2,
             position=1,
         )
         section = TypicalSection.objects.create(
@@ -9278,3 +9368,338 @@ class ProposalCommercialXlsxExportTests(TestCase):
         self.assertContains(response, 'data-commercial-xlsx-url="', html=False)
         self.assertContains(response, 'data-proposal-commercial-xlsx="1"', html=False)
         self.assertContains(response, "bi bi-arrow-down-circle me-2", html=False)
+
+
+@override_settings(ROOT_URLCONF="proposals_app.urls")
+class ProposalVariableMutationRenderTests(TestCase):
+    """Mutations of template variables must not re-render the whole registry."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-variable-render-user",
+            password="secret",
+            is_staff=True,
+            is_active=True,
+        )
+        self.client.force_login(self.user)
+        # Migrations may seed variables; append ours after the existing tail.
+        base = (ProposalVariable.objects.order_by("-position").values_list("position", flat=True).first() or 0)
+        self.first = ProposalVariable.objects.create(key="first_var", description="Первая", position=base + 1)
+        self.second = ProposalVariable.objects.create(key="second_var", description="Вторая", position=base + 2)
+
+    @patch("proposals_app.views._proposals_context")
+    def test_delete_renders_only_variables_section(self, mocked_full_context):
+        response = self.client.post(reverse("proposal_variable_delete", args=[self.first.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "proposals_app/proposal_variables_section.html")
+        self.assertTemplateNotUsed(response, "proposals_app/proposals_partial.html")
+        mocked_full_context.assert_not_called()
+        self.assertFalse(ProposalVariable.objects.filter(pk=self.first.pk).exists())
+        self.assertContains(response, "second_var", html=False)
+        self.assertNotContains(response, "first_var", html=False)
+        # Positions are renumbered without gaps (seeded variables may precede ours).
+        positions = list(ProposalVariable.objects.order_by("position").values_list("position", flat=True))
+        self.assertEqual(positions, list(range(1, len(positions) + 1)))
+
+    @patch("proposals_app.views._proposals_context")
+    def test_delete_with_skip_render_header_returns_no_content(self, mocked_full_context):
+        response = self.client.post(
+            reverse("proposal_variable_delete", args=[self.first.pk]),
+            HTTP_X_SKIP_RENDER="1",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.content, b"")
+        mocked_full_context.assert_not_called()
+        self.assertFalse(ProposalVariable.objects.filter(pk=self.first.pk).exists())
+
+    @patch("proposals_app.views._proposals_context")
+    def test_move_up_renders_only_variables_section(self, mocked_full_context):
+        response = self.client.post(reverse("proposal_variable_move_up", args=[self.second.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "proposals_app/proposal_variables_section.html")
+        mocked_full_context.assert_not_called()
+        self.assertLess(
+            ProposalVariable.objects.get(pk=self.second.pk).position,
+            ProposalVariable.objects.get(pk=self.first.pk).position,
+        )
+
+    @patch("proposals_app.views._proposals_context")
+    def test_create_renders_section_and_closes_modal(self, mocked_full_context):
+        response = self.client.post(
+            reverse("proposal_variable_form_create"),
+            data={
+                "key": "third_var",
+                "description": "Третья",
+                "source_section": "proposals",
+                "source_table": "registry",
+                "source_column": "number",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "proposals_app/proposal_variables_section.html")
+        self.assertEqual(response["HX-Trigger"], "proposals-updated")
+        mocked_full_context.assert_not_called()
+        self.assertTrue(ProposalVariable.objects.filter(key="{{third_var}}").exists())
+
+    def test_create_form_targets_variables_section(self):
+        response = self.client.get(reverse("proposal_variable_form_create"), HTTP_HX_REQUEST="true")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'hx-target="#proposal-variables-section"', html=False)
+
+    def test_create_invalid_form_is_retargeted_to_modal(self):
+        response = self.client.post(
+            reverse("proposal_variable_form_create"),
+            data={"key": "", "description": "Без ключа"},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["HX-Retarget"], "#proposals-modal .modal-content")
+        self.assertTemplateNotUsed(response, "proposals_app/proposal_variables_section.html")
+
+
+@override_settings(ROOT_URLCONF="proposals_app.urls")
+class ProposalRegistryBatchMutationTests(TestCase):
+    """Intermediate requests of a batch skip the registry render entirely."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-batch-user",
+            password="secret",
+            is_staff=True,
+            is_active=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        self.first = ProposalRegistration.objects.create(
+            number=3401, group_member=self.group_member, type=self.product, name="Первое", year=2026, position=1,
+        )
+        self.second = ProposalRegistration.objects.create(
+            number=3402, group_member=self.group_member, type=self.product, name="Второе", year=2026, position=2,
+        )
+
+    @patch("proposals_app.views._proposals_context")
+    def test_delete_with_skip_render_header_returns_no_content(self, mocked_full_context):
+        response = self.client.post(
+            reverse("proposal_delete", args=[self.first.pk]),
+            HTTP_X_SKIP_RENDER="1",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        mocked_full_context.assert_not_called()
+        self.assertFalse(ProposalRegistration.objects.filter(pk=self.first.pk).exists())
+        self.assertEqual(ProposalRegistration.objects.get(pk=self.second.pk).position, 1)
+
+    @patch("proposals_app.views._attach_proposal_folder_urls")
+    def test_delete_without_header_still_renders_registry(self, mocked_attach):
+        response = self.client.post(reverse("proposal_delete", args=[self.first.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "proposals_app/proposals_partial.html")
+        self.assertEqual(response["HX-Trigger"], "proposals-updated")
+        mocked_attach.assert_called_once()
+
+    @patch("proposals_app.views._proposals_context")
+    def test_move_up_with_skip_render_header_returns_no_content(self, mocked_full_context):
+        response = self.client.post(
+            reverse("proposal_move_up", args=[self.second.pk]),
+            HTTP_X_SKIP_RENDER="1",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        mocked_full_context.assert_not_called()
+        self.assertEqual(ProposalRegistration.objects.get(pk=self.second.pk).position, 1)
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+    ROOT_URLCONF="proposals_app.urls",
+)
+class ProposalNextcloudUnreachableFailFastTests(TestCase):
+    """An unreachable Nextcloud host must cost at most one timeout per render."""
+
+    def setUp(self):
+        NextcloudApiClient.reset_network_cooldown()
+        self.addCleanup(NextcloudApiClient.reset_network_cooldown)
+        settings_obj = CloudStorageSettings.get_solo()
+        settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD
+        settings_obj.nextcloud_root_path = "/Corporate Root"
+        settings_obj.save()
+
+        self.user = get_user_model().objects.create_user(
+            username="proposal-failfast-user",
+            email="proposal-failfast-user@example.com",
+            password="secret",
+            is_staff=True,
+            is_active=True,
+        )
+        self.client.force_login(self.user)
+        NextcloudUserLink.objects.create(
+            user=self.user,
+            nextcloud_user_id=f"ncstaff-{self.user.pk}",
+            nextcloud_username=f"ncstaff-{self.user.pk}",
+            nextcloud_email=self.user.email,
+        )
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        self.proposals = []
+        for index, title in enumerate(("Волга", "Западная", "Антоновская"), start=1):
+            workspace = f"/Corporate Root/ТКП/2026/33{index}000RU DD {title}"
+            proposal = ProposalRegistration.objects.create(
+                number=3300 + index,
+                group_member=self.group_member,
+                type=self.product,
+                name=title,
+                year=2026,
+                position=index,
+                proposal_workspace_disk_path=workspace,
+                docx_file_name=f"ТКП_{title}.docx",
+                docx_file_link=f"{workspace}/ТКП_{title}.docx",
+                docx_file_id="",
+            )
+            self.proposals.append(proposal)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    def test_registry_stops_live_lookups_after_first_network_error(
+        self,
+        mocked_list_resources,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        mocked_list_resources.side_effect = NextcloudNetworkError("connect timeout")
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mocked_list_resources.call_count, 1)
+        for proposal in self.proposals:
+            self.assertContains(response, proposal.docx_file_name, html=False)
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    def test_registry_keeps_resolving_after_http_level_error(
+        self,
+        mocked_list_resources,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        # A 404 for one folder says nothing about the host: other proposals
+        # must still get their live lookup.
+        mocked_list_resources.side_effect = NextcloudApiError("Nextcloud DAV error 404")
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mocked_list_resources.call_count, len(self.proposals))
+
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    def test_registry_skips_live_lookups_during_network_cooldown(
+        self,
+        mocked_list_resources,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+    ):
+        NextcloudApiClient._record_network_failure()
+        self.assertTrue(NextcloudApiClient.network_cooldown_active())
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        mocked_list_resources.assert_not_called()
+        mocked_get_user_share.assert_not_called()
+
+
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+    NEXTCLOUD_NETWORK_ERROR_COOLDOWN=30,
+)
+class NextcloudClientNetworkCooldownTests(TestCase):
+    def setUp(self):
+        NextcloudApiClient.reset_network_cooldown()
+        self.addCleanup(NextcloudApiClient.reset_network_cooldown)
+
+    @patch("nextcloud_app.api.time.sleep", return_value=None)
+    def test_transport_failure_raises_network_error_and_arms_cooldown(self, _mocked_sleep):
+        import requests
+
+        client = NextcloudApiClient(session=Mock())
+        client._session.request.side_effect = requests.ConnectTimeout("timed out")
+
+        with self.assertRaises(NextcloudNetworkError):
+            client._dav_request("PROPFIND", "https://cloud.example.com/remote.php/dav/files/cloud-admin/x")
+
+        self.assertTrue(NextcloudApiClient.network_cooldown_active())
+        self.assertEqual(client._session.request.call_count, NextcloudApiClient.MAX_DAV_ATTEMPTS)
+
+    @patch("nextcloud_app.api.time.sleep", return_value=None)
+    def test_http_error_is_not_a_network_error_and_does_not_arm_cooldown(self, _mocked_sleep):
+        client = NextcloudApiClient(session=Mock())
+        client._session.request.return_value = Mock(status_code=404, text="not found")
+
+        with self.assertRaises(NextcloudApiError) as ctx:
+            client._dav_request("PROPFIND", "https://cloud.example.com/remote.php/dav/files/cloud-admin/x")
+
+        self.assertNotIsInstance(ctx.exception, NextcloudNetworkError)
+        self.assertFalse(NextcloudApiClient.network_cooldown_active())
+
+    def test_successful_request_clears_cooldown(self):
+        NextcloudApiClient._record_network_failure()
+        self.assertTrue(NextcloudApiClient.network_cooldown_active())
+
+        client = NextcloudApiClient(session=Mock())
+        client._session.request.return_value = Mock(status_code=207, text="")
+        client._dav_request("PROPFIND", "https://cloud.example.com/remote.php/dav/files/cloud-admin/x")
+
+        self.assertFalse(NextcloudApiClient.network_cooldown_active())
+
+    @override_settings(NEXTCLOUD_NETWORK_ERROR_COOLDOWN=0)
+    def test_zero_cooldown_disables_the_marker(self):
+        NextcloudApiClient._record_network_failure()
+
+        self.assertFalse(NextcloudApiClient.network_cooldown_active())

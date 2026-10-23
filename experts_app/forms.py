@@ -6,18 +6,45 @@ from django.db.models import Q
 
 from classifiers_app.models import OKSMCountry, TerritorialDivision
 from contracts_app.forms import _ContractFileInput
+from core.forms import lock_field, locked_attrs
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import (
-    DEPARTMENT_HEAD_GROUP,
-    DIRECTOR_GROUPS,
     ExpertiseDirection,
     Grade,
 )
-from users_app.models import Employee
 from .models import ExpertContractDetails, ExpertProfile, ExpertSpecialty
 
 OWNER_GROUP_VALUE = "__group__"
 SPECIALIZATION_AREA_PREFIX = "Специалист по"
+
+
+def _pairs_from_units(units):
+    pairs = []
+    for unit in units or []:
+        company = getattr(unit, "company", None)
+        pairs.append({
+            "department": str(getattr(unit, "department_name", "") or "").strip(),
+            "organization": str(getattr(company, "short_name", "") or "").strip(),
+        })
+    return pairs or [{"department": "", "organization": ""}]
+
+
+def _specialty_direction_derived(directions):
+    """Пары подразделение/организация для каждого направления."""
+    from group_app.expertise_management import catalog_labels
+
+    directions = list(directions)
+    labels = catalog_labels([direction.pk for direction in directions])
+    derived = {}
+    for direction in directions:
+        info = labels.get(direction.pk) or {}
+        pairs = _pairs_from_units(info.get("units"))
+        derived[direction.pk] = {
+            "department": pairs[0]["department"],
+            "organization": pairs[0]["organization"],
+            "pairs": pairs,
+        }
+    return derived
 
 
 def _territorial_division_region_choices_for_country(country_id, current_value=""):
@@ -41,6 +68,21 @@ def _territorial_division_region_choices_for_country(country_id, current_value="
     return choices
 
 
+class SpecialtyExpertiseSelect(forms.Select):
+    """Направление экспертизы: у опции пары подразделение/организация."""
+
+    derived = {}
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        direction = getattr(value, "instance", None)
+        info = self.derived.get(getattr(direction, "pk", None)) or {}
+        option["attrs"]["data-department"] = info.get("department", "")
+        option["attrs"]["data-organization"] = info.get("organization", "")
+        option["attrs"]["data-pairs"] = json.dumps(info.get("pairs") or [], ensure_ascii=False)
+        return option
+
+
 class ExpertSpecialtyForm(forms.ModelForm):
     specialization_area_suffix = forms.CharField(
         label="Область специализации",
@@ -50,12 +92,21 @@ class ExpertSpecialtyForm(forms.ModelForm):
             "placeholder": "область специализации",
         }),
     )
+    department = forms.CharField(
+        label="Подразделение",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="esp-department")),
+    )
+    organization = forms.CharField(
+        label="Организация",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="esp-organization")),
+    )
 
     class Meta:
         model = ExpertSpecialty
-        fields = ["expertise_direction", "specialty", "specialty_en", "expertise_dir", "head_of_direction"]
+        fields = ["specialty", "specialty_en", "expertise_dir"]
         widgets = {
-            "expertise_direction": forms.Select(attrs={"class": "form-select", "id": "esp-dept-select"}),
             "specialty": forms.TextInput(attrs={
                 "class": "form-control",
                 "placeholder": "Специальность",
@@ -64,8 +115,10 @@ class ExpertSpecialtyForm(forms.ModelForm):
                 "class": "form-control",
                 "placeholder": "Specialty (English)",
             }),
-            "expertise_dir": forms.Select(attrs={"class": "form-select", "id": "esp-dir-select"}),
-            "head_of_direction": forms.Select(attrs={"class": "form-select"}),
+            "expertise_dir": SpecialtyExpertiseSelect(attrs={
+                "class": "form-select",
+                "id": "esp-dir-select",
+            }),
         }
         error_messages = {
             "specialty": {
@@ -73,7 +126,13 @@ class ExpertSpecialtyForm(forms.ModelForm):
             },
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, lock_expertise=False, locked_expertise_dir=None, allowed_expertise_dirs=None, **kwargs):
+        self.lock_expertise = lock_expertise
+        self.locked_expertise_dir = locked_expertise_dir
+        self.allowed_expertise_dirs = list(allowed_expertise_dirs or [])
+        self.missing_locked_direction = bool(
+            lock_expertise and locked_expertise_dir is None and not self.allowed_expertise_dirs
+        )
         super().__init__(*args, **kwargs)
         self.specialization_area_prefix = SPECIALIZATION_AREA_PREFIX
 
@@ -85,38 +144,43 @@ class ExpertSpecialtyForm(forms.ModelForm):
             current_specialization_area = current_specialization_area[len(SPECIALIZATION_AREA_PREFIX):].strip()
         self.fields["specialization_area_suffix"].initial = current_specialization_area
 
-        all_org_units = OrgUnit.objects.all()
-        self.fields["expertise_direction"].queryset = all_org_units
-        self.fields["expertise_direction"].label_from_instance = (
-            lambda obj: obj.department_name
-        )
-        self.fields["expertise_direction"].empty_label = "---------"
-        self.fields["expertise_direction"].required = False
-
-        org_unit_info = {}
-        for u in all_org_units.values("pk", "unit_type", "company_id", "expertise_id"):
-            org_unit_info[str(u["pk"])] = {
-                "type": u["unit_type"],
-                "company_id": u["company_id"],
-                "expertise_id": u["expertise_id"],
-            }
-        self.org_unit_info_json = json.dumps(org_unit_info, ensure_ascii=False)
-
-        self.fields["expertise_dir"].queryset = ExpertiseDirection.objects.all()
+        direction_qs = ExpertiseDirection.objects.select_related(
+            "department", "department__company"
+        ).order_by("position", "id")
+        if self.allowed_expertise_dirs:
+            direction_qs = direction_qs.filter(pk__in=[item.pk for item in self.allowed_expertise_dirs])
+        if self.lock_expertise and not self.allowed_expertise_dirs:
+            if self.locked_expertise_dir is not None:
+                direction_qs = direction_qs.filter(pk=self.locked_expertise_dir.pk)
+                self.fields["expertise_dir"].empty_label = None
+                self.fields["expertise_dir"].initial = self.locked_expertise_dir.pk
+                self.initial["expertise_dir"] = self.locked_expertise_dir.pk
+            else:
+                direction_qs = direction_qs.none()
+            lock_field(self.fields["expertise_dir"], disabled=True, use_disabled_attr=True)
+        self.fields["expertise_dir"].queryset = direction_qs
         self.fields["expertise_dir"].label_from_instance = (
             lambda obj: f"{obj.short_name} {obj.name}"
         )
-        self.fields["expertise_dir"].empty_label = "---------"
+        if self.allowed_expertise_dirs and self.locked_expertise_dir is None:
+            self.fields["expertise_dir"].empty_label = None
+            self.fields["expertise_dir"].initial = self.allowed_expertise_dirs[0].pk
+            self.initial["expertise_dir"] = self.allowed_expertise_dirs[0].pk
+        elif not (self.lock_expertise and self.locked_expertise_dir is not None):
+            self.fields["expertise_dir"].empty_label = "---------"
         self.fields["expertise_dir"].required = False
-
-        self.fields["head_of_direction"].queryset = Employee.objects.filter(
-            role__in=(DEPARTMENT_HEAD_GROUP, *DIRECTOR_GROUPS)
-        )
-        self.fields["head_of_direction"].label_from_instance = (
-            lambda obj: obj.job_title
-        )
-        self.fields["head_of_direction"].empty_label = "---------"
-        self.fields["head_of_direction"].required = False
+        derived = _specialty_direction_derived(direction_qs)
+        self.fields["expertise_dir"].widget.derived = derived
+        pairs = self._derived_pairs(derived)
+        self.managed_pairs = pairs
+        department = pairs[0]["department"]
+        organization = pairs[0]["organization"]
+        self.fields["department"].initial = department
+        self.fields["organization"].initial = organization
+        if self.is_bound:
+            self.data = self.data.copy()
+            self.data[self.add_prefix("department")] = department
+            self.data[self.add_prefix("organization")] = organization
 
         self.owner_options = list(GroupMember.objects.order_by("position", "id").values("pk", "short_name"))
         self.selected_owner_ids = []
@@ -143,6 +207,43 @@ class ExpertSpecialtyForm(forms.ModelForm):
                 "is_group": d.is_group_owner,
             }
         self.dir_owners_json = json.dumps(dir_owners, ensure_ascii=False)
+
+    def _selected_direction_id(self):
+        if self.locked_expertise_dir is not None:
+            return self.locked_expertise_dir.pk
+        if not self.is_bound and self.allowed_expertise_dirs:
+            return self.allowed_expertise_dirs[0].pk
+        if self.is_bound:
+            raw = self.data.get(self.add_prefix("expertise_dir"))
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+        if self.instance and self.instance.pk and self.instance.expertise_dir_id:
+            return self.instance.expertise_dir_id
+        return None
+
+    def _derived_pairs(self, derived):
+        info = derived.get(self._selected_direction_id()) or {}
+        pairs = info.get("pairs") or [{"department": "", "organization": ""}]
+        return pairs
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.missing_locked_direction:
+            self.add_error(
+                "expertise_dir",
+                "Для вашего подразделения не задано направление экспертизы.",
+            )
+        elif self.allowed_expertise_dirs:
+            allowed_ids = {item.pk for item in self.allowed_expertise_dirs}
+            selected = cleaned.get("expertise_dir")
+            if selected is None or selected.pk not in allowed_ids:
+                self.add_error(
+                    "expertise_dir",
+                    "Можно выбрать только направление экспертизы своего подразделения.",
+                )
+        return cleaned
 
     def save(self, commit=True):
         obj = super().save(commit=False)
@@ -289,11 +390,7 @@ class ExpertProfileForm(forms.ModelForm):
         self.initial["extra_email"] = extra_email_value
         self.initial["extra_phone"] = extra_phone_value
         for field_name in ("extra_email", "extra_phone", "country", "region"):
-            field = self.fields[field_name]
-            field.disabled = True
-            field.widget.attrs["readonly"] = True
-            field.widget.attrs["tabindex"] = "-1"
-            field.widget.attrs["class"] = field.widget.attrs.get("class", "") + " readonly-field"
+            lock_field(self.fields[field_name], disabled=True)
 
     def _resolve_fk(self, field_name):
         if self.data:
@@ -320,31 +417,31 @@ class ExpertContractDetailsForm(forms.ModelForm):
         label="Гражданство",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     citizenship_country = forms.CharField(
         label="Страна гражданства (налоговая юрисдикция)",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     citizenship_status = forms.CharField(
         label="Статус",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     citizenship_identifier = forms.CharField(
         label="Идентификатор",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     citizenship_number = forms.CharField(
         label="Номер",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+        widget=forms.TextInput(attrs=locked_attrs()),
     )
     registration_region = forms.ChoiceField(
         label="Регион",
@@ -375,40 +472,13 @@ class ExpertContractDetailsForm(forms.ModelForm):
         self.fields["citizenship_identifier"].initial = instance.citizenship_identifier
         self.fields["citizenship_number"].initial = instance.citizenship_number
         self.fields["registration_address"].initial = instance.calculated_registration_address
-        self.fields["registration_address"].disabled = True
-        self.fields["registration_address"].widget.attrs.update(
-            {
-                "readonly": True,
-                "tabindex": "-1",
-                "class": self.fields["registration_address"].widget.attrs.get("class", "") + " readonly-field",
-            }
-        )
+        lock_field(self.fields["registration_address"], disabled=True)
         self.fields["full_name_genitive"].initial = instance.person_full_name_genitive
-        self.fields["full_name_genitive"].disabled = True
-        self.fields["full_name_genitive"].widget.attrs.update(
-            {
-                "readonly": True,
-                "tabindex": "-1",
-                "class": self.fields["full_name_genitive"].widget.attrs.get("class", "") + " readonly-field",
-            }
-        )
+        lock_field(self.fields["full_name_genitive"], disabled=True)
         self.fields["gender"].initial = instance.person_gender
-        self.fields["gender"].disabled = True
-        self.fields["gender"].widget.attrs.update(
-            {
-                "tabindex": "-1",
-                "class": self.fields["gender"].widget.attrs.get("class", "") + " readonly-field",
-            }
-        )
+        lock_field(self.fields["gender"], disabled=True, use_disabled_attr=True)
         self.fields["birth_date"].initial = instance.person_birth_date
-        self.fields["birth_date"].disabled = True
-        self.fields["birth_date"].widget.attrs.update(
-            {
-                "readonly": True,
-                "tabindex": "-1",
-                "class": self.fields["birth_date"].widget.attrs.get("class", "") + " readonly-field",
-            }
-        )
+        lock_field(self.fields["birth_date"], disabled=True)
         self.fields["facsimile_file"].widget.attrs.update(
             {
                 "cloud_current_url": getattr(instance.facsimile_file, "url", "") if getattr(instance, "facsimile_file", None) else "",

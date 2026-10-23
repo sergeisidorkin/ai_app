@@ -44,8 +44,6 @@ _LINK_RETRY_WAIT_MAX = 35.0
 
 _HEARTBEAT_INTERVAL = 2.0
 _PROJECT_MANAGER_ROLES = (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP)
-_UNSET_EXPERTISE_DIRECTION_LABEL = "не установлено"
-
 
 def _heartbeat_sleep(seconds, progress, total):
     """Sleep in small chunks, yielding heartbeat progress events to keep
@@ -494,7 +492,7 @@ def grant_project_workspace_editor_access_for_performers(
         .exclude(employee__user__email="")
         .order_by("registration_id", "employee__user_id", "id")
     )
-    direction_head_by_employee_id = _direction_head_by_performer_employee(performers)
+    direction_head_by_performer_id = _direction_head_by_performer(performers)
     workspace_by_project_id = {
         workspace.project_id: workspace
         for workspace in ProjectWorkspace.objects.filter(
@@ -509,7 +507,7 @@ def grant_project_workspace_editor_access_for_performers(
         if not workspace or not workspace.disk_path:
             continue
         access_users = [performer.employee.user]
-        direction_head = direction_head_by_employee_id.get(performer.employee_id)
+        direction_head = direction_head_by_performer_id.get(performer.pk)
         if direction_head and direction_head.user_id:
             access_users.append(direction_head.user)
 
@@ -597,10 +595,10 @@ def _confirmed_project_performer_users(project):
         .exclude(employee__user__email="")
         .order_by("employee__user_id", "id")
     )
-    direction_head_by_employee_id = _direction_head_by_performer_employee(performers)
+    direction_head_by_performer_id = _direction_head_by_performer(performers)
     for performer in performers:
         access_users = [performer.employee.user]
-        direction_head = direction_head_by_employee_id.get(performer.employee_id)
+        direction_head = direction_head_by_performer_id.get(performer.pk)
         if direction_head and direction_head.user_id:
             access_users.append(direction_head.user)
         for user in access_users:
@@ -613,60 +611,40 @@ def _confirmed_project_performer_users(project):
     return users
 
 
-def _direction_head_by_performer_employee(performers):
-    from experts_app.models import ExpertProfile
+def _direction_head_by_performer(performers):
+    from group_app.expertise_management import ExpertiseAssignmentIndex
 
     performer_list = list(performers)
-    employee_ids = {performer.employee_id for performer in performer_list if performer.employee_id}
-    if not employee_ids:
+    if not performer_list:
         return {}
-
-    profile_direction_by_employee_id = {}
-    direction_ids = set()
-    profiles = (
-        ExpertProfile.objects
-        .select_related("expertise_direction")
-        .filter(employee_id__in=employee_ids, expertise_direction_id__isnull=False)
-    )
-    for profile in profiles:
-        if _is_unset_expertise_direction(profile.expertise_direction):
-            continue
-        profile_direction_by_employee_id[profile.employee_id] = profile.expertise_direction_id
-        direction_ids.add(profile.expertise_direction_id)
-    if not direction_ids:
-        return {}
-
-    head_by_direction_id = {}
-    heads = (
-        Employee.objects
-        .select_related("user")
-        .filter(
-            department_id__in=direction_ids,
-            role=DEPARTMENT_HEAD_GROUP,
-            user__is_active=True,
-            user__is_staff=True,
-        )
-        .exclude(user__email="")
-        .order_by("position", "id")
-    )
-    for head in heads:
-        head_by_direction_id.setdefault(head.department_id, head)
-
-    return {
-        employee_id: head_by_direction_id[direction_id]
-        for employee_id, direction_id in profile_direction_by_employee_id.items()
-        if direction_id in head_by_direction_id
+    loaded = {
+        item.pk: item
+        for item in performer_list[0].__class__.objects.select_related(
+            "typical_section",
+            "registration__group_member",
+            "employee__user",
+        ).filter(pk__in=[item.pk for item in performer_list if item.pk])
     }
-
-
-def _is_unset_expertise_direction(direction) -> bool:
-    if direction is None:
-        return True
-    labels = (
-        getattr(direction, "department_name", ""),
-        getattr(direction, "short_name", ""),
-    )
-    return any(str(label or "").strip().casefold() == _UNSET_EXPERTISE_DIRECTION_LABEL for label in labels)
+    direction_ids = [
+        item.typical_section.expertise_dir_id
+        for item in loaded.values()
+        if item.typical_section_id and item.typical_section.expertise_dir_id
+    ]
+    index = ExpertiseAssignmentIndex(direction_ids)
+    result = {}
+    for performer in performer_list:
+        source = loaded.get(performer.pk, performer)
+        section = getattr(source, "typical_section", None)
+        direction_id = getattr(section, "expertise_dir_id", None)
+        if not direction_id:
+            continue
+        group_member = getattr(getattr(source, "registration", None), "group_member", None)
+        head = index.operation_head(direction_id, group_member)
+        user = getattr(head, "user", None)
+        if user is None or not user.is_active or not user.is_staff or not (user.email or "").strip():
+            continue
+        result[performer.pk] = head
+    return result
 
 
 def _ensure_nextcloud_link_for_user(user, *, client: NextcloudApiClient, display_name: str | None = None):

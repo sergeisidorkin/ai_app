@@ -20,6 +20,10 @@
   --main-sidebar-collapsed-width: 80px;
 
   --second-sidebar-header-offset: 75px;
+
+  /* Заблокированные поля форм (.readonly-field) — единственный источник цветов */
+  --locked-field-bg: #f8f9fa;
+  --locked-field-fg: #6c757d;
 }
 
 body.contracts-modal-open,
@@ -253,12 +257,15 @@ body.contract-requisites-modal-open {
   opacity: 1;
 }
 
-/* Заблокированные поля (единый стиль) */
+/* Заблокированные поля (единый стиль).
+   Цвета берутся из --locked-field-bg / --locked-field-fg (см. :root).
+   opacity: 1 — чтобы Bootstrap не осветлял :disabled. */
 .readonly-field,
 .readonly-field:disabled,
 .readonly-field[readonly] {
-  background-color: #f8f9fa !important;
-  color: #6c757d !important;
+  background-color: var(--locked-field-bg) !important;
+  color: var(--locked-field-fg) !important;
+  opacity: 1 !important;
 }
 
 .typical-service-term-unit-select {
@@ -1139,7 +1146,8 @@ body .second-sidebar + .flex-grow-1 {
 .signing-table .form-check-input:disabled,
 #checklists-table-wrap .form-check-input:disabled,
 #policy-pane .consulting-directions-table .form-check-input:disabled,
-#policy-pane .typical-sections-table .form-check-input:disabled {
+#policy-pane .typical-sections-table .form-check-input:disabled,
+#policy-pane .experts-specialties-table-wrap .form-check-input:disabled {
   background-color: #e9ecef !important;
   border-color: #d5dbe1 !important;
   opacity: 1 !important;
@@ -1641,6 +1649,44 @@ body .second-sidebar + .flex-grow-1 {
 
 #policy-pane .policy-table-editor > .table-responsive > .table {
   margin-bottom: 0;
+}
+
+/* Заголовки направлений экспертизы остаются в одну строку.
+   Колонки делят всю ширину таблицы, текст строк переносится внутри ячейки. */
+#policy-expertise-directions-section .expertise-directions-table {
+  width: 100%;
+  table-layout: auto;
+}
+
+#policy-expertise-directions-section .expertise-directions-table thead th {
+  white-space: nowrap;
+}
+
+#policy-expertise-directions-section .expertise-directions-table tbody td:not(:first-child) {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+#policy-expertise-directions-section .expertise-directions-table tr.expdir-group-has-next > td {
+  border-bottom: 0 !important;
+}
+
+#policy-expertise-directions-section .expertise-directions-table tr.expdir-group-has-next > td[data-col="department"],
+#policy-expertise-directions-section .expertise-directions-table tr.expdir-group-has-next > td[data-col="organization"] {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#policy-expertise-directions-section .expertise-directions-table tr.expdir-group-continuation > td {
+  border-top: 0 !important;
 }
 
 #policy-pane .policy-table-footer,
@@ -2172,6 +2218,7 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table col.reg-year       { width: 3%  !important; }
 #projects-pane table.reg-table col.reg-evaluation-date { width: 150px !important; }
 #projects-pane table.reg-table col.reg-manager    { width: 9% !important; }
+#projects-pane table.reg-table col.reg-coordinator { width: 9% !important; }
 #projects-pane table.reg-table col.reg-customer   { width: 13% !important; }
 #projects-pane table.reg-table col.reg-country    { width: 5%  !important; }
 #projects-pane table.reg-table col.reg-identifier { width: 4%  !important; }
@@ -2188,7 +2235,7 @@ section#templates .alert.alert-info .text-muted {
 /* 1) Таблица: занимает всю ширину, а при нехватке места расширяется под содержимое */
 #projects-pane #projects-content-launch .registration-table-wrap {
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
   width: 100%;
   padding-bottom: var(--project-schedule-table-scroll-offset-top);
 }
@@ -2216,7 +2263,7 @@ section#templates .alert.alert-info .text-muted {
 
 #projects-pane .registration-table-wrap {
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
   width: 100%;
 }
 
@@ -2776,6 +2823,7 @@ section#templates .alert.alert-info .text-muted {
 
 #projects-pane table.reg-table tbody td[data-reg-status-cell],
 #projects-pane table.reg-table tbody td[data-reg-manager-cell],
+#projects-pane table.reg-table tbody td[data-reg-coordinator-cell],
 #projects-pane table.reg-table tbody td[data-reg-deadline-cell],
 #projects-pane table.reg-table tbody td[data-reg-date-cell] {
   min-width: 140px !important;
@@ -2800,6 +2848,7 @@ section#templates .alert.alert-info .text-muted {
 
 #projects-pane table.reg-table .reg-status-btn,
 #projects-pane table.reg-table .reg-manager-btn,
+#projects-pane table.reg-table .reg-coordinator-btn,
 #projects-pane table.reg-table .reg-deadline-btn {
   border: 1.5px solid transparent;
   border-radius: .25rem;
@@ -2822,7 +2871,8 @@ section#templates .alert.alert-info .text-muted {
 }
 
 #projects-pane table.reg-table .reg-status-btn::after,
-#projects-pane table.reg-table .reg-manager-btn::after {
+#projects-pane table.reg-table .reg-manager-btn::after,
+#projects-pane table.reg-table .reg-coordinator-btn::after {
   content: "";
   display: inline-block;
   margin-left: auto;
@@ -2842,6 +2892,9 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table .reg-manager-btn:hover,
 #projects-pane table.reg-table .reg-manager-btn:focus-visible,
 #projects-pane table.reg-table .reg-manager-btn.is-editing,
+#projects-pane table.reg-table .reg-coordinator-btn:hover,
+#projects-pane table.reg-table .reg-coordinator-btn:focus-visible,
+#projects-pane table.reg-table .reg-coordinator-btn.is-editing,
 #projects-pane table.reg-table .reg-deadline-btn:hover,
 #projects-pane table.reg-table .reg-deadline-btn:focus-visible,
 #projects-pane table.reg-table .reg-deadline-btn.is-editing {
@@ -2858,12 +2911,16 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table .reg-status-btn.is-editing::after,
 #projects-pane table.reg-table .reg-manager-btn:hover::after,
 #projects-pane table.reg-table .reg-manager-btn:focus-visible::after,
-#projects-pane table.reg-table .reg-manager-btn.is-editing::after {
+#projects-pane table.reg-table .reg-manager-btn.is-editing::after,
+#projects-pane table.reg-table .reg-coordinator-btn:hover::after,
+#projects-pane table.reg-table .reg-coordinator-btn:focus-visible::after,
+#projects-pane table.reg-table .reg-coordinator-btn.is-editing::after {
   opacity: 1;
 }
 
 #projects-pane #registration-status-editor,
-#projects-pane #registration-manager-editor {
+#projects-pane #registration-manager-editor,
+#projects-pane #registration-coordinator-editor {
   border: 1.5px solid #ced4da;
   border-radius: .25rem;
   background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%236c757d' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
@@ -3182,6 +3239,56 @@ section#templates .alert.alert-info .text-muted {
 #experts-pane .experts-profiles-table-wrap.has-horizontal-scroll > table,
 #policy-expert-specialties-section .experts-specialties-table-wrap.has-horizontal-scroll > table {
   margin-bottom: var(--experts-table-margin-to-scroll) !important;
+}
+
+#policy-expert-specialties-section #esp-table tr.esp-group-has-next > td {
+  border-bottom: 0 !important;
+}
+
+#policy-expert-specialties-section #esp-table tr.esp-group-has-next > td[data-col="expertise-direction"],
+#policy-expert-specialties-section #esp-table tr.esp-group-has-next > td[data-col="organization"] {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#policy-expert-specialties-section #esp-table tr.esp-group-continuation > td {
+  border-top: 0 !important;
+}
+
+#policy-modal .esp-pair-labels,
+#policy-modal .esp-pair-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 0.5rem;
+  align-items: center;
+}
+
+#policy-modal .esp-pair-row > div,
+#policy-modal .esp-pair-labels > label {
+  min-width: 0;
+}
+
+#policy-modal .esp-pair-labels {
+  margin-bottom: 0.25rem;
+}
+
+#policy-modal .esp-pair-row + .esp-pair-row {
+  margin-top: 0.5rem;
+}
+
+@media (min-width: 768px) {
+  #policy-modal .esp-pair-labels,
+  #policy-modal .esp-pair-row {
+    grid-template-columns: 18px calc(50% - 1rem - 18px) minmax(0, 1fr);
+  }
 }
 
 #experts-pane .experts-profiles-table-wrap + .products-actions-row {
@@ -3571,6 +3678,38 @@ section#templates .alert.alert-info .text-muted {
   overflow: hidden;
   font-family: inherit;
   font-size: inherit;
+}
+
+/* «График проекта»: пока после перерисовки #projects-pane новая диаграмма
+   запрашивается и монтируется, поверх контейнера лежит статическая копия
+   предыдущей (project-schedule-gantt.js). Контейнер сохраняет высоту, живое
+   содержимое под копией невидимо, но участвует в layout — dhtmlxGantt
+   корректно измеряет размеры. */
+.project-schedule-gantt-wrap--pending {
+  position: relative;
+}
+
+.project-schedule-gantt-wrap--pending > :not(.project-schedule-gantt-ghost) {
+  visibility: hidden;
+}
+
+.project-schedule-gantt-ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  visibility: visible;
+  pointer-events: none;
+  user-select: none;
+  z-index: 2;
+}
+
+/* В живом wrap верхний отступ редактора «схлопывается» наружу; внутри копии
+   (overflow: hidden => новый BFC) он остался бы внутри и сдвинул бы картинку
+   на 1rem относительно настоящей диаграммы. */
+.project-schedule-gantt-ghost > .typical-service-term-gantt-editor {
+  margin-top: 0;
 }
 
 body.typical-service-term-gantt-fullscreen-active {
@@ -5752,8 +5891,8 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
 .gantt_cal_light input.readonly-field,
 .gantt_cal_light select.readonly-field,
 .gantt_cal_light textarea.readonly-field {
-  background-color: #f8f9fa !important;
-  color: #6c757d !important;
+  background-color: var(--locked-field-bg) !important;
+  color: var(--locked-field-fg) !important;
   opacity: 1 !important;
 }
 
@@ -6440,8 +6579,59 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
 html.proposal-progress-cursor,
 html.proposal-progress-cursor *,
 html.worktime-progress-cursor,
-html.worktime-progress-cursor * {
+html.worktime-progress-cursor *,
+html.table-action-progress,
+html.table-action-progress * {
   cursor: progress !important;
+}
+
+/* Fallback save indicator for tables managed by queued-row-order.js
+   that have no local [data-row-order-status] element. */
+.row-order-global-status {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1085;
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  max-width: min(26rem, calc(100vw - 2rem));
+  padding: .3rem .65rem;
+  border-radius: .5rem;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 .25rem .9rem rgba(33, 37, 41, .16);
+  font-size: .8rem;
+  line-height: 1.25;
+  pointer-events: none;
+}
+
+.row-order-global-status.row-order-status-error {
+  pointer-events: auto;
+}
+
+.row-order-global-status .row-order-status-spinner {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: .9rem;
+  height: .9rem;
+  border-radius: 50%;
+  background: conic-gradient(from 25deg, rgba(143, 154, 165, 0) 0deg, rgba(143, 154, 165, .18) 120deg, rgba(143, 154, 165, .92) 330deg, rgba(143, 154, 165, 0) 360deg);
+  animation: row-order-global-spin 820ms linear infinite;
+}
+
+.row-order-global-status .row-order-status-spinner::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+@keyframes row-order-global-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes proposal-refresh-spin {
@@ -7177,11 +7367,6 @@ html.worktime-progress-cursor * {
   transform: none !important;
 }
 
-#proposals-pane .readonly-field {
-  background-color: #f8f9fa;
-  color: #6c757d;
-}
-
 #proposals-pane .form-label {
   display: block;
   white-space: nowrap;
@@ -7235,11 +7420,6 @@ html.worktime-progress-cursor * {
 
 #proposals-pane .proposal-customer-meta-grid > div {
   min-width: 0;
-}
-
-#proposals-modal .readonly-field {
-  background-color: #f8f9fa;
-  color: #6c757d;
 }
 
 #proposals-modal .modal-body.modal-body-scroll {
@@ -7546,11 +7726,6 @@ html.worktime-progress-cursor * {
   color: #6c757d;
 }
 
-#policy-modal .policy-product-select-display.readonly-field {
-  color: #6c757d;
-  background-color: #f8f9fa;
-}
-
 #proposals-pane .proposal-product-remove {
   display: flex;
   align-items: center;
@@ -7790,6 +7965,59 @@ html.worktime-progress-cursor * {
 
 #proposals-pane .proposal-stage-delay-remove:hover {
   color: #dc3545;
+}
+
+#proposals-pane .proposal-stage-preliminary-term-shell,
+#proposals-pane .proposal-stage-final-term-shell,
+#proposals-pane .proposal-stage-total-term-shell {
+  display: flex;
+  align-items: stretch;
+  min-width: 10.5rem;
+  padding: 0;
+  overflow: hidden;
+}
+
+#proposals-pane .proposal-stage-preliminary-term-shell .proposal-stage-service-term-months,
+#proposals-pane .proposal-stage-final-term-shell .proposal-stage-final-report-term-weeks,
+#proposals-pane .proposal-stage-total-term-shell .proposal-stage-total-service-term-months,
+#proposals-pane .proposal-stage-total-term-shell .proposal-stage-total-final-report-term-weeks {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  padding: .375rem .25rem .375rem .75rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  color: inherit;
+}
+
+#proposals-pane .proposal-stage-preliminary-term-unit,
+#proposals-pane .proposal-stage-final-term-unit,
+#proposals-pane .proposal-stage-total-preliminary-term-unit,
+#proposals-pane .proposal-stage-total-final-term-unit {
+  flex: 0 0 5.5rem;
+  width: 5.5rem;
+  padding: .375rem 2.25rem .375rem .75rem;
+  border: 0;
+  border-left: 1px solid #dee2e6;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  background-color: transparent;
+  background-position: right .75rem center;
+  color: #6c757d;
+  box-shadow: none;
+}
+
+#proposals-pane .proposal-stage-preliminary-term-shell.readonly-field .proposal-stage-preliminary-term-unit,
+#proposals-pane .proposal-stage-final-term-shell.readonly-field .proposal-stage-final-term-unit {
+  pointer-events: none;
+}
+
+#proposals-pane .proposal-stage-total-preliminary-term-unit,
+#proposals-pane .proposal-stage-total-final-term-unit {
+  background-color: #fff !important;
+  color: #212529 !important;
 }
 
 #proposals-pane .proposal-stage-terms-total-row td {
@@ -9447,8 +9675,14 @@ html.worktime-progress-cursor * {
   z-index: 1010;
 }
 
-/* Открытый фильтр в шапке таблицы — выше следующих шапок на странице */
+/* Открытый фильтр в шапке таблицы — выше следующих шапок на странице.
+   Селектор с #projects нужен: у шапок там z-index 1010 с более высоким приоритетом. */
+#projects .table-section-header:has(.dropdown-menu.show),
+#projects .table-section-header:has(.tkp-colpicker-menu.show),
 #projects-pane .table-section-header:has(.dropdown-menu.show),
+#projects-pane .table-section-header:has(.tkp-colpicker-menu.show),
+#contracts .table-section-header:has(.dropdown-menu.show),
+#contracts .table-section-header:has(.tkp-colpicker-menu.show),
 #contracts-execution-pane .table-section-header:has(.dropdown-menu.show),
 #contracts-content-in-development .table-section-header.tkp-colpicker-open,
 .table-section-header:has(.tkp-colpicker-menu.show) {
@@ -13372,6 +13606,19 @@ body.proposal-service-text-modal-open {
   overflow: visible;
   text-overflow: clip;
 }
+/* Контейнер для замера: JS кладёт в него клон таблицы на время замера.
+   Нулевой размер и clip не дают клону менять ширину прокрутки обёртки
+   (иначе на macOS при каждом опросе статуса проверки мигает скроллбар). */
+#report-submission-section .report-submission-measuring-host {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
 /* Режим измерения (класс выставляет JS на время замера естественной ширины
    столбцов): содержимое ячеек раскладывается без усечения, чтобы столбцы
    «Загрузить» и «Результаты проверки» получили ширину полного имени файла. */
@@ -13400,7 +13647,8 @@ body.proposal-service-text-modal-open {
   max-width: none;
 }
 
-#report-submission-section .report-source-group {
+#report-submission-section .report-source-group,
+#contract-conclusion-section .report-source-group {
   display: inline-flex;
   align-items: center;
   gap: .5rem;
@@ -13408,7 +13656,9 @@ body.proposal-service-text-modal-open {
 }
 
 #report-submission-section .report-source-group select,
-#report-submission-section #report-submission-local-path {
+#report-submission-section #report-submission-local-path,
+#contract-conclusion-section .report-source-group select,
+#contract-conclusion-section #contract-draft-local-path {
   min-width: 16rem;
 }
 

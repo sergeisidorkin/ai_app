@@ -171,26 +171,24 @@ def sync_review_after_check(upload) -> None:
 
 def upload_org_direction_ids(upload) -> set[int]:
     from .models import Performer
+    from .report_access import _operation_unit_ids_for_sections
 
-    ids = set()
+    registration = getattr(upload, "registration", None)
+    group_member = getattr(registration, "group_member", None)
     performer = getattr(upload, "performer", None)
     section = getattr(performer, "typical_section", None) if performer is not None else None
-    direction_id = getattr(section, "expertise_direction_id", None)
-    if direction_id:
-        ids.add(direction_id)
-    if ids and not getattr(upload, "is_all_sections", False) and not getattr(upload, "is_full_report", False):
-        return ids
-    qs = Performer.objects.filter(
+    if section is not None and getattr(section, "expertise_dir_id", None) and not getattr(upload, "is_all_sections", False) and not getattr(upload, "is_full_report", False):
+        return _operation_unit_ids_for_sections([section], group_member)
+    qs = Performer.objects.select_related("typical_section").filter(
         registration_id=upload.registration_id,
         asset_name=getattr(upload, "asset_name", "") or "",
     )
     if not getattr(upload, "is_full_report", False):
         qs = qs.filter(executor=getattr(upload, "executor", "") or "")
-    ids.update(
-        qs.exclude(typical_section__expertise_direction_id=None)
-        .values_list("typical_section__expertise_direction_id", flat=True)
+    return _operation_unit_ids_for_sections(
+        [item.typical_section for item in qs if item.typical_section_id],
+        group_member,
     )
-    return {int(item) for item in ids if item}
 
 
 def user_matches_review_step(user, upload, step: str) -> bool:

@@ -8,6 +8,7 @@ from django.templatetags.static import static as static_url
 
 from django.contrib.auth.views import LogoutView
 from core.views import home_entry, RememberMeLoginView, dsh_open
+from core.row_order import row_order_save
 from users_app.views import register_view, verify_view, resend_code_view
 
 from openai_app import views as openai_views
@@ -19,6 +20,7 @@ urlpatterns = [
     path("taskpane.html", TemplateView.as_view(template_name="taskpane.html"), name="taskpane"),
     path("", home_entry, name="home"),
     path("dsh/", dsh_open, name="dsh_open"),
+    path("core/row-order/<slug:key>/", row_order_save, name="row_order_save"),
 #   path("", TemplateView.as_view(template_name="index.html"), name="home"),
     path("policy/",    include("policy_app.urls")),
     path("blocks/",    include(("blocks_app.urls", "blocks_app"),   namespace="blocks_app")),

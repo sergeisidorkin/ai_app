@@ -314,9 +314,9 @@
             <td data-col="stage">{{ row.stage }}</td>
             <td data-col="evaluation-date">{{ row.evaluation_date|date:"d.m.Y" }}</td>
             <td data-col="start-date">{{ row.start_date|date:"d.m.Y" }}</td>
-            <td data-col="term">{{ row.service_term_months|format_decimal_comma:"1" }}</td>
+            <td data-col="term">{{ row.preliminary_term_display }}</td>
             <td data-col="preliminary-report-date">{{ row.preliminary_report_date|date:"d.m.Y" }}</td>
-            <td data-col="final-report-weeks">{{ row.final_report_term_weeks|format_decimal_comma:"1" }}</td>
+            <td data-col="final-report-weeks">{{ row.final_term_display }}</td>
             <td data-col="final-report-date">{{ row.final_report_date|date:"d.m.Y" }}</td>
             <td data-col="advance-percent">{% if row.advance_percent != None %}{{ row.advance_percent|floatformat:"-2" }}%{% endif %}</td>
             <td data-col="advance-term">{{ row.advance_term_days|default_if_none:"" }}</td>
@@ -623,7 +623,7 @@
 
       <div id="proposal-template-section-body" class="d-none">
       <div class="table-responsive proposal-template-table-wrap">
-        <table class="table table-sm align-top proposal-template-table">
+        <table data-queued-row-order data-row-order-key="proposal-template" class="table table-sm align-top proposal-template-table">
           <thead>
           <tr>
             <th style="width:1%">

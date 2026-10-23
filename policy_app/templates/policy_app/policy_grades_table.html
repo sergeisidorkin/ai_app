@@ -12,7 +12,7 @@
 
 <div class="policy-table-editor">
 <div class="table-responsive">
-    <table class="table table-sm align-middle">
+    <table data-queued-row-order data-row-order-key="grade" class="table table-sm align-middle">
         <thead>
         <tr>
             <th style="width:1%">
@@ -41,7 +41,9 @@
             <tr data-edit-url="{% url 'grade_form_edit' g.pk %}"
                 data-delete-url="{% url 'grade_delete' g.pk %}"
                 data-move-up-url="{% url 'grade_move_up' g.pk %}"
-                data-move-down-url="{% url 'grade_move_down' g.pk %}">
+                data-move-down-url="{% url 'grade_move_down' g.pk %}"
+                data-row-order-scope="{{ g.created_by_id|default_if_none:'' }}"
+                {% if not request.user.is_superuser and g.created_by_id != request.user.id %}data-row-order-locked="1"{% endif %}>
 
                 <td class="text-nowrap">
                     <div class="form-check">

@@ -4,6 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.db.models import Case, IntegerField, Value, When
 
 from contacts_app.models import PersonRecord
+from core.forms import lock_field
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import ROLE_GROUPS_ORDER, SUPERUSER_GROUPS
 from .models import Employee, PendingRegistration
@@ -157,11 +158,7 @@ class EmployeeForm(forms.Form):
 
     def _lock_name_fields(self):
         for field_name in ("last_name", "first_name", "patronymic"):
-            field = self.fields[field_name]
-            field.disabled = True
-            field.widget.attrs["readonly"] = True
-            field.widget.attrs["tabindex"] = "-1"
-            field.widget.attrs["class"] = field.widget.attrs.get("class", "") + " readonly-field"
+            lock_field(self.fields[field_name], disabled=True)
 
     def clean_email(self):
         email = self.cleaned_data["email"]

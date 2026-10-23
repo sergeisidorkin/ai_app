@@ -29,11 +29,16 @@ from core.cloud_storage import (
 )
 from contacts_app.models import CitizenshipRecord
 from group_app.models import GroupMember
-from nextcloud_app.api import NextcloudApiClient, NextcloudApiError
+from nextcloud_app.api import NextcloudApiClient, NextcloudApiError, NextcloudNetworkError
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.models import Notification, NotificationPerformerLink
 from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP
 from proposals_app.models import ProposalRegistration, ProposalRegistrationProduct
+from projects_app.local_contract_storage import (
+    is_local_contract_path,
+    local_contract_folder_enabled,
+    local_contract_folder_placeholder,
+)
 from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
 from smtp_app.models import ExternalSMTPAccount
 from users_app.forms import FREELANCER_LABEL
@@ -335,39 +340,32 @@ def _attach_contract_responsible_names(performers):
     if not performer_list:
         return performer_list
 
-    performer_effective_employee_id, performer_employee_ids = _effective_contract_employee_ids(performer_list)
+    from group_app.expertise_management import ExpertiseAssignmentIndex
 
-    profile_direction_by_employee = {}
-    if performer_employee_ids:
-        from experts_app.models import ExpertProfile
-
-        profile_direction_by_employee = dict(
-            ExpertProfile.objects
-            .filter(
-                employee_id__in=performer_employee_ids,
-                expertise_direction_id__isnull=False,
-            )
-            .values_list("employee_id", "expertise_direction_id")
-        )
-
-    direction_head_by_department = {}
-    direction_ids = set(profile_direction_by_employee.values())
-    if direction_ids:
-        heads = (
-            Employee.objects
-            .select_related("user")
-            .filter(department_id__in=direction_ids, role=DEPARTMENT_HEAD_GROUP)
-            .order_by("position", "id")
-        )
-        for head in heads:
-            direction_head_by_department.setdefault(head.department_id, head)
-
+    loaded = {
+        item.pk: item
+        for item in Performer.objects.select_related(
+            "typical_section",
+            "registration",
+            "registration__group_member",
+        ).filter(pk__in=[item.pk for item in performer_list])
+    }
+    direction_ids = [
+        loaded[item.pk].typical_section.expertise_dir_id
+        for item in performer_list
+        if item.pk in loaded
+        and loaded[item.pk].typical_section_id
+        and loaded[item.pk].typical_section.expertise_dir_id
+    ]
+    index = ExpertiseAssignmentIndex(direction_ids)
     for performer in performer_list:
-        employee_id = performer_effective_employee_id.get(id(performer))
-        direction_id = profile_direction_by_employee.get(employee_id)
-        if direction_id:
-            head = direction_head_by_department.get(direction_id)
-            performer.responsible_name = Performer.employee_full_name(head) if head else ""
+        source = loaded.get(performer.pk, performer)
+        section = getattr(source, "typical_section", None)
+        direction_id = getattr(section, "expertise_dir_id", None)
+        group_member = getattr(getattr(source, "registration", None), "group_member", None)
+        head = index.operation_head(direction_id, group_member) if direction_id else None
+        if head:
+            performer.responsible_name = Performer.employee_full_name(head)
         else:
             performer.responsible_name = getattr(performer.registration, "project_manager", "") or ""
 
@@ -870,6 +868,8 @@ def _contracts_context(user=None, *, strict_nextcloud=True):
         "is_lawyer": is_lawyer,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "has_active_smtp_connection": has_active_smtp_connection,
+        "allow_local_contract_folder": local_contract_folder_enabled(),
+        "local_contract_folder_placeholder": local_contract_folder_placeholder(),
     }
 
 
@@ -1072,6 +1072,23 @@ def _attach_contract_folder_urls(contracts, user=None):
                 performer.contract_project_folder_file_id = getattr(source, "contract_project_folder_file_id", "") or ""
         path = getattr(performer, "contract_project_disk_folder", "") or ""
         public_url = (getattr(performer, "contract_project_folder_link", "") or "").strip()
+        if is_local_contract_path(path):
+            file_name = (getattr(performer, "contract_file", "") or "").strip()
+            performer.contract_project_local_docx = bool(file_name)
+            performer.contract_project_folder_url = ""
+            performer.contract_project_docx_file_url = (
+                reverse("contract_project_local_download", args=[performer.pk])
+                if file_name and local_contract_folder_enabled()
+                else ""
+            )
+            performer.contract_project_pdf_file_url = (
+                getattr(performer, "contract_pdf_link", "") or ""
+            ).strip()
+            performer.contract_signed_pdf_file_url = (
+                getattr(performer, "contract_signed_pdf_link", "") or ""
+            ).strip()
+            continue
+        performer.contract_project_local_docx = False
         performer.contract_project_folder_url = public_url or build_folder_url(path)
         performer.contract_project_docx_file_url = "" if nextcloud_primary else (
             getattr(performer, "contract_project_link", "") or ""
@@ -1102,6 +1119,15 @@ def _attach_contract_folder_urls(contracts, user=None):
     live_share_lookup = bool(
         getattr(settings, "NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ", True)
     )
+    if live_share_lookup and NextcloudApiClient.network_cooldown_active():
+        # The host failed at transport level moments ago: every live lookup
+        # would burn connect-timeout + retry per row. Render from the saved
+        # folder links instead and let a request after the cooldown retry.
+        logger.info(
+            "Nextcloud network cooldown is active; rendering the contracts "
+            "table from saved links without live share resolution",
+        )
+        live_share_lookup = False
     share_map = {}
     if live_share_lookup:
         try:
@@ -1110,16 +1136,21 @@ def _attach_contract_folder_urls(contracts, user=None):
                 link.nextcloud_user_id,
             )
         except NextcloudApiError as exc:
-            logger.error(
-                "Could not load Nextcloud share map for contracts table: %s",
+            # Nextcloud is unavailable: keep the table usable with the saved
+            # folder links and skip the per-row lookups (each would pay the
+            # same timeout again).
+            logger.warning(
+                "Could not load Nextcloud share map for contracts table; "
+                "rendering it without live share resolution: %s",
                 exc,
             )
-            raise
-        client.prime_user_share_cache(
-            client.username,
-            link.nextcloud_user_id,
-            share_map,
-        )
+            live_share_lookup = False
+        else:
+            client.prime_user_share_cache(
+                client.username,
+                link.nextcloud_user_id,
+                share_map,
+            )
 
     normalized_root_path = _normalize_contract_nextcloud_path(get_nextcloud_root_path())
     resolved_cache = dict(folder_cache)
@@ -1127,15 +1158,32 @@ def _attach_contract_folder_urls(contracts, user=None):
     share_lookup_cache = {}
     for path in list(resolved_cache.keys()):
         target_path = _resolve_contract_shared_target_path(path, share_map, root_path=normalized_root_path)
+        if not target_path and live_share_lookup and NextcloudApiClient.network_cooldown_active():
+            # A lookup earlier in this render already hit a transport error;
+            # do not pay the timeout again for every path.
+            live_share_lookup = False
         if not target_path and live_share_lookup:
-            target_path = _resolve_contract_target_path_via_user_share_lookup(
-                client,
-                client.username,
-                path,
-                link.nextcloud_user_id,
-                root_path=normalized_root_path,
-                share_lookup_cache=share_lookup_cache,
-            )
+            try:
+                target_path = _resolve_contract_target_path_via_user_share_lookup(
+                    client,
+                    client.username,
+                    path,
+                    link.nextcloud_user_id,
+                    root_path=normalized_root_path,
+                    share_lookup_cache=share_lookup_cache,
+                )
+            except NextcloudNetworkError as exc:
+                logger.warning(
+                    "Nextcloud unreachable while resolving contract folder share for %s; "
+                    "skipping live lookups for the rest of this render: %s",
+                    path,
+                    exc,
+                )
+                live_share_lookup = False
+                target_path = ""
+            except NextcloudApiError as exc:
+                logger.warning("Could not resolve Nextcloud contract folder share for %s: %s", path, exc)
+                target_path = ""
         if target_path:
             resolved_target_cache[path] = target_path
             resolved_cache[path] = client.build_files_url(target_path)
@@ -1144,6 +1192,8 @@ def _attach_contract_folder_urls(contracts, user=None):
 
     for performer in contracts:
         path = getattr(performer, "contract_project_disk_folder", "") or ""
+        if is_local_contract_path(path):
+            continue
         public_url = (getattr(performer, "contract_project_folder_link", "") or "").strip()
         target_path = resolved_target_cache.get(path, "")
         stored_folder_file_id = str(getattr(performer, "contract_project_folder_file_id", "") or "").strip()
@@ -1157,6 +1207,15 @@ def _attach_contract_folder_urls(contracts, user=None):
                     path,
                     resource_cache=resource_cache,
                 )
+            except NextcloudNetworkError as exc:
+                logger.warning(
+                    "Nextcloud unreachable while resolving contract folder file id for performer %s; "
+                    "skipping live lookups for the rest of this render: %s",
+                    performer.pk,
+                    exc,
+                )
+                live_share_lookup = False
+                stored_folder_file_id = ""
             except NextcloudApiError as exc:
                 logger.warning("Could not resolve Nextcloud contract folder file id for performer %s: %s", performer.pk, exc)
                 stored_folder_file_id = ""
@@ -1181,6 +1240,15 @@ def _attach_contract_folder_urls(contracts, user=None):
                             contract_file_path,
                             resource_cache=resource_cache,
                         )
+                    except NextcloudNetworkError as exc:
+                        logger.warning(
+                            "Nextcloud unreachable while resolving contract DOCX file id for performer %s; "
+                            "skipping live lookups for the rest of this render: %s",
+                            performer.pk,
+                            exc,
+                        )
+                        live_share_lookup = False
+                        file_id = ""
                     except NextcloudApiError as exc:
                         logger.warning("Could not resolve Nextcloud contract DOCX file id for performer %s: %s", performer.pk, exc)
                         file_id = ""
@@ -1621,7 +1689,9 @@ def _render_contracts_project_registration_form(request, form, *, action, regist
     from proposals_app.views import _proposal_product_autofill_data
 
     context = _registration_form_context(form, action, registration)
-    context.update(_proposal_product_autofill_data())
+    context.update(_proposal_product_autofill_data(
+        group_member=getattr(registration, "group_member", None),
+    ))
     prefill_ranked_products = getattr(form, "prefill_ranked_products", None)
     if prefill_ranked_products is not None:
         context["ranked_products"] = prefill_ranked_products

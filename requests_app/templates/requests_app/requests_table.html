@@ -1,5 +1,5 @@
 <div class="table-responsive">
-  <table class="table table-sm align-middle">
+  <table data-queued-row-order data-row-order-key="request-item" class="table table-sm align-middle">
         <thead>
           <tr>
             <th style="width:1%">
@@ -24,6 +24,7 @@
                 data-delete-url="{% url 'request_delete' it.id %}"
                 data-move-up-url="{% url 'request_move_up' it.id %}"
                 data-move-down-url="{% url 'request_move_down' it.id %}"
+                data-row-order-scope="{{ it.table_id }}"
               >
                 <td>
                   <div class="form-check">
@@ -51,6 +52,7 @@
                 data-delete-url="{% url 'request_delete' it.id %}"
                 data-move-up-url="{% url 'request_move_up' it.id %}"
                 data-move-down-url="{% url 'request_move_down' it.id %}"
+                data-row-order-scope="{{ it.table_id }}"
               >
                 <td>
                   <div class="form-check">

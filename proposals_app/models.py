@@ -26,6 +26,16 @@ class ProposalRegistration(models.Model):
         COMPLETED = "completed", "Завершённое"
         NOT_HELD = "not_held", "Несостоявшееся"
 
+    class PreliminaryReportTermUnit(models.TextChoices):
+        MONTHS = "months", "мес."
+        DAYS = "days", "дн."
+        WEEKS = "weeks", "нед."
+
+    class FinalReportTermUnit(models.TextChoices):
+        DAYS = "days", "дн."
+        WEEKS = "weeks", "нед."
+        MONTHS = "months", "мес."
+
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
     number = models.PositiveIntegerField(
         verbose_name="Номер",
@@ -122,21 +132,33 @@ class ProposalRegistration(models.Model):
     stage_payloads_json = models.JSONField("Данные этапов ТКП", default=list, blank=True)
     evaluation_date = models.DateField("Дата оценки", null=True, blank=True)
     service_term_months = models.DecimalField(
-        "Срок подготовки Предварительного отчёта, мес.",
+        "Предварительный отчёт",
         max_digits=5,
         decimal_places=1,
         null=True,
         blank=True,
         validators=[MinValueValidator(0)],
     )
+    preliminary_report_term_unit = models.CharField(
+        "Единица срока подготовки Предварительного отчёта",
+        max_length=10,
+        choices=PreliminaryReportTermUnit.choices,
+        default=PreliminaryReportTermUnit.MONTHS,
+    )
     preliminary_report_date = models.DateField("Дата Предварительного отчёта", null=True, blank=True)
     final_report_term_weeks = models.DecimalField(
-        "Срок подготовки Итогового отчёта, нед.",
+        "Итоговый отчёт",
         max_digits=5,
         decimal_places=1,
         null=True,
         blank=True,
         validators=[MinValueValidator(0)],
+    )
+    final_report_term_unit = models.CharField(
+        "Единица срока подготовки Итогового отчёта",
+        max_length=10,
+        choices=FinalReportTermUnit.choices,
+        default=FinalReportTermUnit.WEEKS,
     )
     final_report_date = models.DateField("Дата Итогового отчёта", null=True, blank=True)
     report_languages = models.CharField("Языки отчёта", max_length=255, blank=True, default="")

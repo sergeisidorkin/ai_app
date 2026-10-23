@@ -15,7 +15,7 @@
 
 <div class="policy-table-editor">
 <div class="table-responsive">
-    <table id="report-structures-table" class="table table-sm align-top specialty-tariffs-table">
+    <table data-queued-row-order data-row-order-key="report-structure" id="report-structures-table" class="table table-sm align-top specialty-tariffs-table">
         <thead>
         <tr>
             <th style="width:1%">
@@ -49,7 +49,8 @@
                 data-edit-url="{% url 'report_structure_form_edit' rs.pk %}"
                 data-delete-url="{% url 'report_structure_delete' rs.pk %}"
                 data-move-up-url="{% url 'report_structure_move_up' rs.pk %}"
-                data-move-down-url="{% url 'report_structure_move_down' rs.pk %}">
+                data-move-down-url="{% url 'report_structure_move_down' rs.pk %}"
+                data-row-order-scope="{{ rs.product_id }}">
 
                 <td class="text-nowrap">
                     {% if request.user.is_authenticated and request.user.is_staff %}

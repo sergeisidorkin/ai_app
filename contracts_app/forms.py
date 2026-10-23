@@ -9,6 +9,7 @@ from django.db.models import Max, Prefetch, Q
 from django.utils import timezone
 
 from classifiers_app.models import LegalEntityIdentifier, OKSMCountry
+from core.forms import lock_field, locked_attrs
 from group_app.models import GroupMember
 from policy_app.models import (
     Product,
@@ -263,12 +264,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(attrs={
-            "readonly": True,
-            "tabindex": "-1",
-            "class": "form-control readonly-field",
-            "id": "reg-identifier-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(id="reg-identifier-field")),
     )
     registration_region = forms.ChoiceField(
         label="Регион",
@@ -307,12 +303,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     asset_owner_identifier = forms.CharField(
         label="Идентификатор",
         required=False,
-        widget=forms.TextInput(attrs={
-            "readonly": True,
-            "tabindex": "-1",
-            "class": "form-control readonly-field",
-            "id": "reg-asset-owner-identifier-field",
-        }),
+        widget=forms.TextInput(attrs=locked_attrs(id="reg-asset-owner-identifier-field")),
     )
     asset_owner_registration_date = forms.DateField(
         label="Дата регистрации",
@@ -471,16 +462,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         max_value=100,
         max_digits=5,
         decimal_places=2,
-        widget=forms.NumberInput(
-            attrs={
-                "min": 0,
-                "max": 100,
-                "step": "0.01",
-                "readonly": True,
-                "tabindex": "-1",
-                "class": "readonly-field",
-            }
-        ),
+        widget=forms.NumberInput(attrs=locked_attrs(base=None, min=0, max=100, step="0.01")),
     )
     final_report_term_days = forms.IntegerField(
         label="Срок оплаты Итогового отчёта в календарных днях",
@@ -2189,11 +2171,7 @@ class ContractEditForm(forms.ModelForm):
         label="Окон. платеж",
         required=False,
         disabled=True,
-        widget=forms.NumberInput(attrs={
-            "class": "form-control readonly-field",
-            "readonly": True,
-            "step": "1",
-        }),
+        widget=forms.NumberInput(attrs=locked_attrs(step="1")),
     )
 
     def __init__(self, *args, group_member_initial=None, **kwargs):
@@ -2333,11 +2311,11 @@ class ContractTemplateForm(forms.ModelForm):
         widgets = {
             "contract_type": forms.Select(attrs={"class": "form-select"}),
             "party": forms.Select(attrs={"class": "form-select"}),
-            "sample_name": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
-            "version": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+            "sample_name": forms.TextInput(attrs=locked_attrs()),
+            "version": forms.TextInput(attrs=locked_attrs()),
             "file": _ContractFileInput(attrs={"class": "form-control"}),
-            "act_sample_name": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
-            "act_version": forms.TextInput(attrs={"class": "form-control readonly-field", "readonly": True, "tabindex": "-1"}),
+            "act_sample_name": forms.TextInput(attrs=locked_attrs()),
+            "act_version": forms.TextInput(attrs=locked_attrs()),
             "act_file": _ContractFileInput(attrs={"class": "form-control"}),
         }
 
@@ -2707,14 +2685,9 @@ class ContractVariableForm(forms.ModelForm):
         )
 
         if self.is_computed:
-            locked_style = "background-color:#f8f9fa; color:#6c757d;"
-            self.fields["key"].widget.attrs.update({
-                "readonly": True, "tabindex": "-1", "style": locked_style,
-            })
+            lock_field(self.fields["key"])
             for fname in ("source_section", "source_table", "source_column"):
-                self.fields[fname].widget.attrs.update({
-                    "disabled": True, "style": locked_style,
-                })
+                lock_field(self.fields[fname], use_disabled_attr=True)
 
         self.fields["source_section"].choices = get_section_choices()
 

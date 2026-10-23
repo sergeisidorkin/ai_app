@@ -699,12 +699,23 @@
     if (action === 'edit') {
       var editRow = checked[0].closest('tr');
       var editUrl = editRow && editRow.dataset ? editRow.dataset.editUrl : '';
+      if (!editUrl) return;
+      // После закрытия модалки (крестик / Отмена / Сохранить) выделение строк
+      // снимается общим модулем core/js/table-selection.js.
+      if (window.TableSelection) {
+        window.TableSelection.clearOnModalHide(
+          'contacts-modal',
+          config.name,
+          panel.closest('#contacts-persons-pane, #contacts-citizenships-pane, #contacts-addresses-pane, #contacts-positions-pane, #contacts-phones-pane, #contacts-emails-pane, #contacts-specialties-pane') || root
+        );
+      }
       openModalContent(editUrl, config.modalTarget);
       return;
     }
 
     if (action === 'delete') {
       if (!window.confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
+      var progress = window.TableActionProgress ? window.TableActionProgress.begin(checked) : null;
       Promise.resolve().then(async function () {
         for (var i = 0; i < checked.length; i++) {
           var row = checked[i].closest('tr');
@@ -733,11 +744,24 @@
           await refreshTable(panelConfig['eml-actions'], []);
           await refreshTable(panelConfig['spc-actions'], []);
         }
-      });
+      }).finally(function () { if (progress) progress.end(); });
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder && window.__queuedRowOrder.handleMoveAction({
+        checked: checked,
+        action: action,
+        refresh: function () {
+          var currentIds = Array.prototype.map.call(
+            document.querySelectorAll('input.form-check-input[name="' + config.name + '"]:checked'),
+            function (box) { return String(box.value); }
+          );
+          return refreshTable(config, currentIds);
+        },
+      })) {
+        return;
+      }
       Promise.resolve().then(async function () {
         var urls = checked.map(function (checkbox) {
           var row = checkbox.closest('tr');
