@@ -19,6 +19,12 @@ services:
   moodle:
     image: esdrascaleb/moodle-docker-php-production:alpine-php8.3
     restart: always
+    # The host serves imcmontanai.ru on loopback. Moodle must reach Django OIDC
+    # through the Docker gateway, otherwise token exchange is blocked.
+    extra_hosts:
+      - "imcmontanai.ru:host-gateway"
+      - "www.imcmontanai.ru:host-gateway"
+      - "learn.imcmontanai.ru:host-gateway"
     env_file:
       - moodle.env
     depends_on:

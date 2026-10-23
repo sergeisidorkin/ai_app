@@ -121,6 +121,33 @@ class MoodleProvisioningTests(TestCase):
         payload = client.update_users.call_args.args[0][0]
         self.assertEqual(payload["auth"], "oidc")
 
+    @override_settings(MOODLE_USER_AUTH_PLUGIN="oidc")
+    def test_does_not_change_reserved_moodle_admin_account(self):
+        self.user.username = "admin"
+        self.user.email = "admin@imcmontanai.ru"
+        self.user.save(update_fields=["username", "email"])
+        client = self._client()
+
+        link = ensure_moodle_account(self.user, client=client)
+
+        self.assertIsNone(link)
+        client.create_users.assert_not_called()
+        client.update_users.assert_not_called()
+        client.get_users_by_username.assert_not_called()
+
+    @override_settings(MOODLE_USER_AUTH_PLUGIN="oidc")
+    def test_does_not_overwrite_moodle_account_resolved_as_admin(self):
+        client = self._client()
+        client.get_users_by_email.return_value = [
+            {"id": 2, "username": "admin", "email": self.user.email, "auth": "manual"}
+        ]
+
+        link = ensure_moodle_account(self.user, client=client)
+
+        self.assertIsNone(link)
+        client.create_users.assert_not_called()
+        client.update_users.assert_not_called()
+
     def test_raise_clear_error_when_other_django_user_owns_same_moodle_user(self):
         other = User.objects.create_user(
             username="other@example.com",
