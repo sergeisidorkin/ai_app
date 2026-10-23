@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 MOODLE_PASSWORD_ALPHABET = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+# Local Moodle accounts that must keep password login. Provisioning must not
+# switch them to SSO or suspend them when the Django user changes.
+RESERVED_MOODLE_USERNAMES = frozenset({"admin", "imc-api-sync"})
 
 
 def sync_moodle_account_for_user(user_id: int, *, client: MoodleApiClient | None = None) -> LearningUserLink | None:
@@ -31,6 +34,10 @@ def ensure_moodle_account(user, *, client: MoodleApiClient | None = None) -> Lea
         return None
 
     existing_link = LearningUserLink.objects.filter(user=user).first()
+    if _is_reserved_local_account(user, existing_link):
+        logger.info("Skip Moodle provisioning for reserved local account %s.", user.pk)
+        return existing_link
+
     if not _should_manage_in_moodle(user):
         if existing_link and existing_link.moodle_user_id:
             moodle_user_id = existing_link.moodle_user_id
@@ -40,6 +47,10 @@ def ensure_moodle_account(user, *, client: MoodleApiClient | None = None) -> Lea
         return existing_link
 
     moodle_user = _resolve_moodle_user(user, client=client, existing_link=existing_link)
+    if moodle_user and _is_reserved_moodle_username(str(moodle_user.get("username") or "")):
+        logger.info("Skip Moodle provisioning because it resolved reserved account for user %s.", user.pk)
+        return existing_link
+
     moodle_payload = _build_moodle_user_payload(user)
 
     if moodle_user:
@@ -71,6 +82,16 @@ def ensure_moodle_account(user, *, client: MoodleApiClient | None = None) -> Lea
 
 def _should_manage_in_moodle(user) -> bool:
     return bool(user.is_active and user.is_staff and (user.email or "").strip())
+
+
+def _is_reserved_moodle_username(username: str) -> bool:
+    return (username or "").strip().lower() in RESERVED_MOODLE_USERNAMES
+
+
+def _is_reserved_local_account(user, existing_link: LearningUserLink | None) -> bool:
+    if _is_reserved_moodle_username(_build_moodle_username(user)):
+        return True
+    return bool(existing_link and _is_reserved_moodle_username(existing_link.moodle_username or ""))
 
 
 def _resolve_moodle_user(user, *, client: MoodleApiClient, existing_link: LearningUserLink | None = None) -> dict:
