@@ -7969,7 +7969,12 @@ class TypicalServiceCompositionViewsTests(TestCase):
             '<span class="ql-font-calibri" style="color: #ff0000; background-color: rgb(1, 2, 3)">Безопасно</span>',
             html=False,
         )
-        self.assertNotContains(response, "<script", html=False)
+        self.assertContains(
+            response,
+            '<script type="application/json" data-policy-inline-options>',
+            html=False,
+        )
+        self.assertNotContains(response, "<script>alert(1)</script>", html=False)
         self.assertNotContains(response, "alert(1)", html=False)
         self.assertNotContains(response, "onclick", html=False)
         self.assertNotContains(response, "bad-class", html=False)
@@ -8672,9 +8677,24 @@ class TypicalServiceTermViewsTests(TestCase):
         self.assertContains(response, "Сроки предоставления исходных данных")
         self.assertContains(response, "Срок подготовки Предварительного отчёта")
         self.assertContains(response, "Срок подготовки Итогового отчёта")
-        self.assertContains(response, ">0,0 нед.<", html=False)
-        self.assertContains(response, ">1,5 мес.<", html=False)
-        self.assertContains(response, ">3,0 нед.<", html=False)
+        self.assertContains(response, 'data-inline-value="0.0">0,0</td>', html=False)
+        self.assertContains(
+            response,
+            'data-inline-field="source_data_term_unit" data-inline-type="select" data-inline-value="weeks">нед.</td>',
+            html=False,
+        )
+        self.assertContains(response, 'data-inline-value="1.5">1,5</td>', html=False)
+        self.assertContains(
+            response,
+            'data-inline-field="preliminary_report_term_unit" data-inline-type="select" data-inline-value="months">мес.</td>',
+            html=False,
+        )
+        self.assertContains(response, 'data-inline-value="3.0">3,0</td>', html=False)
+        self.assertContains(
+            response,
+            'data-inline-field="final_report_term_unit" data-inline-type="select" data-inline-value="weeks">нед.</td>',
+            html=False,
+        )
         self.assertContains(response, 'id="typical-service-terms-actions"', html=False)
         self.assertContains(response, 'id="typical-service-terms-gantt-edit-btn"', html=False)
         self.assertContains(response, 'id="typical-service-term-gantt-editor"', html=False)

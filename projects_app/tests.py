@@ -5866,6 +5866,12 @@ class LocalContractProjectFlowTests(TestCase):
         self.assertEqual(disabled.status_code, 404)
 
 
+@override_settings(
+    NEXTCLOUD_PROVISIONING_BASE_URL="https://cloud.example.com",
+    NEXTCLOUD_PROVISIONING_USERNAME="cloud-admin",
+    NEXTCLOUD_PROVISIONING_TOKEN="token",
+    NEXTCLOUD_OIDC_PROVIDER_ID=1,
+)
 class NextcloudContractProjectFlowTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
