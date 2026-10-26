@@ -78,10 +78,11 @@
   function pane() { return document.getElementById('performers-pane'); }
   function updatePaymentRequestScrollGaps() {
     qa(
-      '#participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap',
+      '#participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap, #report-submission-section .report-submission-table-wrap, #report-check-section .report-check-table-wrap, #report-macros-section .report-macros-table-wrap',
       document
     ).forEach(function(wrap) {
-      wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+      var clipped = getComputedStyle(wrap).overflowX === 'hidden';
+      wrap.classList.toggle('has-horizontal-scroll', !clipped && wrap.scrollWidth > wrap.clientWidth + 1);
     });
   }
   function schedulePaymentRequestScrollGapsUpdate() {
@@ -191,7 +192,7 @@
   const csrftoken = getCookie('csrftoken');
 
   function cleanupDanglingModalState() {
-    if (document.querySelector('.modal.show, .modal.showing')) return;
+    if (window.ModalBackdropGuard ? window.ModalBackdropGuard.isAnyModalActive() : document.querySelector('.modal.show, .modal.showing')) return;
     document.querySelectorAll('.modal-backdrop').forEach((backdrop) => backdrop.remove());
     document.body.classList.remove('modal-open');
     document.body.style.removeProperty('padding-right');
@@ -219,7 +220,8 @@
     return (name === 'contract-select' || name === 'contract-dispatch-select') ? contractPane() : pane();
   }
   function getRowChecks(name) {
-    return qa(`tbody input.form-check-input[name="${name}"]`, getSelectionRoot(name));
+    return qa(`tbody input.form-check-input[name="${name}"]`, getSelectionRoot(name))
+      .filter(function(box) { return !box.closest('#performers-modal'); });
   }
   function getChecked(name) {
     return getRowChecks(name).filter(b => b.checked);
@@ -229,6 +231,29 @@
       const tr = b.closest('tr');
       if (tr) tr.classList.toggle('table-active', !!b.checked);
     });
+  }
+  function forgetTableSelection(name) {
+    try { delete window.__tableSel[name]; } catch (_) { window.__tableSel[name] = []; }
+    if (window.__tableSelLast === name) window.__tableSelLast = null;
+  }
+  function clearTableSelectionByName(name) {
+    getRowChecks(name).forEach(function(checkbox) { checkbox.checked = false; });
+    forgetTableSelection(name);
+    updateRowHighlight(name);
+    if (name === 'performer-select') {
+      updatePerformerMasterState();
+      ensurePerformerActionsVisibility();
+      return;
+    }
+    if (name === 'report-check-select') {
+      updateReportCheckMasterState();
+      ensureReportCheckActionsVisibility();
+      return;
+    }
+    if (name === 'report-macro-select') {
+      updateReportMacrosMasterState();
+      ensureReportMacrosActionsVisibility();
+    }
   }
   function updatePerformerMasterState() {
     const boxes = getVisiblePerformerChecks();
@@ -244,6 +269,92 @@
     const any = getVisiblePerformerChecks().some(b => b.checked);
     panel.classList.toggle('d-none', !any);
     panel.classList.toggle('d-flex', any);
+    updatePerformerLockedActionButtons(panel);
+  }
+  function performerRowIsSectionLocked(tr) {
+    return !!(tr && tr.dataset.reportSectionLocked === '1');
+  }
+  // Rows with a section code («Код») cannot change position once the project
+  // workspace exists: the code is part of report folder and file names.
+  function performerRowIsOrderLocked(tr) {
+    return !!(tr && (tr.dataset.orderLocked === '1' || tr.dataset.reportSectionLocked === '1'));
+  }
+  function performerRowDeleteLocked(tr) {
+    return performerRowIsSectionLocked(tr) || !!(tr && tr.dataset.reportUploadLocked === '1');
+  }
+  function padPerformerSectionCode(n) {
+    return String(n).padStart(2, '0');
+  }
+  function performerRowIsSectionAccounting(tr) {
+    return !!(tr && String(tr.dataset.accountingType || '').trim() === 'Разделы');
+  }
+  function performerGroupSortKey(tr) {
+    const number = parseInt(tr && tr.dataset ? tr.dataset.projectNumber : '0', 10) || 0;
+    const stage = String((tr && tr.dataset && tr.dataset.stageUid) || '');
+    const asset = String((tr && tr.dataset && tr.dataset.assetName) || '');
+    return [number, stage, asset];
+  }
+  function sortPerformerRowsByProjectAndAsset(table) {
+    const rootTable = table || pane()?.querySelector('#performers-main-section table.performers-table');
+    const tbody = rootTable && rootTable.querySelector('tbody');
+    if (!tbody) return rootTable;
+    const rows = Array.from(tbody.querySelectorAll('tr[data-row-order-id]'));
+    rows.sort(function (a, b) {
+      const ka = performerGroupSortKey(a);
+      const kb = performerGroupSortKey(b);
+      if (ka[0] !== kb[0]) return kb[0] - ka[0];
+      if (ka[1] !== kb[1]) return ka[1] < kb[1] ? -1 : 1;
+      if (ka[2] !== kb[2]) return ka[2] < kb[2] ? -1 : 1;
+      return 0;
+    });
+    rows.forEach(function (row) { tbody.appendChild(row); });
+    return rootTable;
+  }
+  function updatePerformerSectionCodes(table) {
+    const rootTable = table || pane()?.querySelector('#performers-main-section table.performers-table');
+    if (!rootTable) return;
+    const grouped = {};
+    Array.from(rootTable.querySelectorAll('tbody tr[data-row-order-id]')).forEach((tr) => {
+      const key = String(tr.dataset.projectId || '') + '\0' + String(tr.dataset.assetName || '');
+      (grouped[key] || (grouped[key] = [])).push(tr);
+    });
+    Object.keys(grouped).forEach((key) => {
+      let index = 0;
+      grouped[key].forEach((tr) => {
+        const cell = tr.querySelector('td.js-section-code');
+        if (!cell) return;
+        if (performerRowIsSectionAccounting(tr)) {
+          index += 1;
+          cell.textContent = padPerformerSectionCode(index);
+        } else {
+          cell.textContent = '';
+        }
+      });
+    });
+  }
+  function syncPerformerSectionOrder(table) {
+    updatePerformerSectionCodes(sortPerformerRowsByProjectAndAsset(table));
+  }
+  function updatePerformerLockedActionButtons(panel) {
+    if (!panel) return;
+    const upBtn = panel.querySelector('[data-panel-action="up"]');
+    const downBtn = panel.querySelector('[data-panel-action="down"]');
+    const deleteBtn = panel.querySelector('[data-panel-action="delete"]');
+    const rows = getChecked('performer-select').map((box) => box.closest('tr')).filter(Boolean);
+    const anyLocked = rows.some(performerRowIsOrderLocked);
+    const anyDeleteLocked = rows.some(performerRowDeleteLocked);
+    if (upBtn) {
+      upBtn.classList.toggle('d-none', anyLocked);
+      upBtn.disabled = anyLocked;
+    }
+    if (downBtn) {
+      downBtn.classList.toggle('d-none', anyLocked);
+      downBtn.disabled = anyLocked;
+    }
+    if (deleteBtn) {
+      deleteBtn.classList.toggle('d-none', anyDeleteLocked);
+      deleteBtn.disabled = anyDeleteLocked;
+    }
   }
   function movePerformerSelectionImmediately(action, checked) {
     if (
@@ -253,13 +364,17 @@
     ) {
       return false;
     }
+    if (checked.some((box) => performerRowIsOrderLocked(box.closest('tr')))) {
+      return false;
+    }
     const root = pane();
     if (!root) return false;
     return !!window.__queuedRowOrder.moveSelection(root, action, {
       selectionName: 'performer-select',
       selectedIds: checked.map((box) => String(box.value)),
       rowScopeDataKey: 'projectId',
-      onAfterMove: function () {
+      onAfterMove: function (table) {
+        syncPerformerSectionOrder(table);
         updatePerformerMasterState();
         updateRowHighlight('performer-select');
         ensurePerformerActionsVisibility();
@@ -901,6 +1016,7 @@
       var table = tbody.closest('table');
       var isContractDispatchTable = table?.id === 'contract-dispatch-table';
       var isContractDraftingTable = table?.id === 'contract-drafting-table';
+      var isReportTable = table?.id === 'report-submission-table';
       if (isContractDispatchTable) {
         rows.forEach(function(row) {
           if (row.classList.contains('contract-dispatch-collapsed')) {
@@ -921,9 +1037,15 @@
         var detailCells = row.querySelectorAll('.cell-detail-val');
         detailCells.forEach(function(c) { c.classList.remove('cell-repeated'); });
         if (isFilterHidden(row)) return;
-        var groupKey = isParticipationTable
-          ? getParticipationGroupKey(row)
-          : (isContractDraftingTable ? getContractDraftingGroupKey(row) : getContractGroupKey(row, includeContractBatchInGroup));
+        var groupKey = isReportTable
+          ? (
+            (row.dataset.projectId || '')
+            + '||' + (row.dataset.assetName || '')
+            + '||' + (row.dataset.reportKind === 'full' ? '__full__' : (row.dataset.executor || ''))
+          )
+          : (isParticipationTable
+            ? getParticipationGroupKey(row)
+            : (isContractDraftingTable ? getContractDraftingGroupKey(row) : getContractGroupKey(row, includeContractBatchInGroup)));
         var assetKey = groupKey + '||' + (row.dataset.assetName || '');
         if (groupKey !== prevGroupKey) {
           row.classList.add('group-first');
@@ -936,7 +1058,7 @@
           }
         }
         var curGroupTexts = [];
-        if (isParticipationTable || isContractDraftingTable) {
+        if (isParticipationTable || isContractDraftingTable || isReportTable) {
           groupCells.forEach(function(c, i) {
             var txt = c.textContent.trim();
             curGroupTexts.push(txt);
@@ -1154,8 +1276,8 @@
   }
 
   function collapseParticipationSections(sectionEl) {
-    if (!sectionEl) return;
-    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!sectionEl || sectionEl.id === 'report-submission-section') return;
+    var tbody = sectionEl.querySelector('table.performers-table:not(#report-submission-table) tbody');
     if (!tbody) return;
     var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
     var currentFirst = null;
@@ -1305,8 +1427,8 @@
   }
 
   function collapseParticipationAssets(sectionEl) {
-    if (!sectionEl) return;
-    var tbody = sectionEl.querySelector('table.performers-table tbody');
+    if (!sectionEl || sectionEl.id === 'report-submission-section') return;
+    var tbody = sectionEl.querySelector('table.performers-table:not(#report-submission-table) tbody');
     if (!tbody) return;
     var rows = Array.from(tbody.querySelectorAll('tr[data-project-id]'));
     var i = 0;
@@ -2192,6 +2314,3164 @@
     applyFilter(window.__paymentRequestsProjectFilter);
   }
 
+  var REPORT_SUBMISSION_COLPICKER = {
+    prefKey: 'reports:hiddenCols',
+    wrapId: 'report-submission-colpicker-wrap',
+    btnId: 'report-submission-colpicker-btn',
+    menuId: 'report-submission-colpicker-menu',
+    allId: 'report-submission-col-all',
+    tableId: 'report-submission-table',
+    hidden: null,
+  };
+
+  function getReportSubmissionSection() {
+    return pane()?.querySelector('#report-submission-section') || null;
+  }
+
+  function getReportSubmissionDefaultHiddenColumns() {
+    var menu = document.getElementById(REPORT_SUBMISSION_COLPICKER.menuId);
+    var hidden = {};
+    if (!menu) return hidden;
+    menu.querySelectorAll('input.form-check-input[data-default-hidden="true"]:not([value="all"])').forEach(function(cb) {
+      hidden[cb.value] = true;
+    });
+    return hidden;
+  }
+
+  function getReportSubmissionHiddenColumns() {
+    var cfg = REPORT_SUBMISSION_COLPICKER;
+    if (!cfg.hidden) {
+      var saved = window.UIPref ? UIPref.get(cfg.prefKey, null) : null;
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        cfg.hidden = saved;
+      } else if (document.getElementById(cfg.menuId)) {
+        cfg.hidden = getReportSubmissionDefaultHiddenColumns();
+      }
+    }
+    return cfg.hidden || {};
+  }
+
+  function saveReportSubmissionHiddenColumns() {
+    if (window.UIPref) UIPref.set(REPORT_SUBMISSION_COLPICKER.prefKey, getReportSubmissionHiddenColumns());
+  }
+
+  function updateReportSubmissionColPickerLabel(btn, menu) {
+    var cbs = qa('input.form-check-input:not([value="all"])', menu);
+    var checked = cbs.filter(function(cb) { return cb.checked; }).length;
+    btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
+  }
+
+  var REPORT_FIXED_COLUMN_WIDTHS = { checkbox: 30, stage: 105 };
+  // Columns whose file names may be truncated with an ellipsis when the
+  // table does not fit. They shrink from their natural (full file name)
+  // width down to REPORT_SHRINK_COLUMN_FLOOR_PX, but never below the width
+  // of their non-truncatable content (icons, action buttons).
+  var REPORT_SHRINKABLE_COLUMNS = { upload: true, 'check-result': true };
+  var REPORT_SHRINK_COLUMN_FLOOR_PX = 150;
+  var REPORT_SHRINKABLE_CONTENT_SELECTOR =
+    '.report-file-name-link:not(.report-remarks-loaded-link), .report-check-pending-text, .report-check-error-label';
+  var REPORT_MEASURING_CLASS = 'report-submission-measuring';
+  var REPORT_MEASURING_HOST_CLASS = 'report-submission-measuring-host';
+  var reportColumnLayoutCache = null;
+  var reportColumnLayoutQueued = false;
+  var reportColumnLayoutNeedsMeasure = false;
+  var reportColumnLayoutObserver = null;
+  var reportColumnLayoutObserved = null;
+
+  function reportSubmissionColumnKey(col) {
+    if (!col) return '';
+    if (col.classList.contains('col-checkbox')) return 'checkbox';
+    return col.getAttribute('data-col') || '';
+  }
+
+  function reportSubmissionColumnElements(table, key) {
+    if (key === 'checkbox') {
+      return {
+        col: table.querySelector('col.col-checkbox'),
+        th: table.querySelector('thead th.col-checkbox'),
+      };
+    }
+    return {
+      col: table.querySelector('col[data-col="' + key + '"]'),
+      th: table.querySelector('thead th[data-col="' + key + '"]'),
+    };
+  }
+
+  function clearReportSubmissionAssignedWidths(table) {
+    table.style.removeProperty('width');
+    table.style.removeProperty('min-width');
+    table.style.removeProperty('max-width');
+    table.style.removeProperty('table-layout');
+    table.querySelectorAll('col, thead th, tbody td').forEach(function(el) {
+      el.style.removeProperty('width');
+      el.style.removeProperty('min-width');
+      el.style.removeProperty('max-width');
+    });
+  }
+
+  function assignReportSubmissionColumnWidth(el, width, minWidth) {
+    if (!el) return;
+    var floor = minWidth == null ? width : minWidth;
+    el.style.setProperty('width', width + 'px', 'important');
+    el.style.setProperty('min-width', floor + 'px', 'important');
+    el.style.setProperty('max-width', width + 'px', 'important');
+  }
+
+  function reportSubmissionColumnHidden(th) {
+    if (!th) return true;
+    if (th.style.display === 'none') return true;
+    return getComputedStyle(th).display === 'none';
+  }
+
+  function reportSubmissionBoxPaddingX(el) {
+    var style = getComputedStyle(el);
+    return (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  }
+
+  // Width of the content of a shrinkable cell that must never be clipped:
+  // everything except the file name / status text (icons, action buttons,
+  // separators), including the cell padding. Measured in measuring mode,
+  // when the cell is laid out at its natural width.
+  function reportSubmissionCellRigidWidth(cell) {
+    var inner = cell.querySelector(':scope > .report-check-result-inner') || cell;
+    var width = reportSubmissionBoxPaddingX(cell);
+    var gap = inner === cell ? 0 : (parseFloat(getComputedStyle(inner).columnGap) || 0);
+    var children = Array.from(inner.children).filter(function(child) {
+      if (child.classList.contains('report-file-remove-btn')) return false;
+      return getComputedStyle(child).display !== 'none';
+    });
+    children.forEach(function(child, index) {
+      var style = getComputedStyle(child);
+      var margins = (parseFloat(style.marginLeft) || 0) + (parseFloat(style.marginRight) || 0);
+      var rigid;
+      if (child.matches(REPORT_SHRINKABLE_CONTENT_SELECTOR)) {
+        var icon = child.querySelector('.bi');
+        rigid = icon ? icon.getBoundingClientRect().width : 0;
+      } else {
+        rigid = child.getBoundingClientRect().width;
+      }
+      width += rigid + margins + (index ? gap : 0);
+    });
+    return Math.ceil(width);
+  }
+
+  function reportSubmissionHeaderContentWidth(th) {
+    if (!th || typeof document.createRange !== 'function') return 0;
+    var range = document.createRange();
+    range.selectNodeContents(th);
+    var width = range.getBoundingClientRect().width;
+    range.detach && range.detach();
+    return Math.ceil(width + reportSubmissionBoxPaddingX(th));
+  }
+
+  function reportSubmissionShrinkableColumnMin(table, key, th, natural) {
+    var min = Math.max(REPORT_SHRINK_COLUMN_FLOOR_PX, reportSubmissionHeaderContentWidth(th));
+    table.querySelectorAll('tbody td[data-col="' + key + '"]').forEach(function(cell) {
+      min = Math.max(min, reportSubmissionCellRigidWidth(cell));
+    });
+    return Math.min(natural, min);
+  }
+
+  // The natural widths are measured on a clone of the table laid out inside
+  // a zero-size clipped host next to it, so the live table (and the scroll
+  // width of its wrap) stays untouched while measuring. Re-laying out the
+  // live table at its natural width made the wrap's scrollable width jump on
+  // every check-status poll, which flashes the overlay scrollbar on macOS.
+  function measureReportSubmissionColumns(table) {
+    var host = document.createElement('div');
+    host.className = REPORT_MEASURING_HOST_CLASS;
+    host.setAttribute('aria-hidden', 'true');
+    var probe = table.cloneNode(true);
+    host.appendChild(probe);
+    (table.parentNode || document.body).appendChild(host);
+    try {
+      return measureReportSubmissionProbeColumns(probe);
+    } finally {
+      host.remove();
+    }
+  }
+
+  function measureReportSubmissionProbeColumns(table) {
+    clearReportSubmissionAssignedWidths(table);
+    table.classList.add(REPORT_MEASURING_CLASS);
+    table.style.setProperty('width', 'max-content', 'important');
+    table.style.setProperty('min-width', '0', 'important');
+    table.style.setProperty('table-layout', 'auto', 'important');
+    var columns = Array.from(table.querySelectorAll('colgroup col')).map(function(col) {
+      var key = reportSubmissionColumnKey(col);
+      var nodes = reportSubmissionColumnElements(table, key);
+      var hidden = reportSubmissionColumnHidden(nodes.th);
+      var fixed = REPORT_FIXED_COLUMN_WIDTHS[key] || 0;
+      var natural = 0;
+      var min = 0;
+      if (!hidden) {
+        if (fixed) {
+          natural = fixed;
+          min = fixed;
+        } else {
+          // ceil: a column laid out at its natural width must show the
+          // longest file name without an ellipsis.
+          natural = Math.ceil(nodes.th.getBoundingClientRect().width);
+          min = REPORT_SHRINKABLE_COLUMNS[key]
+            ? reportSubmissionShrinkableColumnMin(table, key, nodes.th, natural)
+            : natural;
+        }
+      }
+      return { key: key, hidden: hidden, fixed: fixed, natural: natural, min: min };
+    });
+    table.classList.remove(REPORT_MEASURING_CLASS);
+    return columns;
+  }
+
+  function reportSubmissionColumnNodes(table, key) {
+    var nodes = reportSubmissionColumnElements(table, key);
+    var cells = key === 'checkbox'
+      ? table.querySelectorAll('tbody td.report-select-cell')
+      : table.querySelectorAll('tbody td[data-col="' + key + '"]');
+    return [nodes.col, nodes.th].concat(Array.from(cells));
+  }
+
+  var REPORT_FIT_SLACK_PX = 2;
+  var REPORT_FIT_SLOP_PX = 48;
+
+  // Distributes the available width:
+  //  * surplus: every column at its natural width, the rest spread evenly;
+  //  * deficit: shrinkable columns give up width proportionally to their
+  //    (natural - min) room, the others keep their natural width;
+  //  * deficit beyond the shrink room (plus a small slop that absorbs
+  //    phantom scrollbars): every column at its min, the table overflows
+  //    horizontally.
+  function applyReportSubmissionColumnWidths(table, columns, available) {
+    var visible = columns.filter(function(column) { return !column.hidden && column.natural > 0; });
+    var flex = visible.filter(function(column) { return !column.fixed; });
+    var fixedSum = 0;
+    var naturalSum = 0;
+    var shrinkRoom = 0;
+    visible.forEach(function(column) {
+      if (column.fixed) {
+        fixedSum += column.fixed;
+      } else {
+        naturalSum += column.natural;
+        shrinkRoom += Math.max(0, column.natural - column.min);
+      }
+    });
+    var count = flex.length;
+    var widths = {};
+    flex.forEach(function(column) { widths[column.key] = column.natural; });
+    var deficit = fixedSum + naturalSum - available;
+    var fitting = true;
+    var spread = 0;
+    if (deficit <= 0) {
+      var target = Math.max(fixedSum + count, available - REPORT_FIT_SLACK_PX);
+      spread = target - fixedSum - naturalSum;
+    } else {
+      var shrink = Math.min(deficit, shrinkRoom);
+      if (shrink > 0) {
+        var shrinkable = flex.filter(function(column) { return column.natural > column.min; });
+        var applied = 0;
+        shrinkable.forEach(function(column, index) {
+          var room = column.natural - column.min;
+          var share = index === shrinkable.length - 1
+            ? shrink - applied
+            : Math.floor(shrink * room / shrinkRoom);
+          share = Math.max(0, Math.min(share, room));
+          widths[column.key] = column.natural - share;
+          applied += share;
+        });
+      }
+      var rest = deficit - shrink;
+      if (rest > REPORT_FIT_SLOP_PX) {
+        fitting = false;
+        flex.forEach(function(column) { widths[column.key] = column.min; });
+      } else if (rest > 0) {
+        spread = -rest;
+      }
+    }
+    var base = count ? Math.trunc(spread / count) : 0;
+    var remainder = count ? Math.abs(spread - base * count) : 0;
+    var flexIndex = 0;
+    var total = 0;
+    columns.forEach(function(column) {
+      var nodes = reportSubmissionColumnNodes(table, column.key);
+      if (column.hidden || column.natural <= 0) {
+        nodes.forEach(function(el) {
+          if (!el) return;
+          el.style.removeProperty('width');
+          el.style.removeProperty('min-width');
+          el.style.removeProperty('max-width');
+        });
+        return;
+      }
+      var width = column.fixed ? column.fixed : widths[column.key];
+      if (!column.fixed && count) {
+        width += base;
+        if (flexIndex < remainder) width += spread >= 0 ? 1 : -1;
+        if (width < 1) width = 1;
+        flexIndex += 1;
+      }
+      var floor = column.fixed ? width : Math.min(column.min, width);
+      nodes.forEach(function(el) { assignReportSubmissionColumnWidth(el, width, floor); });
+      total += width;
+    });
+    table.style.setProperty('table-layout', 'fixed', 'important');
+    if (fitting) {
+      var fitted = 'calc(100% - ' + REPORT_FIT_SLACK_PX + 'px)';
+      table.style.setProperty('width', fitted, 'important');
+      table.style.setProperty('max-width', fitted, 'important');
+      table.style.setProperty('min-width', '0', 'important');
+    } else {
+      table.style.setProperty('width', total + 'px', 'important');
+      table.style.setProperty('min-width', total + 'px', 'important');
+      table.style.setProperty('max-width', 'none', 'important');
+    }
+    return fitting;
+  }
+
+  function reportSubmissionWrapOverflow(wrap) {
+    var overflow = wrap.scrollWidth - wrap.clientWidth;
+    if (overflow > 0) return Math.ceil(overflow);
+    var style = getComputedStyle(wrap);
+    var borderY = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    if (wrap.offsetHeight - wrap.clientHeight - borderY > 2) return 1;
+    return 0;
+  }
+
+  function suppressReportSubmissionPhantomScroll(wrap, fitting) {
+    if (!fitting) {
+      wrap.style.overflowX = '';
+      return;
+    }
+    var overflow = reportSubmissionWrapOverflow(wrap);
+    wrap.style.overflowX = overflow > 0 && overflow <= REPORT_FIT_SLOP_PX ? 'hidden' : '';
+  }
+
+  function reportSubmissionLayoutSignature(table) {
+    var hiddenKey = Object.keys(getReportSubmissionHiddenColumns()).sort().join(',');
+    var fontSize = getComputedStyle(document.documentElement).fontSize;
+    var body = table.tBodies && table.tBodies[0];
+    var content = body ? body.textContent.length : 0;
+    var zoom = Math.round((window.devicePixelRatio || 1) * 100);
+    return table.id + '|' + fontSize + '|' + zoom + '|' + hiddenKey + '|' + content;
+  }
+
+  function ensureReportSubmissionColumnLayoutObserver() {
+    var wrap = document.querySelector('#report-submission-section .report-submission-table-wrap');
+    if (!wrap || typeof ResizeObserver === 'undefined') return;
+    if (reportColumnLayoutObserved === wrap) return;
+    if (reportColumnLayoutObserver) reportColumnLayoutObserver.disconnect();
+    reportColumnLayoutObserver = new ResizeObserver(function() {
+      scheduleReportSubmissionColumnLayout(false);
+    });
+    reportColumnLayoutObserver.observe(wrap);
+    reportColumnLayoutObserved = wrap;
+  }
+
+  function layoutReportSubmissionColumns(forceMeasure) {
+    var table = document.getElementById(REPORT_SUBMISSION_COLPICKER.tableId);
+    var wrap = table && table.closest('.report-submission-table-wrap');
+    if (!table || !wrap) return;
+    ensureReportSubmissionColumnLayoutObserver();
+    var available = wrap.clientWidth;
+    if (available < 1) return;
+    var signature = reportSubmissionLayoutSignature(table);
+    var cache = reportColumnLayoutCache;
+    var canReuse = !forceMeasure && cache && cache.signature === signature && cache.table === table;
+    if (canReuse && cache.available === available && reportSubmissionWrapOverflow(wrap) <= 0) return;
+    var columns = canReuse ? cache.columns : measureReportSubmissionColumns(table);
+    var fitting = applyReportSubmissionColumnWidths(table, columns, available);
+    suppressReportSubmissionPhantomScroll(wrap, fitting);
+    reportColumnLayoutCache = {
+      table: table,
+      signature: signature,
+      columns: columns,
+      available: available,
+    };
+    schedulePaymentRequestScrollGapsUpdate();
+  }
+
+  function scheduleReportSubmissionColumnLayout(forceMeasure) {
+    if (forceMeasure) reportColumnLayoutNeedsMeasure = true;
+    if (reportColumnLayoutQueued) return;
+    reportColumnLayoutQueued = true;
+    window.requestAnimationFrame(function() {
+      reportColumnLayoutQueued = false;
+      var measure = reportColumnLayoutNeedsMeasure;
+      reportColumnLayoutNeedsMeasure = false;
+      layoutReportSubmissionColumns(measure);
+    });
+  }
+
+  function applyReportSubmissionColumnVisibility() {
+    var table = document.getElementById(REPORT_SUBMISSION_COLPICKER.tableId);
+    if (!table) return;
+    var hidden = Object.keys(getReportSubmissionHiddenColumns());
+    table.querySelectorAll('[data-col]').forEach(function(cell) {
+      cell.style.display = hidden.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
+    });
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  function initReportSubmissionColPicker() {
+    var cfg = REPORT_SUBMISSION_COLPICKER;
+    var wrap = document.getElementById(cfg.wrapId);
+    var btn = document.getElementById(cfg.btnId);
+    var menu = document.getElementById(cfg.menuId);
+    if (!wrap || !btn || !menu) return;
+
+    btn.onclick = function(event) {
+      event.stopPropagation();
+      menu.classList.toggle('show');
+    };
+
+    var cbs = qa('input.form-check-input:not([value="all"])', menu);
+    var hiddenState = getReportSubmissionHiddenColumns();
+    cbs.forEach(function(cb) {
+      cb.checked = !hiddenState[cb.value];
+    });
+
+    var allCb = document.getElementById(cfg.allId);
+    if (allCb) allCb.checked = cbs.every(function(cb) { return cb.checked; });
+
+    updateReportSubmissionColPickerLabel(btn, menu);
+    applyReportSubmissionColumnVisibility();
+
+    menu.onchange = function(event) {
+      var cb = event.target;
+      if (!cb.classList || !cb.classList.contains('form-check-input')) return;
+      var items = qa('input.form-check-input:not([value="all"])', menu);
+      if (cb.value === 'all') {
+        items.forEach(function(item) { item.checked = cb.checked; });
+      } else {
+        var ac = document.getElementById(cfg.allId);
+        if (ac) ac.checked = items.every(function(item) { return item.checked; });
+      }
+      cfg.hidden = {};
+      items.forEach(function(item) {
+        if (!item.checked) cfg.hidden[item.value] = true;
+      });
+      saveReportSubmissionHiddenColumns();
+      updateReportSubmissionColPickerLabel(btn, menu);
+      applyReportSubmissionColumnVisibility();
+    };
+  }
+
+  document.addEventListener('click', function(event) {
+    var wrap = document.getElementById(REPORT_SUBMISSION_COLPICKER.wrapId);
+    var menu = document.getElementById(REPORT_SUBMISSION_COLPICKER.menuId);
+    if (wrap && menu && !wrap.contains(event.target)) menu.classList.remove('show');
+  });
+
+  function getReportSubmissionRows() {
+    const section = getReportSubmissionSection();
+    if (!section) return [];
+    return Array.from(section.querySelectorAll('#report-submission-table tbody tr[data-project-id]'));
+  }
+
+  function getVisibleReportSelectChecks() {
+    return getReportSubmissionRows()
+      .filter(function(row) {
+        return !row.classList.contains('d-none')
+          && !row.classList.contains('report-version-row-collapsed-hidden');
+      })
+      .map(function(row) { return row.querySelector('input[name="report-select"]'); })
+      .filter(function(checkbox) { return checkbox && !checkbox.disabled; });
+  }
+
+  function updateReportSubmissionMasterState() {
+    const section = getReportSubmissionSection();
+    if (!section) return;
+    const master = section.querySelector('#report-submission-master');
+    if (!master || master.disabled) return;
+    const checks = getVisibleReportSelectChecks();
+    const checked = checks.filter((checkbox) => checkbox.checked);
+    master.checked = checks.length > 0 && checked.length === checks.length;
+    master.indeterminate = checked.length > 0 && checked.length < checks.length;
+    updateReportSendButtonState();
+    updateRowHighlight('report-select');
+  }
+
+  function reportRowIsRemarksPending(row) {
+    return Boolean(row && row.dataset.remarksPending === '1');
+  }
+
+  function updateReportSendButtonState() {
+    const section = getReportSubmissionSection();
+    if (!section) return;
+    const btn = section.querySelector('#report-submission-send-btn');
+    if (!btn) return;
+    const checked = getVisibleReportSelectChecks().filter(function(checkbox) { return checkbox.checked; });
+    const pending = checked.filter(function(checkbox) {
+      return reportRowIsRemarksPending(checkbox.closest('tr'));
+    });
+    const regular = checked.filter(function(checkbox) {
+      return !reportRowIsRemarksPending(checkbox.closest('tr'));
+    });
+    if (!checked.length || (pending.length && regular.length)) {
+      btn.disabled = true;
+      return;
+    }
+    if (pending.length) {
+      btn.disabled = pending.some(function(checkbox) {
+        return !(checkbox.closest('tr').dataset.reviewEntryId || '').trim();
+      });
+      return;
+    }
+    const selectedRow = regular.length === 1 ? regular[0].closest('tr') : null;
+    const uploadId = selectedRow && (selectedRow.dataset.uploadId || '').trim();
+    btn.disabled = !uploadId;
+  }
+
+  function getReportCheckSection() {
+    return pane()?.querySelector('#report-check-section') || null;
+  }
+
+  function getReportCheckRows() {
+    const section = getReportCheckSection();
+    if (!section) return [];
+    return Array.from(section.querySelectorAll('#report-check-table tbody tr[data-edit-url]'));
+  }
+
+  function getVisibleReportCheckChecks() {
+    return getReportCheckRows()
+      .filter((row) => !row.classList.contains('d-none'))
+      .map((row) => row.querySelector('input[name="report-check-select"]'))
+      .filter((checkbox) => checkbox && !checkbox.disabled);
+  }
+
+  function updateReportCheckMasterState() {
+    const section = getReportCheckSection();
+    if (!section) return;
+    const master = section.querySelector('#report-check-master');
+    if (!master || master.disabled) return;
+    const checks = getVisibleReportCheckChecks();
+    const checked = checks.filter((checkbox) => checkbox.checked);
+    master.checked = checks.length > 0 && checked.length === checks.length;
+    master.indeterminate = checked.length > 0 && checked.length < checks.length;
+  }
+
+  function ensureReportCheckActionsVisibility() {
+    const panel = pane()?.querySelector('#report-check-actions');
+    if (!panel) return;
+    const any = getVisibleReportCheckChecks().some((checkbox) => checkbox.checked);
+    panel.classList.toggle('d-none', !any);
+    panel.classList.toggle('d-flex', any);
+  }
+
+  function getReportMacrosSection() {
+    return pane()?.querySelector('#report-macros-section') || null;
+  }
+
+  function reportMacrosListQuery() {
+    const section = getReportMacrosSection();
+    const params = new URLSearchParams();
+    params.set('macros_page', section?.dataset.macrosPage || '1');
+    params.set('macros_page_size', section?.dataset.macrosPageSize || '25');
+    return '?' + params.toString();
+  }
+
+  function getReportMacroRows() {
+    const section = getReportMacrosSection();
+    if (!section) return [];
+    return Array.from(section.querySelectorAll('#report-macros-table tbody tr[data-edit-url]'));
+  }
+
+  function getVisibleReportMacroChecks() {
+    return getReportMacroRows()
+      .filter((row) => !row.classList.contains('d-none'))
+      .map((row) => row.querySelector('input[name="report-macro-select"]'))
+      .filter((checkbox) => checkbox && !checkbox.disabled);
+  }
+
+  function updateReportMacrosMasterState() {
+    const section = getReportMacrosSection();
+    if (!section) return;
+    const master = section.querySelector('#report-macros-master');
+    if (!master || master.disabled) return;
+    const checks = getVisibleReportMacroChecks();
+    const checked = checks.filter((checkbox) => checkbox.checked);
+    master.checked = checks.length > 0 && checked.length === checks.length;
+    master.indeterminate = checked.length > 0 && checked.length < checks.length;
+  }
+
+  function ensureReportMacrosActionsVisibility() {
+    const panel = pane()?.querySelector('#report-macros-actions');
+    if (!panel) return;
+    const any = getVisibleReportMacroChecks().some((checkbox) => checkbox.checked);
+    panel.classList.toggle('d-none', !any);
+    panel.classList.toggle('d-flex', any);
+  }
+
+  function initReportSubmissionProjectFilter() {
+    const root = pane();
+    if (!root) return;
+    const FILTER_ALL = '__all__';
+    window.__reportSubmissionProjectFilter = window.__reportSubmissionProjectFilter || [FILTER_ALL];
+
+    const dropdown = root.querySelector('#report-submission-project-filter-toggle')?.closest('.dropdown');
+    const checks = root.querySelectorAll('.js-report-submission-filter');
+    const label = root.querySelector('.js-report-submission-filter-label');
+    if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
+    dropdown.dataset.bound = '1';
+    if (window.bindProjectFilterMenuWidth) window.bindProjectFilterMenuWidth(dropdown);
+
+    function syncCheckboxes(values) {
+      const set = new Set(values);
+      checks.forEach((cb) => { cb.checked = set.has(cb.value); });
+    }
+
+    function updateLabel(values) {
+      if (values.includes(FILTER_ALL) || !values.length) {
+        label.textContent = 'Все';
+        return;
+      }
+      if (values.length === 1) {
+        const selected = Array.from(checks).find((cb) => cb.value === values[0]);
+        label.textContent = selected
+          ? window.getProjectFilterSummaryLabel(selected, '1 проект')
+          : '1 проект';
+        return;
+      }
+      label.textContent = values.length + ' выбрано';
+    }
+
+    function reportFilterIsSpecific(values) {
+      const filter = values || window.__reportSubmissionProjectFilter || [FILTER_ALL];
+      return filter.length > 0 && !filter.includes(FILTER_ALL);
+    }
+
+    function maxReportPageSize() {
+      const select = document.querySelector('#policy-page-size-report-submission');
+      if (!select || !select.options.length) return '100';
+      return select.options[select.options.length - 1].value;
+    }
+
+    function reportPageSizeForRequest() {
+      if (reportFilterIsSpecific()) return maxReportPageSize();
+      return window.__reportSubmissionPageSize || '25';
+    }
+
+    function reportSubmissionTableUrl(page) {
+      const block = document.querySelector('#report-submission-table-block');
+      if (!block) return '';
+      const params = new URLSearchParams();
+      params.set('page', String(page || '1'));
+      params.set('page_size', reportPageSizeForRequest());
+      const filter = window.__reportSubmissionProjectFilter || [FILTER_ALL];
+      if (reportFilterIsSpecific(filter)) {
+        filter.forEach((id) => params.append('project', id));
+      }
+      return (block.dataset.reportsTableUrl || '') + '?' + params.toString();
+    }
+
+    function reloadReportSubmissionTable(page) {
+      const url = reportSubmissionTableUrl(page || '1');
+      if (!url || !window.htmx) return;
+      window.htmx.ajax('GET', url, {
+        target: '#report-submission-table-block',
+        swap: 'outerHTML',
+      });
+    }
+
+    function reportBlockMatchesFilter(values) {
+      const block = document.querySelector('#report-submission-table-block');
+      if (!block) return true;
+      const rendered = (block.dataset.reportsProjects || FILTER_ALL).split(',').filter(Boolean).sort();
+      const wanted = (!values.length || values.includes(FILTER_ALL))
+        ? [FILTER_ALL]
+        : values.map(String).slice().sort();
+      return rendered.length === wanted.length && rendered.every((value, index) => value === wanted[index]);
+    }
+
+    function applyFilter(values, options) {
+      options = options || {};
+      const block = document.querySelector('#report-submission-table-block');
+      const rendered = block?.dataset.reportsProjects || FILTER_ALL;
+      if (block && rendered === FILTER_ALL && block.dataset.reportsPageSize) {
+        window.__reportSubmissionPageSize = block.dataset.reportsPageSize;
+      }
+      window.__reportSubmissionProjectFilter = values.slice();
+      updateLabel(values);
+      if (options.reload) reloadReportSubmissionTable('1');
+    }
+
+    function normalizeSelection() {
+      let values = Array.from(checks)
+        .filter((cb) => cb.checked)
+        .map((cb) => cb.value);
+      if (!values.length) values = [FILTER_ALL];
+      if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+      syncCheckboxes(values);
+      return values;
+    }
+
+    checks.forEach((cb) => {
+      cb.addEventListener('change', (event) => {
+        const value = event.target.value;
+        if (value === FILTER_ALL && event.target.checked) {
+          syncCheckboxes([FILTER_ALL]);
+          applyFilter([FILTER_ALL], { reload: true });
+          return;
+        }
+        if (value === FILTER_ALL && !event.target.checked) {
+          const firstProject = Array.from(checks).find((item) => item.value !== FILTER_ALL);
+          if (firstProject) firstProject.checked = true;
+        } else {
+          const allCheckbox = root.querySelector('#report-submission-filter-all');
+          if (allCheckbox && allCheckbox.checked) allCheckbox.checked = false;
+        }
+        applyFilter(normalizeSelection(), { reload: true });
+      });
+    });
+
+    window.__syncReportSubmissionProjectFilter = function(values) {
+      var isAll = values[0] === FILTER_ALL;
+      var isSingle = !isAll && values.length === 1;
+      var set = new Set(values);
+      checks.forEach(function(cb) {
+        if (isAll) { cb.checked = cb.value === FILTER_ALL; cb.disabled = false; }
+        else if (isSingle) { cb.checked = cb.value === values[0]; cb.disabled = true; }
+        else {
+          if (cb.value === FILTER_ALL) { cb.checked = true; cb.disabled = false; }
+          else { cb.checked = set.has(cb.value); cb.disabled = !set.has(cb.value); }
+        }
+      });
+      applyFilter(isAll ? [FILTER_ALL] : values.slice(), { reload: true });
+    };
+
+    const initialValues = window.__reportSubmissionProjectFilter && window.__reportSubmissionProjectFilter.length
+      ? window.__reportSubmissionProjectFilter
+      : [FILTER_ALL];
+    syncCheckboxes(initialValues);
+    applyFilter(initialValues, { reload: !reportBlockMatchesFilter(initialValues) });
+  }
+
+  function ensureReportUploadProgressModal() {
+    if (document.getElementById('report-upload-progress-modal')) return;
+    document.body.insertAdjacentHTML('beforeend',
+      '<div class="modal fade" id="report-upload-progress-modal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">'
+      + '<div class="modal-dialog"><div class="modal-content">'
+      + '<div class="modal-header"><h5 class="modal-title">Загрузка отчета</h5></div>'
+      + '<div class="modal-body">'
+      + '<div id="report-upload-progress"><div class="ws-progress-track"><div class="ws-progress-fill" id="report-upload-progress-bar" style="width:0%"></div></div></div>'
+      + '<div id="report-upload-status" class="small mt-2"></div>'
+      + '</div>'
+      + '<div class="modal-footer"><button type="button" class="btn btn-outline-secondary btn-sm" id="report-upload-close-btn" data-bs-dismiss="modal" disabled>Закрыть</button></div>'
+      + '</div></div></div>'
+    );
+  }
+
+  function handleReportUpload(inputEl) {
+    var section = getReportSubmissionSection();
+    var url = section && section.dataset.reportUploadUrl;
+    if (!url) return;
+
+    var sourceSel = section.querySelector('#report-submission-source');
+    var isLocal = Boolean(sourceSel && sourceSel.value === 'local');
+    var file = inputEl.files && inputEl.files[0];
+    if (!file) return;
+    var localPath = '';
+    if (isLocal) {
+      var pathInput = section.querySelector('#report-submission-local-path');
+      localPath = pathInput ? pathInput.value.trim() : '';
+      if (!localPath) {
+        ensureReportUploadProgressModal();
+        var emptyModal = document.getElementById('report-upload-progress-modal');
+        var emptyStatus = document.getElementById('report-upload-status');
+        var emptyClose = document.getElementById('report-upload-close-btn');
+        if (emptyStatus) emptyStatus.textContent = 'Укажите путь к локальной папке.';
+        if (emptyClose) emptyClose.disabled = false;
+        if (emptyModal && window.bootstrap) bootstrap.Modal.getOrCreateInstance(emptyModal).show();
+        inputEl.value = '';
+        return;
+      }
+    }
+
+    ensureReportUploadProgressModal();
+    var modalEl = document.getElementById('report-upload-progress-modal');
+    var progressBar = document.getElementById('report-upload-progress-bar');
+    var statusEl = document.getElementById('report-upload-status');
+    var closeBtn = document.getElementById('report-upload-close-btn');
+    if (progressBar) progressBar.style.width = '0%';
+    if (statusEl) statusEl.textContent = isLocal ? 'Загрузка в локальную папку…' : '';
+    if (closeBtn) closeBtn.disabled = true;
+    if (modalEl && window.bootstrap) {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+
+    var fd = new FormData();
+    fd.append('file', file);
+    if (isLocal) {
+      fd.append('source_kind', 'local');
+      fd.append('local_folder_path', localPath);
+    }
+    if (inputEl.dataset.fullReport === '1') {
+      fd.append('is_full_report', '1');
+      fd.append('registration_id', inputEl.dataset.registrationId || '');
+      fd.append('asset_name', inputEl.dataset.assetName || '');
+      fd.append('executor', inputEl.dataset.executor || '');
+    } else if (inputEl.dataset.allSections === '1') {
+      fd.append('is_all_sections', '1');
+      fd.append('registration_id', inputEl.dataset.registrationId || '');
+      fd.append('executor', inputEl.dataset.executor || '');
+      fd.append('asset_name', inputEl.dataset.assetName || '');
+    } else {
+      fd.append('performer_id', inputEl.dataset.performerId || '');
+    }
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('X-CSRFToken', csrftoken);
+    xhr.upload.addEventListener('progress', function(ev) {
+      if (ev.lengthComputable && progressBar) {
+        progressBar.style.width = Math.round(ev.loaded / ev.total * 100) + '%';
+      }
+    });
+    xhr.addEventListener('load', function() {
+      if (progressBar) progressBar.style.width = '100%';
+      var data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status >= 200 && xhr.status < 300 && data && data.ok) {
+        if (statusEl) {
+          statusEl.textContent = '';
+          var icon = document.createElement('i');
+          icon.className = 'bi bi-check-circle me-1';
+          var span = document.createElement('span');
+          span.className = 'text-success';
+          span.appendChild(icon);
+          var successText = data.local
+            ? 'Файл сохранён в локальную папку.'
+            : ('Файл успешно загружен на ' + (data.storage_label || 'облачное хранилище') + ' в папку с отчетами проекта.');
+          span.appendChild(document.createTextNode(successText));
+          statusEl.appendChild(span);
+        }
+        try {
+          var cell = inputEl.closest('.report-upload-cell');
+          var row = inputEl.closest('tr');
+          if (cell && data.file_name && data.download_url) {
+            var existing = cell.querySelector('.report-file-name-link');
+            if (existing) existing.remove();
+            var link = document.createElement('a');
+            link.href = data.download_url;
+            link.className = 'report-file-name-link';
+            link.setAttribute('download', '');
+            link.title = data.file_name;
+            var nameSpan = document.createElement('span');
+            nameSpan.className = 'report-file-name-text';
+            nameSpan.textContent = data.file_name;
+            link.appendChild(nameSpan);
+            cell.appendChild(link);
+          }
+          if (row) {
+            if (data.upload_id) row.dataset.uploadId = String(data.upload_id);
+            applyReportUploadVersionUpdate(row, data);
+          }
+          updateReportSendButtonState();
+          document.body.dispatchEvent(new Event('notifications-updated'));
+        } catch (err) {
+          console.error(err);
+        }
+      } else if (statusEl) {
+        statusEl.textContent = '';
+        var errSpan = document.createElement('span');
+        errSpan.className = 'text-danger';
+        errSpan.textContent = (data && data.error) || 'Ошибка при загрузке файла.';
+        statusEl.appendChild(errSpan);
+      }
+      if (closeBtn) closeBtn.disabled = false;
+    });
+    xhr.addEventListener('error', function() {
+      if (statusEl) {
+        statusEl.textContent = '';
+        var errSpan = document.createElement('span');
+        errSpan.className = 'text-danger';
+        errSpan.textContent = 'Ошибка сети при загрузке файла.';
+        statusEl.appendChild(errSpan);
+      }
+      if (closeBtn) closeBtn.disabled = false;
+    });
+    xhr.send(fd);
+    inputEl.value = '';
+  }
+
+  var REPORT_VERSIONS_STORAGE_KEY = 'report-versions-collapsed';
+
+  function loadReportVersionCollapsed() {
+    try {
+      var raw = window.localStorage.getItem(REPORT_VERSIONS_STORAGE_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr.map(String) : []);
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function saveReportVersionCollapsed(set) {
+    try {
+      window.localStorage.setItem(
+        REPORT_VERSIONS_STORAGE_KEY,
+        JSON.stringify(Array.from(set))
+      );
+    } catch (_) { /* storage may be disabled */ }
+  }
+
+  function applyReportVersionCollapsedState() {
+    var section = getReportSubmissionSection();
+    if (!section) return;
+    var collapsed = loadReportVersionCollapsed();
+    section.querySelectorAll('#report-submission-table tbody tr[data-is-current="1"]').forEach(function(row) {
+      var group = row.dataset.versionGroup || '';
+      var btn = row.querySelector('.js-report-version-toggle');
+      if (btn) {
+        btn.setAttribute('aria-expanded', collapsed.has(group) ? 'false' : 'true');
+      }
+    });
+    section.querySelectorAll('#report-submission-table tbody tr[data-parent-id]').forEach(function(row) {
+      var parentId = row.dataset.parentId || '';
+      row.classList.toggle('report-version-row-collapsed-hidden', collapsed.has(parentId));
+    });
+    updateReportSendButtonState();
+  }
+
+  function expandReportVersionGroup(group) {
+    if (!group) return;
+    var collapsed = loadReportVersionCollapsed();
+    if (collapsed.delete(group)) {
+      saveReportVersionCollapsed(collapsed);
+    }
+    applyReportVersionCollapsedState();
+  }
+
+  function ensureReportVersionToggle(row) {
+    if (!row) return;
+    var cell = row.querySelector('.cell-typical-val');
+    if (!cell) return;
+    var btn = cell.querySelector('.js-report-version-toggle');
+    if (btn) {
+      btn.setAttribute('aria-expanded', 'true');
+      return;
+    }
+    var slot = cell.querySelector('.report-section-toggle-slot');
+    if (!slot) {
+      slot = document.createElement('span');
+      slot.className = 'report-section-toggle-slot';
+      cell.insertBefore(slot, cell.firstChild);
+    }
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'col-task-toggle js-report-version-toggle';
+    btn.setAttribute('aria-label', 'Свернуть/развернуть версии');
+    btn.setAttribute('aria-expanded', 'true');
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-caret-down-fill';
+    btn.appendChild(icon);
+    slot.appendChild(btn);
+    row.dataset.hasHistory = '1';
+  }
+
+  function insertReviewStepRow(settledRow, html) {
+    if (!settledRow || !html) return;
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var nextRow = wrap.querySelector('tr');
+    if (!nextRow) return;
+    var nextId = nextRow.dataset.rowId || '';
+    var table = settledRow.closest('table');
+    if (nextId && table && settledRow.dataset.rowId !== nextId && table.querySelector('tr[data-row-id="' + nextId + '"]')) {
+      return;
+    }
+    if (settledRow.dataset.rowId === nextId) {
+      var versionCell = settledRow.querySelector('.report-version-cell');
+      var version = versionCell ? versionCell.textContent.trim() : '';
+      settledRow.dataset.rowId = nextId + (version ? '-v' + version : '-accepted');
+      settledRow.dataset.isCurrent = '0';
+      settledRow.dataset.parentId = nextRow.dataset.versionGroup || nextId;
+      settledRow.dataset.hasHistory = '';
+      settledRow.classList.add('report-row-history');
+      var toggle = settledRow.querySelector('.js-report-version-toggle');
+      if (toggle) toggle.remove();
+      var oldBox = settledRow.querySelector('input[name="report-select"]');
+      if (oldBox) {
+        oldBox.checked = false;
+        oldBox.disabled = true;
+      }
+    }
+    if (settledRow.classList.contains('d-none')) nextRow.classList.add('d-none');
+    settledRow.before(nextRow);
+    applyReportSubmissionColumnVisibility();
+    applyReportVersionCollapsedState();
+    applyRowGrouping(getReportSubmissionSection());
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  function replaceReportSubmissionRow(row, html) {
+    if (!row || !html) return null;
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var next = wrap.querySelector('tr');
+    if (!next) return null;
+    row.replaceWith(next);
+    applyReportSubmissionColumnVisibility();
+    applyReportVersionCollapsedState();
+    applyRowGrouping(getReportSubmissionSection());
+    updateReportSubmissionMasterState();
+    scheduleReportSubmissionColumnLayout(true);
+    return next;
+  }
+
+  function insertPreviousReportVersionRow(currentRow, html) {
+    if (!currentRow || !html) return;
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var histRow = wrap.querySelector('tr');
+    if (!histRow) return;
+    var rowId = histRow.dataset.rowId || '';
+    if (rowId) {
+      var table = currentRow.closest('table');
+      var existing = table && table.querySelector('tr[data-row-id="' + rowId + '"]');
+      if (existing) return;
+    }
+    var parentId = currentRow.dataset.versionGroup || currentRow.dataset.rowId || '';
+    if (parentId) histRow.dataset.parentId = parentId;
+    var histCheckbox = histRow.querySelector('input[name="report-select"]');
+    if (histCheckbox) {
+      histCheckbox.checked = false;
+      histCheckbox.disabled = true;
+    }
+    if (currentRow.classList.contains('d-none')) histRow.classList.add('d-none');
+    currentRow.after(histRow);
+    applyReportSubmissionColumnVisibility();
+  }
+
+  function ensureReportSelectCheckbox(row) {
+    if (!row || row.dataset.isCurrent !== '1') return;
+    var section = getReportSubmissionSection();
+    if (section && section.dataset.reportReadonly === '1') return;
+    if (row.dataset.canSend !== '1') return;
+    var cell = row.querySelector('.report-select-cell');
+    if (!cell) return;
+    var checkbox = cell.querySelector('input[name="report-select"]');
+    if (!checkbox) {
+      var wrap = document.createElement('div');
+      wrap.className = 'form-check m-0';
+      checkbox = document.createElement('input');
+      checkbox.className = 'form-check-input';
+      checkbox.type = 'checkbox';
+      checkbox.id = 'report-sel-' + (row.dataset.rowId || '');
+      checkbox.name = 'report-select';
+      checkbox.value = row.dataset.rowId || '';
+      checkbox.setAttribute('aria-label', 'Выделить строку отчета');
+      wrap.appendChild(checkbox);
+      cell.appendChild(wrap);
+    }
+    checkbox.disabled = false;
+    checkbox.checked = false;
+    row.classList.remove('table-active');
+  }
+
+  function reportFindingsMeetThreshold(count, threshold) {
+    var findings = Number(count) || 0;
+    var limit = Number(threshold) || 0;
+    if (limit === 0) return findings === 0;
+    return findings < limit;
+  }
+
+  function reportFindingCountText(data) {
+    if (data && data.finding_count_display) return String(data.finding_count_display);
+    if (data && data.check_status === 'done') return formatFindingCount(data.check_finding_count);
+    return '—';
+  }
+
+  function reportFindingCountValue(text) {
+    if (!text || text === '—') return 0;
+    var digits = String(text).replace(/[\s\u00a0\u202f]/g, '');
+    if (!/^\d+$/.test(digits)) return 0;
+    return Number(digits);
+  }
+
+  function findingThresholdText(value) {
+    if (value === null || value === undefined || value === '') return '';
+    return String(value);
+  }
+
+  function findingMeetsThreshold(count, threshold) {
+    if (threshold === null || threshold === undefined || threshold === '') return null;
+    var findings = Number(count) || 0;
+    var limit = Number(threshold);
+    if (!isFinite(limit)) return null;
+    if (findings < 0) findings = 0;
+    if (limit < 0) limit = 0;
+    return findings < limit || (limit === 0 && findings === 0);
+  }
+
+  function appendFindingTextCell(row, className, text) {
+    var cell = document.createElement('td');
+    if (className) cell.className = className;
+    cell.textContent = text || '';
+    row.appendChild(cell);
+    return cell;
+  }
+
+  function formatFindingCount(value) {
+    var amount = Math.round(Number(value) || 0);
+    if (amount < 0) amount = 0;
+    return String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+  }
+
+  function appendFindingCountCell(row, value, threshold) {
+    var cell = document.createElement('td');
+    cell.className = 'report-finding-count';
+    var meets = findingMeetsThreshold(value, threshold);
+    if (meets === true) cell.classList.add('report-finding-count--ok');
+    if (meets === false) cell.classList.add('report-finding-count--over');
+    cell.textContent = formatFindingCount(value);
+    row.appendChild(cell);
+  }
+
+  function appendFindingThresholdCell(row, value) {
+    var cell = document.createElement('td');
+    cell.className = 'report-finding-threshold';
+    cell.textContent = findingThresholdText(value);
+    row.appendChild(cell);
+  }
+
+  function findingHistogramScale(groups) {
+    return (groups && groups.courses || []).reduce(function(sum, course) {
+      return sum + (Number(course.total) || 0);
+    }, 0);
+  }
+
+  function appendFindingHistogramCell(row, value, scale, tone) {
+    var cell = document.createElement('td');
+    cell.className = 'report-finding-hist';
+    var track = document.createElement('div');
+    track.className = 'report-finding-hist-track' + (tone === 'item' ? ' report-finding-hist-track-item' : '');
+    var bar = document.createElement('div');
+    bar.className = 'report-finding-hist-bar' + (tone === 'item' ? ' report-finding-hist-bar-item' : '');
+    var amount = Number(value) || 0;
+    var width = 0;
+    if (tone === 'total') width = scale > 0 ? 100 : 0;
+    else if (scale > 0) width = amount / scale * 100;
+    bar.style.width = width + '%';
+    track.appendChild(bar);
+    cell.appendChild(track);
+    row.appendChild(cell);
+  }
+
+  function findingKindText(item) {
+    var kind = (item && item.kind_label) || '';
+    return kind === 'Макрос' || kind === 'Навык' ? kind : '';
+  }
+
+  function appendCourseToggle(cell, course) {
+    var label = document.createElement('span');
+    label.className = 'report-finding-course-label';
+    var toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'col-task-toggle js-report-finding-course-toggle';
+    toggle.setAttribute('aria-expanded', 'true');
+    toggle.setAttribute('aria-label', 'Свернуть/развернуть курс');
+    var caret = document.createElement('i');
+    caret.className = 'bi bi-caret-down-fill';
+    caret.setAttribute('aria-hidden', 'true');
+    toggle.appendChild(caret);
+    var courseName = document.createElement('span');
+    var code = course || '';
+    courseName.textContent = /^[A-Z]{4}$/.test(code) ? code : (code || '—');
+    label.appendChild(toggle);
+    label.appendChild(courseName);
+    cell.appendChild(label);
+  }
+
+  function findingHeaderSpecs(editable) {
+    var specs = [
+      ['Курс', 'report-finding-course'],
+      ['Вид', 'report-finding-kind'],
+      ['Название', 'report-finding-name'],
+      ['Порог', 'report-finding-threshold'],
+      ['Замеч.', 'report-finding-count']
+    ];
+    if (editable) specs.push(['Корр.', 'report-finding-corrected']);
+    specs.push(['', 'report-finding-hist']);
+    return specs;
+  }
+
+  function tagFindingHistogram(row, role, key) {
+    var bar = row.querySelector('.report-finding-hist-bar');
+    if (!bar) return;
+    bar.dataset.histRole = role;
+    if (key) bar.dataset.histKey = key;
+  }
+
+  function appendFindingCorrectedCell(row, value, options) {
+    options = options || {};
+    var cell = document.createElement('td');
+    cell.className = 'report-finding-count report-finding-corrected';
+    if (options.editable) {
+      cell.dataset.label = options.label || '';
+      cell.dataset.calculated = String(options.calculated == null ? 0 : options.calculated);
+      cell.dataset.value = String(value == null ? 0 : value);
+      if (options.threshold != null && options.threshold !== '') cell.dataset.threshold = String(options.threshold);
+      cell.tabIndex = 0;
+    } else if (options.sum) {
+      cell.classList.add('report-finding-corrected-sum');
+    } else if (options.total) {
+      cell.classList.add('report-finding-corrected-total');
+    }
+    setCorrectedCellText(cell, formatFindingCount(value));
+    var meets = findingMeetsThreshold(value, options.threshold);
+    if (meets === true) cell.classList.add('report-finding-count--ok');
+    if (meets === false) cell.classList.add('report-finding-count--over');
+    row.appendChild(cell);
+    return cell;
+  }
+
+  function correctionRulesAccepted(rules, counts, total) {
+    if (!rules || !rules.length) return findingMeetsThreshold(total, 0);
+    return rules.every(function(rule) {
+      var hasSum = rule.sum_threshold !== null && rule.sum_threshold !== undefined && rule.sum_threshold !== '';
+      var sumOk = hasSum ? findingMeetsThreshold(total, rule.sum_threshold) : true;
+      var items = rule.items || {};
+      var labels = Object.keys(items);
+      var itemsOk = true;
+      if (rule.mode === 'per_item' || rule.mode === 'sum_and_per_item') {
+        if (!labels.length) itemsOk = false;
+        labels.forEach(function(label) {
+          if (!findingMeetsThreshold(Number(counts[label]) || 0, items[label])) itemsOk = false;
+        });
+      }
+      if (rule.mode === 'per_item') return itemsOk;
+      if (rule.mode === 'sum_and_per_item') return !!(sumOk && itemsOk);
+      return !!sumOk;
+    });
+  }
+
+  function correctedCellState(cell) {
+    var raw = String(cell.dataset.value == null ? '' : cell.dataset.value).trim();
+    if (!/^\d+$/.test(raw)) return 'format';
+    if (Number(raw) > Number(cell.dataset.calculated || 0)) return 'high';
+    return '';
+  }
+
+  function readCorrectedCounts(table) {
+    var counts = {};
+    var byCourse = {};
+    table.querySelectorAll('td.report-finding-corrected[data-label]').forEach(function(cell) {
+      var row = cell.closest('tr');
+      var key = row ? row.dataset.courseKey || '' : '';
+      var raw = String(cell.dataset.value == null ? '' : cell.dataset.value).trim();
+      var amount = /^\d+$/.test(raw) ? Number(raw) : 0;
+      counts[cell.dataset.label] = amount;
+      byCourse[key] = (byCourse[key] || 0) + amount;
+    });
+    return { counts: counts, byCourse: byCourse };
+  }
+
+  function refreshFindingCorrectionTable(table) {
+    if (!table) return;
+    var parsed = readCorrectedCounts(table);
+    var total = 0;
+    Object.keys(parsed.byCourse).forEach(function(key) { total += parsed.byCourse[key]; });
+    table.querySelectorAll('tr.report-finding-course-row').forEach(function(row) {
+      var sumCell = row.querySelector('.report-finding-corrected-sum');
+      var amount = parsed.byCourse[row.dataset.courseKey] || 0;
+      if (sumCell) setCorrectedCellText(sumCell, formatFindingCount(amount));
+    });
+    var totalCell = table.querySelector('.report-finding-corrected-total');
+    if (totalCell) {
+      setCorrectedCellText(totalCell, formatFindingCount(total));
+      totalCell.classList.remove('report-finding-count--ok', 'report-finding-count--over');
+    }
+    table.querySelectorAll('td.report-finding-corrected[data-label]').forEach(function(cell) {
+      var state = correctedCellState(cell);
+      cell.classList.toggle('report-finding-corrected--invalid', !!state);
+      setCorrectedCellText(cell, state ? (cell.dataset.value || '') : formatFindingCount(cell.dataset.value || 0));
+      var meets = state ? null : findingMeetsThreshold(Number(cell.dataset.value), cell.dataset.threshold);
+      cell.classList.toggle('report-finding-count--ok', meets === true);
+      cell.classList.toggle('report-finding-count--over', meets === false);
+    });
+    var rules = [];
+    try { rules = JSON.parse(table.dataset.rules || '[]'); } catch (_) { rules = []; }
+    var accepted = correctionRulesAccepted(rules, parsed.counts, total);
+    var totalRow = table.querySelector('.report-finding-total-row');
+    var statusCell = table.querySelector('.report-finding-status');
+    if (totalRow) {
+      totalRow.classList.toggle('report-finding-total-row--ok', accepted === true);
+      totalRow.classList.toggle('report-finding-total-row--over', accepted === false);
+    }
+    if (statusCell) {
+      statusCell.textContent = accepted === true ? 'Отчет сдан' : (accepted === false ? 'Отчет не сдан' : '');
+    }
+    if (totalCell && accepted === true) totalCell.classList.add('report-finding-count--ok');
+    if (totalCell && accepted === false) totalCell.classList.add('report-finding-count--over');
+    table.querySelectorAll('.report-finding-hist-bar').forEach(function(bar) {
+      var role = bar.dataset.histRole || '';
+      var amount = 0;
+      if (role === 'total') amount = total;
+      else if (role === 'course') amount = parsed.byCourse[bar.dataset.histKey] || 0;
+      else amount = Number(parsed.counts[bar.dataset.histKey]) || 0;
+      var width = 0;
+      if (role === 'total') width = total > 0 ? 100 : 0;
+      else if (total > 0) width = amount / total * 100;
+      bar.style.width = width + '%';
+    });
+  }
+
+  function findingCorrectionSelectionClasses() {
+    return ['inline-cell-selected', 'inline-cell-sel-t', 'inline-cell-sel-r', 'inline-cell-sel-b', 'inline-cell-sel-l'];
+  }
+
+  function selectFindingCorrectionCell(cell) {
+    var modal = document.getElementById('report-finding-modal');
+    if (modal) {
+      modal.querySelectorAll('td.inline-cell-selected').forEach(function(other) {
+        if (other !== cell) other.classList.remove.apply(other.classList, findingCorrectionSelectionClasses());
+      });
+    }
+    if (!cell) return;
+    cell.classList.add.apply(cell.classList, findingCorrectionSelectionClasses());
+    if (!cell.querySelector('input') && document.activeElement !== cell) {
+      try { cell.focus({ preventScroll: true }); } catch (_) { cell.focus(); }
+    }
+  }
+
+  function lockCorrectionSpinner(input, cell) {
+    var calculated = Number(cell.dataset.calculated || 0);
+    if (calculated < 0) calculated = 0;
+    input.min = '0';
+    input.max = String(calculated);
+    var raw = String(input.value == null ? '' : input.value).trim();
+    var current = /^\d+$/.test(raw) ? Number(raw) : 0;
+    var line = input.closest('.report-corr-line');
+    var lock = line && line.querySelector('.report-corr-up-lock');
+    if (lock) lock.hidden = current < calculated;
+  }
+
+  function setCorrectedCellText(cell, text) {
+    if (!cell) return;
+    var live = cell.querySelector('.report-corr-value');
+    if (cell.querySelector('input')) {
+      if (live) live.textContent = text;
+      return;
+    }
+    cell.textContent = '';
+    var line = document.createElement('div');
+    line.className = 'report-corr-line';
+    var value = document.createElement('span');
+    value.className = 'report-corr-value';
+    value.textContent = text;
+    var slot = document.createElement('span');
+    slot.className = 'report-corr-slot';
+    slot.setAttribute('aria-hidden', 'true');
+    line.appendChild(value);
+    line.appendChild(slot);
+    cell.appendChild(line);
+  }
+
+  function closeCorrectedEditor(cell, revert) {
+    var input = cell.querySelector('input');
+    if (!input) return;
+    if (revert) cell.dataset.value = cell.dataset.editStart || '0';
+    else cell.dataset.value = input.value;
+    input.remove();
+    cell.classList.remove('inline-cell-editing');
+    refreshFindingCorrectionTable(cell.closest('table'));
+  }
+
+  function commitFindingCorrectionEditors(revert) {
+    var modal = document.getElementById('report-finding-modal');
+    if (!modal) return;
+    modal.querySelectorAll('td.report-finding-corrected[data-label] input').forEach(function(input) {
+      closeCorrectedEditor(input.closest('td'), !!revert);
+    });
+  }
+
+  function focusAdjacentCorrectedCell(cell, step, openEditor) {
+    var cells = Array.from(cell.closest('table').querySelectorAll('td.report-finding-corrected[data-label]'));
+    var index = cells.indexOf(cell);
+    var next = cells[index + step];
+    if (!next) return;
+    if (openEditor) openCorrectedEditor(next);
+    else selectFindingCorrectionCell(next);
+  }
+
+  function openCorrectedEditor(cell, seed) {
+    if (!cell || cell.querySelector('input')) return;
+    commitFindingCorrectionEditors(false);
+    selectFindingCorrectionCell(cell);
+    cell.dataset.editStart = cell.dataset.value || '0';
+    if (!cell.querySelector('.report-corr-line')) {
+      setCorrectedCellText(cell, formatFindingCount(cell.dataset.value || 0));
+    }
+    var line = cell.querySelector('.report-corr-line');
+    var valueEl = cell.querySelector('.report-corr-value');
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.step = '1';
+    input.inputMode = 'numeric';
+    input.className = 'inline-table-number-input report-finding-corrected-input';
+    input.value = seed != null ? String(seed) : (cell.dataset.value || '0');
+    if (seed != null) cell.dataset.value = String(seed);
+    input.lang = document.documentElement.getAttribute('lang') || 'ru';
+    input.setAttribute('aria-label', 'Корректировка замечаний');
+    if (valueEl) valueEl.textContent = input.value;
+    lockCorrectionSpinner(input, cell);
+    input.addEventListener('wheel', function(event) { event.preventDefault(); }, { passive: false });
+    line.appendChild(input);
+    var lock = document.createElement('span');
+    lock.className = 'report-corr-up-lock';
+    lock.setAttribute('aria-hidden', 'true');
+    line.appendChild(lock);
+    lockCorrectionSpinner(input, cell);
+    var spinnerPointer = false;
+    input.addEventListener('input', function() {
+      cell.dataset.value = input.value;
+      lockCorrectionSpinner(input, cell);
+      refreshFindingCorrectionTable(cell.closest('table'));
+    });
+    input.addEventListener('pointerdown', function(event) {
+      var box = input.getBoundingClientRect();
+      if (event.clientX >= box.right - 24) spinnerPointer = true;
+    });
+    input.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCorrectedEditor(cell, true);
+        selectFindingCorrectionCell(cell);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        closeCorrectedEditor(cell, false);
+        focusAdjacentCorrectedCell(cell, event.shiftKey ? -1 : 1, false);
+      }
+    });
+    input.addEventListener('blur', function() {
+      window.setTimeout(function() {
+        if (spinnerPointer) {
+          spinnerPointer = false;
+          if (cell.querySelector('input') === input && document.activeElement !== input) input.focus();
+          return;
+        }
+        if (cell.querySelector('input') === input) closeCorrectedEditor(cell, false);
+      }, 0);
+    });
+    input.focus();
+    if (seed != null) refreshFindingCorrectionTable(cell.closest('table'));
+  }
+
+  function renderReportFindingGroups(groups, editable) {
+    var table = document.createElement('table');
+    table.className = 'table table-sm align-middle report-finding-groups-table';
+    if (editable) table.dataset.rules = JSON.stringify((groups && groups.rules) || []);
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    findingHeaderSpecs(!!editable).forEach(function(spec) {
+      var cell = document.createElement('th');
+      cell.className = spec[1];
+      if (spec[1] === 'report-finding-hist') cell.setAttribute('aria-label', 'Гистограмма');
+      if (spec[1] === 'report-finding-course') {
+        var wrap = document.createElement('span');
+        wrap.className = 'report-finding-course-label';
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'clf-wrap-btn report-finding-courses-toggle js-report-finding-courses-toggle';
+        toggle.setAttribute('aria-expanded', 'true');
+        toggle.setAttribute('aria-label', 'Свернуть курсы');
+        toggle.title = 'Свернуть/развернуть курсы';
+        var icon = document.createElement('i');
+        icon.className = 'bi bi-arrows-collapse';
+        icon.setAttribute('aria-hidden', 'true');
+        toggle.appendChild(icon);
+        var title = document.createElement('span');
+        title.textContent = 'Курс';
+        wrap.appendChild(toggle);
+        wrap.appendChild(title);
+        cell.appendChild(wrap);
+      } else {
+        cell.textContent = spec[0];
+      }
+      headRow.appendChild(cell);
+    });
+    thead.appendChild(headRow);
+    var tbody = document.createElement('tbody');
+    var histogramScale = editable
+      ? (groups.courses || []).reduce(function(sum, course) {
+          var amount = course.corrected_total != null ? Number(course.corrected_total) : Number(course.total);
+          return sum + (amount || 0);
+        }, 0)
+      : findingHistogramScale(groups);
+    (groups.courses || []).slice().sort(function(a, b) {
+      return (Number(b.total) || 0) - (Number(a.total) || 0);
+    }).forEach(function(course, index) {
+      var key = String(index);
+      var courseCorrected = course.corrected_total != null ? course.corrected_total : course.total;
+      var courseRow = document.createElement('tr');
+      courseRow.className = 'report-finding-course-row';
+      courseRow.dataset.courseKey = key;
+      var courseCell = document.createElement('td');
+      courseCell.className = 'report-finding-course';
+      appendCourseToggle(courseCell, course.course);
+      courseRow.appendChild(courseCell);
+      appendFindingTextCell(courseRow, 'report-finding-kind', '');
+      appendFindingTextCell(courseRow, 'report-finding-name', '');
+      appendFindingThresholdCell(courseRow, null);
+      appendFindingCountCell(courseRow, course.total, null);
+      if (editable) appendFindingCorrectedCell(courseRow, courseCorrected, { sum: true });
+      appendFindingHistogramCell(courseRow, editable ? courseCorrected : course.total, histogramScale, 'course');
+      if (editable) tagFindingHistogram(courseRow, 'course', key);
+      tbody.appendChild(courseRow);
+      (course.items || []).slice().sort(function(a, b) {
+        return (Number(b.count) || 0) - (Number(a.count) || 0);
+      }).forEach(function(item) {
+        var itemCorrected = item.corrected != null ? item.corrected : item.count;
+        var itemRow = document.createElement('tr');
+        itemRow.className = 'report-finding-item-row';
+        itemRow.dataset.courseKey = key;
+        appendFindingTextCell(itemRow, 'report-finding-course', '');
+        appendFindingTextCell(itemRow, 'report-finding-kind', findingKindText(item));
+        appendFindingTextCell(itemRow, 'report-finding-name', item.label || item.name || '');
+        appendFindingThresholdCell(itemRow, item.threshold);
+        appendFindingCountCell(itemRow, item.count, item.threshold);
+        if (editable) {
+          appendFindingCorrectedCell(itemRow, itemCorrected, {
+            editable: true,
+            label: item.label || item.name || '',
+            calculated: item.count,
+            threshold: item.threshold,
+          });
+        }
+        appendFindingHistogramCell(itemRow, editable ? itemCorrected : item.count, histogramScale, 'item');
+        if (editable) tagFindingHistogram(itemRow, 'item', item.label || item.name || '');
+        tbody.appendChild(itemRow);
+      });
+    });
+    var correctedTotal = groups.corrected_total != null ? groups.corrected_total : groups.total;
+    var totalMeets = editable
+      ? correctionRulesAccepted(groups.rules || [], (function() {
+          var counts = {};
+          (groups.courses || []).forEach(function(course) {
+            (course.items || []).forEach(function(item) {
+              counts[item.label] = item.corrected != null ? Number(item.corrected) : Number(item.count) || 0;
+            });
+          });
+          return counts;
+        })(), correctedTotal)
+      : findingMeetsThreshold(groups.total, groups.total_threshold);
+    var totalRow = document.createElement('tr');
+    totalRow.className = 'report-finding-total-row';
+    if (totalMeets === true) totalRow.classList.add('report-finding-total-row--ok');
+    if (totalMeets === false) totalRow.classList.add('report-finding-total-row--over');
+    var totalLabel = document.createElement('td');
+    totalLabel.colSpan = 2;
+    totalLabel.className = 'report-finding-total-label';
+    totalLabel.textContent = 'Итого';
+    totalRow.appendChild(totalLabel);
+    var status = '';
+    if (totalMeets === true) status = 'Отчет сдан';
+    if (totalMeets === false) status = 'Отчет не сдан';
+    appendFindingTextCell(totalRow, 'report-finding-name report-finding-status', status);
+    appendFindingThresholdCell(totalRow, groups.total_threshold);
+    appendFindingCountCell(totalRow, groups.total, groups.total_threshold);
+    if (editable) appendFindingCorrectedCell(totalRow, correctedTotal, { total: true, threshold: groups.total_threshold });
+    appendFindingHistogramCell(totalRow, editable ? correctedTotal : groups.total, histogramScale, 'total');
+    if (editable) tagFindingHistogram(totalRow, 'total', '');
+    tbody.appendChild(totalRow);
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    if (editable) refreshFindingCorrectionTable(table);
+    return table;
+  }
+
+  function fillReportFindingHeading(groups) {
+    var ctx = (groups && groups.context) || {};
+    var projectEl = document.getElementById('report-finding-project');
+    var executorEl = document.getElementById('report-finding-executor');
+    var reportEl = document.getElementById('report-finding-report');
+    if (projectEl) {
+      projectEl.textContent = [ctx.stage, ctx.product, ctx.name].filter(Boolean).join(' ');
+    }
+    if (executorEl) executorEl.textContent = ctx.executor || '';
+    if (reportEl) {
+      reportEl.textContent = ((ctx.section || '') + ' по активу ' + (ctx.asset || '')).trim();
+    }
+    var versionEl = document.getElementById('report-finding-version');
+    if (versionEl) versionEl.textContent = ctx.version || '';
+  }
+
+  function setReportFindingModalMode(mode) {
+    var editing = mode === 'edit';
+    var closeBtn = document.getElementById('report-finding-close');
+    var cancelBtn = document.getElementById('report-finding-cancel');
+    var saveBtn = document.getElementById('report-finding-save');
+    var errorEl = document.getElementById('report-finding-correction-error');
+    if (closeBtn) closeBtn.classList.toggle('d-none', editing);
+    if (cancelBtn) cancelBtn.classList.toggle('d-none', !editing);
+    if (saveBtn) {
+      saveBtn.classList.toggle('d-none', !editing);
+      saveBtn.disabled = false;
+    }
+    if (errorEl) {
+      errorEl.textContent = '';
+      errorEl.classList.add('d-none');
+    }
+  }
+
+  function showFindingCorrectionError(message) {
+    var errorEl = document.getElementById('report-finding-correction-error');
+    if (!errorEl) return;
+    errorEl.textContent = message || '';
+    errorEl.classList.toggle('d-none', !message);
+  }
+
+  function openReportFindingModal(btn, mode) {
+    var modalEl = document.getElementById('report-finding-modal');
+    if (!modalEl || !window.bootstrap) return;
+    mode = mode || 'info';
+    var groups = {};
+    try {
+      groups = JSON.parse(btn.dataset.findings || '{}');
+    } catch (_) {
+      groups = {};
+    }
+    setReportFindingModalMode(mode);
+    fillReportFindingHeading(groups);
+    var host = document.getElementById('report-finding-groups');
+    if (host) {
+      host.textContent = '';
+      host.appendChild(renderReportFindingGroups(groups, mode === 'edit'));
+    }
+    modalEl.dataset.correctionUploadId = btn.dataset.uploadId || '';
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  function reportFindingCorrectionUrl(section, uploadId) {
+    var template = (section && section.dataset.reportFindingCorrectionUrl) || '';
+    if (!template || !uploadId) return '';
+    return template.replace(/\/0\/finding-correction\/?$/, '/' + uploadId + '/finding-correction/');
+  }
+
+  function replaceReportSlotRows(section, versionGroup, html) {
+    var table = document.getElementById('report-submission-table');
+    if (!table || !versionGroup || !html) return;
+    var rows = Array.from(table.querySelectorAll('tr[data-version-group="' + versionGroup + '"]'));
+    if (!rows.length) return;
+    var anchor = rows[0];
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var nextRows = Array.from(wrap.querySelectorAll('tr'));
+    if (!nextRows.length) return;
+    nextRows.forEach(function(row) { anchor.parentNode.insertBefore(row, anchor); });
+    rows.forEach(function(row) { row.remove(); });
+    applyReportSubmissionColumnVisibility();
+    if (typeof applyReportVersionCollapsedState === 'function') applyReportVersionCollapsedState();
+    if (typeof applyRowGrouping === 'function') applyRowGrouping(section);
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  function saveFindingCorrection() {
+    var modalEl = document.getElementById('report-finding-modal');
+    var table = modalEl && modalEl.querySelector('.report-finding-groups-table');
+    var section = getReportSubmissionSection();
+    if (!table || !modalEl) return;
+    var counts = {};
+    var increased = false;
+    var invalid = false;
+    var labels = [];
+    table.querySelectorAll('td.report-finding-corrected[data-label]').forEach(function(cell) {
+      if (cell.querySelector('input')) closeCorrectedEditor(cell, false);
+      var state = correctedCellState(cell);
+      cell.classList.toggle('report-finding-corrected--invalid', !!state);
+      if (state === 'high') increased = true;
+      if (state === 'format') invalid = true;
+      if (state) labels.push(cell.dataset.label);
+      counts[cell.dataset.label] = Number(cell.dataset.value);
+    });
+    if (increased || invalid) {
+      showFindingCorrectionError(increased
+        ? 'Число замечаний нельзя увеличить выше расчётного.'
+        : 'Укажите целое число от 0 до расчётного.');
+      var first = table.querySelector('td.report-finding-corrected--invalid');
+      if (first) first.focus();
+      return;
+    }
+    var uploadId = modalEl.dataset.correctionUploadId || '';
+    var url = reportFindingCorrectionUrl(section, uploadId);
+    var saveBtn = document.getElementById('report-finding-save');
+    if (!url) {
+      showFindingCorrectionError('Не удалось сохранить корректировку.');
+      return;
+    }
+    if (saveBtn) saveBtn.disabled = true;
+    showFindingCorrectionError('');
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': csrftoken,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ counts: counts }),
+    }).then(function(response) {
+      return response.json().then(function(data) {
+        if (!response.ok || !data || !data.ok) {
+          var error = new Error((data && data.error) || 'Не удалось сохранить корректировку.');
+          error.labels = (data && data.invalid_labels) || [];
+          throw error;
+        }
+        return data;
+      });
+    }).then(function(data) {
+      replaceReportSlotRows(section, data.version_group || '', data.slot_rows_html || '');
+      window.bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    }).catch(function(err) {
+      if (saveBtn) saveBtn.disabled = false;
+      (err.labels || labels).forEach(function(label) {
+        table.querySelectorAll('td.report-finding-corrected[data-label]').forEach(function(cell) {
+          if (cell.dataset.label === label) cell.classList.add('report-finding-corrected--invalid');
+        });
+      });
+      showFindingCorrectionError(err.message || 'Не удалось сохранить корректировку.');
+    });
+  }
+
+  function reportCountIsPositive(text) {
+    var digits = String(text || '').replace(/[\s\u00a0\u202f]/g, '');
+    return /^\d+$/.test(digits) && Number(digits) > 0;
+  }
+
+  function appendReportInfoControl(parent, active, findings, label) {
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-info-circle';
+    icon.setAttribute('aria-hidden', 'true');
+    if (!active) {
+      var mark = document.createElement('span');
+      mark.className = 'report-finding-info-btn report-finding-info-btn--disabled';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.appendChild(icon);
+      parent.appendChild(mark);
+      return;
+    }
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'report-finding-info-btn js-report-finding-info';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    if (findings) btn.dataset.findings = JSON.stringify(findings);
+    btn.appendChild(icon);
+    parent.appendChild(btn);
+  }
+
+  function updateReportFindingCountCell(row, data) {
+    if (!row) return;
+    var cell = row.querySelector('.report-finding-count-cell');
+    if (!cell) return;
+    var text = reportFindingCountText(data);
+    cell.textContent = '';
+    var inner = document.createElement('span');
+    inner.className = 'report-finding-count-inner';
+    inner.appendChild(document.createTextNode(text));
+    if (text !== '—') {
+      var active = reportCountIsPositive(text) && (!data || data.finding_info_active !== false);
+      appendReportInfoControl(
+        inner,
+        active,
+        data && data.finding_groups,
+        'Результаты проверки'
+      );
+    }
+    cell.appendChild(inner);
+  }
+
+  function updateReportCalculatedCell(row, data) {
+    var cell = row && row.querySelector('.report-calculated-count-cell');
+    if (!cell || !cell.querySelector('.report-finding-count-inner') || !data) return;
+    var text = data.calculated_count_display || data.finding_count_display;
+    if (!text) return;
+    var inner = cell.querySelector('.report-finding-count-inner');
+    inner.textContent = '';
+    inner.appendChild(document.createTextNode(text));
+    if (text === '—') return;
+    appendReportInfoControl(
+      inner,
+      reportCountIsPositive(text) && !!data.calculated_groups,
+      data.calculated_groups,
+      'Расчётные замечания'
+    );
+  }
+
+  function updateReportCorrectedCell(row, data) {
+    var cell = row && row.querySelector('.report-corrected-count-cell');
+    if (!cell || !cell.querySelector('.report-corrected-count-inner') || !data) return;
+    var text = data.corrected_count_display || data.finding_count_display;
+    if (!text) return;
+    var inner = cell.querySelector('.report-corrected-count-inner');
+    inner.textContent = '';
+    if (reportCountIsPositive(text) && data.edit_groups) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'report-finding-edit-btn js-report-finding-edit';
+      btn.dataset.findings = JSON.stringify(data.edit_groups);
+      btn.dataset.uploadId = String(data.upload_id || row.dataset.uploadId || '');
+      btn.setAttribute('aria-label', 'Скорректировать замечания');
+      btn.title = 'Скорректировать замечания';
+      var icon = document.createElement('i');
+      icon.className = 'bi bi-pencil-square';
+      icon.setAttribute('aria-hidden', 'true');
+      btn.appendChild(icon);
+      inner.appendChild(btn);
+    }
+    var value = document.createElement('span');
+    value.className = 'report-corrected-count-value';
+    value.textContent = text;
+    inner.appendChild(value);
+  }
+
+  function reportWorkflowStatusClass(status) {
+    if ((status || '').indexOf('Сдан') === 0 || (status || '').indexOf('Согласован') === 0) return 'report-status--accepted';
+    if ((status || '').indexOf('Проверен') === 0 || (status || '').indexOf('В работе после ') === 0) return 'report-status--checked';
+    if (status === 'На проверке ИИ' || (status || '').indexOf('На проверке ') === 0) return 'report-status--sent';
+    if (status === 'Загружен') return 'report-status--uploaded';
+    return 'report-status--idle';
+  }
+
+  function updateReportWorkflowStatusCell(row, data) {
+    if (!row) return;
+    var cell = row.querySelector('.report-workflow-status-cell');
+    var status = (data && data.workflow_status) || '';
+    if (!status) {
+      if (data && data.check_status === 'done') {
+        status = reportFindingsMeetThreshold(data.check_finding_count, data.finding_threshold) ? 'Согласован ИИ' : 'Проверен ИИ';
+      } else if (data && data.sent_at && data.sent_at !== '—') {
+        status = 'На проверке ИИ';
+      } else if (data && data.file_name) {
+        status = 'Загружен';
+      } else {
+        status = 'В работе';
+      }
+    }
+    var statusClass = (data && data.workflow_status_class) || reportWorkflowStatusClass(status);
+    row.dataset.workflowStatus = status;
+    if (!cell) return;
+    cell.innerHTML = '';
+    var inner = document.createElement('span');
+    inner.className = 'report-workflow-status-inner';
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-circle reg-launch-icon reg-launch-indicator ' + statusClass;
+    icon.setAttribute('aria-hidden', 'true');
+    var label = document.createElement('span');
+    label.className = 'report-workflow-status-label';
+    if ((status || '').indexOf('Сдан') === 0 || (status || '').indexOf('Согласован') === 0 || status === 'Загружен') {
+      label.classList.add('report-workflow-status-label--inset');
+      label.style.paddingLeft = '1px';
+    }
+    label.textContent = status;
+    inner.appendChild(icon);
+    inner.appendChild(label);
+    cell.appendChild(inner);
+  }
+
+  function reportStatusDateDisplay(data) {
+    if (data && data.status_date && data.status_date !== '—') return data.status_date;
+    var status = (data && data.workflow_status) || '';
+    if (status === 'Загружен') return (data && data.uploaded_at) || '—';
+    if (status === 'Отправлен' || status === 'На проверке ИИ') return (data && data.sent_at) || '—';
+    if ((status || '').indexOf('Проверен') === 0 || (status || '').indexOf('Сдан') === 0 || (status || '').indexOf('Согласован') === 0 || (status || '').indexOf('На проверке ') === 0 || (status || '').indexOf('В работе после ') === 0) {
+      return (data && (data.checked_at || data.sent_at || data.uploaded_at)) || '—';
+    }
+    return '—';
+  }
+
+  function updateReportStatusDateCell(row, data) {
+    if (!row) return;
+    var cell = row.querySelector('.report-status-date-cell, .report-sent-at-cell');
+    if (cell) cell.textContent = reportStatusDateDisplay(data);
+  }
+
+  function applyReportUploadVersionUpdate(row, data) {
+    var versionCell = row.querySelector('.report-version-cell');
+    if (versionCell && data.version_display) {
+      versionCell.textContent = data.version_display;
+    }
+    row.dataset.checkStatus = '';
+    updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), {});
+    updateReportWorkflowStatusCell(row, Object.assign({}, data, {
+      check_status: '',
+      sent_at: '',
+      checked_at: '',
+      workflow_status: data.workflow_status || 'Загружен'
+    }));
+    updateReportStatusDateCell(row, Object.assign({}, data, {
+      sent_at: '',
+      checked_at: '',
+      workflow_status: data.workflow_status || 'Загружен'
+    }));
+    updateReportFindingCountCell(row, Object.assign({}, data, {
+      check_status: '',
+      finding_count_display: '—'
+    }));
+    if ((data.workflow_status || 'Загружен') === 'Загружен') {
+      row.dataset.canSend = '1';
+      row.dataset.sendAllowed = '1';
+    }
+    ensureReportSelectCheckbox(row);
+    if (data.previous_row_html) {
+      insertPreviousReportVersionRow(row, data.previous_row_html);
+    }
+    if (data.has_history) {
+      ensureReportVersionToggle(row);
+      expandReportVersionGroup(row.dataset.versionGroup || row.dataset.rowId || '');
+    }
+    applyRowGrouping(getReportSubmissionSection());
+    applyReportVersionCollapsedState();
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  function statusWantsVersionDownload(status) {
+    status = status || '';
+    return status.indexOf('Проверен') === 0 || status.indexOf('Сдан') === 0 || status.indexOf('Согласован') === 0;
+  }
+
+  function replaceUploadIconWithDownload(row, data) {
+    if (!row) return;
+    var uploadCell = row.querySelector('.report-upload-cell');
+    var downloadUrl = (data && data.download_url) || '';
+    if (!uploadCell || !downloadUrl) return;
+    var uploadLabel = uploadCell.querySelector('label.ct-upload-link');
+    if (uploadCell.querySelector('a.ct-upload-link i.bi-download')) {
+      if (uploadLabel) uploadLabel.remove();
+      return;
+    }
+    var iconLink = document.createElement('a');
+    iconLink.href = downloadUrl;
+    iconLink.className = 'ct-upload-link';
+    iconLink.setAttribute('download', '');
+    iconLink.title = 'Скачать файл';
+    var glyph = document.createElement('i');
+    glyph.className = 'bi bi-download';
+    iconLink.appendChild(glyph);
+    var spacer = uploadCell.querySelector('.report-upload-icon-spacer');
+    if (uploadLabel) uploadLabel.replaceWith(iconLink);
+    else if (spacer) spacer.replaceWith(iconLink);
+    else uploadCell.insertBefore(iconLink, uploadCell.firstChild);
+  }
+
+  function fillReviewDecisionControls(inner, uploadId) {
+    var label = document.createElement('label');
+    label.className = 'report-review-upload-action';
+    var up = document.createElement('i');
+    up.className = 'bi bi-upload';
+    up.setAttribute('aria-hidden', 'true');
+    var uploadText = document.createElement('span');
+    uploadText.className = 'report-review-action-text';
+    uploadText.textContent = 'Загрузить замечания';
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.className = 'd-none js-report-review-upload';
+    input.accept = '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    input.dataset.uploadId = String(uploadId || '');
+    label.appendChild(up);
+    label.appendChild(uploadText);
+    label.appendChild(input);
+    var rule = document.createElement('span');
+    rule.className = 'report-review-action-rule';
+    rule.setAttribute('aria-hidden', 'true');
+    var accept = document.createElement('button');
+    accept.type = 'button';
+    accept.className = 'report-review-accept-action js-report-review-accept';
+    accept.dataset.uploadId = String(uploadId || '');
+    var check = document.createElement('i');
+    check.className = 'bi bi-check2-square';
+    check.setAttribute('aria-hidden', 'true');
+    var acceptText = document.createElement('span');
+    acceptText.className = 'report-review-action-text';
+    acceptText.textContent = 'Принять без замечаний';
+    accept.appendChild(check);
+    accept.appendChild(acceptText);
+    inner.appendChild(label);
+    inner.appendChild(rule);
+    inner.appendChild(accept);
+  }
+
+  function appendRemarksDiscardAction(inner, entryId) {
+    var rule = document.createElement('span');
+    rule.className = 'report-review-action-rule';
+    rule.setAttribute('aria-hidden', 'true');
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'report-review-discard-action js-report-remarks-discard';
+    button.dataset.reviewEntryId = String(entryId || '');
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-x-square';
+    icon.setAttribute('aria-hidden', 'true');
+    var text = document.createElement('span');
+    text.className = 'report-review-action-text';
+    text.textContent = 'Удалить файл';
+    button.appendChild(icon);
+    button.appendChild(text);
+    inner.appendChild(rule);
+    inner.appendChild(button);
+  }
+
+  function applyManualReviewRowControls(row, data) {
+    if (!row) return;
+    replaceUploadIconWithDownload(row, data);
+    if (!data || !data.can_review_upload) return;
+    var resultCell = row.querySelector('.report-check-result-cell');
+    if (!resultCell || resultCell.querySelector('.js-report-review-upload')) return;
+    resultCell.textContent = '';
+    var inner = document.createElement('span');
+    inner.className = 'report-check-result-inner';
+    fillReviewDecisionControls(inner, (data && data.upload_id) || row.dataset.uploadId || '');
+    resultCell.appendChild(inner);
+  }
+
+  function reportRowMayResume(row) {
+    return Boolean(row && row.dataset.isCurrent === '1' && row.dataset.sendAllowed === '1');
+  }
+
+  function reportCheckLocksRow(data) {
+    if (!data || data.check_status === 'error') return false;
+    if (data.check_status === 'done' || data.check_status === 'running') return true;
+    return (data.workflow_status || '').indexOf('На проверке') === 0;
+  }
+
+  function applyReportSendResult(row, data) {
+    if (!row || !data) return;
+    if (Object.prototype.hasOwnProperty.call(data, 'check_status')) {
+      row.dataset.checkStatus = data.check_status || '';
+    }
+    if (data.check_status === 'error' && reportRowMayResume(row)) {
+      row.dataset.canSend = '1';
+    }
+    updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), data);
+    updateReportWorkflowStatusCell(row, data);
+    if ((data.workflow_status || '').indexOf('На проверке ') === 0 && data.workflow_status !== 'На проверке ИИ') {
+      applyManualReviewRowControls(row, data);
+    }
+    if (statusWantsVersionDownload(data.workflow_status)) {
+      replaceUploadIconWithDownload(row, data);
+    }
+    updateReportStatusDateCell(row, data);
+    updateReportFindingCountCell(row, data);
+    updateReportCalculatedCell(row, data);
+    updateReportCorrectedCell(row, data);
+    if (data.review_row_html) insertReviewStepRow(row, data.review_row_html);
+    var checkbox = row.querySelector('input[name="report-select"]');
+    if (reportCheckLocksRow(data)) {
+      if (checkbox) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+      }
+      row.dataset.canSend = '0';
+      row.classList.remove('table-active');
+    } else if (checkbox && row.dataset.isCurrent === '1' && (data.check_status !== 'error' || reportRowMayResume(row))) {
+      checkbox.disabled = false;
+    }
+    updateReportSubmissionMasterState();
+    scheduleReportSubmissionColumnLayout(true);
+  }
+
+  var reportCheckPollingRows = new WeakSet();
+
+  function reportCheckStatusUrl(section, uploadId) {
+    var template = (section && section.dataset.reportCheckStatusUrl) || '';
+    if (!template || !uploadId) return '';
+    return template.replace(/\/0\/check-status\/?$/, '/' + uploadId + '/check-status/');
+  }
+
+  function reportCheckResumeUrl(section, uploadId) {
+    var template = (section && section.dataset.reportCheckResumeUrl) || '';
+    if (!template || !uploadId) return '';
+    return template.replace(/\/0\/check-resume\/?$/, '/' + uploadId + '/check-resume/');
+  }
+
+  function appendReportCheckError(inner, options) {
+    var label = document.createElement('span');
+    label.className = 'report-check-error-label';
+    if (options.error) label.title = options.error;
+    var icon = document.createElement('i');
+    icon.className = 'bi bi-exclamation-circle';
+    icon.setAttribute('aria-hidden', 'true');
+    var text = document.createElement('span');
+    text.className = 'report-check-error-text';
+    text.textContent = options.reason
+      ? 'Ошибка проверки: ' + options.reason
+      : 'Ошибка проверки';
+    if (options.reason) label.dataset.reason = options.reason;
+    label.appendChild(icon);
+    label.appendChild(text);
+    inner.appendChild(label);
+    if (!options.canResume) return;
+    var rule = document.createElement('span');
+    rule.className = 'report-review-action-rule';
+    rule.setAttribute('aria-hidden', 'true');
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'report-check-resume-action js-report-check-resume';
+    button.dataset.uploadId = String(options.uploadId || '');
+    var repeat = document.createElement('i');
+    repeat.className = 'bi bi-arrow-repeat';
+    repeat.setAttribute('aria-hidden', 'true');
+    var caption = document.createElement('span');
+    caption.className = 'report-review-action-text';
+    caption.textContent = 'Возобновить проверку';
+    button.appendChild(repeat);
+    button.appendChild(caption);
+    inner.appendChild(rule);
+    inner.appendChild(button);
+  }
+
+  function showReportCheckPending(cell) {
+    if (!cell) return;
+    cell.textContent = '';
+    var inner = document.createElement('span');
+    inner.className = 'report-check-result-inner';
+    var spacer = document.createElement('span');
+    spacer.className = 'report-upload-icon-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    var pending = document.createElement('span');
+    pending.className = 'text-muted js-report-check-badge report-check-pending-text';
+    pending.textContent = reportCheckPendingText(null);
+    inner.appendChild(spacer);
+    inner.appendChild(pending);
+    cell.appendChild(inner);
+  }
+
+  function reportPollDelay(milliseconds) {
+    return new Promise(function(resolve) {
+      window.setTimeout(resolve, milliseconds);
+    });
+  }
+
+  async function pollReportCheck(row, gate) {
+    if (!row || reportCheckPollingRows.has(row)) return;
+    var uploadId = (row.dataset.uploadId || '').trim();
+    var section = getReportSubmissionSection();
+    var url = reportCheckStatusUrl(section, uploadId);
+    if (!url) return;
+    reportCheckPollingRows.add(row);
+    try {
+      while (row.isConnected && row.dataset.checkStatus === 'running') {
+        try {
+          var response = await fetch(url, {
+            method: 'GET',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          });
+          var data = null;
+          try { data = await response.json(); } catch (_) {}
+          if (!response.ok || !data || !data.ok) {
+            throw new Error((data && data.error) || 'Не удалось получить статус проверки.');
+          }
+          var stillStarting = gate && gate.allowFinish === false;
+          if (data.check_status === 'running' || !stillStarting) {
+            applyReportSendResult(row, data);
+          }
+        } catch (err) {
+          console.warn('report check status error', err);
+          await reportPollDelay(3000);
+        }
+        if (!row.isConnected || row.dataset.checkStatus !== 'running') break;
+        await reportPollDelay(1000);
+      }
+    } finally {
+      reportCheckPollingRows.delete(row);
+    }
+  }
+
+  function initReportCheckPolling() {
+    getReportSubmissionRows().forEach(function(row) {
+      if (row.dataset.checkStatus === 'running') pollReportCheck(row);
+    });
+  }
+
+  function initReportSubmissionFooterSticky() {
+    var footer = document.querySelector('#report-submission-section .policy-table-footer');
+    var section = footer && footer.closest('#report-submission-section');
+    if (!footer || !section || footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    var spacer = document.createElement('div');
+    spacer.className = 'report-submission-footer-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('beforebegin', spacer);
+
+    var marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    var intersectionObserver = null;
+
+    function release() {
+      if (intersectionObserver) intersectionObserver.disconnect();
+      window.removeEventListener('scroll', sync, true);
+      window.removeEventListener('resize', sync);
+    }
+
+    function sync() {
+      if (!footer.isConnected) {
+        release();
+        return;
+      }
+      var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      var sectionRect = section.getBoundingClientRect();
+      var markerRect = marker.getBoundingClientRect();
+      var sectionVisible = sectionRect.top < viewportHeight && sectionRect.bottom > 0;
+      var footerBelowFold = markerRect.top >= viewportHeight - 1;
+      var stuck = sectionVisible && footerBelowFold;
+      if (stuck) {
+        if (!footer.classList.contains('is-stuck')) {
+          var styles = window.getComputedStyle(footer);
+          var blockHeight = footer.offsetHeight
+            + (parseFloat(styles.marginTop) || 0)
+            + (parseFloat(styles.marginBottom) || 0);
+          spacer.style.height = blockHeight + 'px';
+          footer.classList.add('is-stuck');
+        }
+        var pinnedRect = section.getBoundingClientRect();
+        footer.style.left = pinnedRect.left + 'px';
+        footer.style.width = pinnedRect.width + 'px';
+      } else if (footer.classList.contains('is-stuck')) {
+        footer.classList.remove('is-stuck');
+        footer.style.left = '';
+        footer.style.width = '';
+        spacer.style.height = '0px';
+      }
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
+      intersectionObserver.observe(section);
+      intersectionObserver.observe(marker);
+    }
+    window.addEventListener('scroll', sync, true);
+    window.addEventListener('resize', sync);
+    window.requestAnimationFrame(sync);
+  }
+
+  function reportCheckPendingText(data) {
+    var progress = data && data.check_progress ? String(data.check_progress).trim() : '';
+    return progress ? 'Идет проверка... ' + progress : 'Идет проверка...';
+  }
+
+  function updateReportCheckResultCell(cell, data) {
+    if (!cell) return;
+    cell.textContent = '';
+    if (!data.check_file_name && !data.review_file_name && data.check_status !== 'error' && data.check_status !== 'running') {
+      cell.textContent = '';
+      var empty = document.createElement('span');
+      empty.className = 'report-check-result-inner';
+      var mark = document.createElement('span');
+      mark.className = 'report-check-result-empty';
+      mark.textContent = '—';
+      empty.appendChild(mark);
+      cell.appendChild(empty);
+      return;
+    }
+    var inner = document.createElement('span');
+    inner.className = 'report-check-result-inner';
+    var row = cell.closest('tr');
+    if (data.check_status === 'error' && !(data.review_file_name && data.review_download_url)) {
+      appendReportCheckError(inner, {
+        error: data.check_error || '',
+        reason: data.check_error_reason || '',
+        canResume: reportRowMayResume(row),
+        uploadId: data.upload_id || (row && row.dataset.uploadId) || '',
+      });
+      cell.appendChild(inner);
+      return;
+    }
+    if (data.review_file_name && data.review_download_url) {
+      var reviewIcon = document.createElement('a');
+      reviewIcon.href = data.review_download_url;
+      reviewIcon.className = 'ct-upload-link report-check-download-icon';
+      reviewIcon.setAttribute('download', '');
+      reviewIcon.title = 'Скачать файл замечаний';
+      var reviewGlyph = document.createElement('i');
+      reviewGlyph.className = 'bi bi-download';
+      reviewIcon.appendChild(reviewGlyph);
+      inner.appendChild(reviewIcon);
+      var reviewLink = document.createElement('a');
+      reviewLink.href = data.review_download_url;
+      reviewLink.className = 'report-file-name-link';
+      reviewLink.setAttribute('download', '');
+      if (!data.remarks_notice_pending) reviewLink.title = data.review_file_name;
+      else reviewLink.classList.add('report-remarks-loaded-link');
+      var reviewName = document.createElement('span');
+      reviewName.className = 'report-file-name-text';
+      reviewName.textContent = data.remarks_notice_pending ? 'Загружен' : data.review_file_name;
+      reviewLink.appendChild(reviewName);
+      inner.appendChild(reviewLink);
+      if (data.remarks_notice_pending) appendRemarksDiscardAction(inner, data.review_entry_id);
+    } else if (data.check_file_name && data.check_download_url) {
+      var iconLink = document.createElement('a');
+      iconLink.href = data.check_download_url;
+      iconLink.className = 'ct-upload-link report-check-download-icon';
+      iconLink.setAttribute('download', '');
+      iconLink.title = 'Скачать результат проверки';
+      var icon = document.createElement('i');
+      icon.className = 'bi bi-download';
+      iconLink.appendChild(icon);
+      inner.appendChild(iconLink);
+      var link = document.createElement('a');
+      link.href = data.check_download_url;
+      link.className = 'report-file-name-link js-report-check-file-link';
+      link.setAttribute('download', '');
+      link.title = data.check_file_name;
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'report-file-name-text';
+      nameSpan.textContent = data.check_file_name;
+      link.appendChild(nameSpan);
+      inner.appendChild(link);
+    }
+    if (data.check_status === 'running') {
+      var spacer = document.createElement('span');
+      spacer.className = 'report-upload-icon-spacer';
+      spacer.setAttribute('aria-hidden', 'true');
+      inner.appendChild(spacer);
+      var pending = document.createElement('span');
+      pending.className = 'text-muted js-report-check-badge report-check-pending-text';
+      pending.textContent = reportCheckPendingText(data);
+      inner.appendChild(pending);
+    }
+    cell.appendChild(inner);
+  }
+
+  function syncReportLocalSourceUi() {
+    var section = getReportSubmissionSection();
+    if (!section) return;
+    var sourceSel = section.querySelector('#report-submission-source');
+    var wrap = section.querySelector('#report-submission-local-wrap');
+    var isLocal = Boolean(sourceSel && sourceSel.value === 'local');
+    if (wrap) wrap.classList.toggle('d-none', !isLocal);
+    section.querySelectorAll('.report-upload-cell .ct-upload-link').forEach(function(label) {
+      label.title = isLocal ? 'Загрузить файл в локальную папку' : 'Загрузить файл';
+    });
+  }
+
+  function syncContractLocalSourceUi() {
+    var section = document.getElementById('contract-conclusion-section');
+    if (!section) return;
+    var sourceSel = section.querySelector('#contract-draft-source');
+    var wrap = section.querySelector('#contract-draft-local-wrap');
+    var isLocal = Boolean(sourceSel && sourceSel.value === 'local');
+    if (wrap) wrap.classList.toggle('d-none', !isLocal);
+    var note = document.getElementById('create-contract-destination-note');
+    if (note) {
+      var text = isLocal ? note.dataset.localText : note.dataset.cloudText;
+      if (text) note.textContent = text;
+    }
+  }
+
+  function initContractLocalSource() {
+    var section = document.getElementById('contract-conclusion-section');
+    if (!section) return;
+    var sourceSel = section.querySelector('#contract-draft-source');
+    var pathInput = section.querySelector('#contract-draft-local-path');
+    if (!sourceSel) return;
+    if (window.UIPref) {
+      var savedSource = UIPref.get('contracts:draftSource', 'cloud');
+      if (savedSource === 'local') sourceSel.value = 'local';
+      var savedPath = UIPref.get('contracts:localFolder', '');
+      if (pathInput && !pathInput.value && savedPath) pathInput.value = savedPath;
+    }
+    syncContractLocalSourceUi();
+  }
+
+  function initReportLocalSource() {
+    var section = getReportSubmissionSection();
+    if (!section) return;
+    var sourceSel = section.querySelector('#report-submission-source');
+    var pathInput = section.querySelector('#report-submission-local-path');
+    if (!sourceSel) return;
+    if (window.UIPref) {
+      var savedSource = UIPref.get('reports:source', 'cloud');
+      if (savedSource === 'local') sourceSel.value = 'local';
+      var savedPath = UIPref.get('reports:localFolder', '');
+      if (pathInput && !pathInput.value && savedPath) pathInput.value = savedPath;
+    }
+    syncReportLocalSourceUi();
+  }
+
+  function reportRowById(section, rowId) {
+    if (!section || !rowId) return null;
+    var escaped = window.CSS && CSS.escape ? CSS.escape(rowId) : String(rowId).replace(/"/g, '\\"');
+    return section.querySelector('#report-submission-table tbody tr[data-row-id="' + escaped + '"]');
+  }
+
+  function reportFileDeleteUrl(section, uploadId) {
+    var template = (section && section.dataset.reportDeleteUrl) || '';
+    if (!template || !uploadId) return '';
+    return template.replace(/\/0\/delete\/?$/, '/' + uploadId + '/delete/');
+  }
+
+  function reportFileDeleteMessage(btn) {
+    var kind = btn.dataset.removeKind || '';
+    var fileName = btn.dataset.fileName || '';
+    var row = btn.closest('tr');
+    var checkBtn = row && row.querySelector('.js-report-file-remove[data-remove-kind="check"]');
+    var checkName = checkBtn ? (checkBtn.dataset.fileName || '') : '';
+    if (kind === 'check') {
+      return 'Удалить результат проверки «' + fileName + '»? Файл будет удалён и с диска.';
+    }
+    var text = 'Удалить файл «' + fileName + '»? Файл будет удалён и с диска.';
+    if (checkName) {
+      text += ' Также будет удалён результат проверки «' + checkName + '» и его файл на диске.';
+    }
+    return text;
+  }
+
+  function clearReportVersionToggle(row) {
+    if (!row) return;
+    var btn = row.querySelector('.js-report-version-toggle');
+    if (btn) btn.remove();
+    delete row.dataset.hasHistory;
+  }
+
+  function replaceReportCurrentRow(section, slotRowId, html) {
+    var current = reportRowById(section, slotRowId);
+    if (!current || current.dataset.isCurrent !== '1' || !html) return null;
+    var wrap = document.createElement('tbody');
+    wrap.innerHTML = String(html).trim();
+    var next = wrap.querySelector('tr');
+    if (!next) return null;
+    current.replaceWith(next);
+    applyReportSubmissionColumnVisibility();
+    return next;
+  }
+
+  var reportFileDeletePending = null;
+
+  function setReportFileDeleteBusy(busy) {
+    var confirmBtn = document.getElementById('report-file-delete-confirm');
+    var cancelBtn = document.getElementById('report-file-delete-cancel');
+    if (confirmBtn) confirmBtn.disabled = busy;
+    if (cancelBtn) cancelBtn.disabled = busy;
+  }
+
+  function showReportFileDeleteError(message) {
+    var messageEl = document.getElementById('report-file-delete-message');
+    if (!messageEl) return;
+    messageEl.textContent = message || 'Не удалось удалить файл.';
+    messageEl.classList.add('text-danger');
+  }
+
+  async function submitReportFileDelete() {
+    var pending = reportFileDeletePending;
+    if (!pending) return;
+    var section = getReportSubmissionSection();
+    var url = reportFileDeleteUrl(section, pending.uploadId);
+    if (!url) {
+      showReportFileDeleteError('Не удалось удалить файл.');
+      return;
+    }
+    setReportFileDeleteBusy(true);
+    var body = new FormData();
+    body.append('kind', pending.kind);
+    try {
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+        body: body,
+      });
+      var data = null;
+      try { data = await response.json(); } catch (_) {}
+      if (!response.ok || !data || !data.ok) {
+        showReportFileDeleteError((data && data.error) || 'Не удалось удалить файл.');
+        setReportFileDeleteBusy(false);
+        return;
+      }
+      if (pending.kind === 'check') {
+        var checkRow = pending.row && pending.row.isConnected ? pending.row : null;
+        if (checkRow) applyReportSendResult(checkRow, data);
+      } else if (data.replaced_current) {
+        var nextRow = replaceReportCurrentRow(section, data.slot_row_id || '', data.current_row_html);
+        if (data.remove_row_id) {
+          var historyRow = reportRowById(section, data.remove_row_id);
+          if (historyRow) historyRow.remove();
+        }
+        if (nextRow && nextRow.dataset.checkStatus === 'running') pollReportCheck(nextRow);
+      } else {
+        var removed = pending.row && pending.row.isConnected ? pending.row : reportRowById(section, pending.rowId);
+        if (removed) removed.remove();
+        if (!data.has_history) clearReportVersionToggle(reportRowById(section, data.slot_row_id || ''));
+      }
+      applyRowGrouping(section);
+      applyReportVersionCollapsedState();
+      updateReportSendButtonState();
+      reportFileDeletePending = null;
+      var modalEl = document.getElementById('report-file-delete-modal');
+      if (modalEl && window.bootstrap) {
+        var instance = window.bootstrap.Modal.getInstance(modalEl);
+        if (instance) instance.hide();
+      }
+    } catch (err) {
+      console.error(err);
+      showReportFileDeleteError('Ошибка сети при удалении файла.');
+    }
+    setReportFileDeleteBusy(false);
+  }
+
+  function openReportFileDeleteModal(btn) {
+    var row = btn.closest('tr');
+    var modalEl = document.getElementById('report-file-delete-modal');
+    var messageEl = document.getElementById('report-file-delete-message');
+    if (!row || !modalEl || !messageEl || !window.bootstrap) return;
+    reportFileDeletePending = {
+      kind: btn.dataset.removeKind || '',
+      uploadId: btn.dataset.uploadId || row.dataset.uploadId || '',
+      rowId: row.dataset.rowId || '',
+      row: row,
+    };
+    messageEl.classList.remove('text-danger');
+    messageEl.textContent = reportFileDeleteMessage(btn);
+    setReportFileDeleteBusy(false);
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  document.addEventListener('click', function(e) {
+    var removeBtn = e.target.closest('.js-report-file-remove');
+    if (!removeBtn) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(removeBtn)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openReportFileDeleteModal(removeBtn);
+  });
+
+  document.addEventListener('click', function(e) {
+    var confirmBtn = e.target.closest('#report-file-delete-confirm');
+    if (!confirmBtn || confirmBtn.disabled) return;
+    e.preventDefault();
+    submitReportFileDelete();
+  });
+
+  document.addEventListener('change', function(e) {
+    var inputEl = e.target.closest('.js-report-upload');
+    var root = pane();
+    if (!inputEl || !root || !root.contains(inputEl)) return;
+    handleReportUpload(inputEl);
+  });
+
+  function applyReviewDecisionResult(row, data) {
+    if (!row || !data) return;
+    if (data.workflow_status) {
+      updateReportWorkflowStatusCell(row, data);
+      updateReportStatusDateCell(row, data);
+      updateReportFindingCountCell(row, data);
+      updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), data);
+      if (statusWantsVersionDownload(data.workflow_status)) {
+        replaceUploadIconWithDownload(row, data);
+        row.dataset.canSend = '0';
+      }
+      var checkbox = row.querySelector('input[name="report-select"]');
+      if (data.remarks_notice_pending) {
+        row.dataset.remarksPending = '1';
+        row.dataset.reviewEntryId = String(data.review_entry_id || '');
+        if (checkbox) {
+          checkbox.disabled = false;
+          checkbox.checked = true;
+        }
+        updateReportSubmissionMasterState();
+      } else if (statusWantsVersionDownload(data.workflow_status) && checkbox) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+      }
+    }
+    var uploadLabel = row.querySelector('.js-report-review-upload');
+    if (uploadLabel) {
+      var label = uploadLabel.closest('label');
+      if (label) {
+        var uploadRule = label.nextElementSibling;
+        if (uploadRule && uploadRule.classList.contains('report-review-action-rule')) uploadRule.remove();
+        label.remove();
+      }
+    }
+    var acceptBtn = row.querySelector('.js-report-review-accept');
+    if (acceptBtn) acceptBtn.remove();
+    if (data.review_row_html && !data.remarks_notice_pending) insertReviewStepRow(row, data.review_row_html);
+  }
+
+  document.addEventListener('change', function(e) {
+    var inputEl = e.target.closest('.js-report-review-upload');
+    var section = getReportSubmissionSection();
+    if (!inputEl || !section || !section.contains(inputEl)) return;
+    var url = section.dataset.reportReviewUrl;
+    var file = inputEl.files && inputEl.files[0];
+    var uploadId = inputEl.dataset.uploadId || '';
+    inputEl.value = '';
+    if (!url || !file || !uploadId) return;
+    var row = inputEl.closest('tr');
+    var body = new FormData();
+    body.append('upload_id', uploadId);
+    body.append('file', file);
+    var sourceSel = section.querySelector('#report-submission-source');
+    if (sourceSel && sourceSel.value === 'local') {
+      body.append('source_kind', 'local');
+      var pathInput = section.querySelector('#report-submission-local-path');
+      body.append('local_folder_path', pathInput ? pathInput.value.trim() : '');
+    }
+    fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+      body: body,
+    }).then(function(response) {
+      return response.json().then(function(data) {
+        if (!response.ok || !data.ok) throw new Error((data && data.error) || 'Не удалось загрузить файл.');
+        return data;
+      });
+    }).then(function(data) {
+      applyReviewDecisionResult(row, data);
+    }).catch(function(err) {
+      window.alert(err.message || 'Не удалось загрузить файл.');
+    });
+  });
+
+  document.addEventListener('click', function(e) {
+    var acceptBtn = e.target.closest('.js-report-review-accept');
+    var section = getReportSubmissionSection();
+    if (!acceptBtn || !section || !section.contains(acceptBtn)) return;
+    e.preventDefault();
+    var url = section.dataset.reportReviewUrl;
+    var uploadId = acceptBtn.dataset.uploadId || '';
+    var row = acceptBtn.closest('tr');
+    if (!url || !uploadId || !row || acceptBtn.disabled) return;
+    acceptBtn.disabled = true;
+    var body = new FormData();
+    body.append('upload_id', uploadId);
+    body.append('accept_without_remarks', '1');
+    fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+      body: body,
+    }).then(function(response) {
+      return response.json().then(function(data) {
+        if (!response.ok || !data.ok) throw new Error((data && data.error) || 'Не удалось принять отчёт.');
+        return data;
+      });
+    }).then(function(data) {
+      applyReviewDecisionResult(row, data);
+    }).catch(function(err) {
+      acceptBtn.disabled = false;
+      window.alert(err.message || 'Не удалось принять отчёт.');
+    });
+  });
+
+  document.addEventListener('click', function(e) {
+    var editBtn = e.target.closest('.js-report-finding-edit');
+    if (editBtn) {
+      var editSection = getReportSubmissionSection();
+      if (!editSection || !editSection.contains(editBtn)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openReportFindingModal(editBtn, 'edit');
+      return;
+    }
+    var correctedCell = e.target.closest('#report-finding-modal td.report-finding-corrected[data-label]');
+    if (correctedCell) {
+      if (e.target.closest('input, .inline-table-number-wrap')) return;
+      e.preventDefault();
+      if (correctedCell.classList.contains('inline-cell-selected') && !correctedCell.querySelector('input')) {
+        openCorrectedEditor(correctedCell);
+      } else if (!correctedCell.querySelector('input')) {
+        commitFindingCorrectionEditors(false);
+        selectFindingCorrectionCell(correctedCell);
+      }
+      return;
+    }
+    if (e.target.closest('#report-finding-cancel, #report-finding-close, #report-finding-modal .btn-close')) {
+      commitFindingCorrectionEditors(true);
+      selectFindingCorrectionCell(null);
+    } else if (e.target.closest('#report-finding-modal') && !e.target.closest('#report-finding-save')) {
+      commitFindingCorrectionEditors(false);
+      selectFindingCorrectionCell(null);
+    }
+    if (e.target.closest('#report-finding-save')) {
+      e.preventDefault();
+      saveFindingCorrection();
+      return;
+    }
+    var btn = e.target.closest('.js-report-finding-info');
+    if (!btn) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(btn)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openReportFindingModal(btn, 'info');
+  });
+
+  document.addEventListener('keydown', function(e) {
+    var modal = document.getElementById('report-finding-modal');
+    if (!modal || !modal.classList.contains('show')) return;
+    if (e.target.closest && e.target.closest('input, textarea, button')) return;
+    var cell = e.target.closest && e.target.closest('#report-finding-modal td.report-finding-corrected[data-label]');
+    if (!cell) return;
+    if (e.key === 'Enter' || e.key === 'F2') {
+      e.preventDefault();
+      openCorrectedEditor(cell);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      focusAdjacentCorrectedCell(cell, (e.key === 'ArrowUp' || e.key === 'ArrowLeft') ? -1 : 1, false);
+      return;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && /^[0-9]$/.test(e.key)) {
+      e.preventDefault();
+      openCorrectedEditor(cell, e.key);
+    }
+  });
+
+  function setFindingCourseExpanded(modal, courseBtn, expanded) {
+    courseBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    var courseRow = courseBtn.closest('tr');
+    var key = courseRow && courseRow.dataset.courseKey;
+    if (!key) return;
+    modal.querySelectorAll('.report-finding-item-row[data-course-key="' + key + '"]').forEach(function(row) {
+      row.classList.toggle('report-finding-item-collapsed', !expanded);
+    });
+  }
+
+  function syncFindingCoursesToggle(modal) {
+    var master = modal.querySelector('.js-report-finding-courses-toggle');
+    if (!master) return;
+    var buttons = modal.querySelectorAll('.js-report-finding-course-toggle');
+    var allCollapsed = buttons.length > 0 && Array.prototype.every.call(buttons, function(button) {
+      return button.getAttribute('aria-expanded') === 'false';
+    });
+    master.setAttribute('aria-expanded', allCollapsed ? 'false' : 'true');
+    master.classList.toggle('active', allCollapsed);
+    master.title = allCollapsed ? 'Развернуть курсы' : 'Свернуть курсы';
+    master.setAttribute('aria-label', allCollapsed ? 'Развернуть курсы' : 'Свернуть курсы');
+    var icon = master.querySelector('i');
+    if (icon) icon.className = allCollapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+  }
+
+  document.addEventListener('click', function(e) {
+    var master = e.target.closest('.js-report-finding-courses-toggle');
+    if (!master) return;
+    var modal = document.getElementById('report-finding-modal');
+    if (!modal || !modal.contains(master)) return;
+    e.preventDefault();
+    var buttons = modal.querySelectorAll('.js-report-finding-course-toggle');
+    var expand = master.getAttribute('aria-expanded') === 'false';
+    buttons.forEach(function(button) {
+      setFindingCourseExpanded(modal, button, expand);
+    });
+    syncFindingCoursesToggle(modal);
+  });
+
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.js-report-finding-course-toggle');
+    if (!btn) return;
+    var modal = document.getElementById('report-finding-modal');
+    if (!modal || !modal.contains(btn)) return;
+    e.preventDefault();
+    var expanded = btn.getAttribute('aria-expanded') === 'false';
+    setFindingCourseExpanded(modal, btn, expanded);
+    syncFindingCoursesToggle(modal);
+  });
+
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.js-report-version-toggle');
+    if (!btn) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(btn)) return;
+    var row = btn.closest('tr');
+    var group = row && (row.dataset.versionGroup || row.dataset.rowId);
+    if (!group) return;
+    e.preventDefault();
+    var collapsed = loadReportVersionCollapsed();
+    if (collapsed.has(group)) collapsed.delete(group);
+    else collapsed.add(group);
+    saveReportVersionCollapsed(collapsed);
+    applyReportVersionCollapsedState();
+  });
+
+  function revealReportRemarksFile(rowPayload) {
+    var section = getReportSubmissionSection();
+    var entryId = String((rowPayload && rowPayload.review_entry_id) || '');
+    if (!section || !entryId) return;
+    var row = section.querySelector('tr[data-review-entry-id="' + entryId + '"]');
+    if (!row) return;
+    delete row.dataset.remarksPending;
+    updateReportCheckResultCell(row.querySelector('.report-check-result-cell'), {
+      review_file_name: rowPayload.review_file_name,
+      review_download_url: rowPayload.review_download_url,
+    });
+    var checkbox = row.querySelector('input[name="report-select"]');
+    if (checkbox) {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+    }
+    row.classList.remove('table-active');
+    if (rowPayload.review_row_html) insertReviewStepRow(row, rowPayload.review_row_html);
+  }
+
+  document.addEventListener('click', function(e) {
+    var discardBtn = e.target.closest('.js-report-remarks-discard');
+    var section = getReportSubmissionSection();
+    if (!discardBtn || !section || !section.contains(discardBtn) || discardBtn.disabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var row = discardBtn.closest('tr');
+    var entryId = discardBtn.dataset.reviewEntryId || (row && row.dataset.reviewEntryId) || '';
+    var url = section.dataset.reportRemarksDiscardUrl || '';
+    if (!row || !entryId || !url) return;
+    discardBtn.disabled = true;
+    var body = new FormData();
+    body.append('entry_id', entryId);
+    fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+      body: body,
+    }).then(function(response) {
+      return response.json().then(function(data) {
+        if (!response.ok || !data || !data.ok) {
+          throw new Error((data && data.error) || 'Не удалось удалить файл.');
+        }
+        return data;
+      });
+    }).then(function(data) {
+      replaceReportSubmissionRow(row, data.row_html);
+    }).catch(function(err) {
+      discardBtn.disabled = false;
+      window.alert(err.message || 'Не удалось удалить файл.');
+    });
+  });
+
+  var REPORT_REMARKS_CHANNELS_PREF_KEY = 'reports:remarksChannels';
+
+  function getReportRemarksChannels() {
+    var modal = document.getElementById('report-remarks-modal');
+    if (!modal) return [];
+    return Array.from(modal.querySelectorAll('.js-report-remarks-channel'));
+  }
+
+  function saveReportRemarksChannels() {
+    if (!window.UIPref) return;
+    UIPref.set(REPORT_REMARKS_CHANNELS_PREF_KEY, getReportRemarksChannels()
+      .filter(function(box) { return box.checked && !box.disabled; })
+      .map(function(box) { return box.value; }));
+  }
+
+  function restoreReportRemarksChannels() {
+    var channels = getReportRemarksChannels();
+    if (!channels.length || !window.UIPref) return;
+    var saved = UIPref.get(REPORT_REMARKS_CHANNELS_PREF_KEY, null);
+    if (!Array.isArray(saved)) return;
+    var savedValues = new Set(saved);
+    channels.forEach(function(box) {
+      box.checked = !box.disabled && savedValues.has(box.value);
+    });
+  }
+
+  function reportRemarksDeliveryAlert(emailDelivery) {
+    if (!emailDelivery || !emailDelivery.requested || !(emailDelivery.failed > 0)) return;
+    var errorLines = (emailDelivery.errors || []).slice(0, 5).map(function(item) {
+      var channelPrefix = item.channel_label ? '[' + item.channel_label + '] ' : '';
+      return '- ' + channelPrefix + item.recipient + ': ' + item.error;
+    });
+    var moreCount = Math.max((emailDelivery.errors || []).length - errorLines.length, 0);
+    var details = [
+      'Не удалось отправить ' + emailDelivery.failed + ' из ' + emailDelivery.attempted + ' email-писем.',
+    ].concat(errorLines);
+    if (moreCount > 0) details.push('- И еще ' + moreCount + ' ошибок.');
+    window.alert(details.join('\n'));
+  }
+
+  async function sendReportRemarks(section, btn, pendingBoxes) {
+    var modal = document.getElementById('report-remarks-modal');
+    var channels = modal
+      ? Array.from(modal.querySelectorAll('.js-report-remarks-channel')).filter(function(box) { return box.checked; })
+      : [];
+    if (!channels.length) {
+      window.alert('Выберите хотя бы один способ отправки.');
+      return;
+    }
+    var url = section.dataset.reportRemarksSendUrl || '';
+    if (!url) return;
+    var sentAtInput = modal ? modal.querySelector('.js-report-remarks-sent-at') : null;
+    var formData = new FormData();
+    pendingBoxes.forEach(function(checkbox) {
+      formData.append('entry_ids[]', checkbox.closest('tr').dataset.reviewEntryId || '');
+    });
+    formData.append('request_sent_at', sentAtInput ? sentAtInput.value : '');
+    channels.forEach(function(box) { formData.append('delivery_channels[]', box.value); });
+    btn.disabled = true;
+    try {
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = null;
+      try { data = await response.json(); } catch (_) {}
+      if (!response.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || 'Не удалось отправить замечания.');
+      }
+      (data.rows || []).forEach(revealReportRemarksFile);
+      if (data.warning) window.alert(data.warning);
+      reportRemarksDeliveryAlert(data.email_delivery);
+      var modalInstance = modal && window.bootstrap ? window.bootstrap.Modal.getInstance(modal) : null;
+      if (modalInstance) modalInstance.hide();
+      document.body.dispatchEvent(new Event('notifications-updated'));
+    } catch (err) {
+      window.alert(err.message || 'Не удалось отправить замечания.');
+    }
+    updateReportSubmissionMasterState();
+  }
+
+  document.addEventListener('change', function(event) {
+    var box = event.target.closest('.js-report-remarks-channel');
+    if (!box) return;
+    var modal = document.getElementById('report-remarks-modal');
+    if (!modal || !modal.contains(box)) return;
+    saveReportRemarksChannels();
+  });
+
+  document.addEventListener('click', async function(e) {
+    var btn = e.target.closest('.js-report-check-resume');
+    if (!btn || btn.disabled) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(btn)) return;
+    e.preventDefault();
+    var row = btn.closest('tr');
+    var uploadId = (btn.dataset.uploadId || (row && row.dataset.uploadId) || '').trim();
+    var url = reportCheckResumeUrl(section, uploadId);
+    if (!row || !url) return;
+    var resultCell = row.querySelector('.report-check-result-cell');
+    var previousLabel = resultCell && resultCell.querySelector('.report-check-error-label');
+    var previousError = previousLabel ? (previousLabel.title || '') : '';
+    var previousReason = previousLabel ? (previousLabel.dataset.reason || '') : '';
+    var checkbox = row.querySelector('input[name="report-select"]');
+    if (checkbox) {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+    }
+    row.classList.remove('table-active');
+    updateReportSubmissionMasterState();
+    btn.disabled = true;
+    showReportCheckPending(resultCell);
+    row.dataset.checkStatus = 'running';
+    var checkPollGate = { allowFinish: false };
+    pollReportCheck(row, checkPollGate);
+    try {
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': csrftoken,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      });
+      var data = null;
+      try { data = await response.json(); } catch (_) {}
+      if (!response.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || 'Не удалось возобновить проверку.');
+      }
+      checkPollGate.allowFinish = true;
+      applyReportSendResult(row, data);
+      if (data.check_status === 'running') pollReportCheck(row, checkPollGate);
+    } catch (err) {
+      alert(err.message || 'Не удалось возобновить проверку.');
+      row.dataset.checkStatus = 'error';
+      if (reportRowMayResume(row)) row.dataset.canSend = '1';
+      if (checkbox && reportRowMayResume(row)) {
+        checkbox.disabled = false;
+      }
+      updateReportCheckResultCell(resultCell, {
+        check_status: 'error',
+        check_error: previousError,
+        check_error_reason: previousReason,
+        upload_id: uploadId,
+      });
+      updateReportSubmissionMasterState();
+    }
+  });
+
+  document.addEventListener('click', async function(e) {
+    var btn = e.target.closest('#report-submission-send-btn');
+    if (!btn) return;
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(btn) || btn.disabled) return;
+    e.preventDefault();
+    var checked = getVisibleReportSelectChecks().filter(function(checkbox) { return checkbox.checked; });
+    var pendingBoxes = checked.filter(function(checkbox) {
+      return reportRowIsRemarksPending(checkbox.closest('tr'));
+    });
+    if (pendingBoxes.length) {
+      if (pendingBoxes.length !== checked.length) {
+        updateReportSendButtonState();
+        return;
+      }
+      sendReportRemarks(section, btn, pendingBoxes);
+      return;
+    }
+    if (checked.length !== 1) {
+      updateReportSendButtonState();
+      return;
+    }
+    var selectedCheckbox = checked[0];
+    var row = selectedCheckbox.closest('tr');
+    var uploadId = row && (row.dataset.uploadId || '').trim();
+    var url = section.dataset.reportSendUrl || '';
+    if (!uploadId || !url) {
+      alert('Выберите одну строку с загруженным файлом.');
+      return;
+    }
+    selectedCheckbox.checked = false;
+    selectedCheckbox.disabled = true;
+    row.classList.remove('table-active');
+    updateReportSubmissionMasterState();
+    var resultCell = row.querySelector('.report-check-result-cell');
+    if (resultCell) {
+      resultCell.textContent = '';
+      var spacer = document.createElement('span');
+      spacer.className = 'report-upload-icon-spacer';
+      spacer.setAttribute('aria-hidden', 'true');
+      resultCell.appendChild(spacer);
+      var pending = document.createElement('span');
+      pending.className = 'text-muted js-report-check-badge report-check-pending-text';
+      pending.textContent = reportCheckPendingText(null);
+      resultCell.appendChild(pending);
+    }
+    updateReportFindingCountCell(row, { check_status: 'running' });
+    row.dataset.checkStatus = 'running';
+    var checkPollGate = { allowFinish: false };
+    pollReportCheck(row, checkPollGate);
+    btn.disabled = true;
+    try {
+      var fd = new FormData();
+      fd.append('upload_id', uploadId);
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: fd,
+      });
+      var data = null;
+      try { data = await response.json(); } catch (_) {}
+      if (!response.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || 'Не удалось отправить файл.');
+      }
+      checkPollGate.allowFinish = true;
+      applyReportSendResult(row, data);
+      if (data.check_status === 'running') pollReportCheck(row, checkPollGate);
+    } catch (err) {
+      alert(err.message || 'Не удалось отправить файл.');
+      row.dataset.checkStatus = '';
+      if (selectedCheckbox && row.dataset.isCurrent === '1') {
+        selectedCheckbox.disabled = false;
+      }
+      if (resultCell && resultCell.querySelector('.js-report-check-badge')) {
+        resultCell.textContent = '';
+        var emptyMark = document.createElement('span');
+        emptyMark.className = 'report-check-result-inner';
+        var emptyDash = document.createElement('span');
+        emptyDash.className = 'report-check-result-empty';
+        emptyDash.textContent = '—';
+        emptyMark.appendChild(emptyDash);
+        resultCell.appendChild(emptyMark);
+      }
+    } finally {
+      updateReportSendButtonState();
+    }
+  });
+
+  document.addEventListener('click', function(e) {
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(e.target)) return;
+    var sourceSel = section.querySelector('#report-submission-source');
+    if (!sourceSel || sourceSel.value !== 'local') return;
+    var label = e.target.closest('.ct-upload-link');
+    if (!label || !section.contains(label) || !label.closest('.report-upload-cell')) return;
+    if (!label.querySelector('.js-report-upload')) return;
+    var pathInput = section.querySelector('#report-submission-local-path');
+    var localPath = pathInput ? pathInput.value.trim() : '';
+    if (localPath) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ensureReportUploadProgressModal();
+    var emptyModal = document.getElementById('report-upload-progress-modal');
+    var emptyStatus = document.getElementById('report-upload-status');
+    var emptyClose = document.getElementById('report-upload-close-btn');
+    if (emptyStatus) emptyStatus.textContent = 'Укажите путь к локальной папке.';
+    if (emptyClose) emptyClose.disabled = false;
+    if (emptyModal && window.bootstrap) bootstrap.Modal.getOrCreateInstance(emptyModal).show();
+  }, true);
+
+  document.addEventListener('change', function(e) {
+    var section = getReportSubmissionSection();
+    if (!section || !section.contains(e.target)) return;
+    if (e.target.id === 'report-submission-source') {
+      if (window.UIPref) UIPref.set('reports:source', e.target.value);
+      syncReportLocalSourceUi();
+    }
+    if (e.target.id === 'report-submission-local-path' && window.UIPref) {
+      UIPref.set('reports:localFolder', e.target.value.trim());
+    }
+  });
+
+  document.addEventListener('change', function(e) {
+    if (e.target.id === 'contract-draft-source') {
+      if (window.UIPref) UIPref.set('contracts:draftSource', e.target.value);
+      syncContractLocalSourceUi();
+    }
+    if (e.target.id === 'contract-draft-local-path' && window.UIPref) {
+      UIPref.set('contracts:localFolder', e.target.value.trim());
+    }
+  });
+
+  document.addEventListener('change', function(e) {
+    var root = pane();
+    if (!root) return;
+    if (e.target.closest && e.target.closest('#performers-modal')) return;
+    if (e.target.id === 'report-submission-master') {
+      var checked = e.target.checked;
+      getVisibleReportSelectChecks().forEach(function(checkbox) {
+        checkbox.checked = checked;
+      });
+      updateReportSubmissionMasterState();
+      return;
+    }
+    if (e.target.name === 'report-select' && root.contains(e.target)) {
+      updateReportSubmissionMasterState();
+      return;
+    }
+    if (e.target.id === 'report-check-master') {
+      var reportCheckChecked = e.target.checked;
+      getVisibleReportCheckChecks().forEach(function(checkbox) {
+        checkbox.checked = reportCheckChecked;
+      });
+      e.target.indeterminate = false;
+      updateReportCheckMasterState();
+      updateRowHighlight('report-check-select');
+      ensureReportCheckActionsVisibility();
+      return;
+    }
+    if (e.target.name === 'report-check-select' && root.contains(e.target)) {
+      updateReportCheckMasterState();
+      updateRowHighlight('report-check-select');
+      ensureReportCheckActionsVisibility();
+      return;
+    }
+    if (e.target.id === 'report-macros-master') {
+      var reportMacroChecked = e.target.checked;
+      getVisibleReportMacroChecks().forEach(function(checkbox) {
+        checkbox.checked = reportMacroChecked;
+      });
+      e.target.indeterminate = false;
+      updateReportMacrosMasterState();
+      updateRowHighlight('report-macro-select');
+      ensureReportMacrosActionsVisibility();
+      return;
+    }
+    if (e.target.name === 'report-macro-select' && root.contains(e.target)) {
+      updateReportMacrosMasterState();
+      updateRowHighlight('report-macro-select');
+      ensureReportMacrosActionsVisibility();
+    }
+  });
+
   document.addEventListener('click', async (e) => {
     const paymentPaidToggleIcon = e.target.closest('[data-payment-paid-toggle]');
     const paymentSectionFromToggle = paymentPaidToggleIcon ? findPaymentRequestSection(paymentPaidToggleIcon) : null;
@@ -2597,6 +5877,19 @@
 
       const formData = new FormData();
       performerIds.forEach((id) => formData.append('performer_ids[]', id));
+      const sourceSel = document.getElementById('contract-draft-source');
+      const pathInput = document.getElementById('contract-draft-local-path');
+      if (sourceSel && sourceSel.value === 'local') {
+        const localPath = pathInput ? pathInput.value.trim() : '';
+        if (!localPath) {
+          if (progressEl) progressEl.classList.add('d-none');
+          if (statusEl) statusEl.innerHTML = '<span class="text-danger">Укажите путь к локальной папке.</span>';
+          createContractConfirm.disabled = false;
+          return;
+        }
+        formData.append('source_kind', 'local');
+        formData.append('local_folder_path', localPath);
+      }
 
       try {
         const response = await fetch(createUrl, {
@@ -2915,6 +6208,142 @@
     const btn = e.target.closest('button[data-panel-action]');
     if (!btn || !root.contains(btn)) return;
 
+    if (btn.closest('#report-check-actions')) {
+      const action = btn.dataset.panelAction;
+      const checked = getChecked('report-check-select');
+      if (!checked.length) return;
+
+      if (action === 'edit') {
+        const tr = checked[0].closest('tr');
+        const url = tr?.dataset?.editUrl;
+        if (!url) return;
+        forgetTableSelection('report-check-select');
+        window.TableSelection?.clearOnModalHide('performers-modal', 'report-check-select', root);
+        await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
+        ensureReportCheckActionsVisibility();
+        return;
+      }
+
+      window.__tableSel['report-check-select'] = checked.map(ch => String(ch.value));
+      window.__tableSelLast = 'report-check-select';
+
+      if (action === 'delete') {
+        if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+        const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+        const progress = window.TableActionProgress?.begin(checked);
+        try {
+          for (let i = 0; i < urls.length; i++) {
+            const isLast = i === urls.length - 1;
+            if (isLast) {
+              await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+            } else {
+              await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+            }
+          }
+        } finally {
+          progress?.end();
+        }
+        return;
+      }
+
+      if (action === 'up' || action === 'down') {
+        if (window.__queuedRowOrder?.handleMoveAction({
+          checked,
+          action,
+          refresh: () => document.body.dispatchEvent(new Event('performers-updated')),
+        })) {
+          ensureReportCheckActionsVisibility();
+          return;
+        }
+        let urls = checked
+          .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
+          .filter(Boolean);
+        if (action === 'down') urls = urls.reverse();
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
+        }
+        ensureReportCheckActionsVisibility();
+      }
+      return;
+    }
+
+    if (btn.closest('#report-macros-actions')) {
+      const action = btn.dataset.panelAction;
+      const checked = getChecked('report-macro-select');
+      if (!checked.length) return;
+
+      if (action === 'edit') {
+        const tr = checked[0].closest('tr');
+        const url = tr?.dataset?.editUrl;
+        if (!url) return;
+        forgetTableSelection('report-macro-select');
+        window.TableSelection?.clearOnModalHide('performers-modal', 'report-macro-select', root);
+        await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
+        ensureReportMacrosActionsVisibility();
+        return;
+      }
+
+      window.__tableSel['report-macro-select'] = checked.map(ch => String(ch.value));
+      window.__tableSelLast = 'report-macro-select';
+
+      if (action === 'delete') {
+        if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
+        const urls = checked.map(ch => {
+          const url = ch.closest('tr')?.dataset?.deleteUrl;
+          return url ? url + reportMacrosListQuery() : '';
+        }).filter(Boolean);
+        const progress = window.TableActionProgress?.begin(checked);
+        try {
+          for (let i = 0; i < urls.length; i++) {
+            const isLast = i === urls.length - 1;
+            if (isLast) {
+              await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+            } else {
+              await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+            }
+          }
+        } finally {
+          progress?.end();
+        }
+        return;
+      }
+
+      if (action === 'up' || action === 'down') {
+        if (window.__queuedRowOrder?.handleMoveAction({
+          checked,
+          action,
+          refresh: () => document.body.dispatchEvent(new Event('performers-updated')),
+        })) {
+          ensureReportMacrosActionsVisibility();
+          return;
+        }
+        let urls = checked
+          .map(ch => {
+            const url = ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'];
+            return url ? url + reportMacrosListQuery() : '';
+          })
+          .filter(Boolean);
+        if (action === 'down') urls = urls.reverse();
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
+        }
+        ensureReportMacrosActionsVisibility();
+      }
+      return;
+    }
+
+    if (!btn.closest('#performers-actions')) return;
+
     const action = btn.dataset.panelAction; // up|down|edit|delete
     const checked = getChecked('performer-select');
     if (!checked.length) return;
@@ -2927,26 +6356,38 @@
       const tr = checked[0].closest('tr');
       const url = tr?.dataset?.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы перерисовка после «Сохранить» его не восстановила.
+      forgetTableSelection('performer-select');
+      window.TableSelection?.clearOnModalHide('performers-modal', 'performer-select', root);
       await htmx.ajax('GET', url, { target: '#performers-modal .modal-content', swap: 'innerHTML' });
       ensurePerformerActionsVisibility();
       return;
     }
 
     if (action === 'delete') {
-      if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
-      const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+      const deletable = checked.filter((box) => !performerRowDeleteLocked(box.closest('tr')));
+      if (!deletable.length) return;
+      if (!confirm(`Удалить ${deletable.length} строк(у/и)?`)) return;
+      const urls = deletable.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+      const progress = window.TableActionProgress?.begin(deletable);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#performers-pane', swap: 'innerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(()=>{});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (checked.some((box) => performerRowIsOrderLocked(box.closest('tr')))) return;
       if (movePerformerSelectionImmediately(action, checked)) return;
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
@@ -2968,6 +6409,7 @@
     const root = pane();
     const table = e.detail && e.detail.table;
     if (!root || !table || !root.contains(table)) return;
+    if (e.detail.generic) return; // generic tables refresh themselves
     window.__tableSel['performer-select'] = getChecked('performer-select').map((box) => String(box.value));
     window.__tableSelLast = 'performer-select';
     document.body.dispatchEvent(new Event('performers-updated'));
@@ -3372,6 +6814,7 @@
     var contractDispatchSet = new Set(contractDispatchIds || []);
     getRowChecks('contract-dispatch-select').forEach(function(b) { b.checked = contractDispatchSet.has(String(b.value)); });
     initContractProjectFilter();
+    initContractLocalSource();
     updateContractState();
     try { delete window.__tableSel['contract-select']; } catch(_) {}
     try { delete window.__tableSel['contract-dispatch-select']; } catch(_) {}
@@ -3392,6 +6835,37 @@
     syncPaymentRequestRowsState();
     updatePaymentRequestState();
     try { delete window.__tableSel['payment-request-select']; } catch(_) {}
+
+    var reportIds = (window.__tableSel && window.__tableSel['report-select']) || [];
+    var reportSet = new Set(reportIds || []);
+    getRowChecks('report-select').forEach(function(b) { b.checked = reportSet.has(String(b.value)); });
+    initReportSubmissionProjectFilter();
+    initReportSubmissionColPicker();
+    restoreReportRemarksChannels();
+    initReportLocalSource();
+    applyRowGrouping(root.querySelector('#report-submission-section'));
+    applyReportVersionCollapsedState();
+    initReportCheckPolling();
+    initReportSubmissionFooterSticky();
+    updateReportSubmissionMasterState();
+    updateRowHighlight('report-select');
+    try { delete window.__tableSel['report-select']; } catch(_) {}
+
+    var reportCheckIds = (window.__tableSel && window.__tableSel['report-check-select']) || [];
+    var reportCheckSet = new Set(reportCheckIds || []);
+    getRowChecks('report-check-select').forEach(function(b) { b.checked = reportCheckSet.has(String(b.value)); });
+    updateReportCheckMasterState();
+    updateRowHighlight('report-check-select');
+    ensureReportCheckActionsVisibility();
+    try { delete window.__tableSel['report-check-select']; } catch(_) {}
+
+    var reportMacroIds = (window.__tableSel && window.__tableSel['report-macro-select']) || [];
+    var reportMacroSet = new Set(reportMacroIds || []);
+    getRowChecks('report-macro-select').forEach(function(b) { b.checked = reportMacroSet.has(String(b.value)); });
+    updateReportMacrosMasterState();
+    updateRowHighlight('report-macro-select');
+    ensureReportMacrosActionsVisibility();
+    try { delete window.__tableSel['report-macro-select']; } catch(_) {}
 
     applyRowGrouping(root.querySelector('#participation-confirmation-section'));
     applyParticipationSentState();
@@ -3420,6 +6894,7 @@
       b.checked = contractDispatchSet.has(String(b.value));
     });
     initContractProjectFilter();
+    initContractLocalSource();
     initCreateContractSettingsModal();
     applyRowGrouping(root.querySelector('#contract-conclusion-section'));
     applyContractSentState();
@@ -3455,7 +6930,11 @@
     var root = pane(); if (!root) return;
     if (!(e.target === root || root.contains(e.target))) return;
     ensurePerformerActionsVisibility();
+    ensureReportCheckActionsVisibility();
+    ensureReportMacrosActionsVisibility();
+    syncPerformerSectionOrder();
     schedulePaymentRequestScrollGapsUpdate();
+    scheduleReportSubmissionColumnLayout(true);
     if (typeof window.__perfScrollY === 'number') {
       window.scrollTo(0, window.__perfScrollY);
       delete window.__perfScrollY;
@@ -3599,11 +7078,117 @@
     }
   });
 
+  function showProjectsCsvResult(html) {
+    var body = document.getElementById('projects-csv-result-body');
+    var modalEl = document.getElementById('projects-csv-result-modal');
+    if (!body || !modalEl) {
+      alert(html.replace(/<[^>]+>/g, ''));
+      return;
+    }
+    body.innerHTML = html;
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  async function handleReportMacrosCsvUpload(uploadUrl, file) {
+    var formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      var resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        var html = '<div class="mb-2"><strong>Загружено строк: ' + data.created + '</strong></div>';
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (var i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + data.warnings[i].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+          }
+          html += '</div>';
+        }
+        showProjectsCsvResult(html);
+        document.body.dispatchEvent(new Event('performers-updated'));
+      } else {
+        showProjectsCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
+          (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+      }
+    } catch (err) {
+      showProjectsCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
+        err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
+    }
+  }
+
+  document.body.addEventListener('htmx:configRequest', function (evt) {
+    const path = evt.detail && evt.detail.path || '';
+    if (path.indexOf('performers/partial') === -1 || !evt.detail.parameters) return;
+    const macros = document.querySelector('#report-macros-section');
+    if (macros) {
+      evt.detail.parameters.macros_page = macros.dataset.macrosPage || '1';
+      evt.detail.parameters.macros_page_size = macros.dataset.macrosPageSize || '25';
+    }
+    const reports = document.querySelector('#report-submission-table-block');
+    if (reports) {
+      const filter = window.__reportSubmissionProjectFilter || [];
+      const filtered = filter.length && filter.indexOf('__all__') === -1;
+      const rendered = (reports.dataset.reportsProjects || '__all__').split(',').filter(Boolean).sort();
+      const wanted = filtered ? filter.map(String).slice().sort() : ['__all__'];
+      const sameFilter = rendered.length === wanted.length && rendered.every(function (value, index) {
+        return value === wanted[index];
+      });
+      evt.detail.parameters.reports_page = sameFilter ? (reports.dataset.reportsPage || '1') : '1';
+      if (filtered && !sameFilter) {
+        const select = document.querySelector('#policy-page-size-report-submission');
+        evt.detail.parameters.reports_page_size = (select && select.options.length)
+          ? select.options[select.options.length - 1].value
+          : '100';
+      } else if (!filtered) {
+        const blockUnfiltered = (reports.dataset.reportsProjects || '__all__') === '__all__';
+        if (blockUnfiltered && reports.dataset.reportsPageSize) {
+          window.__reportSubmissionPageSize = reports.dataset.reportsPageSize;
+        }
+        evt.detail.parameters.reports_page_size = window.__reportSubmissionPageSize || '25';
+      } else {
+        evt.detail.parameters.reports_page_size = reports.dataset.reportsPageSize || '100';
+      }
+      if (filtered) evt.detail.parameters.reports_project = filter.join(',');
+    }
+  });
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('#report-macros-csv-upload-btn');
+    if (!btn) return;
+    var fileInput = document.getElementById('report-macros-csv-file-input');
+    if (fileInput) {
+      fileInput.value = '';
+      fileInput.click();
+    }
+  });
+
+  document.addEventListener('change', async function (e) {
+    if (e.target.id !== 'report-macros-csv-file-input') return;
+    var file = e.target.files && e.target.files[0];
+    var btn = document.getElementById('report-macros-csv-upload-btn');
+    var uploadUrl = btn && btn.getAttribute('data-upload-url');
+    e.target.value = '';
+    if (!file || !uploadUrl) return;
+    await handleReportMacrosCsvUpload(uploadUrl, file);
+  });
+
   document.addEventListener('DOMContentLoaded', () => {
     initParticipationProjectFilter();
     initContractProjectFilter();
+    initContractLocalSource();
     initInfoRequestProjectFilter();
     initPaymentRequestProjectFilter();
+    initReportSubmissionProjectFilter();
+    initReportSubmissionColPicker();
+    restoreReportRemarksChannels();
+    initReportLocalSource();
+    initReportCheckPolling();
+    initReportSubmissionFooterSticky();
     var root = pane();
     if (root) {
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));
@@ -3615,29 +7200,45 @@
       reapplyContractCollapse();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
       reapplyInfoRequestCollapse();
+      applyRowGrouping(root.querySelector('#report-submission-section'));
+      applyReportVersionCollapsedState();
       updatePaymentRequestState();
+      updateReportSubmissionMasterState();
+      updateReportCheckMasterState();
+      updateRowHighlight('report-check-select');
+      ensureReportCheckActionsVisibility();
+      updateReportMacrosMasterState();
+      updateRowHighlight('report-macro-select');
+      ensureReportMacrosActionsVisibility();
       syncCollapseButtons();
+      syncPerformerSectionOrder();
     }
     schedulePaymentRequestScrollGapsUpdate();
 
     const perfModal = document.getElementById('performers-modal');
     if (perfModal) {
       perfModal.addEventListener('hidden.bs.modal', () => {
-        window.__tableSel['performer-select'] = [];
-        window.__tableSelLast = null;
-        getRowChecks('performer-select').forEach(b => { b.checked = false; });
-        updatePerformerMasterState();
-        updateRowHighlight('performer-select');
-        ensurePerformerActionsVisibility();
+        clearTableSelectionByName('performer-select');
+        clearTableSelectionByName('report-check-select');
+        clearTableSelectionByName('report-macro-select');
       });
     }
   });
 
-  window.addEventListener('resize', schedulePaymentRequestScrollGapsUpdate);
-  window.addEventListener('load', schedulePaymentRequestScrollGapsUpdate);
+  window.addEventListener('resize', function() {
+    schedulePaymentRequestScrollGapsUpdate();
+    scheduleReportSubmissionColumnLayout(false);
+  });
+  window.addEventListener('load', function() {
+    schedulePaymentRequestScrollGapsUpdate();
+    scheduleReportSubmissionColumnLayout(true);
+  });
   window.addEventListener('projects:section-shown', function(e) {
-    if (e.detail && (e.detail.section === 'team' || e.detail.section === 'performer-payments' || e.detail.section === 'info-request')) {
+    if (e.detail && (e.detail.section === 'team' || e.detail.section === 'performer-payments' || e.detail.section === 'info-request' || e.detail.section === 'report-submission')) {
       schedulePaymentRequestScrollGapsUpdate();
+    }
+    if (e.detail && e.detail.section === 'report-submission') {
+      scheduleReportSubmissionColumnLayout(true);
     }
   });
   window.addEventListener('contracts:payment-request-shown', function() {

@@ -12,7 +12,7 @@
       {% url 'policy_service_goal_reports_table' as table_url %}
       {% include "policy_app/_policy_table_placeholder.html" with table_key="service-goal-reports" table_id="policy-service-goal-reports-section" table_label="Цели услуг и названия отчетов" table_url=table_url load_priority="deferred" master_managed="1" %}
       {% url 'policy_typical_sections_table' as table_url %}
-      {% include "policy_app/_policy_table_placeholder.html" with table_key="typical-sections" table_id="policy-typical-sections-section" table_label="Типовые разделы (услуги)" table_url=table_url load_priority="deferred" master_managed="1" %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="typical-sections" table_id="policy-typical-sections-section" table_label="Типовые блоки услуг" table_url=table_url load_priority="deferred" master_managed="1" %}
       {% url 'policy_section_structures_table' as table_url %}
       {% include "policy_app/_policy_table_placeholder.html" with table_key="section-structures" table_id="policy-section-structures-section" table_label="Типовая структура раздела (состава услуг)" table_url=table_url load_priority="deferred" master_managed="1" %}
       {% url 'policy_report_structures_table' as table_url %}
@@ -34,11 +34,11 @@
     </div>
     <div class="card-body">
       {% url 'policy_consulting_directions_table' as table_url %}
-      {% include "policy_app/_policy_table_placeholder.html" with table_key="consulting-directions" table_id="policy-consulting-directions-section" table_label="Направления консалтинга" table_url=table_url load_priority="deferred" %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="consulting-directions" table_id="policy-consulting-directions-section" table_label="Направления консалтинга" table_url=table_url load_priority="deferred" master_managed="1" %}
       {% url 'policy_expertise_directions_table' as table_url %}
       {% include "policy_app/_policy_table_placeholder.html" with table_key="expertise-directions" table_id="policy-expertise-directions-section" table_label="Направления экспертизы" table_url=table_url load_priority="deferred" %}
       {% url 'policy_expert_specialties_table' as table_url %}
-      {% include "policy_app/_policy_table_placeholder.html" with table_key="expert-specialties" table_id="policy-expert-specialties-section" table_label="Специальности исполнителей" table_url=table_url load_priority="deferred" %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="expert-specialties" table_id="policy-expert-specialties-section" table_label="Классификатор специальностей исполнителей" table_url=table_url load_priority="deferred" %}
       {% url 'policy_service_block_classifiers_table' as table_url %}
       {% include "policy_app/_policy_table_placeholder.html" with table_key="service-block-classifiers" table_id="policy-service-block-classifiers-section" table_label="Классификатор типовых блоков услуг" table_url=table_url load_priority="deferred" %}
       {% url 'policy_specialty_tariffs_table' as table_url %}

@@ -64,6 +64,8 @@ COLUMN_REGISTRY = {
                     "code": "Код",
                     "short_name_en": "Краткое имя EN",
                     "short_name_ru": "Краткое имя RU",
+                    "section_name_en": "Наименование раздела (услуги) EN",
+                    "section_name_ru": "Наименование раздела (услуги) RU",
                     "accounting_type": "Тип учета",
                     "expertise": "Экспертиза",
                     "department": "Подразделение",
@@ -90,11 +92,12 @@ COLUMN_REGISTRY = {
                     "service_category": "Тип услуг",
                     "service_code": "Код",
                     "service_subtype": "Подтип услуги",
+                    "accuracy": "Точность",
                     "owner": "Владелец",
                 },
             },
             "typical_sections": {
-                "label": "Типовые разделы (услуги)",
+                "label": "Типовые блоки услуг",
                 "columns": {
                     "product": "Продукт",
                     "code": "Код",

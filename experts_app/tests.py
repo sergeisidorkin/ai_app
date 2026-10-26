@@ -854,7 +854,7 @@ class ExpertSpecialtyCsvTests(TestCase):
         response = self.client.get(reverse("policy_expert_specialties_table"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Специальности исполнителей")
+        self.assertContains(response, "Классификатор специальностей исполнителей")
         self.assertContains(response, 'id="esp-colpicker-wrap"', html=False)
         self.assertContains(response, 'id="esp-colpicker-btn"', html=False)
         self.assertContains(response, 'id="esp-col-all"', html=False)

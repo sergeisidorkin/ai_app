@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_BIN="$ROOT/.venv/bin"
 
+# Export sourced values so the readiness probe sees the same DATABASE_URL as Django.
+set -a
 if [ -f "$ROOT/.env.dev" ]; then
   # shellcheck disable=SC1091
   source "$ROOT/.env.dev"
@@ -13,6 +15,7 @@ if [ -f "$ROOT/.env" ]; then
   # shellcheck disable=SC1091
   source "$ROOT/.env"
 fi
+set +a
 
 DEV_POSTGRES_AUTO_RECOVER="${DEV_POSTGRES_AUTO_RECOVER:-1}"
 DEV_POSTGRES_HOST="${DEV_POSTGRES_HOST:-}"
@@ -69,15 +72,68 @@ is_local_database() {
 }
 
 is_ready() {
-  "$VENV_BIN/python" - <<'PY' >/dev/null 2>&1
+  # A listening socket is not enough. After kickstart, PostgreSQL accepts TCP
+  # while recovery is still running and rejects sessions with SQLSTATE 57P03
+  # ("the database system is starting up"). Probe the same DATABASE_URL Django uses.
+  DEV_POSTGRES_HOST="${DEV_POSTGRES_HOST:-127.0.0.1}" \
+  DEV_POSTGRES_PORT="${DEV_POSTGRES_PORT:-5432}" \
+  DEV_POSTGRES_USER="${DEV_POSTGRES_USER:-}" \
+  "$VENV_BIN/python" - <<'PY'
 import os
-import socket
+import sys
 
 host = os.environ.get("DEV_POSTGRES_HOST") or "127.0.0.1"
-port = int(os.environ.get("DEV_POSTGRES_PORT") or "5432")
+port = os.environ.get("DEV_POSTGRES_PORT") or "5432"
+user = os.environ.get("DEV_POSTGRES_USER") or "postgres"
+database_url = os.environ.get("DATABASE_URL", "").strip()
 
-with socket.create_connection((host, port), timeout=1.5):
-    pass
+try:
+    import psycopg2
+except ImportError:
+    sys.exit(1)
+
+try:
+    if database_url:
+        conn = psycopg2.connect(database_url, connect_timeout=2)
+    else:
+        conn = psycopg2.connect(
+            host=host,
+            port=port,
+            user=user,
+            dbname="postgres",
+            connect_timeout=2,
+        )
+    conn.close()
+except psycopg2.OperationalError as exc:
+    message = str(exc).lower()
+    pgcode = getattr(exc, "pgcode", None)
+    # Connection-time errors often leave pgcode empty. 57P03 and the startup
+    # messages mean the postmaster is not accepting sessions yet.
+    not_ready = pgcode == "57P03" or any(
+        phrase in message
+        for phrase in (
+            "starting up",
+            "shutting down",
+            "recovery mode",
+            "not yet accepting connections",
+            "connection refused",
+            "timeout expired",
+            "could not translate host",
+            "name or service not known",
+            "no route to host",
+            "network is unreachable",
+            "server closed the connection unexpectedly",
+        )
+    )
+    if not_ready:
+        sys.exit(1)
+    # A FATAL reply (unknown role, bad password, missing database) means
+    # the server accepted the session attempt.
+    if pgcode or "fatal:" in message:
+        sys.exit(0)
+    sys.exit(1)
+except Exception:
+    sys.exit(1)
 PY
 }
 
@@ -195,12 +251,17 @@ start_service() {
 }
 
 wait_until_ready() {
-  local attempt max_attempts
-  max_attempts="${DEV_POSTGRES_WAIT_ATTEMPTS:-20}"
+  local attempt max_attempts announced
+  max_attempts="${DEV_POSTGRES_WAIT_ATTEMPTS:-40}"
+  announced=0
   for attempt in $(seq 1 "$max_attempts"); do
     if is_ready; then
       log "ready on ${DEV_POSTGRES_HOST:-127.0.0.1}:${DEV_POSTGRES_PORT:-5432}"
       return 0
+    fi
+    if [ "$announced" -eq 0 ]; then
+      log "waiting until the server accepts connections"
+      announced=1
     fi
     sleep 1
   done

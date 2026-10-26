@@ -392,7 +392,7 @@ class ProposalRegistration(models.Model):
         if not self.pk:
             return []
         return list(
-            self.product_links.select_related("product").order_by("rank", "id")
+            self.product_links.select_related("product", "product__group", "product_group").order_by("rank", "id")
         )
 
     def ordered_products(self):
@@ -421,6 +421,11 @@ class ProposalRegistration(models.Model):
 
     @property
     def type_short_names(self):
+        from policy_app.product_groups import grouped_type_short_names
+
+        links = self._ordered_product_links()
+        if links:
+            return grouped_type_short_names(links)
         labels = []
         for product in self.ordered_products():
             label = (
@@ -448,6 +453,14 @@ class ProposalRegistrationProduct(models.Model):
         on_delete=models.PROTECT,
         related_name="proposal_registration_links",
         verbose_name="Продукт",
+    )
+    product_group = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="proposal_registration_member_links",
+        verbose_name="Групповой продукт",
     )
     rank = models.PositiveIntegerField("Ранг", default=1)
 

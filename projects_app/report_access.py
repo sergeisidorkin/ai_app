@@ -111,7 +111,7 @@ def _direction_head_registration_ids(head_employee) -> set[int]:
         if resolved is None or resolved.pk != unit.pk:
             return set()
         return set(
-            Performer.objects.filter(typical_section__expertise_dir_id=direction_id)
+            Performer.objects.filter(typical_section__service_block__expertise_dir_id=direction_id)
             .values_list("registration_id", flat=True)
         )
     resolved = index.operation_unit(direction_id, unit.company)
@@ -119,7 +119,7 @@ def _direction_head_registration_ids(head_employee) -> set[int]:
         return set()
     return set(
         Performer.objects.filter(
-            typical_section__expertise_dir_id=direction_id,
+            typical_section__service_block__expertise_dir_id=direction_id,
             registration__group_member_id=unit.company_id,
         ).values_list("registration_id", flat=True)
     )

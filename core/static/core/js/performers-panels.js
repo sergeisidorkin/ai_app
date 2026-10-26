@@ -286,7 +286,7 @@
     return String(n).padStart(2, '0');
   }
   function performerRowIsSectionAccounting(tr) {
-    return !!(tr && String(tr.dataset.accountingType || '').trim() === 'Раздел');
+    return !!(tr && String(tr.dataset.accountingType || '').trim() === 'Разделы');
   }
   function performerGroupSortKey(tr) {
     const number = parseInt(tr && tr.dataset ? tr.dataset.projectNumber : '0', 10) || 0;

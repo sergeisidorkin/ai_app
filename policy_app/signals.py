@@ -6,7 +6,7 @@ from experts_app.models import ExpertSpecialty
 from group_app.models import GroupMember, OrgUnit
 
 from .cache import schedule_policy_cache_invalidation
-from .models import ExpertiseDirection, Product, SpecialtyTariff, TypicalSection
+from .models import ExpertiseDirection, Product, SpecialtyTariff
 
 
 EXTERNAL_POLICY_DISPLAY_MODELS = {
@@ -20,7 +20,6 @@ POLICY_M2M_THROUGH_MODELS = {
     Product.owners.through,
     ExpertiseDirection.owners.through,
     SpecialtyTariff.specialties.through,
-    TypicalSection.specialties.through,
 }
 
 

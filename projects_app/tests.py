@@ -3022,6 +3022,38 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         self.assertEqual(deps_response.status_code, 200)
         self.assertEqual(deps_response.json()["type_short"], self.second_product.short_name)
 
+    def test_registration_create_from_product_group_still_splits_members(self):
+        from policy_app.product_groups import create_product_group
+
+        sibling = Product.objects.create(
+            short_name="DD2",
+            name_en="Due Diligence 2",
+            name_ru="ДД 2",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=3,
+        )
+        group = create_product_group(
+            [self.product, sibling],
+            "DDG",
+            "DD group",
+            "Группа ДД",
+            "DD group",
+        )
+
+        response = self._post_registration(
+            type_id=[self.product.pk, sibling.pk],
+            stage1_weeks=["1.0", "2.0"],
+            stage2_weeks=["3.0", "4.0"],
+        )
+
+        self.assertEqual(response.status_code, 200)
+        projects = list(ProjectRegistration.objects.filter(number=4444).order_by("position", "id"))
+        self.assertEqual([project.type_short_display for project in projects], ["DD", "DD2"])
+        self.assertEqual([str(project.stage1_weeks) for project in projects], ["1.0", "2.0"])
+        self.assertFalse(ProjectRegistration.objects.filter(product_links__product=group).exists())
+
     def test_registration_create_preserves_duplicate_product_stages_as_rows(self):
         response = self._post_registration(
             type_id=[self.product.pk, self.product.pk],
@@ -8477,8 +8509,8 @@ class ReportSubmissionTests(TestCase):
         self.assertIn(">02<", second_row)
         self.assertNotIn(">01<", service_row_html)
         self.assertNotIn(">02<", service_row_html)
-        self.assertIn('data-accounting-type="Раздел"', first_row)
-        self.assertIn('data-accounting-type="Услуги"', service_row_html)
+        self.assertIn('data-accounting-type="Разделы"', first_row)
+        self.assertIn('data-accounting-type="Управление"', service_row_html)
         self.assertIn('js-section-code', first_row)
         js = (
             Path(__file__).resolve().parents[1]

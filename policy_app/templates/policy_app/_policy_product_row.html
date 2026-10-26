@@ -1,0 +1,77 @@
+<tr data-policy-filter-row="1"
+    data-product-id="{{ p.id }}"
+    data-inline-row-id="{{ p.id }}"
+    data-product-label="{{ p.short_name }}{% if p.display_name %} {{ p.display_name }}{% endif %}"
+    data-consulting-type="{{ p.consulting_type_display }}"
+    data-service-category="{{ p.service_category_display }}"
+    data-service-subtype="{{ p.service_subtype_display }}"
+    data-service-code="{{ p.service_code }}"
+    data-owner-key="{{ p.grouping_owner_key }}"
+    data-consulting-type-ref="{{ p.consulting_type_ref_id|default_if_none:'' }}"
+    data-service-category-ref="{{ p.service_category_ref_id|default_if_none:'' }}"
+    data-service-subtype-ref="{{ p.service_subtype_ref_id|default_if_none:'' }}"
+    data-edit-url="{% url 'product_form_edit' p.pk %}"
+    data-workspace-url="{% url 'product_workspace' p.pk %}"
+    data-delete-url="{% url 'product_delete' p.pk %}"
+    data-move-up-url="{% url 'product_move_up' p.pk %}"
+    data-move-down-url="{% url 'product_move_down' p.pk %}"
+    {% if p.is_product_group %}
+        data-is-product-group="1"
+        data-product-group-block="{{ p.id }}"
+    {% endif %}
+    {% if group_parent %}
+        data-in-product-group="1"
+        data-parent-id="{{ group_parent.id }}"
+        data-product-group-member="1"
+        data-product-group-block="{{ group_parent.id }}"
+        class="product-group-member"
+    {% endif %}>
+
+    <td class="text-nowrap product-workspace-checkbox-cell">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="prod-def-{{ p.id }}"
+                       name="product-select"
+                       value="{{ p.id }}"
+                       aria-label="Выделить строку">
+            </div>
+        {% endif %}
+    </td>
+    <td class="text-nowrap product-workspace-short-name-cell"{% if policy_inline_edit %} data-inline-field="short_name" data-inline-type="text" data-inline-value="{{ p.short_name }}"{% endif %}>
+        {% if p.is_product_group and p.grouped_members and not policy_workspace %}
+            <button type="button"
+                    class="product-group-toggle"
+                    data-product-group-toggle="{{ p.id }}"
+                    aria-expanded="true"
+                    aria-label="Свернуть/развернуть группу">
+                <i class="bi bi-caret-down-fill"></i>
+            </button>
+        {% endif %}
+        <span class="product-group-short-name">
+            {% if p.is_product_group %}
+                <span>{{ p.short_name|slice:":-1" }}</span><span class="product-group-mark">⧉</span>
+            {% else %}
+                {{ p.short_name }}
+            {% endif %}
+        </span>
+    </td>
+    <td class="product-workspace-edit-cell text-nowrap">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+            <i class="bi bi-pencil-square text-secondary product-quick-edit me-1"
+               role="button"
+               title="Редактировать"
+               aria-label="Редактировать продукт"></i>
+        {% endif %}
+    </td>
+    <td{% if policy_inline_edit %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ p.name_en }}"{% endif %}>{{ p.name_en }}</td>
+    <td{% if policy_inline_edit %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ p.name_ru }}"{% endif %}>{{ p.name_ru }}</td>
+    <td{% if policy_inline_edit %} data-inline-field="display_name" data-inline-type="text" data-inline-value="{{ p.display_name }}"{% endif %}>{{ p.display_name }}</td>
+    <td class="text-nowrap"{% if policy_inline_edit and not p.classification_locked %} data-inline-field="consulting_type_ref" data-inline-type="select" data-inline-value="{{ p.consulting_type_ref_id|default_if_none:'' }}"{% endif %}>{{ p.consulting_type_display }}</td>
+    <td class="text-nowrap"{% if policy_inline_edit and not p.classification_locked %} data-inline-field="service_category_ref" data-inline-type="select" data-inline-value="{{ p.service_category_ref_id|default_if_none:'' }}"{% endif %}>{{ p.service_category_display }}</td>
+    <td class="text-nowrap"{% if policy_inline_edit and not p.classification_locked %} data-inline-field="service_code"{% endif %}>{{ p.service_code }}</td>
+    <td{% if policy_inline_edit and not p.classification_locked %} data-inline-field="service_subtype_ref" data-inline-type="select" data-inline-value="{{ p.service_subtype_ref_id|default_if_none:'' }}"{% endif %}>{{ p.service_subtype_display }}</td>
+    <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="accuracy" data-inline-type="select" data-inline-value="{{ p.accuracy }}"{% endif %}>{{ p.accuracy }}</td>
+    <td class="text-nowrap"{% if policy_inline_edit and not p.classification_locked %} data-inline-field="owner_ids" data-inline-type="owners" data-inline-value="{{ p.inline_owner_ids_json }}"{% endif %}>{{ p.owner_display }}</td>
+</tr>

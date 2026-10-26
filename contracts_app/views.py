@@ -1713,7 +1713,9 @@ def _contract_project_order_signature(contract_project_ids):
     return ":".join(str(contract_project_id) for contract_project_id in contract_project_ids)
 
 
-def _save_ranked_contract_project_products(registration, product_ids):
+def _save_ranked_contract_project_products(registration, product_ids, raw_group_ids=None):
+    from policy_app.product_groups import resolve_posted_group_ids
+
     normalized_ids = []
     for raw_id in product_ids:
         try:
@@ -1721,6 +1723,7 @@ def _save_ranked_contract_project_products(registration, product_ids):
         except (TypeError, ValueError):
             continue
         normalized_ids.append(product_id)
+    group_ids = resolve_posted_group_ids(normalized_ids, list(raw_group_ids or []))
 
     ContractProjectRegistrationProduct.objects.filter(registration=registration).delete()
     if normalized_ids:
@@ -1729,9 +1732,10 @@ def _save_ranked_contract_project_products(registration, product_ids):
                 ContractProjectRegistrationProduct(
                     registration=registration,
                     product_id=product_id,
-                    rank=rank,
+                    product_group_id=group_ids[index],
+                    rank=index + 1,
                 )
-                for rank, product_id in enumerate(normalized_ids, start=1)
+                for index, product_id in enumerate(normalized_ids)
             ]
         )
     _sync_contract_project_registration_primary_product(registration.pk)
@@ -1886,7 +1890,11 @@ def contracts_project_registration_create(request):
     if not getattr(obj, "position", 0):
         obj.position = _next_position(ContractProjectRegistration)
     obj.save()
-    _save_ranked_contract_project_products(obj, getattr(form, "cleaned_type_ids", []))
+    _save_ranked_contract_project_products(
+        obj,
+        getattr(form, "cleaned_type_ids", []),
+        getattr(form, "cleaned_row_group_ids", []),
+    )
     _sync_to_legal_entity_record(
         obj.customer,
         obj.country,
@@ -1925,7 +1933,11 @@ def contracts_project_registration_edit(request, pk):
     )
 
     obj = form.save()
-    _save_ranked_contract_project_products(obj, getattr(form, "cleaned_type_ids", []))
+    _save_ranked_contract_project_products(
+        obj,
+        getattr(form, "cleaned_type_ids", []),
+        getattr(form, "cleaned_row_group_ids", []),
+    )
     _sync_to_legal_entity_record(
         obj.customer,
         obj.country,

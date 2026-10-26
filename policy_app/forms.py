@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib.auth.models import User
+from django.core.exceptions import NON_FIELD_ERRORS
 from django.core.validators import MaxLengthValidator, MinLengthValidator
 from django.db.models import Q
 from django.utils import timezone
@@ -16,8 +17,12 @@ from .models import (
     ConsultingDirectionType,
     ConsultingServiceSubtype,
     ConsultingServiceType,
+    PRODUCT_GROUP_MARK,
     Product,
     SYSTEM_DSC_SECTION_DEFAULTS,
+    normalize_product_accuracy,
+    strip_product_group_mark,
+    with_product_group_mark,
     TypicalSection,
     SectionStructure,
     ReportStructure,
@@ -34,6 +39,7 @@ from .models import (
     SERVICE_BLOCK_CODE_FORMAT_MESSAGE,
     is_system_dsc_code,
     normalize_service_block_code,
+    resolve_copied_section_name,
 )
 
 OWNER_GROUP_VALUE = "__group__"
@@ -96,7 +102,7 @@ class PolicySectionSelect(forms.Select):
 
 
 def _configure_policy_product_field(field):
-    field.queryset = Product.objects.order_by("position", "id")
+    field.queryset = Product.objects.filter(is_product_group=False).order_by("position", "id")
     field.label_from_instance = _service_goal_report_product_option_label
     widget_attrs = dict(getattr(field.widget, "attrs", {}) or {})
     classes = [part for part in str(widget_attrs.get("class", "") or "").split() if part]
@@ -146,6 +152,11 @@ class CommaDecimalField(forms.DecimalField):
         return str(prepared).replace(".", ",")
 
 
+class ProductAccuracyField(forms.ChoiceField):
+    def to_python(self, value):
+        return normalize_product_accuracy(super().to_python(value))
+
+
 class ProductForm(forms.ModelForm):
     consulting_type_ref = forms.ModelChoiceField(
         label="Вид консалтинга",
@@ -162,6 +173,12 @@ class ProductForm(forms.ModelForm):
         queryset=ConsultingServiceSubtype.objects.none(),
         widget=forms.Select(attrs={"class": "form-select", "id": "id_service_subtype"}),
     )
+    accuracy = ProductAccuracyField(
+        label="Точность",
+        required=False,
+        choices=[("", "")] + list(Product.ACCURACY_CHOICES),
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_accuracy"}),
+    )
 
     class Meta:
         model = Product
@@ -173,6 +190,7 @@ class ProductForm(forms.ModelForm):
             "consulting_type_ref",
             "service_category_ref",
             "service_subtype_ref",
+            "accuracy",
         ]
         widgets = {
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя"}),
@@ -234,6 +252,27 @@ class ProductForm(forms.ModelForm):
         else:
             subtype_qs = subtype_qs.none()
         self.fields["service_subtype_ref"].queryset = subtype_qs
+        self.classification_locked = bool(
+            self.instance
+            and self.instance.pk
+            and (self.instance.is_product_group or self.instance.group_id)
+        )
+        if self.classification_locked:
+            for field_name in ("consulting_type_ref", "service_category_ref", "service_subtype_ref"):
+                lock_field(self.fields[field_name], disabled=True, use_disabled_attr=True)
+
+    def clean_short_name(self):
+        value = (self.cleaned_data.get("short_name") or "").strip()
+        if getattr(self.instance, "is_product_group", False):
+            marked = with_product_group_mark(value)
+            if not strip_product_group_mark(value):
+                raise forms.ValidationError("Обязательное поле.")
+            if len(marked) > 64:
+                raise forms.ValidationError("Краткое имя слишком длинное.")
+            return marked
+        if PRODUCT_GROUP_MARK in value:
+            raise forms.ValidationError("Знак ⧉ зарезервирован для группового продукта.")
+        return value
 
     def clean(self):
         cleaned_data = super().clean()
@@ -254,6 +293,10 @@ class ProductForm(forms.ModelForm):
 
     def save(self, commit=True):
         obj = super().save(commit=False)
+        if self.classification_locked:
+            if commit:
+                obj.save()
+            return obj
         owner_values = self.data.getlist("owner_ids")
         if OWNER_GROUP_VALUE in owner_values:
             obj.is_group_owner = True
@@ -267,6 +310,56 @@ class ProductForm(forms.ModelForm):
                 member_ids = [int(v) for v in owner_values if v != OWNER_GROUP_VALUE and v.isdigit()]
                 obj.owners.set(member_ids)
         return obj
+
+
+class ProductGroupForm(forms.Form):
+    short_name = forms.CharField(
+        label="Краткое имя",
+        max_length=64,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя"}),
+    )
+    name_en = forms.CharField(
+        label="Наименование на английском языке",
+        max_length=255,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "English name"}),
+    )
+    name_ru = forms.CharField(
+        label="Наименование на русском языке",
+        max_length=255,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование"}),
+    )
+    display_name = forms.CharField(
+        label="Отображаемое в системе имя",
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Отображаемое в системе имя"}),
+    )
+    product_ids = forms.CharField(widget=forms.HiddenInput)
+
+    def clean_short_name(self):
+        raw = (self.cleaned_data.get("short_name") or "").strip()
+        marked = with_product_group_mark(raw)
+        if not strip_product_group_mark(raw):
+            raise forms.ValidationError("Обязательное поле.")
+        if len(marked) > 64:
+            raise forms.ValidationError("Краткое имя слишком длинное.")
+        if Product.objects.filter(short_name=marked).exists():
+            raise forms.ValidationError("Продукт с таким кратким именем уже существует.")
+        return marked
+
+    def clean_product_ids(self):
+        raw = str(self.cleaned_data.get("product_ids") or "")
+        ids = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part.isdigit():
+                continue
+            parsed = int(part)
+            if parsed > 0 and parsed not in ids:
+                ids.append(parsed)
+        if len(ids) < 2:
+            raise forms.ValidationError("Выберите не меньше двух продуктов.")
+        return ids
 
 
 class ConsultingDirectionForm(forms.ModelForm):
@@ -499,23 +592,61 @@ class ConsultingDirectionForm(forms.ModelForm):
         return direction
 
 class ServiceBlockChoiceSelect(forms.Select):
-    """Код блока: у опции краткие имена из классификатора."""
+    """Код блока: у опции справочные поля классификатора."""
 
     def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
         option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
         block = getattr(value, "instance", None)
         if block is not None:
+            specialties = [
+                link.specialty.specialty
+                for link in block.ranked_specialties.all()
+                if getattr(link, "specialty", None) and link.specialty.specialty
+            ]
             option["attrs"]["data-code"] = block.code or ""
             option["attrs"]["data-short-name"] = block.short_name or ""
             option["attrs"]["data-short-name-ru"] = block.short_name_ru or ""
+            option["attrs"]["data-name-en"] = block.name_en or ""
+            option["attrs"]["data-name-ru"] = block.name_ru or ""
+            option["attrs"]["data-accounting-type"] = block.accounting_type or ""
+            option["attrs"]["data-expertise"] = (
+                block.expertise_dir.short_name if block.expertise_dir_id and block.expertise_dir else ""
+            )
+            option["attrs"]["data-department"] = block.department_display or ""
+            option["attrs"]["data-executor"] = "\n".join(specialties)
         return option
 
 
 class TypicalSectionForm(forms.ModelForm):
+    short_name = forms.CharField(
+        label="Краткое имя EN",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="sec-short-name")),
+    )
+    short_name_ru = forms.CharField(
+        label="Краткое имя RU",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="sec-short-name-ru")),
+    )
+    accounting_type = forms.CharField(
+        label="Тип учета",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="sec-accounting-type")),
+    )
+    expertise_display = forms.CharField(
+        label="Экспертиза",
+        required=False,
+        widget=forms.TextInput(attrs=locked_attrs(id="sec-expertise-dir")),
+    )
     department_display = forms.CharField(
         label="Подразделение",
         required=False,
         widget=forms.TextInput(attrs=locked_attrs(id="sec-department")),
+    )
+    executor_display = forms.CharField(
+        label="Исполнитель",
+        required=False,
+        widget=forms.Textarea(attrs={**locked_attrs(id="sec-executor"), "rows": 3}),
     )
     service_block = forms.ModelChoiceField(
         label="Код",
@@ -528,12 +659,6 @@ class TypicalSectionForm(forms.ModelForm):
         queryset=Product.objects.all(),
         widget=forms.Select(attrs={"class": "form-select"})
     )
-    expertise_dir = forms.ModelChoiceField(
-        label="Экспертиза",
-        queryset=ExpertiseDirection.objects.all(),
-        required=False,
-        widget=forms.Select(attrs={"class": "form-select", "id": "sec-expertise-dir"}),
-    )
 
     class Meta:
         model = TypicalSection
@@ -541,84 +666,94 @@ class TypicalSectionForm(forms.ModelForm):
             "product",
             "service_block",
             "code",
-            "short_name",
-            "short_name_ru",
             "name_en",
             "name_ru",
-            "accounting_type",
-            "expertise_dir",
             "exclude_from_tkp_autofill",
         ]
         widgets = {
             "code": forms.TextInput(attrs=locked_attrs(id="sec-code")),
-            "short_name": forms.TextInput(attrs=locked_attrs(id="sec-short-name")),
-            "short_name_ru": forms.TextInput(attrs=locked_attrs(id="sec-short-name-ru")),
             "name_en": forms.TextInput(attrs={"class": "form-control", "placeholder": "English section name"}),
             "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование раздела"}),
-            "accounting_type": forms.Select(attrs={"class": "form-select"}),
             "exclude_from_tkp_autofill": forms.CheckboxInput(attrs={"class": "form-check-input"}),
         }
 
-    def __init__(self, *args, request_user=None, **kwargs):
+    def __init__(self, *args, request_user=None, pending_delete_ids=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.choose_service_block = not getattr(self.instance, "pk", None) and not getattr(
-            self.instance, "is_system_dsc", False
+        self.pending_delete_ids = {
+            pk for pk in (int(item) for item in (pending_delete_ids or [])) if pk
+        }
+        self.choose_service_block = not getattr(self.instance, "is_system_dsc", False)
+        block_qs = (
+            ServiceBlockClassifier.objects.select_related("expertise_dir")
+            .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+            .order_by("position", "id")
         )
-        block_qs = ServiceBlockClassifier.objects.order_by("position", "id")
         if self.choose_service_block:
             block_qs = block_qs.exclude(code="DSC")
         self.fields["service_block"].queryset = block_qs
         self.fields["service_block"].label_from_instance = lambda obj: obj.code
         self.fields["service_block"].empty_label = "---------"
-        for field_name in ("code", "short_name", "short_name_ru"):
+        self.fields["service_block"].required = False
+        self.fields["code"].required = False
+        for field_name in (
+            "code",
+            "short_name",
+            "short_name_ru",
+            "accounting_type",
+            "expertise_display",
+            "department_display",
+            "executor_display",
+        ):
             lock_field(self.fields[field_name])
-        if self.choose_service_block:
-            self.fields["service_block"].required = True
-            self.fields["code"].required = False
-            self.fields["short_name"].required = False
-        elif self.instance.pk and self.instance.service_block_id:
-            self.fields["service_block"].initial = self.instance.service_block_id
-            lock_field(self.fields["service_block"], disabled=True, use_disabled_attr=True)
+        block = self._selected_block()
+        self._fill_reference_fields(block)
         _configure_policy_product_field(self.fields["product"])
-        expertise_qs = ExpertiseDirection.objects.order_by("position", "id")
-        self.fields["expertise_dir"].queryset = expertise_qs
-        self.fields["expertise_dir"].label_from_instance = (
-            lambda obj: f"{obj.short_name} {obj.name}"
-        )
-        from group_app.expertise_management import catalog_labels
-
-        pairs = catalog_labels(list(expertise_qs.values_list("pk", flat=True)))
-        self.fields["expertise_dir"].widget = ExpertiseDirectionDepartmentSelect(
-            attrs={"class": "form-select", "id": "sec-expertise-dir"},
-            pairs=pairs,
-        )
-        direction_id = None
-        if self.is_bound:
-            direction_id = _coerce_positive_int(self.data.get(self.add_prefix("expertise_dir")))
-        elif self.instance and self.instance.pk:
-            direction_id = self.instance.expertise_dir_id
-        department = (pairs.get(direction_id) or {}).get("department", "") if direction_id else ""
-        self.fields["department_display"].initial = department
-        if self.is_bound:
-            self.data = self.data.copy()
-            self.data[self.add_prefix("department_display")] = department
         if getattr(self.instance, "is_system_dsc", False):
-            for field_name, value in SYSTEM_DSC_SECTION_DEFAULTS.items():
-                if field_name in self.fields:
-                    self.fields[field_name].initial = value
             self.fields["product"].disabled = True
+            lock_field(self.fields["service_block"], disabled=True, use_disabled_attr=True)
             for field_name in (
-                "code",
-                "short_name",
-                "short_name_ru",
                 "name_en",
                 "name_ru",
-                "accounting_type",
-                "expertise_dir",
-                "department_display",
                 "exclude_from_tkp_autofill",
             ):
                 self.fields[field_name].disabled = True
+
+    def _selected_block(self):
+        if self.is_bound:
+            block_id = _coerce_positive_int(self.data.get(self.add_prefix("service_block")))
+            if block_id:
+                return self.fields["service_block"].queryset.filter(pk=block_id).first()
+        if self.instance and self.instance.service_block_id:
+            return self.instance.service_block
+        return None
+
+    def _fill_reference_fields(self, block):
+        specialties = []
+        if block is not None:
+            specialties = [
+                link.specialty.specialty
+                for link in block.ranked_specialties.all()
+                if getattr(link, "specialty", None) and link.specialty.specialty
+            ]
+        self.fields["short_name"].initial = block.short_name if block is not None else ""
+        self.fields["short_name_ru"].initial = block.short_name_ru if block is not None else ""
+        self.fields["accounting_type"].initial = block.accounting_type if block is not None else ""
+        self.fields["expertise_display"].initial = (
+            block.expertise_dir.short_name if block is not None and block.expertise_dir_id and block.expertise_dir else ""
+        )
+        self.fields["department_display"].initial = block.department_display if block is not None else ""
+        self.fields["executor_display"].initial = "\n".join(specialties)
+        if self.is_bound:
+            self.data = self.data.copy()
+            for field_name in (
+                "short_name",
+                "short_name_ru",
+                "accounting_type",
+                "expertise_display",
+                "department_display",
+                "executor_display",
+            ):
+                self.data[self.add_prefix(field_name)] = self.fields[field_name].initial
 
     def clean_code(self):
         code = str(self.cleaned_data.get("code") or "").strip()
@@ -642,10 +777,6 @@ class TypicalSectionForm(forms.ModelForm):
                     "service_block",
                     "Выберите код из классификатора типовых блоков услуг.",
                 )
-            else:
-                cleaned["code"] = self.instance.code
-                cleaned["short_name"] = self.instance.short_name
-                cleaned["short_name_ru"] = self.instance.short_name_ru
             return cleaned
         if is_system_dsc_code(block.code) and not getattr(self.instance, "is_system_dsc", False):
             self.add_error(
@@ -656,14 +787,81 @@ class TypicalSectionForm(forms.ModelForm):
         product = cleaned.get("product")
         if product is None and self.instance.pk:
             product = self.instance.product
-        if product and TypicalSection.objects.filter(product=product, code=block.code).exclude(
-            pk=self.instance.pk or 0
-        ).exists():
+        if product and self._sections_with_same_block(product, block).exists():
             self.add_error("service_block", "У этого продукта уже есть раздел с таким кодом.")
+        previous = None
+        block_changed = True
+        if self.instance.pk and self.instance.service_block_id:
+            previous = self.instance.service_block
+            block_changed = previous.pk != block.pk
         cleaned["code"] = block.code
-        cleaned["short_name"] = block.short_name
-        cleaned["short_name_ru"] = block.short_name_ru
+        cleaned["name_en"] = resolve_copied_section_name(
+            cleaned.get("name_en"),
+            None if previous is None or not block_changed else previous.name_en,
+            block.name_en,
+            block_changed=block_changed,
+        )
+        cleaned["name_ru"] = resolve_copied_section_name(
+            cleaned.get("name_ru"),
+            None if previous is None or not block_changed else previous.name_ru,
+            block.name_ru,
+            block_changed=block_changed,
+        )
+        if not str(cleaned.get("name_en") or "").strip():
+            self.add_error("name_en", "Обязательное поле.")
+        if not str(cleaned.get("name_ru") or "").strip():
+            self.add_error("name_ru", "Обязательное поле.")
         return cleaned
+
+    def _sections_with_same_block(self, product, block):
+        queryset = TypicalSection.objects.filter(product=product, service_block=block)
+        if self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if self.pending_delete_ids:
+            queryset = queryset.exclude(pk__in=self.pending_delete_ids)
+        return queryset
+
+    def _post_clean(self):
+        super()._post_clean()
+        self._discard_replaced_section_unique_errors()
+
+    def _discard_replaced_section_unique_errors(self):
+        """Уникальность кода не должна мешать заменить раздел в том же сохранении.
+
+        Удаление старой строки происходит после проверки формы. Пока она есть в базе,
+        ограничения (продукт, код) и (продукт, блок) считают повторное добавление
+        того же блока ошибкой и подсвечивают всю строку.
+        """
+        if not self.pending_delete_ids or not getattr(self, "_errors", None):
+            return
+        product_id = self.instance.product_id
+        if not product_id:
+            return
+        conflict = Q()
+        if self.instance.service_block_id:
+            conflict |= Q(service_block_id=self.instance.service_block_id)
+        if self.instance.code:
+            conflict |= Q(code=self.instance.code)
+        if not conflict:
+            return
+        conflicts = TypicalSection.objects.filter(product_id=product_id).filter(conflict)
+        if self.instance.pk:
+            conflicts = conflicts.exclude(pk=self.instance.pk)
+        conflict_ids = set(conflicts.values_list("pk", flat=True))
+        if not conflict_ids or conflict_ids - self.pending_delete_ids:
+            return
+        non_field = self._errors.get(NON_FIELD_ERRORS)
+        if not non_field:
+            return
+        kept = [
+            error
+            for error in non_field.data
+            if getattr(error, "code", None) not in {"unique", "unique_together"}
+        ]
+        if kept:
+            non_field.data[:] = kept
+        else:
+            del self._errors[NON_FIELD_ERRORS]
 
 
 class SectionStructureForm(forms.ModelForm):
@@ -1207,6 +1405,8 @@ class ServiceBlockClassifierForm(forms.ModelForm):
             "code",
             "short_name",
             "short_name_ru",
+            "name_en",
+            "name_ru",
             "accounting_type",
             "expertise_dir",
         ]
@@ -1219,6 +1419,8 @@ class ServiceBlockClassifierForm(forms.ModelForm):
             }),
             "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Short name EN"}),
             "short_name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя RU"}),
+            "name_en": forms.TextInput(attrs={"class": "form-control", "placeholder": "English section name"}),
+            "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование раздела"}),
             "accounting_type": forms.Select(attrs={"class": "form-select"}),
         }
 
@@ -1226,6 +1428,7 @@ class ServiceBlockClassifierForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if getattr(self.instance, "pk", None):
             lock_field(self.fields["code"], disabled=True)
+        self.fields["code"].widget.attrs["maxlength"] = "3"
         code_field = self.fields["code"]
         code_field.error_messages["max_length"] = SERVICE_BLOCK_CODE_FORMAT_MESSAGE
         code_field.error_messages["min_length"] = SERVICE_BLOCK_CODE_FORMAT_MESSAGE

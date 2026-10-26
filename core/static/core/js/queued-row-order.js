@@ -538,14 +538,32 @@
     return row.dataset.rowGroupContinuation === '1' || row.dataset.expdirGroupContinuation === '1';
   }
 
+  function productGroupBlockKey(row) {
+    if (!row || !row.dataset) return '';
+    return row.dataset.productGroupBlock || '';
+  }
+
+  function isProductGroupMemberRow(row) {
+    return !!(row && row.dataset && row.dataset.productGroupMember === '1');
+  }
+
   function takeGroupBlock(row) {
     var block = [row];
     var key = groupKey(row);
-    if (!key) return block;
-    var sibling = row.nextElementSibling;
-    while (sibling && groupKey(sibling) === key && isGroupContinuation(sibling)) {
-      block.push(sibling);
-      sibling = sibling.nextElementSibling;
+    if (key) {
+      var sibling = row.nextElementSibling;
+      while (sibling && groupKey(sibling) === key && isGroupContinuation(sibling)) {
+        block.push(sibling);
+        sibling = sibling.nextElementSibling;
+      }
+      return block;
+    }
+    var productKey = productGroupBlockKey(row);
+    if (!productKey || isProductGroupMemberRow(row)) return block;
+    var member = row.nextElementSibling;
+    while (member && productGroupBlockKey(member) === productKey && isProductGroupMemberRow(member)) {
+      block.push(member);
+      member = member.nextElementSibling;
     }
     return block;
   }
@@ -569,6 +587,21 @@
       var candidate = step === 'up' ? row.previousElementSibling : row.nextElementSibling;
       while (candidate) {
         if (candidate.tagName === 'TR' && isMovableRow(candidate, selectionName)) {
+          if (isProductGroupMemberRow(row)) {
+            if (productGroupBlockKey(candidate) === productGroupBlockKey(row) && isProductGroupMemberRow(candidate)) {
+              return candidate;
+            }
+            return null;
+          }
+          if (
+            productGroupBlockKey(row)
+            && !isProductGroupMemberRow(row)
+            && productGroupBlockKey(candidate) === productGroupBlockKey(row)
+            && isProductGroupMemberRow(candidate)
+          ) {
+            candidate = step === 'up' ? candidate.previousElementSibling : candidate.nextElementSibling;
+            continue;
+          }
           if (matchesRowScope(candidate, row, options)) return candidate;
           if (options && options.rowScopeDataKey) {
             candidate = step === 'up' ? candidate.previousElementSibling : candidate.nextElementSibling;

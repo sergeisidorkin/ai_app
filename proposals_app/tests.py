@@ -7095,9 +7095,9 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(
             {item["name"]: item["accounting_type"] for item in entries},
             {
-                "Описание продукта": "Раздел",
-                "Раздел 1": "Раздел",
-                "Услуга 1": "Услуги",
+                "Описание продукта": "Разделы",
+                "Раздел 1": "Разделы",
+                "Услуга 1": "Управление",
             },
         )
 
@@ -7369,8 +7369,6 @@ class ProposalFormContextTests(TestCase):
             position=1,
         )
 
-        section.code = "NEW"
-        section.short_name = "new"
         section.name_en = "New section"
         section.name_ru = "Актуальный раздел"
         section.save()
@@ -7387,13 +7385,13 @@ class ProposalFormContextTests(TestCase):
         payload = response.json()
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["product_id"], str(product.pk))
-        section_entry = next(item for item in payload["typical_sections"] if item["code"] == "NEW")
+        section_entry = next(item for item in payload["typical_sections"] if item["code"] == "OLD")
         self.assertEqual(section_entry["name"], "Актуальный раздел")
         self.assertEqual(
             payload["typical_service_compositions"],
             [
                 {
-                    "code": "NEW",
+                    "code": "OLD",
                     "service_name": "Актуальный раздел",
                     "service_composition": "Актуальный состав",
                     "service_composition_editor_state": {
@@ -7857,6 +7855,87 @@ class ProposalFormContextTests(TestCase):
         self.assertIn("finishProposalCommercialHydration", source)
         self.assertIn("endHydration", source)
         self.assertIn("form-submit-flush", source)
+
+    def test_product_group_replaces_member_short_names_and_reopens(self):
+        from policy_app.product_groups import create_product_group, resolve_posted_group_ids
+
+        first = Product.objects.create(
+            short_name="ESIA-A",
+            name_en="ESIA A",
+            name_ru="ЕСИА А",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second = Product.objects.create(
+            short_name="ESIA-B",
+            name_en="ESIA B",
+            name_ru="ЕСИА Б",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        other = Product.objects.create(
+            short_name="OTHER",
+            name_en="Other",
+            name_ru="Другой",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            service_code="ZZ",
+            position=3,
+        )
+        group = create_product_group([first, second], "ESIA", "ESIA bundle", "ЕСИА", "ESIA bundle")
+        proposal = ProposalRegistration.objects.create(
+            number=4510,
+            group_member=self.group_member,
+            name="Групповое ТКП",
+            year=2026,
+            stage_payloads_json=[
+                {"rank": 1, "product_id": first.pk},
+                {"rank": 2, "product_id": other.pk},
+                {"rank": 3, "product_id": second.pk},
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create([
+            ProposalRegistrationProduct(proposal=proposal, product=first, product_group=group, rank=1),
+            ProposalRegistrationProduct(proposal=proposal, product=other, rank=2),
+            ProposalRegistrationProduct(proposal=proposal, product=second, product_group=group, rank=3),
+        ])
+
+        proposal = ProposalRegistration.objects.get(pk=proposal.pk)
+        self.assertEqual(proposal.type_short_display, "ESIA\u29c9-OTHER")
+        self.assertEqual(
+            resolve_posted_group_ids([first.pk], [group.pk]),
+            [None],
+        )
+        lone = ProposalRegistration.objects.create(
+            number=4511,
+            group_member=self.group_member,
+            name="Один участник",
+            year=2026,
+        )
+        ProposalRegistrationProduct.objects.create(
+            proposal=lone,
+            product=first,
+            product_group=group,
+            rank=1,
+        )
+        self.assertEqual(lone.type_short_display, "ESIA-A")
+
+        form = ProposalRegistrationForm(instance=proposal)
+        form.cleaned_type_ids = [first.pk, other.pk, second.pk]
+        form.cleaned_row_group_ids = [str(group.pk), "", str(group.pk)]
+        form._save_ranked_products(proposal)
+        saved = list(proposal.product_links.order_by("rank", "id"))
+        self.assertEqual([link.product_group_id for link in saved], [group.pk, None, group.pk])
+        reopened = ProposalRegistrationForm(instance=proposal)
+        self.assertEqual(
+            [row.get("product_group_id") for row in reopened.stage_rows],
+            [str(group.pk), "", str(group.pk)],
+        )
 
 
 class ProposalCatalogLazyShellTests(TestCase):

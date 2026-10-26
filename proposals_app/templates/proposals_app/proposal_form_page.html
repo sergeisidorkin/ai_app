@@ -77,13 +77,15 @@
               </div>
               <span aria-hidden="true"></span>
             </div>
-            <div id="proposal-products-container" class="proposal-products-container">
+            <div id="proposal-products-container" class="proposal-products-container" data-allow-product-groups="1">
               {% for stage in form.stage_rows %}
                 <div class="proposal-product-row"
                      data-selected-product-id="{{ stage.product_id|default:'' }}"
                      data-selected-consulting-type="{{ stage.consulting_type|default:'' }}"
                      data-selected-service-category="{{ stage.service_category|default:'' }}"
-                     data-selected-service-subtype="{{ stage.service_subtype|default:'' }}">
+                     data-selected-service-subtype="{{ stage.service_subtype|default:'' }}"
+                     data-product-group-id="{{ stage.product_group_id|default:'' }}">
+                  <input type="hidden" name="row_group_id" value="{{ stage.product_group_id|default:'' }}">
                   <div class="proposal-product-row-inner">
                     <span class="badge rounded-circle d-flex align-items-center justify-content-center proposal-product-badge">{{ stage.rank }}</span>
                     <div class="row g-2 flex-grow-1 proposal-product-fields">

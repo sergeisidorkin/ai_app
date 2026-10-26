@@ -43,12 +43,49 @@ SYSTEM_DSC_SECTION_DEFAULTS = {
     "short_name_ru": "Описание",
     "name_en": "Product description",
     "name_ru": "Описание продукта",
-    "accounting_type": "Раздел",
+    "accounting_type": "Разделы",
     "expertise_dir": None,
     "expertise_direction": None,
     "exclude_from_tkp_autofill": False,
     "is_system": True,
 }
+
+# Старые значения типа учета раздела. В классификаторе их заменяют «Разделы» и «Управление».
+LEGACY_SECTION_ACCOUNTING_TYPES = {
+    "Раздел": "Разделы",
+    "Услуги": "Управление",
+}
+_MISSING = object()
+
+
+def classifier_accounting_type(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "Разделы"
+    return LEGACY_SECTION_ACCOUNTING_TYPES.get(text, text)
+
+
+_SECTION_CLASSIFIER_FIELDS = {
+    "short_name",
+    "short_name_ru",
+    "accounting_type",
+    "expertise_dir",
+    "expertise_dir_id",
+    "expertise_direction",
+    "expertise_direction_id",
+}
+
+
+def resolve_copied_section_name(posted, previous_name, new_name, *, block_changed) -> str:
+    """Копирует наименование из классификатора, пока пользователь его не изменил."""
+    posted = "" if posted is None else str(posted)
+    if not block_changed:
+        return posted
+    if previous_name is None:
+        return posted if posted.strip() else (new_name or "")
+    if posted == (previous_name or ""):
+        return new_name or ""
+    return posted
 
 
 def normalize_section_code(value) -> str:
@@ -328,7 +365,48 @@ def build_consulting_catalog_meta():
     }
 
 
+PRODUCT_ACCURACY_CHOICES = (
+    (">50%", ">50%"),
+    ("±30\u201350%", "±30\u201350%"),
+    ("±20\u201330%", "±20\u201330%"),
+    ("±10\u201320%", "±10\u201320%"),
+    ("<10%", "<10%"),
+)
+PRODUCT_ACCURACY_VALUES = frozenset(value for value, _label in PRODUCT_ACCURACY_CHOICES)
+_PRODUCT_ACCURACY_DASHES = str.maketrans({
+    "-": "\u2013",
+    "\u2014": "\u2013",
+    "\u2212": "\u2013",
+})
+
+
+def normalize_product_accuracy(value):
+    if value is None:
+        return ""
+    return str(value).strip().translate(_PRODUCT_ACCURACY_DASHES)
+
+
+PRODUCT_GROUP_MARK = "⧉"
+
+
+def strip_product_group_mark(short_name):
+    base = str(short_name or "").strip()
+    if base.endswith(PRODUCT_GROUP_MARK):
+        return base[: -len(PRODUCT_GROUP_MARK)].strip()
+    return base
+
+
+def with_product_group_mark(short_name):
+    base = strip_product_group_mark(short_name)
+    if not base:
+        return ""
+    return f"{base}{PRODUCT_GROUP_MARK}"
+
+
 class Product(models.Model):
+    ACCURACY_CHOICES = PRODUCT_ACCURACY_CHOICES
+    ACCURACY_VALUES = PRODUCT_ACCURACY_VALUES
+
     short_name = models.CharField("Краткое имя", max_length=64, unique=True)
     name_en = models.CharField("Наименование на английском языке", max_length=255)
     display_name = models.CharField("Отображаемое в системе имя", max_length=255, blank=True, default="")
@@ -337,6 +415,13 @@ class Product(models.Model):
     service_category = models.CharField("Тип услуг", max_length=128, blank=True, default="")
     service_code = models.CharField("Код", max_length=32, blank=True, default="")
     service_subtype = models.CharField("Подтип услуги", max_length=255, blank=True, default="")
+    accuracy = models.CharField(
+        "Точность",
+        max_length=16,
+        blank=True,
+        default="",
+        choices=PRODUCT_ACCURACY_CHOICES,
+    )
     consulting_type_ref = models.ForeignKey(
         "policy_app.ConsultingDirectionType",
         on_delete=models.SET_NULL,
@@ -368,6 +453,15 @@ class Product(models.Model):
         verbose_name="Владельцы",
     )
     is_group_owner = models.BooleanField("Группа (все компании)", default=False)
+    is_product_group = models.BooleanField("Групповой продукт", default=False)
+    group = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="grouped_products",
+        verbose_name="Групповой продукт",
+    )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -411,6 +505,17 @@ class Product(models.Model):
             and self.service_subtype_ref.service_type_id != self.service_category_ref_id
         ):
             raise ValidationError({"service_subtype_ref": "Подтип услуги не соответствует типу услуг."})
+        if self.is_product_group and self.group_id:
+            raise ValidationError({"group": "Групповой продукт не может входить в другую группу."})
+        if self.is_product_group:
+            marked = with_product_group_mark(self.short_name)
+            if not marked:
+                raise ValidationError({"short_name": "Обязательное поле."})
+            if len(marked) > 64:
+                raise ValidationError({"short_name": "Краткое имя слишком длинное."})
+            self.short_name = marked
+        elif PRODUCT_GROUP_MARK in (self.short_name or ""):
+            raise ValidationError({"short_name": "Знак ⧉ зарезервирован для группового продукта."})
 
     def _sync_catalog_refs_from_legacy_values(self):
         if not self.consulting_type_ref_id and self.consulting_type:
@@ -457,41 +562,43 @@ class Product(models.Model):
         names = [owner.short_name for owner in owners]
         return ", ".join(names) if names else ""
 
+    @property
+    def classification_locked(self):
+        return bool(self.pk and (self.is_product_group or self.group_id))
+
+    def grouping_owner_key(self):
+        if self.is_group_owner:
+            return "group"
+        owners = getattr(self, "_policy_owner_display_items", None)
+        if owners is None:
+            owner_ids = self.owners.values_list("pk", flat=True)
+        else:
+            owner_ids = [owner.pk for owner in owners]
+        normalized = sorted(int(owner_id) for owner_id in owner_ids)
+        if not normalized:
+            return "none"
+        return ",".join(str(owner_id) for owner_id in normalized)
+
+
+class TypicalSectionManager(models.Manager):
+    def create(self, **kwargs):
+        return super().create(**prepare_typical_section_create_kwargs(kwargs))
+
+
 class TypicalSection(models.Model):
-    ACCOUNTING_TYPE_CHOICES = [
-        ("Раздел", "Раздел"),
-        ("Услуги", "Услуги"),
-    ]
+    """Строка продукта. Код и справочные поля берутся из классификатора блоков."""
 
     product = models.ForeignKey(Product, verbose_name="Продукт", on_delete=models.CASCADE, related_name="sections")
     code = models.CharField("Код", max_length=64)
-    short_name = models.CharField("Краткое имя EN", max_length=64)
-    short_name_ru = models.CharField("Краткое имя RU", max_length=128, blank=True, default="")
-    name_en = models.CharField("Наименование раздела на английском языке", max_length=255)
-    name_ru = models.CharField("Наименование раздела на русском языке", max_length=255)
-    accounting_type = models.CharField("Тип учета", max_length=128, choices=ACCOUNTING_TYPE_CHOICES, default="Раздел")
-    specialties = models.ManyToManyField(
-        "experts_app.ExpertSpecialty",
-        through="TypicalSectionSpecialty",
+    name_en = models.CharField(
+        "Наименование раздела на английском языке",
+        max_length=255,
         blank=True,
-        related_name="typical_sections",
-        verbose_name="Специальности",
     )
-    expertise_dir = models.ForeignKey(
-        "policy_app.ExpertiseDirection",
-        on_delete=models.SET_NULL,
-        null=True,
+    name_ru = models.CharField(
+        "Наименование раздела на русском языке",
+        max_length=255,
         blank=True,
-        related_name="typical_sections_dir",
-        verbose_name="Экспертиза",
-    )
-    expertise_direction = models.ForeignKey(
-        "group_app.OrgUnit",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="typical_sections",
-        verbose_name="Направление экспертизы",
     )
     exclude_from_tkp_autofill = models.BooleanField(
         "Исключить из автозаполнения в ТКП",
@@ -500,8 +607,6 @@ class TypicalSection(models.Model):
     service_block = models.ForeignKey(
         "policy_app.ServiceBlockClassifier",
         on_delete=models.PROTECT,
-        null=True,
-        blank=True,
         related_name="typical_sections",
         verbose_name="Блок услуг",
     )
@@ -511,30 +616,123 @@ class TypicalSection(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = TypicalSectionManager()
+
     class Meta:
         verbose_name = "Типовой раздел"
         verbose_name_plural = "Типовые разделы"
         ordering = ["product__short_name", "position", "id"]
 
         constraints = [
-            models.UniqueConstraint(fields=["product", "code"], name="ux_section_product_code")
+            models.UniqueConstraint(fields=["product", "code"], name="ux_section_product_code"),
+            models.UniqueConstraint(fields=["product", "service_block"], name="ux_section_product_service_block"),
         ]
 
     def __str__(self):
         return f"{self.product.short_name}:{self.code}"
 
     def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = [
+                name for name in update_fields if name not in _SECTION_CLASSIFIER_FIELDS
+            ]
+        dirty = getattr(self, "_classifier_dirty_fields", None)
+        block = self._block()
+        if dirty and block is not None and block.pk:
+            block.save(update_fields=list(set(dirty) | {"updated_at"}))
+            self._classifier_dirty_fields = set()
         if self.service_block_id:
-            block = self.service_block
-            self.code = block.code
-            self.short_name = block.short_name
-            self.short_name_ru = block.short_name_ru
-            update_fields = kwargs.get("update_fields")
-            if update_fields is not None:
-                kwargs["update_fields"] = list(
-                    set(update_fields) | {"service_block", "code", "short_name", "short_name_ru"}
-                )
+            self.code = self.service_block.code
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = list(set(kwargs["update_fields"]) | {"service_block", "code"})
         super().save(*args, **kwargs)
+
+    def _block(self):
+        if not self.service_block_id:
+            return None
+        return self.service_block
+
+    def _write_classifier_field(self, name, value):
+        block = self._block()
+        if block is None:
+            return
+        setattr(block, name, value)
+        dirty = getattr(self, "_classifier_dirty_fields", None)
+        if dirty is None:
+            dirty = set()
+            self._classifier_dirty_fields = dirty
+        dirty.add(name)
+
+    @property
+    def short_name(self):
+        block = self._block()
+        return block.short_name if block is not None else ""
+
+    @short_name.setter
+    def short_name(self, value):
+        self._write_classifier_field("short_name", value)
+
+    @property
+    def short_name_ru(self):
+        block = self._block()
+        return block.short_name_ru if block is not None else ""
+
+    @short_name_ru.setter
+    def short_name_ru(self, value):
+        self._write_classifier_field("short_name_ru", value)
+
+    @property
+    def accounting_type(self):
+        block = self._block()
+        return block.accounting_type if block is not None else ""
+
+    @accounting_type.setter
+    def accounting_type(self, value):
+        self._write_classifier_field("accounting_type", classifier_accounting_type(value))
+
+    @property
+    def expertise_dir(self):
+        block = self._block()
+        return block.expertise_dir if block is not None else None
+
+    @expertise_dir.setter
+    def expertise_dir(self, value):
+        self._write_classifier_field("expertise_dir", value)
+
+    @property
+    def expertise_dir_id(self):
+        block = self._block()
+        return block.expertise_dir_id if block is not None else None
+
+    @expertise_dir_id.setter
+    def expertise_dir_id(self, value):
+        self._write_classifier_field("expertise_dir_id", value)
+
+    @property
+    def expertise_direction(self):
+        block = self._block()
+        return block.expertise_direction if block is not None else None
+
+    @expertise_direction.setter
+    def expertise_direction(self, value):
+        self._write_classifier_field("expertise_direction", value)
+
+    @property
+    def expertise_direction_id(self):
+        block = self._block()
+        return block.expertise_direction_id if block is not None else None
+
+    @expertise_direction_id.setter
+    def expertise_direction_id(self, value):
+        self._write_classifier_field("expertise_direction_id", value)
+
+    @property
+    def ranked_specialties(self):
+        block = self._block()
+        if block is None:
+            return ServiceBlockClassifierSpecialty.objects.none()
+        return block.ranked_specialties
 
     @property
     def is_system_dsc(self):
@@ -548,31 +746,103 @@ class TypicalSection(models.Model):
         return direction.department_display
 
 
-class TypicalSectionSpecialty(models.Model):
-    section = models.ForeignKey(
-        TypicalSection,
-        on_delete=models.CASCADE,
-        related_name="ranked_specialties",
-    )
-    specialty = models.ForeignKey(
-        "experts_app.ExpertSpecialty",
-        on_delete=models.CASCADE,
-        related_name="section_links",
-    )
-    rank = models.PositiveIntegerField("Ранг", default=1)
+def prepare_typical_section_create_kwargs(kwargs):
+    """Собирает блок классификатора для создания раздела.
 
-    class Meta:
-        ordering = ["rank"]
-        unique_together = [("section", "specialty")]
-        verbose_name = "Специальность раздела"
-        verbose_name_plural = "Специальности раздела"
+    Старые вызовы передают краткое имя, тип учета и экспертизу прямо в раздел.
+    Эти значения записываются в классификатор, а не в строку продукта.
+    """
+    short_name = kwargs.pop("short_name", _MISSING)
+    short_name_ru = kwargs.pop("short_name_ru", _MISSING)
+    accounting_type = kwargs.pop("accounting_type", _MISSING)
+    expertise_dir = kwargs.pop("expertise_dir", _MISSING)
+    expertise_dir_id = kwargs.pop("expertise_dir_id", _MISSING)
+    expertise_direction = kwargs.pop("expertise_direction", _MISSING)
+    expertise_direction_id = kwargs.pop("expertise_direction_id", _MISSING)
 
-    def __str__(self):
-        return f"{self.section} — {self.specialty} (#{self.rank})"
+    block = kwargs.get("service_block")
+    block_id = kwargs.get("service_block_id")
+    if block is None and block_id:
+        block = ServiceBlockClassifier.objects.filter(pk=block_id).first()
+
+    code = normalize_service_block_code(kwargs.get("code") or (block.code if block is not None else ""))
+    if block is None and is_system_dsc_code(code):
+        block = ensure_dsc_service_block()
+    created = False
+    if block is None:
+        if code:
+            block = ServiceBlockClassifier.objects.filter(code=code).first()
+        if block is None:
+            if not code:
+                raise ValidationError("Для типового блока нужен код классификатора.")
+            position = (
+                ServiceBlockClassifier.objects.order_by("-position", "-id")
+                .values_list("position", flat=True)
+                .first()
+                or 0
+            ) + 1
+            block = ServiceBlockClassifier(
+                code=code,
+                short_name=(str(short_name).strip() if short_name is not _MISSING and short_name else code)[:64],
+                short_name_ru=(
+                    str(short_name_ru).strip() if short_name_ru is not _MISSING and short_name_ru else ""
+                )[:128],
+                name_en=str(kwargs.get("name_en") or "")[:255],
+                name_ru=str(kwargs.get("name_ru") or "")[:255],
+                accounting_type=classifier_accounting_type(
+                    None if accounting_type is _MISSING else accounting_type
+                ),
+                position=position,
+            )
+            if expertise_dir is not _MISSING:
+                block.expertise_dir = expertise_dir
+            elif expertise_dir_id is not _MISSING:
+                block.expertise_dir_id = expertise_dir_id
+            if expertise_direction is not _MISSING:
+                block.expertise_direction = expertise_direction
+            elif expertise_direction_id is not _MISSING:
+                block.expertise_direction_id = expertise_direction_id
+            block.save()
+            created = True
+    if not created and block is not None and not is_system_dsc_code(block.code):
+        changed = []
+        if short_name is not _MISSING and short_name and block.short_name != short_name:
+            block.short_name = str(short_name)[:64]
+            changed.append("short_name")
+        if short_name_ru is not _MISSING and block.short_name_ru != (short_name_ru or ""):
+            block.short_name_ru = str(short_name_ru or "")[:128]
+            changed.append("short_name_ru")
+        if accounting_type is not _MISSING:
+            mapped = classifier_accounting_type(accounting_type)
+            if block.accounting_type != mapped:
+                block.accounting_type = mapped
+                changed.append("accounting_type")
+        if expertise_dir is not _MISSING and block.expertise_dir != expertise_dir:
+            block.expertise_dir = expertise_dir
+            changed.append("expertise_dir")
+        elif expertise_dir_id is not _MISSING and block.expertise_dir_id != expertise_dir_id:
+            block.expertise_dir_id = expertise_dir_id
+            changed.append("expertise_dir")
+        if expertise_direction is not _MISSING and block.expertise_direction != expertise_direction:
+            block.expertise_direction = expertise_direction
+            changed.append("expertise_direction")
+        elif (
+            expertise_direction_id is not _MISSING
+            and block.expertise_direction_id != expertise_direction_id
+        ):
+            block.expertise_direction_id = expertise_direction_id
+            changed.append("expertise_direction")
+        if changed:
+            block.save(update_fields=changed)
+    kwargs["service_block"] = block
+    kwargs["code"] = block.code
+    return kwargs
 
 
 def ensure_system_dsc_section(product):
     if not product or not getattr(product, "pk", None):
+        return None
+    if getattr(product, "is_product_group", False):
         return None
 
     with transaction.atomic():
@@ -582,31 +852,43 @@ def ensure_system_dsc_section(product):
             .order_by("position", "id")
         )
         section = next((item for item in sections if is_system_dsc_code(item.code)), None)
+        block = ensure_dsc_service_block()
+        names = {
+            "name_en": block.name_en or SYSTEM_DSC_SECTION_DEFAULTS["name_en"],
+            "name_ru": block.name_ru or SYSTEM_DSC_SECTION_DEFAULTS["name_ru"],
+        }
         if section is None:
             section = TypicalSection.objects.create(
                 product=product,
                 position=0,
-                **SYSTEM_DSC_SECTION_DEFAULTS,
+                service_block=block,
+                code=block.code,
+                name_en=names["name_en"],
+                name_ru=names["name_ru"],
+                exclude_from_tkp_autofill=False,
+                is_system=True,
             )
             sections.append(section)
-
-        block = ensure_dsc_service_block()
-        defaults = dict(SYSTEM_DSC_SECTION_DEFAULTS)
-        defaults["code"] = block.code
-        defaults["short_name"] = block.short_name
-        defaults["short_name_ru"] = block.short_name_ru
-        changed_fields = []
-        if section.service_block_id != block.pk:
-            section.service_block = block
-            changed_fields.append("service_block")
-        for field, value in defaults.items():
-            if getattr(section, field) != value:
-                setattr(section, field, value)
-                changed_fields.append(field)
-        if changed_fields:
-            section.save(update_fields=[*changed_fields, "updated_at"])
-
-        TypicalSectionSpecialty.objects.filter(section=section).delete()
+        else:
+            changed_fields = []
+            if section.service_block_id != block.pk:
+                section.service_block = block
+                changed_fields.append("service_block")
+            if section.code != block.code:
+                section.code = block.code
+                changed_fields.append("code")
+            for field, value in names.items():
+                if getattr(section, field) != value:
+                    setattr(section, field, value)
+                    changed_fields.append(field)
+            if not section.is_system:
+                section.is_system = True
+                changed_fields.append("is_system")
+            if section.exclude_from_tkp_autofill:
+                section.exclude_from_tkp_autofill = False
+                changed_fields.append("exclude_from_tkp_autofill")
+            if changed_fields:
+                section.save(update_fields=[*changed_fields, "updated_at"])
 
         ordered = [section] + [item for item in sections if item.pk != section.pk]
         changed_positions = []
@@ -627,7 +909,7 @@ def ensure_system_dsc_section(product):
 
 
 def ensure_system_dsc_sections_for_all_products():
-    for product in Product.objects.order_by("position", "id"):
+    for product in Product.objects.filter(is_product_group=False).order_by("position", "id"):
         ensure_system_dsc_section(product)
 
 
@@ -950,7 +1232,7 @@ def normalize_service_block_code(value):
 
 
 class ServiceBlockClassifier(models.Model):
-    """Единый классификатор типовых блоков услуг (будущий источник истины для TypicalSection)."""
+    """Единый классификатор типовых блоков услуг: источник кода и справочных полей раздела."""
 
     ACCOUNTING_TYPE_CHOICES = [
         ("Разделы", "Разделы"),
@@ -966,7 +1248,7 @@ class ServiceBlockClassifier(models.Model):
 
     code = models.CharField(
         "Код",
-        max_length=3,
+        max_length=64,
         unique=True,
         validators=[code_validator],
         help_text="Ровно три латинские буквы; сравнение без учёта регистра.",
@@ -977,6 +1259,18 @@ class ServiceBlockClassifier(models.Model):
     )
     short_name = models.CharField("Краткое имя EN", max_length=64)
     short_name_ru = models.CharField("Краткое имя RU", max_length=128, blank=True, default="")
+    name_en = models.CharField(
+        "Наименование раздела (услуги) на английском языке",
+        max_length=255,
+        blank=True,
+        default="",
+    )
+    name_ru = models.CharField(
+        "Наименование раздела (услуги) на русском языке",
+        max_length=255,
+        blank=True,
+        default="",
+    )
     accounting_type = models.CharField(
         "Тип учета", max_length=128, choices=ACCOUNTING_TYPE_CHOICES, default="Разделы"
     )
@@ -1034,20 +1328,6 @@ class ServiceBlockClassifier(models.Model):
         if update_fields is not None:
             kwargs["update_fields"] = list(set(update_fields) | {"code"})
         super().save(*args, **kwargs)
-        self.sync_linked_section_names()
-
-    def sync_linked_section_names(self):
-        """Краткие имена связанных разделов повторяют классификатор. Код раздела не меняется."""
-        from django.utils import timezone
-
-        TypicalSection.objects.filter(service_block_id=self.pk).exclude(
-            short_name=self.short_name,
-            short_name_ru=self.short_name_ru,
-        ).update(
-            short_name=self.short_name,
-            short_name_ru=self.short_name_ru,
-            updated_at=timezone.now(),
-        )
 
 
 class ServiceBlockClassifierSpecialty(models.Model):
@@ -1075,6 +1355,52 @@ class ServiceBlockClassifierSpecialty(models.Model):
         return f"{self.classifier} — {self.specialty} (#{self.rank})"
 
 
+class _TypicalSectionSpecialtyManager:
+    """Пишет исполнителя в блок классификатора, к которому привязан раздел."""
+
+    def create(self, section=None, specialty=None, rank=1, **kwargs):
+        if section is None and kwargs.get("section_id"):
+            section = TypicalSection.objects.get(pk=kwargs["section_id"])
+        if section is None or not getattr(section, "service_block_id", None):
+            raise ValidationError("Раздел без блока классификатора не хранит исполнителя.")
+        specialty_id = kwargs.get("specialty_id")
+        if specialty is not None:
+            specialty_id = getattr(specialty, "pk", specialty)
+        return ServiceBlockClassifierSpecialty.objects.create(
+            classifier_id=section.service_block_id,
+            specialty_id=specialty_id,
+            rank=kwargs.get("rank", rank),
+        )
+
+    def filter(self, *args, **kwargs):
+        if "section" in kwargs:
+            section = kwargs.pop("section")
+            kwargs["classifier_id"] = section.service_block_id
+        if "section_id" in kwargs:
+            section = TypicalSection.objects.get(pk=kwargs.pop("section_id"))
+            kwargs["classifier_id"] = section.service_block_id
+        if "section_id__in" in kwargs:
+            kwargs["classifier_id__in"] = list(
+                TypicalSection.objects.filter(pk__in=kwargs.pop("section_id__in")).values_list(
+                    "service_block_id",
+                    flat=True,
+                )
+            )
+        return ServiceBlockClassifierSpecialty.objects.filter(*args, **kwargs)
+
+    def all(self):
+        return ServiceBlockClassifierSpecialty.objects.all()
+
+
+class TypicalSectionSpecialty:
+    """Совместимость для кода, который создаёт исполнителя через раздел.
+
+    Строка хранится в ServiceBlockClassifierSpecialty выбранного блока.
+    """
+
+    objects = _TypicalSectionSpecialtyManager()
+
+
 def ensure_dsc_service_block():
     """Одна строка классификатора для системного раздела DSC."""
     from django.db.models import Max
@@ -1082,15 +1408,27 @@ def ensure_dsc_service_block():
     code = normalize_service_block_code(SYSTEM_DSC_SECTION_CODE)
     block = ServiceBlockClassifier.objects.filter(code=code).first()
     if block is not None:
+        changed = []
+        if not block.name_en:
+            block.name_en = SYSTEM_DSC_SECTION_DEFAULTS["name_en"]
+            changed.append("name_en")
+        if not block.name_ru:
+            block.name_ru = SYSTEM_DSC_SECTION_DEFAULTS["name_ru"]
+            changed.append("name_ru")
+        if changed:
+            block.save(update_fields=changed)
         return block
     position = (ServiceBlockClassifier.objects.aggregate(m=Max("position"))["m"] or 0) + 1
-    return ServiceBlockClassifier.objects.create(
+    block = ServiceBlockClassifier.objects.create(
         code=code,
         short_name=SYSTEM_DSC_SECTION_DEFAULTS["short_name"],
         short_name_ru=SYSTEM_DSC_SECTION_DEFAULTS["short_name_ru"],
+        name_en=SYSTEM_DSC_SECTION_DEFAULTS["name_en"],
+        name_ru=SYSTEM_DSC_SECTION_DEFAULTS["name_ru"],
         accounting_type="Разделы",
         position=position,
     )
+    return block
 
 
 class Grade(models.Model):

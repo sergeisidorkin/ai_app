@@ -3275,6 +3275,7 @@ class ChecklistSortWorkerUnitTests(SimpleTestCase):
         )
         self.assertIn("After=network-online.target docker.service dsh-compose.service", text)
         self.assertIn("ExecStartPre=/opt/dsh/dsh-healthcheck.sh", text)
+        self.assertIn("SupplementaryGroups=sergei", text)
         self.assertIn("TimeoutStartSec=300", text)
 
 

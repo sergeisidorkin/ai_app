@@ -3740,7 +3740,7 @@
 
   function isProposalTechnicalAssignmentSection(form, section) {
     const entry = getProposalTypicalSectionEntry(form, section?.service_name || section?.name || '', section?.code || '');
-    return String(entry?.accounting_type || '').trim() === 'Раздел';
+    return String(entry?.accounting_type || '').trim() === 'Разделы';
   }
 
   function getProposalTypicalSectionNames(form) {
@@ -9741,7 +9741,38 @@
       }
 
       function getProductRows() {
-        return Array.from(container.querySelectorAll('.proposal-product-row'));
+        return Array.from(container.querySelectorAll('.proposal-product-row')).filter(function (row) {
+          return row.dataset.productGroupLabel !== '1';
+        });
+      }
+
+      function proposalGroupOptions() {
+        return {
+          container: container,
+          productRowClass: 'proposal-product-row',
+          labelClass: 'proposal-product-group-label',
+          badgeSelector: '.proposal-product-badge',
+          displaySelector: '.proposal-product-display',
+          productById: productById,
+          bindRow: bindProductRow,
+          assignStageUid: function (member) {
+            member.dataset.stageUid = nextStageUid();
+          },
+          restoreNames: function (row) {
+            [
+              ['.proposal-consulting-select', 'type_consulting'],
+              ['.proposal-service-category-select', 'type_service_category'],
+              ['.proposal-service-subtype-select', 'type_service_subtype'],
+              ['.proposal-product-select', 'type'],
+            ].forEach(function (pair) {
+              const field = row.querySelector(pair[0]);
+              if (field) field.setAttribute('name', pair[1]);
+            });
+          },
+          after: function () {
+            syncStageContent();
+          },
+        };
       }
 
       function getServiceBlocks() {
@@ -10185,6 +10216,24 @@
         });
         productSelect?.addEventListener('change', function () {
           const selectedProductId = String(productSelect.value || '').trim();
+          const selected = productById.get(selectedProductId);
+          if (window.ProductGroupPicker && ProductGroupPicker.allow(container)) {
+            if (ProductGroupPicker.isGroup(selected)) {
+              if (row.dataset.productGroupLabel === '1' && row.dataset.groupProductId !== String(selected.id)) {
+                ProductGroupPicker.reifyLabel(row, proposalGroupOptions());
+              }
+              if (ProductGroupPicker.expand(row, selected, proposalGroupOptions())) return;
+              return;
+            }
+            if (row.dataset.productGroupLabel === '1') {
+              ProductGroupPicker.reifyLabel(row, proposalGroupOptions());
+            } else if (row.dataset.productGroupParent) {
+              const parent = productById.get(String(row.dataset.productGroupParent));
+              const stillMember = parent && (parent.member_ids || []).map(String).includes(selectedProductId);
+              if (!stillMember) ProductGroupPicker.clearMemberMarker(row);
+              ProductGroupPicker.prune(container, proposalGroupOptions());
+            }
+          }
           const refreshSeq = productAutofillRefreshSeq + 1;
           productAutofillRefreshSeq = refreshSeq;
           syncRow({ productId: selectedProductId });
@@ -11068,6 +11117,11 @@
         clone.dataset.selectedServiceSubtype = copiedState?.serviceSubtype || '';
         clone.dataset.selectedProductId = '';
         delete clone.dataset.eventsBound;
+        delete clone.dataset.productGroupParent;
+        delete clone.dataset.productGroupLabel;
+        clone.classList.remove('proposal-product-group-label');
+        const clonedGroupInput = clone.querySelector('input[name="row_group_id"]');
+        if (clonedGroupInput) clonedGroupInput.value = '';
         container.appendChild(clone);
         bindProductRow(clone);
         syncStageContent();
@@ -11076,10 +11130,16 @@
       container.addEventListener('click', function (event) {
         const removeBtn = event.target.closest('.proposal-product-remove');
         if (!removeBtn) return;
-        const rows = getProductRows();
         const row = removeBtn.closest('.proposal-product-row');
         if (!row) return;
+        if (row.dataset.productGroupLabel === '1' && window.ProductGroupPicker) {
+          ProductGroupPicker.releaseLabel(container, row, proposalGroupOptions());
+          syncStageContent();
+          return;
+        }
+        const rows = getProductRows();
         if (rows.length === 1) {
+          if (window.ProductGroupPicker) ProductGroupPicker.clearMemberMarker(row);
           row.dataset.selectedConsultingType = '';
           row.dataset.selectedServiceCategory = '';
           row.dataset.selectedServiceSubtype = '';
@@ -11090,10 +11150,14 @@
         } else {
           row.remove();
         }
+        if (window.ProductGroupPicker) ProductGroupPicker.prune(container, proposalGroupOptions());
         syncStageContent();
       });
 
-      getProductRows().forEach(bindProductRow);
+      if (window.ProductGroupPicker && ProductGroupPicker.allow(container)) {
+        ProductGroupPicker.restore(container, proposalGroupOptions());
+      }
+      container.querySelectorAll('.proposal-product-row').forEach(bindProductRow);
       syncStageContent();
 
       const api = {

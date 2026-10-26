@@ -1852,27 +1852,34 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                     )
                 else:
                     cleaned_data["final_report_percent"] = final_percent
-        product_ids = []
         raw_product_ids = self.data.getlist("type_id") if hasattr(self.data, "getlist") else self.data.get("type_id", [])
         if not isinstance(raw_product_ids, (list, tuple)):
             raw_product_ids = [raw_product_ids]
-        for raw_id in raw_product_ids:
+        raw_groups = self.data.getlist("row_group_id") if hasattr(self.data, "getlist") else self.data.get("row_group_id", [])
+        if not isinstance(raw_groups, (list, tuple)):
+            raw_groups = [raw_groups]
+        paired = []
+        for index, raw_id in enumerate(raw_product_ids):
             raw_id = str(raw_id or "").strip()
             if not raw_id:
                 continue
             try:
-                product_ids.append(int(raw_id))
+                product_id = int(raw_id)
             except (TypeError, ValueError):
                 continue
+            raw_group = raw_groups[index] if index < len(raw_groups) else ""
+            paired.append((product_id, str(raw_group or "").strip()))
 
         valid_ids = list(
             Product.objects
-            .filter(pk__in=set(product_ids))
+            .filter(pk__in={product_id for product_id, _group_id in paired})
             .order_by("position", "id")
             .values_list("pk", flat=True)
         )
         valid_set = set(valid_ids)
-        ordered_valid_ids = [product_id for product_id in product_ids if product_id in valid_set]
+        ordered_pairs = [item for item in paired if item[0] in valid_set]
+        ordered_valid_ids = [product_id for product_id, _group_id in ordered_pairs]
+        self.cleaned_row_group_ids = [group_id for _product_id, group_id in ordered_pairs]
         if not ordered_valid_ids:
             self.add_error("type_ids", "Укажите хотя бы один продукт.")
         elif not self.allow_multiple_products and len(ordered_valid_ids) > 1:
@@ -2091,7 +2098,11 @@ CONTRACT_PREFILL_PAYMENT_FIELDS = (
 
 
 def _ranked_products_from_proposal(proposal):
-    products = list(proposal.ordered_products())
+    links = list(proposal._ordered_product_links())
+    products = [link.product for link in links if getattr(link, "product_id", None)]
+    if not products:
+        products = list(proposal.ordered_products())
+        links = []
     if not products:
         return [{
             "rank": 1,
@@ -2099,7 +2110,21 @@ def _ranked_products_from_proposal(proposal):
             "service_category": "",
             "service_subtype": "",
             "product_id": "",
+            "product_group_id": "",
         }]
+    if links:
+        return [
+            {
+                "rank": index,
+                "consulting_type": (link.product.consulting_type_display or "").strip(),
+                "service_category": (link.product.service_category_display or "").strip(),
+                "service_subtype": (link.product.service_subtype_display or "").strip(),
+                "product_id": str(link.product_id),
+                "product_group_id": str(link.product_group_id or ""),
+            }
+            for index, link in enumerate(links, start=1)
+            if link.product_id
+        ]
     return [
         {
             "rank": index,
@@ -2107,6 +2132,7 @@ def _ranked_products_from_proposal(proposal):
             "service_category": (product.service_category_display or "").strip(),
             "service_subtype": (product.service_subtype_display or "").strip(),
             "product_id": str(product.pk),
+            "product_group_id": "",
         }
         for index, product in enumerate(products, start=1)
     ]

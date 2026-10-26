@@ -229,8 +229,8 @@ def _typical_section_specialty_ids(typical_section_id):
     return list(
         TypicalSection.objects
         .filter(pk=typical_section_pk)
-        .values_list("specialties__pk", flat=True)
-        .exclude(specialties__pk__isnull=True)
+        .values_list("service_block__ranked_specialties__specialty_id", flat=True)
+        .exclude(service_block__ranked_specialties__specialty_id__isnull=True)
         .distinct()
     )
 

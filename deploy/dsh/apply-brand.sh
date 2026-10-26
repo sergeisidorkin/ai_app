@@ -94,6 +94,21 @@ if [[ ! -f "$PROFILE_PKG" ]]; then
 fi
 [[ -f "$PROFILE_PKG" ]] || fail "web profile was not created at $PROFILE_PKG"
 
+# A fresh web profile defaults to live patch reload. That watcher needs the
+# Cordis HMR service, which this sidecar disables, so the UI exits on boot.
+python3 - "$PROFILE_PKG" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+profile = data.setdefault("dsh", {}).setdefault("profile", {})
+if profile.get("patchReload") != "startup":
+    profile["patchReload"] = "startup"
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+
 need_plugin=1
 if python3 - "$PROFILE_PKG" "$PLUGIN_NAME" "$PLUGIN_VERSION" <<'PY'
 import json

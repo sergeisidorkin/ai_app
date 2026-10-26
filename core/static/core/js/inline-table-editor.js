@@ -1795,6 +1795,7 @@
     const types = catalog.consulting_types || [];
     const categories = catalog.service_categories || [];
     const subtypes = catalog.service_subtypes || [];
+    const accuracyChoices = options.accuracy || [];
 
     function findCategory(id) {
       return categories.find(function (item) { return String(item.id) === String(id || ''); });
@@ -1863,6 +1864,11 @@
             return { value: String(item.id), label: item.label };
           }));
         }
+        if (ref.field === 'accuracy') {
+          return [{ value: '', label: '' }].concat(accuracyChoices.map(function (item) {
+            return { value: String(item.value), label: item.label };
+          }));
+        }
         return [];
       },
       getOwnerOptions: function () {
@@ -1883,6 +1889,12 @@
         }
         if (ref.field === 'service_subtype_ref') {
           const item = findSubtype(value);
+          return { value: value ? String(value) : '', label: item ? item.label : '' };
+        }
+        if (ref.field === 'accuracy') {
+          const item = accuracyChoices.find(function (entry) {
+            return String(entry.value) === String(value || '');
+          });
           return { value: value ? String(value) : '', label: item ? item.label : '' };
         }
         return { value: value, label: value };
@@ -1965,11 +1977,49 @@
       afterChange: function (ref, value) {
         if (ref.field !== 'service_block') return;
         const row = ref.cell.closest('tr');
+        if (!row) return;
         const item = findById(serviceBlocks, value);
-        const shortName = row && row.querySelector('td[data-service-block-name="en"]');
-        const shortNameRu = row && row.querySelector('td[data-service-block-name="ru"]');
+        const shortName = row.querySelector('td[data-service-block-name="en"]');
+        const shortNameRu = row.querySelector('td[data-service-block-name="ru"]');
         if (shortName) shortName.textContent = item ? (item.short_name || '') : '';
         if (shortNameRu) shortNameRu.textContent = item ? (item.short_name_ru || '') : '';
+        const accounting = row.querySelector('td[data-service-block-accounting]');
+        if (accounting) accounting.textContent = item ? (item.accounting_type || '') : '';
+        const expertise = row.querySelector('td[data-service-block-expertise]');
+        if (expertise) expertise.textContent = item ? (item.expertise || '') : '';
+        const department = row.querySelector('td[data-service-block-department]');
+        if (department) department.textContent = item ? (item.department || '') : '';
+        const executor = row.querySelector('td[data-service-block-executor]');
+        if (executor) {
+          const lines = item && Array.isArray(item.executor) ? item.executor : [];
+          executor.textContent = '';
+          if (!lines.length) {
+            executor.textContent = '—';
+          } else {
+            lines.forEach(function (line, index) {
+              if (index) executor.appendChild(document.createElement('br'));
+              executor.appendChild(document.createTextNode(line));
+            });
+          }
+        }
+        const hadBlock = Boolean(row.dataset.sourceBlock);
+        const previousEn = row.dataset.sourceNameEn || '';
+        const previousRu = row.dataset.sourceNameRu || '';
+        function copySectionName(field, previous, next) {
+          const cell = row.querySelector('td[data-inline-field="' + field + '"]');
+          if (!cell) return;
+          const current = readCellValue(cell);
+          if (!hadBlock) {
+            if (!String(current || '').trim()) applyCellValue(cell, next || '');
+          } else if (String(current || '') === previous) {
+            applyCellValue(cell, next || '');
+          }
+        }
+        copySectionName('name_en', previousEn, item ? (item.name_en || '') : '');
+        copySectionName('name_ru', previousRu, item ? (item.name_ru || '') : '');
+        row.dataset.sourceBlock = value || '';
+        row.dataset.sourceNameEn = item ? (item.name_en || '') : '';
+        row.dataset.sourceNameRu = item ? (item.name_ru || '') : '';
       },
       normalizeValue: function (ref, value) {
         if (ref.field === 'service_block') {
