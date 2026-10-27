@@ -3,26 +3,14 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
-def drop_unlinked_and_duplicate_sections(apps, schema_editor):
-    TypicalSection = apps.get_model("policy_app", "TypicalSection")
-    TypicalSection.objects.filter(service_block__isnull=True).delete()
-    seen = set()
-    duplicate_ids = []
-    rows = TypicalSection.objects.order_by("product_id", "service_block_id", "id").values_list(
-        "id", "product_id", "service_block_id"
+def prepare_sections(apps, schema_editor):
+    from policy_app.service_block_link import prepare_sections_for_required_service_block
+
+    prepare_sections_for_required_service_block(
+        apps.get_model("policy_app", "TypicalSection"),
+        apps.get_model("policy_app", "ServiceBlockClassifier"),
+        schema_editor,
     )
-    for section_id, product_id, block_id in rows:
-        key = (product_id, block_id)
-        if key in seen:
-            duplicate_ids.append(section_id)
-        else:
-            seen.add(key)
-    if duplicate_ids:
-        TypicalSection.objects.filter(pk__in=duplicate_ids).delete()
-    # Deletes queue deferred FK checks. PostgreSQL refuses ALTER TABLE while
-    # those trigger events are still pending in this transaction.
-    if schema_editor.connection.vendor == "postgresql":
-        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 class Migration(migrations.Migration):
@@ -72,7 +60,7 @@ class Migration(migrations.Migration):
                 verbose_name="Код",
             ),
         ),
-        migrations.RunPython(drop_unlinked_and_duplicate_sections, migrations.RunPython.noop),
+        migrations.RunPython(prepare_sections, migrations.RunPython.noop),
         migrations.AlterField(
             model_name="typicalsection",
             name="service_block",
