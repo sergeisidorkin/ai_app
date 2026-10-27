@@ -19,6 +19,10 @@ def drop_unlinked_and_duplicate_sections(apps, schema_editor):
             seen.add(key)
     if duplicate_ids:
         TypicalSection.objects.filter(pk__in=duplicate_ids).delete()
+    # Deletes queue deferred FK checks. PostgreSQL refuses ALTER TABLE while
+    # those trigger events are still pending in this transaction.
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 class Migration(migrations.Migration):

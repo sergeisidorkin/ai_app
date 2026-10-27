@@ -2225,6 +2225,12 @@ class BusinessEntityReorganizationMigrationTests(TransactionTestCase):
         self.executor.migrate(self.migrate_to)
         self.apps = self.executor.loader.project_state(self.migrate_to).apps
 
+    def tearDown(self):
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        super().tearDown()
+
     def test_backfill_creates_one_event_per_legacy_relation_row(self):
         BusinessEntityReorganizationEvent = self.apps.get_model(
             "classifiers_app",
