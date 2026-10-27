@@ -48,7 +48,10 @@ from policy_app.forms import (
     TypicalServiceCompositionForm,
 )
 from policy_app.service_block_link import (
+    ServiceBlockMigrationError,
+    conflicting_product_block_ids,
     link_typical_sections_to_service_blocks,
+    reconcile_classifier_expertise,
 )
 from policy_app.models import (
     ConsultingDirection,
@@ -122,7 +125,7 @@ class RemoveTypicalSectionExecutorMigrationTests(TransactionTestCase):
         )
         self.section = TypicalSection.objects.create(
             product_id=product.pk,
-            code="MIG-1",
+            code="MIG",
             short_name="mig-1",
             short_name_ru="mig-1",
             name_en="Migration section",
@@ -290,6 +293,155 @@ class ConsultingCatalogBackfillMigrationTests(TransactionTestCase):
         self.assertTrue(
             ConsultingServiceSubtype.objects.filter(name="Аудит проектных решений").exists()
         )
+
+
+class ClassifierSourceMigrationTests(TransactionTestCase):
+    migrate_from = ("policy_app", "0059_product_group")
+    migrate_to = ("policy_app", "0060_section_classifier_source")
+
+    def setUp(self):
+        super().setUp()
+        self.executor = MigrationExecutor(connection)
+        self.executor.migrate([self.migrate_from])
+        self.old_apps = self.executor.loader.project_state([self.migrate_from]).apps
+
+    def tearDown(self):
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM policy_app_typicalsection")
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        super().tearDown()
+
+    def _models(self):
+        apps = self.old_apps
+        return (
+            apps.get_model("policy_app", "Product"),
+            apps.get_model("policy_app", "TypicalSection"),
+            apps.get_model("policy_app", "ServiceBlockClassifier"),
+            apps.get_model("policy_app", "ExpertiseDirection"),
+        )
+
+    def _product(self, Product, short_name):
+        return Product.objects.create(
+            short_name=short_name,
+            name_en=short_name,
+            name_ru=short_name,
+            position=1,
+        )
+
+    def _section(self, TypicalSection, product, code, **extra):
+        payload = {
+            "product_id": product.pk,
+            "code": code,
+            "short_name": extra.pop("short_name", "name"),
+            "short_name_ru": extra.pop("short_name_ru", "имя"),
+            "name_en": "Section",
+            "name_ru": "Раздел",
+            "accounting_type": "Раздел",
+            "position": extra.pop("position", 1),
+        }
+        payload.update(extra)
+        return TypicalSection.objects.create(**payload)
+
+    def _migrate_forward(self):
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate([self.migrate_to])
+        return executor.loader.project_state([self.migrate_to]).apps
+
+    def test_links_existing_block_and_copies_expertise_without_deleting_section(self):
+        Product, TypicalSection, ServiceBlockClassifier, ExpertiseDirection = self._models()
+        direction = ExpertiseDirection.objects.create(name="Горная", short_name="GEO", position=1)
+        product = self._product(Product, "AUD-P")
+        block = ServiceBlockClassifier.objects.create(
+            code="AUD",
+            short_name="other",
+            short_name_ru="другое",
+            accounting_type="Разделы",
+            position=1,
+        )
+        section = self._section(
+            TypicalSection,
+            product,
+            "aud",
+            short_name="audit",
+            short_name_ru="аудит",
+            expertise_dir_id=direction.pk,
+            expertise_direction_id=None,
+        )
+        other_product = self._product(Product, "AUD-Q")
+        other = self._section(
+            TypicalSection,
+            other_product,
+            "AUD",
+            short_name="audit",
+            short_name_ru="аудит",
+            expertise_dir_id=direction.pk,
+            position=2,
+        )
+
+        new_apps = self._migrate_forward()
+        NewSection = new_apps.get_model("policy_app", "TypicalSection")
+        NewBlock = new_apps.get_model("policy_app", "ServiceBlockClassifier")
+
+        self.assertTrue(NewSection.objects.filter(pk=section.pk).exists())
+        self.assertTrue(NewSection.objects.filter(pk=other.pk).exists())
+        stored = NewBlock.objects.get(pk=block.pk)
+        self.assertEqual(stored.expertise_dir_id, direction.pk)
+        self.assertIsNone(stored.expertise_direction_id)
+        self.assertEqual(NewSection.objects.get(pk=section.pk).service_block_id, block.pk)
+        self.assertEqual(NewSection.objects.get(pk=other.pk).service_block_id, block.pk)
+
+    def test_stops_instead_of_deleting_section_with_unusable_code(self):
+        Product, TypicalSection, _ServiceBlockClassifier, _ExpertiseDirection = self._models()
+        product = self._product(Product, "LEG-P")
+        section = self._section(TypicalSection, product, "SEC-1", short_name="legacy", short_name_ru="старый")
+
+        with self.assertRaises(ServiceBlockMigrationError) as caught:
+            self._migrate_forward()
+
+        self.assertIn(f"id={section.pk}", str(caught.exception))
+        self.assertIn("SEC-1", str(caught.exception))
+        self.assertIn("не удалены", str(caught.exception))
+        self.assertTrue(TypicalSection.objects.filter(pk=section.pk).exists())
+
+    def test_stops_when_section_expertise_conflicts(self):
+        Product, TypicalSection, ServiceBlockClassifier, ExpertiseDirection = self._models()
+        first = ExpertiseDirection.objects.create(name="Горная", short_name="GEO", position=1)
+        second = ExpertiseDirection.objects.create(name="Экология", short_name="ECO", position=2)
+        product = self._product(Product, "CNF-P")
+        other_product = self._product(Product, "CNF-Q")
+        block = ServiceBlockClassifier.objects.create(
+            code="CNF",
+            short_name="conflict",
+            short_name_ru="конфликт",
+            accounting_type="Разделы",
+            position=1,
+        )
+        left = self._section(
+            TypicalSection,
+            product,
+            "CNF",
+            expertise_dir_id=first.pk,
+        )
+        right = self._section(
+            TypicalSection,
+            other_product,
+            "CNF",
+            expertise_dir_id=second.pk,
+            position=2,
+        )
+
+        with self.assertRaises(ServiceBlockMigrationError) as caught:
+            self._migrate_forward()
+
+        message = str(caught.exception)
+        self.assertIn(f"id={left.pk}", message)
+        self.assertIn(f"id={right.pk}", message)
+        self.assertIn(block.code, message)
+        self.assertTrue(TypicalSection.objects.filter(pk=left.pk).exists())
+        self.assertTrue(TypicalSection.objects.filter(pk=right.pk).exists())
 
 
 class PolicyTablePartialEndpointsTests(TestCase):
@@ -4780,6 +4932,41 @@ class ServiceBlockClassifierTableTests(TestCase):
         self.assertFalse(
             ServiceBlockClassifierSpecialty.objects.filter(specialty=foreign, classifier=self.first).exists()
         )
+
+
+class ServiceBlockMigrationRuleTests(TestCase):
+    def test_reconcile_fills_empty_classifier_when_sections_agree(self):
+        dir_id, direction_id = reconcile_classifier_expertise(
+            None,
+            None,
+            [(4, 5, None), (6, 5, 8)],
+        )
+
+        self.assertEqual((dir_id, direction_id), (5, 8))
+
+    def test_reconcile_keeps_classifier_value_and_rejects_a_different_section(self):
+        self.assertEqual(reconcile_classifier_expertise(5, 8, [(4, 5, None)]), (5, 8))
+
+        with self.assertRaises(ServiceBlockMigrationError) as caught:
+            reconcile_classifier_expertise(5, None, [(4, 7, None)])
+
+        self.assertIn("id=4", str(caught.exception))
+        self.assertIn("не удалены", str(caught.exception))
+
+    def test_reconcile_rejects_sections_that_disagree_with_each_other(self):
+        with self.assertRaises(ServiceBlockMigrationError) as caught:
+            reconcile_classifier_expertise(None, None, [(4, 5, 1), (6, 7, 1)])
+
+        message = str(caught.exception)
+        self.assertIn("id=4", message)
+        self.assertIn("id=6", message)
+
+    def test_duplicate_product_block_ids_keep_every_section(self):
+        self.assertEqual(
+            conflicting_product_block_ids([(1, 10, 3), (2, 10, 4), (3, 10, 3)]),
+            [[1, 3]],
+        )
+        self.assertEqual(conflicting_product_block_ids([(1, 10, 3)]), [])
 
 
 class ServiceBlockSectionLinkTests(TestCase):

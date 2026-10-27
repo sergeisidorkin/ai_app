@@ -11,9 +11,10 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, TransactionTestCase
+from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.urls import reverse
 
+from classifiers_app.numcap_official_csv import region_from_gar_territory, resolve_numcap_region
 from classifiers_app.models import (
     BusinessEntityAttributeRecord,
     BusinessEntityIdentifierRecord,
@@ -560,6 +561,55 @@ class NumcapRecordTests(TestCase):
         self.assertEqual(NumcapRecord.objects.count(), 2)
         self.assertTrue(NumcapRecord.objects.filter(code="495", region="Москва").exists())
         self.assertTrue(NumcapRecord.objects.filter(code="812", region="Санкт-Петербург").exists())
+
+    def test_numcap_csv_upload_fills_region_from_gar_when_official_region_is_blank(self):
+        csv_content = (
+            "АВС/ DEF;От;До;Емкость;Оператор;Регион;Территория ГАР;ИНН\n"
+            '301;2110000;2129999;20000;ПАО "Ростелеком";-;'
+            "г. Улан-Удэ|г.о. город Улан-Удэ|Республика Бурятия;0320000000\n"
+        ).encode("utf-8")
+        response = self.client.post(
+            reverse("numcap_csv_upload"),
+            {"csv_files": [SimpleUploadedFile("ABC-3xx.csv", csv_content, content_type="text/csv")]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        item = NumcapRecord.objects.get()
+        self.assertEqual(item.region, "г. Улан-Удэ|Республика Бурятия")
+        self.assertEqual(item.gar_territory, "г. Улан-Удэ|г.о. город Улан-Удэ|Республика Бурятия")
+
+
+class NumcapOfficialRegionTests(SimpleTestCase):
+    def test_region_from_gar_matches_local_short_form(self):
+        self.assertEqual(region_from_gar_territory("Город Москва"), "г. Москва")
+        self.assertEqual(
+            region_from_gar_territory("г. Екатеринбург|г.о. город Екатеринбург|Свердловская область"),
+            "г. Екатеринбург|Свердловская обл.",
+        )
+        self.assertEqual(
+            region_from_gar_territory("г. Ижевск|г.о. город Ижевск|Удмуртская Республика"),
+            "г. Ижевск|Республика Удмуртская",
+        )
+        self.assertEqual(
+            region_from_gar_territory(
+                "г. Петровск-Забайкальский|Петровск-Забайкальский м.о.|Забайкальский край"
+            ),
+            "г. Петровск-Забайкальский|р-н Петровск-Забайкальский|Забайкальский край",
+        )
+        self.assertEqual(
+            region_from_gar_territory("м.р-н Северо-Байкальский|Республика Бурятия"),
+            "р-н Северо-Байкальский|Республика Бурятия",
+        )
+        self.assertEqual(region_from_gar_territory("Российская Федерация"), "Российская Федерация")
+        self.assertEqual(
+            region_from_gar_territory("Город Москва, Московская область"),
+            "г. Москва|Московская обл.",
+        )
+
+    def test_explicit_region_is_kept(self):
+        self.assertEqual(resolve_numcap_region("Москва", "Город Москва"), "Москва")
+        self.assertEqual(resolve_numcap_region("-", "Город Санкт-Петербург"), "г. Санкт-Петербург")
 
 
 class LegalEntityAutocompleteTests(TestCase):

@@ -127,6 +127,206 @@ def backfill_service_block_executors(section_model, section_link_model, block_li
         block_link_model.objects.bulk_create(to_create)
 
 
+class ServiceBlockMigrationError(RuntimeError):
+    """Миграция остановлена, чтобы не стереть разделы или их экспертизу."""
+
+
+def link_unlinked_sections_by_existing_code(section_model, block_model):
+    """Привязывает раздел к уже существующему блоку с тем же кодом.
+
+    Имена при этом не переписываются: строка раздела сохраняет свой id.
+    Новый блок здесь не создаётся — для этого есть связь по совпавшим именам.
+    """
+    blocks = {_code(block.code): block.pk for block in block_model.objects.all()}
+    grouped = {}
+    for section in section_model.objects.filter(service_block_id=None).only("id", "code"):
+        code = _code(section.code)
+        block_id = blocks.get(code)
+        if block_id is None or not _THREE_LETTERS.fullmatch(code):
+            continue
+        grouped.setdefault(block_id, []).append(section.pk)
+    for block_id, section_ids in grouped.items():
+        section_model.objects.filter(pk__in=section_ids).update(service_block_id=block_id)
+
+
+def conflicting_product_block_ids(rows):
+    """Группы id разделов, которые делят одну пару продукт + блок."""
+    grouped = {}
+    for section_id, product_id, block_id in rows:
+        grouped.setdefault((product_id, block_id), []).append(section_id)
+    return [section_ids for section_ids in grouped.values() if len(section_ids) > 1]
+
+
+def reconcile_classifier_expertise(block_dir_id, block_direction_id, section_rows):
+    """Возвращает экспертизу блока после переноса однозначных значений из разделов.
+
+    section_rows — пары (id раздела, expertise_dir_id, expertise_direction_id).
+    Пустое поле блока заполняется, только если все непустые разделы называют одно
+    и то же значение. Уже записанное поле блока не затирается. Расхождение — ошибка.
+    """
+    section_rows = list(section_rows)
+    dir_id, dir_conflicts = _reconcile_expertise_id(
+        block_dir_id,
+        ((section_id, dir_id) for section_id, dir_id, _direction_id in section_rows),
+    )
+    direction_id, direction_conflicts = _reconcile_expertise_id(
+        block_direction_id,
+        ((section_id, direction_id) for section_id, _dir_id, direction_id in section_rows),
+    )
+    if dir_conflicts or direction_conflicts:
+        raise ServiceBlockMigrationError(
+            "Миграция остановлена: экспертизу раздела нельзя перенести в классификатор "
+            "без конфликта. Поля раздела не удалены. Согласуйте экспертизу и подразделение "
+            "у перечисленных строк и повторите миграцию.\n"
+            + _expertise_conflict_text(dir_conflicts, direction_conflicts)
+        )
+    return dir_id, direction_id
+
+
+def _reconcile_expertise_id(current, pairs):
+    filled = [(section_id, value) for section_id, value in pairs if value is not None]
+    if current is not None:
+        conflicts = [(section_id, value) for section_id, value in filled if value != current]
+        return current, conflicts
+    unique = {value for _section_id, value in filled}
+    if len(unique) <= 1:
+        return (next(iter(unique)) if unique else None), []
+    return None, filled
+
+
+def _expertise_conflict_text(dir_conflicts, direction_conflicts):
+    lines = []
+    for section_id, value in dir_conflicts:
+        lines.append(f"- раздел id={section_id}: экспертиза id={value}")
+    for section_id, value in direction_conflicts:
+        lines.append(f"- раздел id={section_id}: подразделение id={value}")
+    return "\n".join(lines)
+
+
+def prepare_sections_for_required_service_block(section_model, block_model, schema_editor):
+    """Готовит разделы к обязательному блоку услуг, не удаляя живые строки.
+
+    Сначала повторяет однозначную связь по имени, затем привязывает оставшиеся
+    разделы к уже существующему блоку с тем же кодом. Если раздел так и не
+    привязан, у продукта два раздела на один блок или экспертиза конфликтует,
+    миграция останавливается с текстом, по которому можно поправить данные.
+    """
+    link_typical_sections_to_service_blocks(section_model, block_model)
+    link_unlinked_sections_by_existing_code(section_model, block_model)
+    _raise_if_sections_stay_unlinked(section_model)
+    _raise_if_product_blocks_repeat(section_model)
+    _backfill_empty_classifier_expertise(section_model, block_model)
+    # Обновление ссылки на блок ставит отложенные проверки внешних ключей.
+    # PostgreSQL не даёт изменить таблицу, пока эти проверки не выполнены.
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+
+def _raise_if_sections_stay_unlinked(section_model):
+    unlinked = list(
+        section_model.objects.filter(service_block_id=None)
+        .select_related("product")
+        .order_by("product_id", "id")
+    )
+    if not unlinked:
+        return
+    names_by_code = {}
+    for section in unlinked:
+        code = _code(section.code)
+        names_by_code.setdefault(code, set()).add(
+            (_name(getattr(section, "short_name", "")), _name(getattr(section, "short_name_ru", "")))
+        )
+    lines = [
+        "Миграция остановлена: есть типовые разделы без блока услуг. Строки не удалены.",
+        "Привяжите раздел к классификатору с кодом из трёх латинских букв.",
+        "Если блока ещё нет, выровняйте краткие имена разделов с одним кодом, "
+        "чтобы его можно было создать однозначно, и повторите миграцию.",
+    ]
+    for section in unlinked:
+        code = _code(section.code)
+        product = getattr(section, "product", None)
+        product_name = getattr(product, "short_name", None) or section.product_id
+        lines.append(
+            f"- id={section.pk} продукт={product_name} код={section.code!r} "
+            f"краткое имя={_name(getattr(section, 'short_name', ''))!r}/"
+            f"{_name(getattr(section, 'short_name_ru', ''))!r}: "
+            f"{_unlinked_section_reason(section, names_by_code.get(code, set()))}"
+        )
+    raise ServiceBlockMigrationError("\n".join(lines))
+
+
+def _unlinked_section_reason(section, names):
+    code = _code(section.code)
+    if not _THREE_LETTERS.fullmatch(code):
+        return "код не состоит из трёх латинских букв"
+    if len(names) > 1:
+        return "у разделов с этим кодом разные краткие имена, поэтому блок не создан"
+    if not _name(getattr(section, "short_name", "")):
+        return "нет краткого имени, чтобы создать новый блок"
+    return "нет блока услуг с таким кодом"
+
+
+def _raise_if_product_blocks_repeat(section_model):
+    rows = section_model.objects.order_by("product_id", "service_block_id", "id").values_list(
+        "id",
+        "product_id",
+        "service_block_id",
+    )
+    groups = conflicting_product_block_ids(rows)
+    if not groups:
+        return
+    lines = [
+        "Миграция остановлена: у одного продукта несколько разделов ссылаются на один блок услуг.",
+        "Строки не удалены. Оставьте один раздел на эту пару и повторите миграцию.",
+    ]
+    for section_ids in groups:
+        lines.append("- разделы id=" + ", ".join(str(section_id) for section_id in section_ids))
+    raise ServiceBlockMigrationError("\n".join(lines))
+
+
+def _backfill_empty_classifier_expertise(section_model, block_model):
+    sections = list(
+        section_model.objects.exclude(service_block_id=None).order_by("service_block_id", "id")
+    )
+    if not sections:
+        return
+    by_block = {}
+    for section in sections:
+        by_block.setdefault(section.service_block_id, []).append(
+            (section.pk, section.expertise_dir_id, section.expertise_direction_id)
+        )
+    blocks = {
+        block.pk: block
+        for block in block_model.objects.filter(pk__in=by_block)
+    }
+    for block_id, section_rows in by_block.items():
+        block = blocks.get(block_id)
+        if block is None:
+            continue
+        try:
+            dir_id, direction_id = reconcile_classifier_expertise(
+                block.expertise_dir_id,
+                block.expertise_direction_id,
+                section_rows,
+            )
+        except ServiceBlockMigrationError as exc:
+            raise ServiceBlockMigrationError(
+                f"{exc}\n"
+                f"Блок {block.code} (id={block.pk}): "
+                f"экспертиза id={block.expertise_dir_id}, "
+                f"подразделение id={block.expertise_direction_id}."
+            ) from exc
+        changed = []
+        if block.expertise_dir_id != dir_id:
+            block.expertise_dir_id = dir_id
+            changed.append("expertise_dir")
+        if block.expertise_direction_id != direction_id:
+            block.expertise_direction_id = direction_id
+            changed.append("expertise_direction")
+        if changed:
+            block.save(update_fields=changed)
+
+
 def replace_service_block_classifier_specialties(classifier, raw_ids):
     """Заменяет список специальностей одного блока. Разделы не читает и не меняет."""
     from experts_app.models import ExpertSpecialty

@@ -15,6 +15,8 @@ DEFAULT_FILENAMES = [
     "DEF-9xx.csv",
 ]
 EXPECTED_FIELDS = {"АВС/ DEF", "От", "До", "Емкость", "Оператор", "Регион"}
+PLACEHOLDER_REGIONS = {"", "-", "—", "–", "−"}
+REGION_MAX_LENGTH = 255
 
 
 def normalize_guillemets(value):
@@ -29,6 +31,85 @@ def normalize_guillemets(value):
         else:
             out.append(char)
     return "".join(out)
+
+
+def _legacy_gar_piece(part):
+    text = re.sub(r"\s+", " ", str(part or "")).strip(" ,")
+    text = re.sub(r"^Город\s+", "г. ", text)
+    text = re.sub(r"^г\.о\.\s+город\s+", "г. ", text, flags=re.IGNORECASE)
+    text = re.sub(r"^м\.р-н\s+", "р-н ", text)
+    municipal = re.match(r"^(.+?)\s+м\.о\.$", text)
+    if municipal:
+        text = "р-н " + municipal.group(1)
+    republic = re.match(r"^(.+?)\s+Республика$", text)
+    if republic and not text.startswith("Республика"):
+        text = "Республика " + republic.group(1)
+    text = text.replace(" автономный округ", " АО")
+    text = text.replace(" автономная область", " автономная обл.")
+    text = re.sub(r"\s+область\b", " обл.", text)
+    return text
+
+
+def _fit_region(value):
+    if len(value) <= REGION_MAX_LENGTH:
+        return value
+    trimmed = value[:REGION_MAX_LENGTH]
+    if "|" in trimmed:
+        trimmed = trimmed.rsplit("|", 1)[0]
+    return trimmed
+
+
+def region_from_gar_territory(gar_territory):
+    """Собирает колонку «Регион» в короткой форме из официальной территории ГАР.
+
+    Берётся населённый пункт и субъект, промежуточный городской округ с тем же
+    названием опускается, район сохраняется. «Город Москва» становится
+    «г. Москва», «Свердловская область» — «Свердловская обл.».
+    """
+    raw_parts = [
+        part.strip()
+        for part in str(gar_territory or "").split("|")
+        if part.strip() and part.strip() not in PLACEHOLDER_REGIONS
+    ]
+    if not raw_parts:
+        return ""
+    if len(raw_parts) == 1 and ("," in raw_parts[0] or raw_parts[0].casefold() == "российская федерация"):
+        if raw_parts[0].casefold() == "российская федерация":
+            return "Российская Федерация"
+        chunks = [chunk.strip() for chunk in raw_parts[0].split(",") if chunk.strip()]
+        if len(chunks) > 4:
+            return "Российская Федерация"
+        names = []
+        seen = set()
+        for chunk in chunks:
+            name = _legacy_gar_piece(chunk)
+            key = name.casefold()
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            names.append(name)
+        return _fit_region("|".join(names))
+
+    names = [_legacy_gar_piece(part) for part in raw_parts]
+    kept = []
+    seen = set()
+    last_index = len(names) - 1
+    for index, name in enumerate(names):
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        if index not in (0, last_index) and not name.startswith("р-н "):
+            continue
+        seen.add(key)
+        kept.append(name)
+    return _fit_region("|".join(kept))
+
+
+def resolve_numcap_region(region, gar_territory):
+    cleaned = str(region or "").strip()
+    if cleaned not in PLACEHOLDER_REGIONS:
+        return cleaned
+    return region_from_gar_territory(gar_territory)
 
 
 def extract_zone_codes(raw_code):
@@ -115,8 +196,8 @@ def process_numcap_official_sources(
                 end = str(row.get("До") or "").strip()
                 capacity = str(row.get("Емкость") or "").strip()
                 operator = normalize_guillemets(str(row.get("Оператор") or "").strip())
-                region = str(row.get("Регион") or "").strip()
                 gar_territory = str(row.get("Территория ГАР") or "").strip()
+                region = resolve_numcap_region(row.get("Регион"), gar_territory)
                 inn = str(row.get("ИНН") or "").strip()
                 zone_codes = extract_zone_codes(raw_code)
                 if not zone_codes or not begin or not end:
