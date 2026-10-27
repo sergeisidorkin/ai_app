@@ -31,7 +31,7 @@ elif env.bool("READ_DOTENV", False) or (
 # Сканы печати и файлы договоров больше стандартных 2.5 МБ Django.
 DATA_UPLOAD_MAX_MEMORY_SIZE = env.int(
     "DATA_UPLOAD_MAX_MEMORY_SIZE",
-    default=25 * 1024 * 1024,
+    default=32 * 1024 * 1024,
 )
 
 # On local macOS development, make Python SMTP TLS use certifi by default.
