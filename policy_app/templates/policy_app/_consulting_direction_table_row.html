@@ -1,0 +1,20 @@
+<tr data-policy-filter-row="1"
+    data-consulting-type="{{ consulting_type|default_if_none:'' }}"
+    data-service-category="{{ service_type|default_if_none:'' }}"
+    data-service-subtype="{{ service_subtype|default_if_none:'' }}">
+    <td class="text-nowrap">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+            <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="consulting-dir-sel-{{ direction_id }}-{{ row_key }}"
+                       disabled
+                       aria-label="Строка направления консалтинга">
+            </div>
+        {% endif %}
+    </td>
+    <td>{{ consulting_type|default:"—" }}</td>
+    <td class="text-nowrap">{{ code|default:"—" }}</td>
+    <td>{{ service_type|default:"—" }}</td>
+    <td>{{ service_subtype|default:"—" }}</td>
+</tr>

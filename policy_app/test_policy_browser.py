@@ -179,7 +179,7 @@ def test_expert_specialties_table_lives_in_products_not_experts(
         ).scroll_into_view_if_needed()
         page.locator("#policy-expert-specialties-section table#esp-table").wait_for()
         assert page.locator("#policy-expert-specialties-section").get_by_text(
-            "Специальности исполнителей"
+            "Классификатор специальностей исполнителей"
         ).count() == 1
         assert page.locator(
             "#policy-expert-specialties-section td[data-col='specialty']"
@@ -1067,78 +1067,25 @@ def test_product_workspace_typical_section_inline_edit_saves(live_server, django
         assert dsc_color["code"] == dsc_color["name"]
         assert dsc_color["name"] == "rgb(173, 181, 189)"
 
-        spec_cell = page.locator(
-            '#policy-typical-sections-section td[data-inline-field="specialty_ids"]'
-        )
-        spec_rows = spec_cell.locator(".inline-specialty-row")
-        assert spec_rows.count() == 2
-        assert spec_rows.nth(0).locator(".inline-specialty-label").inner_text() == "Горное дело BR"
-        assert spec_rows.nth(1).locator(".inline-specialty-label").inner_text() == "Геология BR"
-        dash = spec_rows.nth(0).evaluate("el => getComputedStyle(el).backgroundImage")
-        assert "repeating-linear-gradient" in dash
-        width_before_hover = spec_cell.evaluate("el => el.getBoundingClientRect().width")
-        actions_display = spec_rows.nth(0).locator(".inline-specialty-actions").evaluate(
-            "el => getComputedStyle(el).display"
-        )
-        assert actions_display in ("inline-flex", "flex")
-        spec_rows.nth(0).hover()
-        assert spec_rows.nth(0).locator('[data-specialty-action="add"]').is_visible()
-        assert spec_rows.nth(0).locator('[data-specialty-action="remove"]').is_visible()
-        width_after_hover = spec_cell.evaluate("el => el.getBoundingClientRect().width")
-        assert abs(width_after_hover - width_before_hover) <= 1
-        icon_layout = spec_rows.nth(0).evaluate(
-            """(el) => {
-              const chevron = el.querySelector('.inline-specialty-chevron');
-              const add = el.querySelector('.inline-specialty-add');
-              const actions = el.querySelector('.inline-specialty-actions');
-              const cr = chevron.getBoundingClientRect();
-              const ar = add.getBoundingClientRect();
-              const row = el.getBoundingClientRect();
+        locked = page.evaluate(
+            """() => {
+              const section = document.querySelector('#policy-typical-sections-section');
+              const row = section.querySelector('tr[data-inline-row-id]');
+              const executor = row && row.querySelector('[data-service-block-executor]');
+              const accounting = row && row.querySelector('[data-service-block-accounting]');
               return {
-                addAfterChevron: ar.left >= cr.right - 1,
-                addInsideRow: ar.top >= row.top - 1 && ar.bottom <= row.bottom + 1,
-                actionsBg: actions ? getComputedStyle(actions).backgroundColor : '',
+                specialtyEditor: section.querySelectorAll('[data-inline-field="specialty_ids"]').length,
+                accountingEditor: section.querySelectorAll('[data-inline-field="accounting_type"]').length,
+                executor: executor ? executor.textContent : '',
+                accounting: accounting ? accounting.textContent.trim() : '',
               };
             }"""
         )
-        assert icon_layout["addAfterChevron"]
-        assert icon_layout["addInsideRow"]
-        assert icon_layout["actionsBg"] in ("rgba(0, 0, 0, 0)", "transparent")
-        spec_rows.nth(0).locator('[data-specialty-action="add"]').click(force=True)
-        page.wait_for_function(
-            """() => {
-              const rows = document.querySelectorAll(
-                '#policy-typical-sections-section td[data-inline-field="specialty_ids"] .inline-specialty-row'
-              );
-              const overlay = document.querySelector('.inline-table-select-editor');
-              return rows.length === 3
-                && (!overlay || overlay.classList.contains('d-none'));
-            }"""
-        )
-        spec_cell.locator(".inline-specialty-row").nth(1).locator(
-            '[data-specialty-action="remove"]'
-        ).click(force=True)
-        page.wait_for_function(
-            """() => {
-              const labels = Array.from(document.querySelectorAll(
-                '#policy-typical-sections-section td[data-inline-field="specialty_ids"] .inline-specialty-label'
-              )).map((el) => el.textContent.trim());
-              return labels.length === 2
-                && labels[0] === 'Горное дело BR'
-                && labels[1] === 'Геология BR';
-            }"""
-        )
-        spec_rows = spec_cell.locator(".inline-specialty-row")
-        spec_rows.nth(0).hover()
-        spec_rows.nth(0).locator('[data-specialty-action="move"][data-dir="1"]').click(force=True)
-        page.wait_for_function(
-            """() => {
-              const labels = Array.from(document.querySelectorAll(
-                '#policy-typical-sections-section td[data-inline-field="specialty_ids"] .inline-specialty-label'
-              )).map((el) => el.textContent.trim());
-              return labels[0] === 'Геология BR' && labels[1] === 'Горное дело BR';
-            }"""
-        )
+        assert locked["specialtyEditor"] == 0
+        assert locked["accountingEditor"] == 0
+        assert "Горное дело BR" in locked["executor"]
+        assert "Геология BR" in locked["executor"]
+        assert locked["accounting"] == "Разделы"
 
         name_cell = page.locator(
             '#policy-typical-sections-section td[data-inline-field="name_ru"]'
@@ -1173,7 +1120,7 @@ def test_product_workspace_typical_section_inline_edit_saves(live_server, django
               ).closest('tr');
               const chevronTop = getComputedStyle(
                 document.querySelector(
-                  '#policy-typical-sections-section td[data-inline-field="accounting_type"]'
+                  '#policy-typical-sections-section td[data-inline-field="service_block"]'
                 ),
                 '::after'
               ).top;
@@ -1227,35 +1174,6 @@ def test_product_workspace_typical_section_inline_edit_saves(live_server, django
             }"""
         )
 
-        accounting_cell = page.locator(
-            '#policy-typical-sections-section td[data-inline-field="accounting_type"]'
-        )
-        page.evaluate(
-            """() => {
-              const cell = document.querySelector(
-                '#policy-typical-sections-section td[data-inline-field="accounting_type"]'
-              );
-              if (!cell) return;
-              cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-              cell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-            }"""
-        )
-        overlay = page.locator(".inline-table-select-editor")
-        page.wait_for_function(
-            """() => {
-              const overlay = document.querySelector('.inline-table-select-editor');
-              return overlay && overlay.dataset.inlineOpen === '1' && !overlay.classList.contains('d-none');
-            }"""
-        )
-        overlay.select_option(value="Услуги", force=True)
-        page.wait_for_function(
-            """() => {
-              const typeCell = document.querySelector(
-                '#policy-typical-sections-section td[data-inline-field="accounting_type"]'
-              );
-              return typeCell && typeCell.textContent.includes('Услуги');
-            }"""
-        )
         tkp_box = page.locator(
             '#policy-typical-sections-section td[data-inline-field="exclude_from_tkp_autofill"] input[type="checkbox"]'
         )
@@ -1283,14 +1201,14 @@ def test_product_workspace_typical_section_inline_edit_saves(live_server, django
                 '#policy-typical-sections-section td[data-inline-field="name_ru"]'
               );
               const typeCell = document.querySelector(
-                '#policy-typical-sections-section td[data-inline-field="accounting_type"]'
+                '#policy-typical-sections-section [data-service-block-accounting]'
               );
               const tkp = document.querySelector(
                 '#policy-typical-sections-section td[data-inline-field="exclude_from_tkp_autofill"] input[type="checkbox"]'
               );
               return save && save.disabled
                 && nameCell && nameCell.textContent.includes('Новый браузерный раздел')
-                && typeCell && typeCell.textContent.includes('Услуги')
+                && typeCell && typeCell.textContent.includes('Разделы')
                 && tkp && tkp.checked;
             }"""
         )
@@ -1300,13 +1218,13 @@ def test_product_workspace_typical_section_inline_edit_saves(live_server, django
 
     section.refresh_from_db()
     assert section.name_ru == "Новый браузерный раздел"
-    assert section.accounting_type == "Услуги"
+    assert section.accounting_type == "Разделы"
     assert section.exclude_from_tkp_autofill is True
     assert list(
         section.ranked_specialties.order_by("rank").values_list("specialty__specialty", flat=True)
     ) == [
-        "Геология BR",
         "Горное дело BR",
+        "Геология BR",
     ]
 
 

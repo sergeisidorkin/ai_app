@@ -41,6 +41,11 @@
   }
 
   const csrftoken = getCookie('csrftoken');
+  const PROPOSAL_FORM_LEAVE_MESSAGE = 'Есть несохранённые изменения. Уйти без сохранения?';
+  const PROPOSAL_FORM_CANCEL_MESSAGE = 'Сбросить внесённые изменения?';
+  let proposalFormSession = null;
+  let proposalFormDirtySyncScheduled = false;
+  let proposalFormActionsHideLock = false;
   const SELECT_NAMES = ['proposal-select', 'proposal-dispatch-select', 'proposal-template-select', 'proposal-variable-select'];
   const PROPOSAL_SEND_PREF_KEY = 'proposals:dispatch-send-settings';
   const PROPOSAL_KIND_FILTER_PREF_KEY = 'proposals:kind-filter';
@@ -48,6 +53,35 @@
   const PROPOSAL_PAYMENT_VIEW_PREF_KEY = 'proposals:payment-schedule-view';
   const PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY = 'proposals:payment-schedule-gantt-scale';
   const PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY = 'proposals:payment-schedule-gantt-open-groups';
+  const PROPOSAL_SECTION_TOGGLES = [
+    {
+      toggleId: 'proposal-payment-section-toggle',
+      controlsIds: ['proposal-payment-header-controls', 'proposal-payment-view-dropdown'],
+      bodyId: 'proposal-payment-section-body',
+      prefKey: 'proposals:payment-section-collapsed',
+      defaultCollapsed: true,
+      collapsedLabel: 'Развернуть раздел «Сроки и порядок платежей»',
+      expandedLabel: 'Свернуть раздел «Сроки и порядок платежей»',
+    },
+    {
+      toggleId: 'proposal-dispatch-section-toggle',
+      controlsIds: ['proposal-dispatch-header-controls'],
+      bodyId: 'proposal-dispatch-section-body',
+      prefKey: 'proposals:dispatch-section-collapsed',
+      defaultCollapsed: true,
+      collapsedLabel: 'Развернуть раздел «Отправка ТКП»',
+      expandedLabel: 'Свернуть раздел «Отправка ТКП»',
+    },
+    {
+      toggleId: 'proposal-template-section-toggle',
+      controlsIds: [],
+      bodyId: 'proposal-template-section-body',
+      prefKey: 'proposals:template-section-collapsed',
+      defaultCollapsed: true,
+      collapsedLabel: 'Развернуть раздел «Образцы шаблонов ТКП»',
+      expandedLabel: 'Свернуть раздел «Образцы шаблонов ТКП»',
+    },
+  ];
   const PROPOSAL_PAYMENT_VIEW_TABLE = 'table';
   const PROPOSAL_PAYMENT_VIEW_GANTT = 'gantt';
   const PROPOSAL_PAYMENT_GANTT_SCALE_DAY = 'day';
@@ -103,8 +137,30 @@
   let proposalQuillLoaded = false;
   let proposalQuillLoading = false;
   let proposalQuillReadyCallbacks = [];
+  let proposalProductAutofillProgressCursorCount = 0;
+  let proposalProductAutofillProgressCursorWasActive = false;
   window.__proposalKindFilter = window.__proposalKindFilter || [PROPOSAL_KIND_FILTER_ALL];
   window.__proposalStatusFilter = window.__proposalStatusFilter || [PROPOSAL_STATUS_FILTER_ALL];
+
+  function beginProposalProductAutofillProgressCursor() {
+    const root = document.documentElement;
+    if (proposalProductAutofillProgressCursorCount === 0) {
+      proposalProductAutofillProgressCursorWasActive = root.classList.contains('proposal-progress-cursor');
+    }
+    proposalProductAutofillProgressCursorCount += 1;
+    root.classList.add('proposal-progress-cursor');
+    let released = false;
+    return function releaseProposalProductAutofillProgressCursor() {
+      if (released) return;
+      released = true;
+      proposalProductAutofillProgressCursorCount = Math.max(0, proposalProductAutofillProgressCursorCount - 1);
+      if (proposalProductAutofillProgressCursorCount > 0) return;
+      if (!proposalProductAutofillProgressCursorWasActive) {
+        root.classList.remove('proposal-progress-cursor');
+      }
+      proposalProductAutofillProgressCursorWasActive = false;
+    };
+  }
 
   function ensureProposalQuillFormats() {
     if (!window.Quill || window.__proposalQuillFormatsReady) return;
@@ -152,12 +208,16 @@
     const heading = document.getElementById('proposals-section-heading');
     const kindFilterDropdown = document.getElementById('master-proposal-kind-filter-dropdown');
     const statusFilterDropdown = document.getElementById('master-proposal-status-filter-dropdown');
-    if (!heading) return;
+    if (!heading) {
+      syncProposalFormActions();
+      return;
+    }
     const root = pane();
     if (!root) {
       heading.textContent = 'ТКП';
       if (kindFilterDropdown) kindFilterDropdown.classList.add('d-none');
       if (statusFilterDropdown) statusFilterDropdown.classList.add('d-none');
+      syncProposalFormActions();
       return;
     }
 
@@ -171,6 +231,7 @@
 
     if (!currentLabel) {
       heading.textContent = rootLabel;
+      syncProposalFormActions();
       return;
     }
 
@@ -187,6 +248,291 @@
       + '<a class="proposal-header-link" ' + currentHrefAttrs + '>' + currentLabel + '</a>';
 
     if (window.htmx) window.htmx.process(heading);
+    syncProposalFormActions();
+  }
+
+  function isProposalFormActive(root) {
+    root = root || pane();
+    return !!(root && root.querySelector('form[data-proposal-form]') && root.dataset.headerCurrentLabel);
+  }
+
+  function proposalFormActionsEl() {
+    return document.getElementById('proposal-form-actions');
+  }
+
+  function proposalFormSaveBtn() {
+    return document.querySelector('#proposal-form-actions [data-proposal-form-save-btn]');
+  }
+
+  function proposalFormCancelBtn() {
+    return document.querySelector('#proposal-form-actions [data-proposal-form-cancel-btn]');
+  }
+
+  function getProposalRegistrationForm() {
+    return pane()?.querySelector('form[data-proposal-form]') || null;
+  }
+
+  function serializeProposalForm(form) {
+    if (!form) return '';
+    const data = new FormData(form);
+    const parts = [];
+    data.forEach(function (value, key) {
+      if (key === 'csrfmiddlewaretoken') return;
+      parts.push(key + '=' + (value instanceof File ? (value.name + ':' + value.size + ':' + value.type) : String(value)));
+    });
+    parts.sort();
+    return parts.join('\n');
+  }
+
+  function scheduleProposalFormDirtySync() {
+    if (proposalFormDirtySyncScheduled) return;
+    proposalFormDirtySyncScheduled = true;
+    window.requestAnimationFrame(function () {
+      proposalFormDirtySyncScheduled = false;
+      syncProposalFormActions();
+    });
+  }
+
+  function onProposalFormDirtyEvent() {
+    scheduleProposalFormDirtySync();
+  }
+
+  function waitProposalPaint() {
+    return new Promise(function (resolve) {
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(resolve);
+      });
+    });
+  }
+
+  function hideProposalFormActions() {
+    proposalFormActionsHideLock = true;
+    clearProposalFormActionLoading();
+    const actions = proposalFormActionsEl();
+    if (actions) {
+      actions.classList.add('d-none');
+      actions.classList.remove('d-flex');
+    }
+  }
+
+  function syncProposalFormActions() {
+    const actions = proposalFormActionsEl();
+    const saveBtn = proposalFormSaveBtn();
+    const cancelBtn = proposalFormCancelBtn();
+    const active = !proposalFormActionsHideLock && isProposalFormActive();
+    if (actions) {
+      actions.classList.toggle('d-none', !active);
+      actions.classList.toggle('d-flex', active);
+    }
+    const dirty = !!(proposalFormSession && proposalFormSession.isDirty());
+    const saving = !!(proposalFormSession && proposalFormSession.saving);
+    if (saveBtn && saveBtn.dataset.loading !== '1') saveBtn.disabled = !active || saving || !dirty;
+    if (cancelBtn && cancelBtn.dataset.loading !== '1') cancelBtn.disabled = !active || saving;
+  }
+
+  function destroyProposalFormSession() {
+    if (proposalFormSession?.form) {
+      proposalFormSession.form.removeEventListener('input', onProposalFormDirtyEvent);
+      proposalFormSession.form.removeEventListener('change', onProposalFormDirtyEvent);
+      proposalFormSession.form.removeEventListener('click', onProposalFormDirtyEvent);
+    }
+    proposalFormSession = null;
+    clearProposalFormActionLoading();
+    syncProposalFormActions();
+  }
+
+  function clearProposalFormActionLoading() {
+    const saveBtn = proposalFormSaveBtn();
+    const cancelBtn = proposalFormCancelBtn();
+    if (saveBtn?.dataset?.loading === '1') {
+      saveBtn.innerHTML = saveBtn.dataset.originalHtml || 'Сохранить';
+      delete saveBtn.dataset.loading;
+    }
+    if (cancelBtn?.dataset?.loading === '1') {
+      cancelBtn.innerHTML = cancelBtn.dataset.originalHtml || 'Отмена';
+      delete cancelBtn.dataset.loading;
+    }
+  }
+
+  function ensureProposalFormSession(form) {
+    form = form || getProposalRegistrationForm();
+    proposalFormActionsHideLock = false;
+    if (!form || !isProposalFormActive()) {
+      destroyProposalFormSession();
+      return null;
+    }
+    if (proposalFormSession && proposalFormSession.form === form) {
+      syncProposalFormActions();
+      return proposalFormSession;
+    }
+    destroyProposalFormSession();
+    const session = {
+      form: form,
+      baseline: '',
+      saving: false,
+      ready: false,
+      hasErrors: form.dataset.proposalFormHasErrors === '1',
+      isDirty: function () {
+        if (this.hasErrors) return true;
+        if (!this.ready) return false;
+        return serializeProposalForm(this.form) !== this.baseline;
+      },
+    };
+    proposalFormSession = session;
+    clearProposalFormActionLoading();
+    form.addEventListener('input', onProposalFormDirtyEvent);
+    form.addEventListener('change', onProposalFormDirtyEvent);
+    form.addEventListener('click', onProposalFormDirtyEvent);
+    window.requestAnimationFrame(function () {
+      window.requestAnimationFrame(function () {
+        if (proposalFormSession !== session) return;
+        session.baseline = serializeProposalForm(form);
+        session.ready = true;
+        syncProposalFormActions();
+      });
+    });
+    syncProposalFormActions();
+    return session;
+  }
+
+  function proposalCatalogTablesUrl(catalogUrl) {
+    const url = String(catalogUrl || '/proposals/partial/');
+    if (url.indexOf('tables=1') !== -1) return url;
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 'tables=1';
+  }
+
+  function proposalRequestPath(event) {
+    const detail = event?.detail || {};
+    return String(
+      detail.path
+      || detail.requestConfig?.path
+      || detail.requestConfig?.pathInfo?.requestPath
+      || ''
+    );
+  }
+
+  function isProposalCatalogPartialRequest(event) {
+    return proposalRequestPath(event).indexOf('/proposals/partial/') !== -1;
+  }
+
+  function isProposalTablesRequest(event) {
+    return proposalRequestPath(event).indexOf('tables=1') !== -1;
+  }
+
+  const PROPOSAL_CATALOG_SKELETON_INNER =
+    '<div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap">'
+    + '<h5 class="table-section-title mb-0 d-flex align-items-center gap-2">'
+    + '<i class="bi bi-table"></i> Реестр ТКП'
+    + '</h5>'
+    + '</div>'
+    + '<div class="policy-table-placeholder-card proposal-table-placeholder-card" role="status">'
+    + '<span class="visually-hidden">Загрузка реестра ТКП</span>'
+    + '<div class="policy-table-skeleton proposal-table-skeleton" aria-hidden="true">'
+    + '<span></span><span></span><span></span>'
+    + '</div>'
+    + '<div class="proposal-table-placeholder-error alert alert-danger d-none mt-3 mb-0" role="alert">'
+    + '<span>Не удалось загрузить реестр ТКП.</span>'
+    + '<button type="button" class="btn btn-sm btn-outline-danger ms-2" data-proposal-lazy-retry="1">Повторить</button>'
+    + '</div>'
+    + '</div>';
+
+  function fillProposalCatalogSkeleton(root) {
+    root = root || pane();
+    if (!root || root.dataset.proposalLazyShell === '1') return;
+    hideProposalFormActions();
+    root.classList.remove('proposal-form-page');
+    root.classList.add('proposal-catalog-shell');
+    delete root.dataset.headerCurrentLabel;
+    delete root.dataset.headerCurrentUrl;
+    root.dataset.proposalLazyShell = '1';
+    root.setAttribute('aria-busy', 'true');
+    root.innerHTML = PROPOSAL_CATALOG_SKELETON_INNER;
+    updateHeaderPath();
+    syncProposalFormActions();
+  }
+
+  function showProposalCatalogLoadError(root) {
+    root = root || pane();
+    if (!root) return;
+    root.dataset.proposalLazyShell = '1';
+    delete root.dataset.proposalLazyInitialized;
+    root.setAttribute('aria-busy', 'false');
+    let error = root.querySelector('.proposal-table-placeholder-error');
+    if (!error) {
+      root.classList.add('proposal-catalog-shell');
+      root.innerHTML = PROPOSAL_CATALOG_SKELETON_INNER;
+      error = root.querySelector('.proposal-table-placeholder-error');
+    }
+    if (error) error.classList.remove('d-none');
+  }
+
+  function initProposalLazyShell(root) {
+    root = root || pane();
+    if (!root?.matches?.('#proposals-pane[data-proposal-lazy-shell="1"]')) return;
+    if (root.dataset.proposalLazyInitialized === '1') return;
+    const tablesUrl = root.dataset.proposalTablesUrl
+      || proposalCatalogTablesUrl(root.dataset.headerRootUrl || '/proposals/partial/');
+    if (!tablesUrl || !window.htmx) return;
+    root.dataset.proposalLazyInitialized = '1';
+    Promise.resolve(
+      htmx.ajax('GET', tablesUrl, { target: '#proposals-pane', swap: 'outerHTML' })
+    ).catch(function () {
+      showProposalCatalogLoadError(pane());
+    });
+  }
+
+  function loadProposalCatalogShell() {
+    const root = pane();
+    const catalogUrl = root?.dataset?.headerRootUrl || '/proposals/partial/';
+    fillProposalCatalogSkeleton(root);
+    if (!window.htmx) return Promise.resolve();
+    return Promise.resolve(
+      htmx.ajax('GET', proposalCatalogTablesUrl(catalogUrl), { target: '#proposals-pane', swap: 'outerHTML' })
+    );
+  }
+
+  function reloadProposalFormPage() {
+    const root = pane();
+    const currentUrl = root?.dataset?.headerCurrentUrl || '';
+    if (!currentUrl || !window.htmx) return Promise.resolve();
+    return Promise.resolve(
+      htmx.ajax('GET', currentUrl, { target: '#proposals-pane', swap: 'outerHTML' })
+    );
+  }
+
+  function saveProposalForm() {
+    const session = proposalFormSession;
+    const form = getProposalRegistrationForm();
+    if (!form || (session && session.saving)) return;
+    if (session && !session.isDirty()) return;
+    if (typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+      return;
+    }
+    form.submit();
+  }
+
+  async function cancelProposalForm() {
+    const session = proposalFormSession;
+    if (!session || session.saving) return;
+    if (!session.isDirty()) {
+      destroyProposalFormSession();
+      setProposalFormCancelLoading(proposalFormCancelBtn(), true);
+      await waitProposalPaint();
+      hideProposalFormActions();
+      await waitProposalPaint();
+      await loadProposalCatalogShell();
+      return;
+    }
+    if (!window.confirm(PROPOSAL_FORM_CANCEL_MESSAGE)) return;
+    destroyProposalFormSession();
+    setProposalFormCancelLoading(proposalFormCancelBtn(), true);
+    await reloadProposalFormPage();
+  }
+
+  function confirmProposalFormLeave() {
+    if (!proposalFormSession?.isDirty()) return true;
+    return window.confirm(PROPOSAL_FORM_LEAVE_MESSAGE);
   }
 
   function getMaster(name) {
@@ -479,6 +825,26 @@
     return addProposalPaymentDays(date, Math.round(safeWeeks * 7));
   }
 
+  function parseProposalPaymentTerm(value, defaultUnit) {
+    const raw = String(value || '').trim();
+    if (!raw) return { value: null, unit: defaultUnit, label: '' };
+    const match = raw.match(/^([+-]?\d+(?:[.,]\d+)?)\s*(дн\.|нед\.|мес\.)?$/);
+    const numberText = match ? match[1] : raw;
+    const parsed = parseProposalPaymentDecimal(numberText);
+    const unitLabel = match && match[2] ? match[2] : '';
+    const unit = unitLabel === 'дн.' ? 'days' : unitLabel === 'нед.' ? 'weeks' : unitLabel === 'мес.' ? 'months' : defaultUnit;
+    const label = unitLabel
+      ? raw.replace(/\s+/g, ' ')
+      : formatProposalPaymentDurationLabel(raw, defaultUnit === 'weeks' ? 'нед.' : defaultUnit === 'days' ? 'дн.' : 'мес.');
+    return { value: parsed, unit: unit, label: label };
+  }
+
+  function addProposalPaymentTerm(date, amount, unit) {
+    if (unit === 'days') return addProposalPaymentDays(date, Math.round(Math.max(amount, 0)));
+    if (unit === 'weeks') return addProposalPaymentWeeks(date, amount);
+    return addProposalPaymentMonths(date, amount);
+  }
+
   function formatProposalPaymentDurationLabel(value, unit) {
     const raw = String(value || '').trim();
     if (!raw) return '';
@@ -615,7 +981,8 @@
   }
 
   function buildProposalPaymentGanttData(root) {
-    const rows = qa('#proposal-payment-schedule-table tbody tr[data-proposal-id]', root);
+    const rows = qa('#proposal-payment-schedule-table tbody tr[data-proposal-id]', root)
+      .filter((row) => !row.classList.contains('d-none'));
     const proposalLabelById = new Map();
     const stageLabelsByProposalId = new Map();
     const tasks = [];
@@ -651,10 +1018,12 @@
       const type = getProposalPaymentCellText(row, 'type');
       const preliminaryTermMonthsText = getProposalPaymentCellText(row, 'term');
       const finalReportTermWeeksText = getProposalPaymentCellText(row, 'final-report-weeks');
-      const preliminaryDurationLabel = formatProposalPaymentDurationLabel(preliminaryTermMonthsText, 'мес.');
-      const finalReportDurationLabel = formatProposalPaymentDurationLabel(finalReportTermWeeksText, 'нед.');
-      const preliminaryTermMonths = parseProposalPaymentDecimal(preliminaryTermMonthsText);
-      const finalReportTermWeeks = parseProposalPaymentDecimal(finalReportTermWeeksText);
+      const preliminaryTerm = parseProposalPaymentTerm(preliminaryTermMonthsText, 'months');
+      const finalTerm = parseProposalPaymentTerm(finalReportTermWeeksText, 'weeks');
+      const preliminaryDurationLabel = preliminaryTerm.label;
+      const finalReportDurationLabel = finalTerm.label;
+      const preliminaryTermMonths = preliminaryTerm.value;
+      const finalReportTermWeeks = finalTerm.value;
       const advancePercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'advance-percent'));
       const preliminaryPaymentPercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'preliminary-report-percent'));
       const finalPaymentPercent = parseProposalPaymentPercent(getProposalPaymentCellText(row, 'final-report-percent'));
@@ -663,9 +1032,9 @@
       const finalPaymentTermDays = parseProposalPaymentInteger(getProposalPaymentCellText(row, 'final-report-term'));
       const hideStageBarLabel = Boolean(stage && (stageLabelsByProposalId.get(proposalId)?.size || 0) <= 1);
       const advanceDate = addProposalPaymentDays(startDate, advanceTermDays || 0);
-      const preliminaryDate = addProposalPaymentMonths(startDate, preliminaryTermMonths || 0);
+      const preliminaryDate = addProposalPaymentTerm(startDate, preliminaryTermMonths || 0, preliminaryTerm.unit);
       const preliminaryPaymentDate = addProposalPaymentDays(preliminaryDate, preliminaryPaymentTermDays || 0);
-      const finalDate = addProposalPaymentWeeks(preliminaryDate, finalReportTermWeeks || 0);
+      const finalDate = addProposalPaymentTerm(preliminaryDate, finalReportTermWeeks || 0, finalTerm.unit);
       const finalPaymentDate = addProposalPaymentDays(finalDate, finalPaymentTermDays || 0);
       const groupStartDate = startDate;
       const groupEndDate = finalDate;
@@ -1253,6 +1622,82 @@
     if (isGantt) requestAnimationFrame(() => renderProposalPaymentGantt(root));
   }
 
+  function applyProposalSectionState(root, cfg, collapsed) {
+    const toggle = root?.querySelector('#' + cfg.toggleId);
+    if (!toggle) return;
+
+    const body = root.querySelector('#' + cfg.bodyId);
+    const icon = toggle.querySelector('i');
+    const label = collapsed ? cfg.collapsedLabel : cfg.expandedLabel;
+
+    (cfg.controlsIds || []).forEach((controlsId) => {
+      const node = root.querySelector('#' + controlsId);
+      if (!node) return;
+      node.classList.toggle('classifiers-section-controls-hidden', collapsed);
+      node.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+    });
+    if (body) body.classList.toggle('d-none', collapsed);
+
+    toggle.classList.toggle('active', collapsed);
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('title', label);
+    if (icon) icon.className = collapsed ? 'bi bi-plus-square' : 'bi bi-dash-square';
+  }
+
+  function syncProposalCollapsedSectionHeaderSpacing(root) {
+    if (!root) return;
+    const items = qa('.proposal-section-toggle', root).map((toggle) => {
+      const header = toggle.closest('.table-section-header');
+      const bodyId = toggle.dataset.sectionBodyId;
+      const body = bodyId ? root.querySelector('#' + bodyId) : null;
+      if (!header || !body) return null;
+      if (!header.dataset.baseMarginTop) {
+        header.dataset.baseMarginTop = header.style.marginTop || '0px';
+      }
+      return {
+        header,
+        collapsed: body.classList.contains('d-none'),
+        baseMarginTop: header.dataset.baseMarginTop,
+      };
+    }).filter(Boolean);
+
+    items.forEach((item, index) => {
+      const prev = items[index - 1];
+      const basePx = parseFloat(item.baseMarginTop) || 0;
+      const nextPx = prev && prev.collapsed && item.collapsed && basePx > 0 ? basePx / 4 : basePx;
+      item.header.style.marginTop = `${nextPx}px`;
+    });
+  }
+
+  function initProposalSectionToggles() {
+    const root = pane();
+    if (!root) return;
+
+    PROPOSAL_SECTION_TOGGLES.forEach((cfg) => {
+      const toggle = root.querySelector('#' + cfg.toggleId);
+      if (!toggle) return;
+
+      const collapsed = window.UIPref
+        ? !!UIPref.get(cfg.prefKey, cfg.defaultCollapsed)
+        : cfg.defaultCollapsed;
+      applyProposalSectionState(root, cfg, collapsed);
+
+      if (toggle.dataset.bound === '1') return;
+      toggle.dataset.bound = '1';
+      toggle.addEventListener('click', () => {
+        const body = root.querySelector('#' + cfg.bodyId);
+        const isCollapsed = !!body && body.classList.contains('d-none');
+        const nextCollapsed = !isCollapsed;
+        applyProposalSectionState(root, cfg, nextCollapsed);
+        if (window.UIPref) UIPref.set(cfg.prefKey, nextCollapsed);
+        syncProposalCollapsedSectionHeaderSpacing(root);
+        scheduleProposalTableScrollGapsUpdate();
+      });
+    });
+    syncProposalCollapsedSectionHeaderSpacing(root);
+  }
+
   function initProposalPaymentScheduleViewSwitch() {
     const root = pane();
     if (!root) return;
@@ -1307,8 +1752,9 @@
     const statusDropdown = document.getElementById('master-proposal-status-filter-dropdown');
     const statusListContainer = document.getElementById('proposal-status-filter-list');
     const statusLabel = document.querySelector('.js-proposal-status-filter-label');
-    const registryRows = root.querySelectorAll('table.proposals-table tbody tr[data-kind]');
+    const registryRows = root.querySelectorAll('#proposal-registry-table tbody tr[data-kind]');
     const dispatchRows = root.querySelectorAll('table.proposal-dispatch-table tbody tr[data-kind]');
+    const paymentRows = root.querySelectorAll('#proposal-payment-schedule-table tbody tr[data-proposal-id]');
     const rows = Array.from([...registryRows, ...dispatchRows]);
 
     if (!kindDropdown || !kindListContainer || !statusDropdown || !statusListContainer) return;
@@ -1477,7 +1923,7 @@
       }
       const showAllKinds = kindValues.includes(PROPOSAL_KIND_FILTER_ALL) || !kindValues.length;
       const showAllStatuses = normalizedStatusValues.includes(PROPOSAL_STATUS_FILTER_ALL) || !normalizedStatusValues.length;
-      [registryRows, dispatchRows].forEach((rowsCollection) => {
+      [registryRows, dispatchRows, paymentRows].forEach((rowsCollection) => {
         rowsCollection.forEach((row) => {
           const kind = row.dataset.kind || '';
           const status = row.dataset.status || '';
@@ -1493,6 +1939,9 @@
       updateLabel(statusLabel, statusChecks, normalizedStatusValues, PROPOSAL_STATUS_FILTER_ALL);
       syncAllSelectionStates();
       scheduleProposalTableScrollGapsUpdate();
+      if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
+        requestAnimationFrame(() => renderProposalPaymentGantt(root));
+      }
     }
 
     kindChecks.forEach((cb) => {
@@ -2826,69 +3275,68 @@
     return syncOptionsSelect(select, getProposalLegalEntityShortNameOptions(form), selectedValue);
   }
 
-  function getProposalTypicalSectionsMap(form) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
-    const script = root.querySelector('#proposal-typical-sections-data');
+  const proposalJsonMapCache = new WeakMap();
+
+  function parseProposalJsonMapScript(script) {
     if (!script) return {};
+    const source = script.textContent || '{}';
+    const cached = proposalJsonMapCache.get(script);
+    if (cached && cached.source === source) return cached.value;
+    let value = {};
     try {
-      return JSON.parse(script.textContent || '{}') || {};
+      value = JSON.parse(source) || {};
     } catch (error) {
-      return {};
+      value = {};
     }
+    proposalJsonMapCache.set(script, { source: source, value: value });
+    return value;
+  }
+
+  function getProposalTypicalSectionsMap(form) {
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
+    const script = root.querySelector('#proposal-typical-sections-data');
+    return parseProposalJsonMapScript(script);
   }
 
   function getProposalServiceGoalReportsMap(form) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-service-goal-reports-data');
-    if (!script) return {};
-    try {
-      return JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      return {};
-    }
+    return parseProposalJsonMapScript(script);
   }
 
   function getProposalTypicalServiceCompositionsMap(form) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-typical-service-compositions-data');
-    if (!script) return {};
-    try {
-      return JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      return {};
-    }
+    return parseProposalJsonMapScript(script);
   }
 
   function getProposalTypicalServiceTermsMap(form) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#proposal-typical-service-terms-data');
-    if (!script) return {};
-    try {
-      return JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      return {};
-    }
+    return parseProposalJsonMapScript(script);
   }
 
   function setProposalJsonMapEntry(form, scriptId, productId, value) {
-    const root = form?.closest('#proposals-pane') || pane() || document;
+    const root = form?.closest('#proposals-pane, #contracts-drafts-pane') || pane() || document;
     const script = root.querySelector('#' + scriptId);
     if (!script || !productId) return;
-    let data = {};
-    try {
-      data = JSON.parse(script.textContent || '{}') || {};
-    } catch (error) {
-      data = {};
-    }
+    const data = { ...parseProposalJsonMapScript(script) };
     data[String(productId)] = value;
     script.textContent = JSON.stringify(data);
+    proposalJsonMapCache.set(script, { source: script.textContent, value: data });
   }
 
   function getProposalProductAutofillUrl(form, productId) {
     const owningForm = getProposalOwningForm(form) || form;
     const template = String(owningForm?.dataset?.productAutofillUrlTemplate || '');
     if (!template || !productId) return '';
-    return template.replace('/0/', '/' + encodeURIComponent(productId) + '/');
+    let url = template.replace('/0/', '/' + encodeURIComponent(productId) + '/');
+    const select = owningForm.querySelector('[name="group_member"]');
+    const groupId = select && String(select.value || '').trim();
+    if (groupId) {
+      url += (url.indexOf('?') === -1 ? '?' : '&') + 'group_member=' + encodeURIComponent(groupId);
+    }
+    return url;
   }
 
   function applyProposalProductAutofillPayload(form, productId, payload) {
@@ -2939,7 +3387,8 @@
   function getProposalOwningForm(node) {
     if (!node) return null;
     if (node.matches?.('form[data-proposal-form]')) return node;
-    return node.closest?.('form[data-proposal-form]') || null;
+    if (node.matches?.('form[data-contract-project-form]')) return node;
+    return node.closest?.('form[data-proposal-form], form[data-contract-project-form]') || null;
   }
 
   function getProposalStageScope(node) {
@@ -3061,13 +3510,56 @@
     return value && typeof value === 'object' ? value : {};
   }
 
+  function parseProposalTermDecimal(value) {
+    const raw = String(value || '').trim().replace(/\s+/g, '').replace(',', '.');
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function formatProposalTermDecimal(value) {
+    return Number.isFinite(value) ? (Math.round(value * 10) / 10).toFixed(1) : '';
+  }
+
+  function proposalTermValueToDays(value, unit) {
+    const safeValue = Number.isFinite(value) ? Math.max(value, 0) : 0;
+    if (unit === 'days') return Math.round(safeValue);
+    if (unit === 'months') return safeValue * 30;
+    return safeValue * 7;
+  }
+
+  function proposalTermValueForUnit(value, sourceUnit, targetUnit) {
+    const parsed = parseProposalTermDecimal(value);
+    if (parsed === null) return '';
+    const normalizedSourceUnit = ['days', 'weeks', 'months'].includes(sourceUnit) ? sourceUnit : targetUnit;
+    const days = proposalTermValueToDays(parsed, normalizedSourceUnit);
+    if (targetUnit === 'months') return formatProposalTermDecimal(days / 30);
+    if (targetUnit === 'weeks') return formatProposalTermDecimal(days / 7);
+    return String(Math.round(days));
+  }
+
+  function formatProposalStoredTermValue(value, unit) {
+    const parsed = parseProposalTermDecimal(value);
+    if (parsed === null) return '';
+    if (unit === 'days') return String(Math.round(Math.max(parsed, 0)));
+    return formatProposalTermDecimal(parsed);
+  }
+
   function getProposalTypicalServiceTermEntry(form) {
     const entriesMap = getProposalTypicalServiceTermsMap(form);
     const entry = entriesMap[getProposalTypeId(form)] || null;
     if (!entry || typeof entry !== 'object') return null;
+    const preliminaryUnit = ['days', 'weeks', 'months'].includes(entry.preliminary_report_term_unit)
+      ? entry.preliminary_report_term_unit
+      : 'months';
+    const finalUnit = ['days', 'weeks', 'months'].includes(entry.final_report_term_unit)
+      ? entry.final_report_term_unit
+      : 'weeks';
     return {
-      preliminary_report_months: String(entry.preliminary_report_months || '').trim(),
-      final_report_weeks: String(entry.final_report_weeks || '').trim(),
+      preliminary_report_months: formatProposalStoredTermValue(entry.preliminary_report_months, preliminaryUnit),
+      preliminary_report_term_unit: preliminaryUnit,
+      final_report_weeks: formatProposalStoredTermValue(entry.final_report_weeks, finalUnit),
+      final_report_term_unit: finalUnit,
     };
   }
 
@@ -3248,7 +3740,7 @@
 
   function isProposalTechnicalAssignmentSection(form, section) {
     const entry = getProposalTypicalSectionEntry(form, section?.service_name || section?.name || '', section?.code || '');
-    return String(entry?.accounting_type || '').trim() === 'Раздел';
+    return String(entry?.accounting_type || '').trim() === 'Разделы';
   }
 
   function getProposalTypicalSectionNames(form) {
@@ -4405,6 +4897,8 @@
       const specialistStatus = getProposalCommercialSpecialistStatus(scope, serviceName, specialist, code);
       const currentRate = String(row?.rate_eur_per_day || '').trim();
       const autofillRate = getProposalCommercialRateValue(scope, serviceName, specialist, code);
+      const preserveExplicitRate = options?.preserveExplicitRate === true
+        && Object.prototype.hasOwnProperty.call(row || {}, 'rate_eur_per_day');
       const currentDayCounts = Array.isArray(row?.asset_day_counts)
         ? row.asset_day_counts.map(function (value) { return String(value ?? '').trim(); })
         : [];
@@ -4421,7 +4915,9 @@
         service_name: serviceName,
         code: getProposalTypicalSectionCode(scope, serviceName, code) || code,
         merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
-        rate_eur_per_day: forceAutofill ? (autofillRate || currentRate) : (currentRate || autofillRate),
+        rate_eur_per_day: forceAutofill
+          ? (autofillRate || currentRate)
+          : (preserveExplicitRate ? currentRate : (currentRate || autofillRate)),
         asset_day_counts: forceAutofill
           ? autofillDayCounts
           : (currentDayCounts.length ? currentDayCounts : autofillDayCounts),
@@ -4525,6 +5021,48 @@
       return true;
     }
 
+    function serviceRowPermutation(meta, currentRows, nextRows) {
+      const permutation = meta?.rowPermutation;
+      if (!Array.isArray(permutation) || permutation.length !== nextRows.length || currentRows.length !== nextRows.length) {
+        return null;
+      }
+      const seen = new Set();
+      for (let index = 0; index < permutation.length; index += 1) {
+        const sourceIndex = permutation[index];
+        if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= currentRows.length || seen.has(sourceIndex)) {
+          return null;
+        }
+        seen.add(sourceIndex);
+      }
+      return permutation;
+    }
+
+    function serviceRowInsertionSources(meta, currentRows, nextRows) {
+      const sourceIndexes = meta?.rowSourceIndexes;
+      if (
+        meta?.reason !== 'row-add'
+        || !Array.isArray(sourceIndexes)
+        || sourceIndexes.length !== nextRows.length
+        || nextRows.length !== currentRows.length + 1
+      ) {
+        return null;
+      }
+      const seen = new Set();
+      let insertedCount = 0;
+      for (let index = 0; index < sourceIndexes.length; index += 1) {
+        const sourceIndex = sourceIndexes[index];
+        if (sourceIndex === -1) {
+          insertedCount += 1;
+          continue;
+        }
+        if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= currentRows.length || seen.has(sourceIndex)) {
+          return null;
+        }
+        seen.add(sourceIndex);
+      }
+      return insertedCount === 1 && seen.size === currentRows.length ? sourceIndexes : null;
+    }
+
     function syncHiddenInputs() {
       commercialInput.value = JSON.stringify(serializeCommercialRows());
       serviceInput.value = JSON.stringify(serializeServiceRows());
@@ -4581,11 +5119,14 @@
       commitCommercialRows: function (nextRows, meta) {
         const previousServiceRows = serializeServiceRows();
         const currentSystemRows = rows.filter(isProposalSystemDscRow);
+        const preserveExplicitRate = meta?.preserveExplicitRate === true;
         rows = [
           ...currentSystemRows,
           ...(Array.isArray(nextRows) ? nextRows : [])
             .filter(function (row) { return !isProposalSystemDscRow(row); })
-            .map(normalizeRow),
+            .map(function (row) {
+              return normalizeRow(row, { preserveExplicitRate: preserveExplicitRate });
+            }),
         ];
         if (!rows.some(isProposalTravelExpensesRow)) {
           rows.push(normalizeProposalTravelExpensesRow({}));
@@ -4599,23 +5140,49 @@
         const currentRows = api.getRows();
         const currentTravelRow = currentRows.find(isProposalTravelExpensesRow) || normalizeProposalTravelExpensesRow({});
         const forceAutofill = meta?.forceAutofill === true;
-        rows = ensureSystemDscServiceRows(nextRows).map(function (row, index) {
-          const currentRow = currentRows[index] || {};
-          const nextServiceName = String(row?.service_name || '').trim();
-          const currentServiceName = String(currentRow?.service_name || '').trim();
-          const nextCode = String(row?.code || '').trim();
-          const currentCode = String(currentRow?.code || '').trim();
-          return normalizeRow({
-            ...currentRow,
-            service_name: nextServiceName,
-            code: nextCode,
-            merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
-          }, {
-            forceAutofill: forceAutofill || nextServiceName !== currentServiceName || nextCode !== currentCode,
-          });
+        const isRowMove = meta?.reason === 'row-move';
+        const currentServiceRows = currentRows.filter(function (row) {
+          return !isProposalTravelExpensesRow(row);
         });
+        const nextServiceRows = ensureSystemDscServiceRows(nextRows);
+        const rowPermutation = isRowMove
+          ? serviceRowPermutation(meta, currentServiceRows, nextServiceRows)
+          : null;
+        const rowInsertionSources = serviceRowInsertionSources(meta, currentServiceRows, nextServiceRows);
+        if (rowPermutation) {
+          rows = rowPermutation.map(function (sourceIndex) {
+            return currentServiceRows[sourceIndex];
+          });
+        } else if (rowInsertionSources) {
+          rows = rowInsertionSources.map(function (sourceIndex, index) {
+            return sourceIndex === -1
+              ? normalizeRow(nextServiceRows[index], { forceAutofill: true })
+              : currentServiceRows[sourceIndex];
+          });
+        } else {
+          rows = nextServiceRows.map(function (row, index) {
+            const currentRow = currentServiceRows[index] || {};
+            const nextServiceName = String(row?.service_name || '').trim();
+            const currentServiceName = String(currentRow?.service_name || '').trim();
+            const nextCode = String(row?.code || '').trim();
+            const currentCode = String(currentRow?.code || '').trim();
+            return normalizeRow({
+              ...currentRow,
+              service_name: nextServiceName,
+              code: nextCode,
+              merge_without_code: normalizeProposalMergeWithoutCode(row?.merge_without_code),
+            }, {
+              forceAutofill: forceAutofill || nextServiceName !== currentServiceName || nextCode !== currentCode,
+            });
+          });
+        }
         rows.push(normalizeProposalTravelExpensesRow(currentTravelRow));
         syncHiddenInputs();
+        if (meta?.deferLinkedRender !== true) {
+          emit(meta, { includeServiceSections: true });
+        }
+      },
+      flushDeferredServiceRows: function (meta) {
         emit(meta, { includeServiceSections: true });
       },
       replaceFromType: function (meta) {
@@ -4658,6 +5225,84 @@
     return api;
   }
 
+  function createProposalRowInsertButton(title) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'proposal-row-insert';
+    button.title = title || 'Добавить строку в этом месте';
+    button.setAttribute('aria-label', button.title);
+    button.innerHTML = [
+      '<svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">',
+      '<circle class="proposal-service-row-insert-shape" cx="9" cy="9" r="8"></circle>',
+      '<path class="proposal-service-row-insert-plus" d="M9 5.5V12.5M5.5 9H12.5"></path>',
+      '</svg>',
+    ].join('');
+    return button;
+  }
+
+  function syncProposalRowInsertGeometry(button, row, checkCell) {
+    const iconRect = button?.querySelector('svg')?.getBoundingClientRect();
+    const buttonRect = button?.getBoundingClientRect();
+    const checkCellRect = checkCell?.getBoundingClientRect();
+    const rowRect = row?.getBoundingClientRect();
+    if (!iconRect || !buttonRect || !checkCellRect || !rowRect) return;
+    button.style.setProperty(
+      '--proposal-service-row-insert-mask-left',
+      Math.max(0, checkCellRect.left - buttonRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-mask-width',
+      Math.max(0, iconRect.left - checkCellRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-line-left',
+      Math.max(0, iconRect.right - buttonRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-line-width',
+      Math.max(0, rowRect.right - iconRect.right) + 'px'
+    );
+  }
+
+  function moveSelectedProposalRowBlocks(tbody, rows, direction, isSelected, canCross) {
+    const selected = rows.map(function (row) {
+      return !!isSelected(row);
+    });
+    let moved = false;
+
+    if (direction === 'up') {
+      for (let index = 1; index < rows.length; index += 1) {
+        if (!selected[index] || selected[index - 1]) continue;
+        let blockEnd = index;
+        while (blockEnd + 1 < rows.length && selected[blockEnd + 1]) {
+          blockEnd += 1;
+        }
+        const crossingRow = rows[index - 1];
+        if (!canCross || canCross(crossingRow, direction)) {
+          tbody.insertBefore(crossingRow, rows[blockEnd].nextElementSibling);
+          moved = true;
+        }
+        index = blockEnd;
+      }
+      return moved;
+    }
+
+    for (let index = rows.length - 2; index >= 0; index -= 1) {
+      if (!selected[index] || selected[index + 1]) continue;
+      let blockStart = index;
+      while (blockStart - 1 >= 0 && selected[blockStart - 1]) {
+        blockStart -= 1;
+      }
+      const crossingRow = rows[index + 1];
+      if (!canCross || canCross(crossingRow, direction)) {
+        tbody.insertBefore(crossingRow, rows[blockStart]);
+        moved = true;
+      }
+      index = blockStart;
+    }
+    return moved;
+  }
+
   function attachProposalCommercialTable(root, assetsApi) {
     if (!root) return null;
     const scope = getProposalScope(root);
@@ -4682,6 +5327,177 @@
     ) return null;
     if (scope.dataset.commercialBound === '1') return scope.__proposalCommercialTableApi || null;
     scope.dataset.commercialBound = '1';
+    if (!isSummaryCommercialBlock) {
+      attachProposalActionsStickyState(scope, '.proposal-commercial-actions');
+    }
+    const rowInsertButton = isSummaryCommercialBlock ? null : createProposalRowInsertButton();
+    let rowInsertTarget = null;
+    let rowInsertPosition = '';
+    const selectedCommercialCells = new Set();
+    let commercialCellSelectionAnchor = null;
+    let commercialCellDragAnchor = null;
+    let commercialCellDragBase = new Set();
+    let commercialCellDragAdditive = false;
+    let commercialSpinnerPointerInput = null;
+    let bulkCommercialRateSourceInput = null;
+    let syncingCommercialCellValues = false;
+    let commercialTableHydrating = true;
+
+    function isSelectableCommercialCell(input) {
+      if (isSummaryCommercialBlock || !(input instanceof HTMLInputElement)) return false;
+      if (input.disabled || input.readOnly) return false;
+      const row = input.closest('tr.proposal-commercial-data-row');
+      if (!row || row.parentElement !== tbody) return false;
+      return input.classList.contains('proposal-commercial-rate')
+        || input.classList.contains('proposal-commercial-day-count');
+    }
+
+    function getSelectableCommercialCell(target) {
+      const input = target instanceof Element
+        ? target.closest('input.proposal-commercial-rate, input.proposal-commercial-day-count')
+        : null;
+      return isSelectableCommercialCell(input) ? input : null;
+    }
+
+    function pruneCommercialCellSelection() {
+      Array.from(selectedCommercialCells).forEach(function (input) {
+        if (!input.isConnected || !isSelectableCommercialCell(input)) {
+          input.classList.remove('proposal-commercial-cell-selected');
+          input.removeAttribute('aria-selected');
+          selectedCommercialCells.delete(input);
+        }
+      });
+      if (!isSelectableCommercialCell(commercialCellSelectionAnchor)) {
+        commercialCellSelectionAnchor = null;
+      }
+    }
+
+    function setCommercialCellSelection(inputs, anchor) {
+      const nextSelection = new Set(
+        Array.from(inputs || []).filter(isSelectableCommercialCell)
+      );
+      selectedCommercialCells.forEach(function (input) {
+        if (nextSelection.has(input)) return;
+        input.classList.remove('proposal-commercial-cell-selected');
+        input.removeAttribute('aria-selected');
+      });
+      nextSelection.forEach(function (input) {
+        input.classList.add('proposal-commercial-cell-selected');
+        input.setAttribute('aria-selected', 'true');
+      });
+      selectedCommercialCells.clear();
+      nextSelection.forEach(function (input) {
+        selectedCommercialCells.add(input);
+      });
+      if (isSelectableCommercialCell(anchor)) {
+        commercialCellSelectionAnchor = anchor;
+      } else if (!selectedCommercialCells.has(commercialCellSelectionAnchor)) {
+        commercialCellSelectionAnchor = selectedCommercialCells.values().next().value || null;
+      }
+    }
+
+    function clearCommercialCellSelection() {
+      setCommercialCellSelection([], null);
+      commercialCellSelectionAnchor = null;
+      commercialCellDragAnchor = null;
+      commercialCellDragBase = new Set();
+      commercialCellDragAdditive = false;
+    }
+
+    function getSelectableCommercialGrid() {
+      return getEditableRows().map(function (row) {
+        return [
+          row.querySelector('.proposal-commercial-rate'),
+          ...getDayInputs(row),
+        ].filter(isSelectableCommercialCell);
+      });
+    }
+
+    function getCommercialCellRange(startInput, endInput) {
+      const grid = getSelectableCommercialGrid();
+      let startRow = -1;
+      let startColumn = -1;
+      let endRow = -1;
+      let endColumn = -1;
+      grid.forEach(function (rowInputs, rowIndex) {
+        const startIndex = rowInputs.indexOf(startInput);
+        const endIndex = rowInputs.indexOf(endInput);
+        if (startIndex !== -1) {
+          startRow = rowIndex;
+          startColumn = startIndex;
+        }
+        if (endIndex !== -1) {
+          endRow = rowIndex;
+          endColumn = endIndex;
+        }
+      });
+      if (startRow === -1 || endRow === -1) return [];
+      const firstRow = Math.min(startRow, endRow);
+      const lastRow = Math.max(startRow, endRow);
+      const firstColumn = Math.min(startColumn, endColumn);
+      const lastColumn = Math.max(startColumn, endColumn);
+      const range = [];
+      for (let rowIndex = firstRow; rowIndex <= lastRow; rowIndex += 1) {
+        for (let columnIndex = firstColumn; columnIndex <= lastColumn; columnIndex += 1) {
+          const input = grid[rowIndex]?.[columnIndex];
+          if (input) range.push(input);
+        }
+      }
+      return range;
+    }
+
+    function focusCommercialCell(input) {
+      if (!isSelectableCommercialCell(input)) return;
+      input.focus({ preventScroll: true });
+      input.select();
+    }
+
+    function normalizeBulkCommercialCellValue(input, value, sourceInput) {
+      const text = String(value ?? '');
+      if (
+        text
+        && input !== sourceInput
+        && input.classList.contains('proposal-commercial-rate')
+      ) {
+        return formatMoneyWithPrecision(text, 2);
+      }
+      if (input.type !== 'number') return text;
+      return text.replace(/[\s\u00a0]/g, '').replace(',', '.');
+    }
+
+    function applyBulkCommercialCellValue(value, sourceInput, commit) {
+      pruneCommercialCellSelection();
+      if (selectedCommercialCells.size < 2) return;
+      syncingCommercialCellValues = true;
+      selectedCommercialCells.forEach(function (input) {
+        if (input === sourceInput && input.value === String(value ?? '')) return;
+        const nextValue = normalizeBulkCommercialCellValue(input, value, sourceInput);
+        if (input.value === nextValue) return;
+        input.value = nextValue;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      syncingCommercialCellValues = false;
+      const bulkEditMeta = {
+        reason: 'commercial-bulk-cell-edit',
+        preserveExplicitRate: true,
+      };
+      if (commit) {
+        flushScheduledUpdatePayload(bulkEditMeta);
+      } else {
+        scheduleUpdatePayload(bulkEditMeta);
+      }
+    }
+
+    function isNumericCommercialCellValue(value) {
+      const compactValue = String(value ?? '').replace(/[\s\u00a0]/g, '');
+      return compactValue === '' || /^\d*(?:[.,]\d*)?$/.test(compactValue);
+    }
+
+    function announceCommercialCellSelection() {
+      formRoot.dispatchEvent(new CustomEvent('proposal-commercial-cell-selection-start', {
+        detail: { scope: scope },
+      }));
+    }
 
     function hasVisibleSummaryCommercialBlock() {
       const summaryBlock = formRoot.querySelector('[data-proposal-commercial-summary="1"]');
@@ -4705,6 +5521,16 @@
 
     function shouldSyncServiceCost() {
       return isSummaryCommercialBlock ? hasVisibleSummaryCommercialBlock() : !hasVisibleSummaryCommercialBlock();
+    }
+
+    function shouldSyncServiceCostFromTotalsUpdate(meta) {
+      if (commercialTableHydrating) return false;
+      if (String(formRoot.dataset.proposalCommercialHydrating || '') === '1') return false;
+      const reason = String((meta && meta.reason) || '');
+      if (reason === 'form-submit-flush' || reason === 'xlsx-export' || reason === 'initial-render') {
+        return false;
+      }
+      return shouldSyncServiceCost();
     }
 
     function readCommercialTotalsState(block) {
@@ -4832,6 +5658,35 @@
       });
     }
 
+    function clearRowInsertMarker() {
+      rowInsertTarget?.classList.remove('proposal-service-insert-before', 'proposal-service-insert-after');
+      tbody.classList.remove('proposal-commercial-insert-active');
+      rowInsertButton?.remove();
+      rowInsertTarget = null;
+      rowInsertPosition = '';
+    }
+
+    function showRowInsertMarker(row, position) {
+      if (!rowInsertButton || !row || isFixedRow(row) || (position !== 'before' && position !== 'after')) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (rowInsertTarget !== row || rowInsertPosition !== position) {
+        clearRowInsertMarker();
+        rowInsertTarget = row;
+        rowInsertPosition = position;
+        row.classList.add(position === 'before'
+          ? 'proposal-service-insert-before'
+          : 'proposal-service-insert-after');
+      }
+      const checkCell = row.querySelector('.proposal-asset-check-cell');
+      if (checkCell && rowInsertButton.parentElement !== checkCell) {
+        checkCell.appendChild(rowInsertButton);
+      }
+      syncProposalRowInsertGeometry(rowInsertButton, row, checkCell);
+      tbody.classList.add('proposal-commercial-insert-active');
+    }
+
     function getAssetRows() {
       return assetsApi ? assetsApi.getSerializedRows() : [];
     }
@@ -4920,6 +5775,7 @@
     }
 
     let dayHeaderMeasureEl = null;
+    let codeColumnMeasureEl = null;
 
     function measureCommercialDayLabelWidth(label) {
       const text = String(label || '').trim();
@@ -4938,6 +5794,61 @@
       }
       dayHeaderMeasureEl.textContent = text;
       return Math.ceil(dayHeaderMeasureEl.getBoundingClientRect().width);
+    }
+
+    function measureCommercialCodeColumnWidth(value) {
+      const text = String(value || '').trim() || 'Код';
+      if (!document?.body) return 64;
+      if (!codeColumnMeasureEl) {
+        codeColumnMeasureEl = document.createElement('span');
+        codeColumnMeasureEl.className = 'form-control readonly-field proposal-commercial-code';
+        codeColumnMeasureEl.style.position = 'absolute';
+        codeColumnMeasureEl.style.visibility = 'hidden';
+        codeColumnMeasureEl.style.pointerEvents = 'none';
+        codeColumnMeasureEl.style.whiteSpace = 'nowrap';
+        codeColumnMeasureEl.style.display = 'inline-block';
+        codeColumnMeasureEl.style.width = 'auto';
+        codeColumnMeasureEl.style.left = '-9999px';
+        codeColumnMeasureEl.style.top = '-9999px';
+        document.body.appendChild(codeColumnMeasureEl);
+      }
+      codeColumnMeasureEl.textContent = text;
+      return Math.ceil(codeColumnMeasureEl.getBoundingClientRect().width);
+    }
+
+    function getCommercialCodeColumnWidth() {
+      const reservePx = 7;
+      const roundingPx = 2;
+      const values = ['Код'];
+      parsePayload().forEach(function (row) {
+        if (isProposalTravelExpensesRow(row)) return;
+        const code = String(row?.code || '').trim();
+        if (code) values.push(code);
+      });
+      getDataRows().forEach(function (row) {
+        const code = String(row.querySelector('.proposal-commercial-code')?.value || row.dataset.commercialCode || '').trim();
+        if (code) values.push(code);
+      });
+      const width = values.reduce(function (maxWidth, value) {
+        return Math.max(maxWidth, measureCommercialCodeColumnWidth(value));
+      }, 0);
+      return Math.max(58, width + roundingPx + reservePx);
+    }
+
+    function applyCommercialCodeColumnWidth(cell, widthPx) {
+      if (!cell || !widthPx) return;
+      cell.style.width = widthPx + 'px';
+      cell.style.minWidth = widthPx + 'px';
+      cell.style.maxWidth = widthPx + 'px';
+    }
+
+    function syncCommercialCodeColumnWidth() {
+      const width = getCommercialCodeColumnWidth();
+      const codeCol = table.querySelector('colgroup[data-proposal-commercial-cols] col.proposal-commercial-code-col');
+      applyCommercialCodeColumnWidth(codeCol, width);
+      Array.from(table.querySelectorAll('.proposal-commercial-code-header, .proposal-commercial-code-cell')).forEach(function (cell) {
+        applyCommercialCodeColumnWidth(cell, width);
+      });
     }
 
     function getCommercialDayColumnWidths(assetRows) {
@@ -4969,9 +5880,12 @@
       }
 
       const dayWidths = getCommercialDayColumnWidths(assetRows);
+      const codeWidth = getCommercialCodeColumnWidth();
       const cols = [];
 
-      for (let i = 0; i < 5; i += 1) cols.push({});
+      for (let i = 0; i < 4; i += 1) cols.push({});
+      cols.push({ widthPx: codeWidth, className: 'proposal-commercial-code-col' });
+      cols.push({});
       cols.push({ width: '10.5rem' });
 
       if (shouldRenderSummaryStageDays()) {
@@ -4991,6 +5905,9 @@
       colgroup.innerHTML = '';
       cols.forEach(function (config) {
         const col = document.createElement('col');
+        if (config.className) {
+          col.className = config.className;
+        }
         if (config.width) {
           col.style.width = config.width;
           col.style.minWidth = config.width;
@@ -5020,6 +5937,7 @@
             + '<th>Специалист</th>'
             + '<th>Специальность</th>'
             + '<th>Профессиональный статус</th>'
+            + '<th class="proposal-commercial-code-header">Код</th>'
             + '<th>Услуги</th>'
             + '<th class="proposal-commercial-rate-header">Ставка, евро / день</th>'
             + stageLabels.map(function (stageLabel) {
@@ -5034,6 +5952,7 @@
           Array.from(thead.querySelectorAll('.proposal-commercial-day-header')).forEach(function (header, index) {
             applyCommercialDayColumnWidth(header, widths[index]);
           });
+          syncCommercialCodeColumnWidth();
           return;
         }
         const assetLabels = assetRows.length
@@ -5045,6 +5964,7 @@
           + '<th rowspan="2">Специалист</th>'
           + '<th rowspan="2">Специальность</th>'
           + '<th rowspan="2">Профессиональный статус</th>'
+          + '<th class="proposal-commercial-code-header" rowspan="2">Код</th>'
           + '<th rowspan="2">Услуги</th>'
           + '<th class="proposal-commercial-rate-header" rowspan="2">Ставка, евро / день</th>'
           + stageLabels.map(function (stageLabel) {
@@ -5071,6 +5991,7 @@
           const width = measureCommercialDayLabelWidth(header.textContent || '') + 36;
           applyCommercialDayColumnWidth(header, width);
         });
+        syncCommercialCodeColumnWidth();
         return;
       }
       if (labels.length <= 1) {
@@ -5080,11 +6001,13 @@
           + '<th>Специалист</th>'
           + '<th>Специальность</th>'
           + '<th>Профессиональный статус</th>'
+          + '<th class="proposal-commercial-code-header">Код</th>'
           + '<th>Услуги</th>'
           + '<th class="proposal-commercial-rate-header">Ставка, евро / день</th>'
           + '<th class="proposal-commercial-days-group proposal-commercial-days-header proposal-commercial-days-header-single">Количество дней</th>'
           + '<th class="proposal-commercial-total-header">Итого, евро без НДС</th>'
           + '</tr>';
+        syncCommercialCodeColumnWidth();
         return;
       }
 
@@ -5094,6 +6017,7 @@
         + '<th rowspan="2">Специалист</th>'
         + '<th rowspan="2">Специальность</th>'
         + '<th rowspan="2">Профессиональный статус</th>'
+        + '<th class="proposal-commercial-code-header" rowspan="2">Код</th>'
         + '<th rowspan="2">Услуги</th>'
         + '<th class="proposal-commercial-rate-header" rowspan="2">Ставка, евро / день</th>'
         + '<th class="proposal-commercial-days-group proposal-commercial-days-group-subheaders proposal-commercial-days-header proposal-commercial-days-header-multi" colspan="' + labels.length + '">Количество дней</th>'
@@ -5109,6 +6033,7 @@
       Array.from(thead.querySelectorAll('.proposal-commercial-day-header')).forEach(function (header, index) {
         applyCommercialDayColumnWidth(header, widths[index]);
       });
+      syncCommercialCodeColumnWidth();
     }
 
     function syncActions() {
@@ -5396,19 +6321,20 @@
           total_eur_without_vat: rawMoney(row.querySelector('.proposal-commercial-total')?.value || ''),
         };
       }
+      const codeInput = row.querySelector('.proposal-commercial-code');
       const serviceControl = row.querySelector('.proposal-commercial-service');
       const selectedSection = serviceControl instanceof HTMLSelectElement
-        ? getProposalSelectedSection(serviceControl, form, row.dataset.commercialCode || '')
+        ? getProposalSelectedSection(serviceControl, form, codeInput?.value || row.dataset.commercialCode || '')
         : {
           serviceName: String(serviceControl?.value || '').trim(),
-          code: String(row.dataset.commercialCode || '').trim(),
+          code: String(codeInput?.value || row.dataset.commercialCode || '').trim(),
         };
       return {
         specialist: (row.querySelector('.proposal-commercial-specialist')?.value || '').trim(),
         job_title: (row.querySelector('.proposal-commercial-job-title')?.value || '').trim(),
         professional_status: (row.querySelector('.proposal-commercial-status')?.value || '').trim(),
         service_name: selectedSection.serviceName,
-        code: selectedSection.code || String(row.dataset.commercialCode || '').trim(),
+        code: selectedSection.code || String(codeInput?.value || row.dataset.commercialCode || '').trim(),
         merge_without_code: normalizeProposalMergeWithoutCode(row.dataset.mergeWithoutCode),
         service_name_auto: isSummaryCommercialBlock ? String(row.dataset.summaryServiceAuto || '').trim() : undefined,
         service_name_manually_edited: isSummaryCommercialBlock
@@ -5494,9 +6420,9 @@
       if (!labelCell || !serviceCell || !serviceInput) return;
 
       const spanVariants = [
-        { labelColSpan: 4, serviceColSpan: 1 },
-        { labelColSpan: 3, serviceColSpan: 2 },
-        { labelColSpan: 2, serviceColSpan: 3 },
+        { labelColSpan: 5, serviceColSpan: 1 },
+        { labelColSpan: 4, serviceColSpan: 2 },
+        { labelColSpan: 3, serviceColSpan: 3 },
       ];
 
       for (let index = 0; index < spanVariants.length; index += 1) {
@@ -5570,12 +6496,11 @@
     }
 
     function syncServiceCostValue(valueRaw) {
-      if (!shouldSyncServiceCost()) return;
       if (!serviceCostInput || document.activeElement === serviceCostInput) return;
       serviceCostInput.value = valueRaw ? fmtMoney(valueRaw) : '';
     }
 
-    function syncCommercialFinancialRows() {
+    function syncCommercialFinancialRows(meta) {
       const totals = computeCommercialFinancialTotals();
       const rubTotalRow = findFixedRow('tr[data-rub-total-row="1"]');
       const discountedRow = findFixedRow('tr[data-discounted-total-row="1"]');
@@ -5615,7 +6540,9 @@
         contractRow.dataset.manualContractOverride = manualOverride && contractValueRaw && contractValueRaw !== nextAutoRaw ? '1' : '0';
       }
 
-      syncServiceCostValue(contractValueRaw);
+      if (shouldSyncServiceCostFromTotalsUpdate(meta)) {
+        syncServiceCostValue(contractValueRaw);
+      }
 
       setTotalsPayload({
         exchange_rate: totals.exchange_rate,
@@ -5686,7 +6613,7 @@
       const rows = getRows().map(serializeRow).filter(Boolean);
       syncSummaryRowValues();
       syncSummaryWithTravelRowValues();
-      syncCommercialFinancialRows();
+      syncCommercialFinancialRows(meta);
       syncActions();
       if (servicesStore) {
         servicesStore.commitCommercialRows(rows, { ...(meta || {}), source: 'commercial-view' });
@@ -5714,6 +6641,7 @@
       const specialist = row.querySelector('.proposal-commercial-specialist');
       const jobTitle = row.querySelector('.proposal-commercial-job-title');
       const status = row.querySelector('.proposal-commercial-status');
+      const code = row.querySelector('.proposal-commercial-code');
       const service = row.querySelector('.proposal-commercial-service');
       const rate = row.querySelector('.proposal-commercial-rate');
       const total = row.querySelector('.proposal-commercial-total');
@@ -5723,6 +6651,7 @@
       }
       if (jobTitle) jobTitle.value = data.job_title || getProposalTypicalSectionPrimaryExecutor(form, data.service_name || '', data.code || '');
       if (status) status.value = data.professional_status || '';
+      if (code) code.value = data.code || '';
       if (service) {
         syncProposalCommercialServiceSelect(service, form, data.service_name || '', data.code || '');
         if (service instanceof HTMLSelectElement) {
@@ -5738,10 +6667,12 @@
         stageDayCounts: data.stage_asset_day_counts || [],
       });
       recalcRowTotal(row);
+      syncCommercialCodeColumnWidth();
     }
 
     function createRow(data) {
       const row = document.createElement('tr');
+      row.className = 'proposal-commercial-data-row';
       const autofill = getProposalCommercialAutofill(form, data.service_name || '', data.code || '');
       row.dataset.commercialCode = String(data.code || '').trim();
       row.dataset.mergeWithoutCode = normalizeProposalMergeWithoutCode(data.merge_without_code) ? '1' : '0';
@@ -5810,6 +6741,16 @@
       statusTd.appendChild(statusInput);
       row.appendChild(statusTd);
 
+      const codeTd = createProposalTableCell('proposal-commercial-code-cell');
+      const codeInput = document.createElement('input');
+      codeInput.type = 'text';
+      codeInput.className = 'form-control readonly-field proposal-commercial-code';
+      codeInput.readOnly = true;
+      codeInput.tabIndex = -1;
+      codeInput.value = data.code || '';
+      codeTd.appendChild(codeInput);
+      row.appendChild(codeTd);
+
       const serviceTd = createProposalTableCell();
       let serviceSelect = null;
       if (isSummaryCommercialBlock) {
@@ -5834,6 +6775,7 @@
           const selectedSection = getProposalSelectedSection(serviceSelect, form, row.dataset.commercialCode || '');
           const serviceName = selectedSection.serviceName;
           row.dataset.commercialCode = selectedSection.code || getProposalTypicalSectionCode(form, serviceName, selectedSection.code || '');
+          codeInput.value = row.dataset.commercialCode || '';
           const serviceAutofill = getProposalCommercialAutofill(form, serviceName, row.dataset.commercialCode || '');
           titleInput.value = serviceAutofill.jobTitle || '';
           syncProposalCommercialSpecialistSelect(
@@ -5868,10 +6810,14 @@
             )
           );
           recalcRowTotal(row);
+          syncCommercialCodeColumnWidth();
           updatePayload({ reason: 'row-edit', rowIndex: getRows().indexOf(row) });
         });
         serviceSelect.addEventListener('input', function () {
           if (!serviceSelect.value) {
+            row.dataset.commercialCode = '';
+            codeInput.value = '';
+            syncCommercialCodeColumnWidth();
             updatePayload({ reason: 'commercial-field-edit', rowIndex: getRows().indexOf(row) });
           }
         });
@@ -5966,7 +6912,7 @@
       row.className = 'proposal-commercial-travel-row';
 
       const labelTd = createProposalTableCell('proposal-commercial-travel-label-cell');
-      labelTd.colSpan = 5;
+      labelTd.colSpan = 6;
       labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_TRAVEL_EXPENSES_LABEL));
       row.appendChild(labelTd);
 
@@ -6032,7 +6978,7 @@
       row.className = 'proposal-commercial-summary-row';
 
       const labelTd = createProposalTableCell('proposal-commercial-summary-label-cell');
-      labelTd.colSpan = 5;
+      labelTd.colSpan = 6;
       labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_SUMMARY_TOTAL_LABEL));
       row.appendChild(labelTd);
 
@@ -6065,7 +7011,7 @@
       row.className = 'proposal-commercial-travel-row proposal-commercial-summary-with-travel-row';
 
       const labelTd = createProposalTableCell('proposal-commercial-travel-label-cell');
-      labelTd.colSpan = 5;
+      labelTd.colSpan = 6;
       labelTd.appendChild(createProposalEllipsisLabel(PROPOSAL_SUMMARY_WITH_TRAVEL_TOTAL_LABEL));
       row.appendChild(labelTd);
 
@@ -6098,7 +7044,7 @@
       row.dataset[config.rowDataset] = '1';
 
       const labelTd = createProposalTableCell('proposal-commercial-financial-label-cell');
-      labelTd.colSpan = config.serviceEditable ? 4 : 5;
+      labelTd.colSpan = config.serviceEditable ? 5 : 6;
       labelTd.appendChild(createProposalEllipsisLabel(config.label));
       row.appendChild(labelTd);
 
@@ -6264,7 +7210,9 @@
       return row;
     }
 
-    function renderRows(dataRows) {
+    function renderRows(dataRows, meta) {
+      clearRowInsertMarker();
+      clearCommercialCellSelection();
       tbody.innerHTML = '';
       const rowsList = Array.isArray(dataRows) ? dataRows : [];
       const regularRows = rowsList.filter(function (item) {
@@ -6310,46 +7258,273 @@
       }, totalsState));
       syncSummaryRowValues();
       syncSummaryWithTravelRowValues();
+      syncCommercialFinancialRows(meta);
+      syncActions();
+      syncCommercialCodeColumnWidth();
+    }
+
+    function applyServiceRowMovePermutation(permutation) {
+      const currentRows = getDataRows();
+      if (!Array.isArray(permutation) || permutation.length !== currentRows.length) return false;
+      const seen = new Set();
+      for (let index = 0; index < permutation.length; index += 1) {
+        const sourceIndex = permutation[index];
+        if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= currentRows.length || seen.has(sourceIndex)) {
+          return false;
+        }
+        seen.add(sourceIndex);
+      }
+      const firstFixedRow = getRows().find(function (row) {
+        return isFixedRow(row);
+      }) || null;
+      permutation.forEach(function (sourceIndex) {
+        tbody.insertBefore(currentRows[sourceIndex], firstFixedRow);
+      });
+      syncSummaryRowValues();
+      syncSummaryWithTravelRowValues();
       syncCommercialFinancialRows();
       syncActions();
+      syncCommercialCodeColumnWidth();
+      return true;
     }
 
     function moveSelected(direction) {
       const rows = getEditableRows();
-      if (direction === 'up') {
-        for (let i = 1; i < rows.length; i += 1) {
-          if (rows[i].querySelector('.proposal-commercial-check:checked') && !rows[i - 1].querySelector('.proposal-commercial-check:checked')) {
-            tbody.insertBefore(rows[i], rows[i - 1]);
-          }
-        }
-      } else {
-        for (let i = rows.length - 2; i >= 0; i -= 1) {
-          if (rows[i].querySelector('.proposal-commercial-check:checked') && !rows[i + 1].querySelector('.proposal-commercial-check:checked')) {
-            tbody.insertBefore(rows[i + 1], rows[i]);
-          }
-        }
-      }
+      const moved = moveSelectedProposalRowBlocks(tbody, rows, direction, function (row) {
+        return !!row.querySelector('.proposal-commercial-check:checked');
+      });
+      if (!moved) return;
       updatePayload({ reason: 'row-move' });
     }
 
     function deleteSelected() {
+      clearRowInsertMarker();
       getSelectedRows().forEach(function (row) {
         row.remove();
       });
       updatePayload({ reason: 'row-delete' });
     }
 
+    function addRowAt(referenceRow, position) {
+      const row = createRow({});
+      if (referenceRow && referenceRow.parentElement === tbody && !isFixedRow(referenceRow)) {
+        const anchor = position === 'before' ? referenceRow : referenceRow.nextElementSibling;
+        tbody.insertBefore(row, anchor);
+      } else {
+        const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
+        tbody.insertBefore(row, firstFixedRow || null);
+      }
+      clearRowInsertMarker();
+      updatePayload({ reason: 'row-add', rowIndex: getEditableRows().indexOf(row) });
+      row.querySelector('.proposal-commercial-specialist')?.focus();
+    }
+
     if (!isSummaryCommercialBlock && addBtn) {
       addBtn.addEventListener('click', function () {
-        const row = createRow({});
-        const firstFixedRow = getRows().find(function (item) { return isFixedRow(item); });
-        if (firstFixedRow) {
-          tbody.insertBefore(row, firstFixedRow);
-        } else {
-          tbody.appendChild(row);
+        addRowAt(null, 'after');
+      });
+
+      tbody.addEventListener('pointermove', function (event) {
+        if (event.pointerType === 'touch') {
+          clearRowInsertMarker();
+          return;
         }
-        updatePayload({ reason: 'row-add', rowIndex: getEditableRows().length - 1 });
-        row.querySelector('.proposal-commercial-specialist')?.focus();
+        if (event.target.closest('.proposal-row-insert')) return;
+        if (rowInsertTarget && rowInsertButton?.isConnected) {
+          const activeRateCell = rowInsertTarget.querySelector('.proposal-commercial-rate-cell');
+          if (!activeRateCell || event.clientX >= activeRateCell.getBoundingClientRect().left) {
+            clearRowInsertMarker();
+            return;
+          }
+          const activeRect = rowInsertTarget.getBoundingClientRect();
+          const activeBoundaryY = rowInsertPosition === 'before' ? activeRect.top : activeRect.bottom;
+          if (Math.abs(event.clientY - activeBoundaryY) <= 14) return;
+        }
+        const row = event.target.closest('tr');
+        if (!row || row.parentElement !== tbody || isFixedRow(row)) {
+          clearRowInsertMarker();
+          return;
+        }
+        const rateCell = row.querySelector('.proposal-commercial-rate-cell');
+        if (!rateCell || event.clientX >= rateCell.getBoundingClientRect().left) {
+          clearRowInsertMarker();
+          return;
+        }
+        const rect = row.getBoundingClientRect();
+        const distanceFromTop = event.clientY - rect.top;
+        const distanceFromBottom = rect.bottom - event.clientY;
+        const boundaryHoverSize = 10;
+        if (Math.min(distanceFromTop, distanceFromBottom) > boundaryHoverSize) {
+          clearRowInsertMarker();
+          return;
+        }
+        showRowInsertMarker(row, distanceFromTop <= distanceFromBottom ? 'before' : 'after');
+      });
+
+      tbody.addEventListener('pointerleave', function () {
+        clearRowInsertMarker();
+      });
+
+      rowInsertButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!rowInsertTarget || !rowInsertPosition) return;
+        addRowAt(rowInsertTarget, rowInsertPosition);
+      });
+    }
+
+    if (!isSummaryCommercialBlock) {
+      formRoot.addEventListener('proposal-commercial-cell-selection-start', function (event) {
+        if (event.detail?.scope !== scope) clearCommercialCellSelection();
+      });
+
+      formRoot.addEventListener('pointerdown', function (event) {
+        if (!scope.contains(event.target) || !getSelectableCommercialCell(event.target)) {
+          clearCommercialCellSelection();
+        }
+      });
+
+      tbody.addEventListener('pointerdown', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (!input || event.button !== 0) return;
+        const inputRect = input.getBoundingClientRect();
+        const isNumberSpinnerClick = (
+          input.type === 'number'
+          && !event.shiftKey
+          && !event.ctrlKey
+          && !event.metaKey
+          && event.clientX >= inputRect.right - 24
+        );
+        if (isNumberSpinnerClick) {
+          commercialSpinnerPointerInput = input;
+          return;
+        }
+        commercialSpinnerPointerInput = null;
+        event.preventDefault();
+        announceCommercialCellSelection();
+        pruneCommercialCellSelection();
+
+        const additive = event.ctrlKey || event.metaKey;
+        const selectionBeforePointerDown = new Set(selectedCommercialCells);
+        if (event.shiftKey && commercialCellSelectionAnchor) {
+          const range = getCommercialCellRange(commercialCellSelectionAnchor, input);
+          setCommercialCellSelection(
+            additive ? new Set([...selectionBeforePointerDown, ...range]) : range,
+            commercialCellSelectionAnchor
+          );
+          commercialCellDragAnchor = null;
+        } else if (additive) {
+          const nextSelection = new Set(selectionBeforePointerDown);
+          if (nextSelection.has(input)) {
+            nextSelection.delete(input);
+          } else {
+            nextSelection.add(input);
+          }
+          setCommercialCellSelection(nextSelection, input);
+          commercialCellDragAnchor = input;
+          commercialCellDragBase = selectionBeforePointerDown;
+          commercialCellDragAdditive = true;
+        } else {
+          setCommercialCellSelection([input], input);
+          commercialCellDragAnchor = input;
+          commercialCellDragBase = new Set();
+          commercialCellDragAdditive = false;
+        }
+        focusCommercialCell(input);
+      });
+
+      tbody.addEventListener('pointermove', function (event) {
+        if (!commercialCellDragAnchor) return;
+        if ((event.buttons & 1) !== 1) {
+          commercialCellDragAnchor = null;
+          return;
+        }
+        const input = getSelectableCommercialCell(event.target);
+        if (!input || input === commercialCellDragAnchor) return;
+        const range = getCommercialCellRange(commercialCellDragAnchor, input);
+        setCommercialCellSelection(
+          commercialCellDragAdditive
+            ? new Set([...commercialCellDragBase, ...range])
+            : range,
+          commercialCellDragAnchor
+        );
+      });
+
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (eventName) {
+        tbody.addEventListener(eventName, function () {
+          commercialCellDragAnchor = null;
+          commercialCellDragBase = new Set();
+          commercialCellDragAdditive = false;
+          if (eventName !== 'pointerup') commercialSpinnerPointerInput = null;
+        });
+      });
+
+      tbody.addEventListener('focusin', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (
+          !input
+          || input === commercialSpinnerPointerInput
+          || selectedCommercialCells.has(input)
+        ) return;
+        announceCommercialCellSelection();
+        setCommercialCellSelection([input], input);
+      });
+
+      tbody.addEventListener('click', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (!input || input !== commercialSpinnerPointerInput) return;
+        commercialSpinnerPointerInput = null;
+        window.setTimeout(function () {
+          if (!input.isConnected) return;
+          announceCommercialCellSelection();
+          setCommercialCellSelection([input], input);
+        }, 0);
+      });
+
+      tbody.addEventListener('keydown', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (!input) return;
+        pruneCommercialCellSelection();
+        if (selectedCommercialCells.size < 2 || !selectedCommercialCells.has(input)) return;
+        if (event.key !== 'Backspace' && event.key !== 'Delete') return;
+        event.preventDefault();
+        bulkCommercialRateSourceInput = null;
+        applyBulkCommercialCellValue('', null, true);
+        focusCommercialCell(input);
+      });
+
+      tbody.addEventListener('input', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (
+          syncingCommercialCellValues
+          || !input
+          || !selectedCommercialCells.has(input)
+          || selectedCommercialCells.size < 2
+          || !isNumericCommercialCellValue(input.value)
+        ) return;
+        if (input.classList.contains('proposal-commercial-rate')) {
+          bulkCommercialRateSourceInput = input;
+        }
+        applyBulkCommercialCellValue(input.value, input, false);
+      });
+
+      tbody.addEventListener('focusout', function (event) {
+        const input = getSelectableCommercialCell(event.target);
+        if (!input || input !== bulkCommercialRateSourceInput) return;
+        bulkCommercialRateSourceInput = null;
+        const formattedValue = input.value
+          ? formatMoneyWithPrecision(input.value, 2)
+          : '';
+        if (input.value !== formattedValue) {
+          input.value = formattedValue;
+          syncingCommercialCellValues = true;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          syncingCommercialCellValues = false;
+        }
+        flushScheduledUpdatePayload({
+          reason: 'commercial-bulk-cell-edit',
+          preserveExplicitRate: true,
+        });
       });
     }
 
@@ -6364,6 +7539,7 @@
     }
 
     formRoot.addEventListener('proposal-assets-changed', function (event) {
+      clearCommercialCellSelection();
       const rows = Array.isArray(event.detail?.rows) ? event.detail.rows : getAssetRows();
       const meta = event.detail?.meta || {};
       renderHeader(rows);
@@ -6402,6 +7578,12 @@
     if (servicesStore) {
       servicesStore.subscribe(function (detail) {
         if (detail?.meta?.source === 'commercial-view') return;
+        if (
+          detail?.meta?.reason === 'row-move'
+          && applyServiceRowMovePermutation(detail.meta.commercialRowPermutation)
+        ) {
+          return;
+        }
         renderRows(detail?.rows || []);
       });
     }
@@ -6415,12 +7597,19 @@
     }
 
     renderHeader(getAssetRows());
-    renderRows(parsePayload());
+    renderRows(parsePayload(), { reason: 'initial-render' });
     window.addEventListener('resize', syncAllFinancialServiceCellExpansions);
 
     const api = {
       getSerializedRows: function () {
         return servicesStore ? servicesStore.getCommercialRows() : getRows().map(serializeRow).filter(Boolean);
+      },
+      flush: function (meta) {
+        flushScheduledUpdatePayload(meta);
+        return servicesStore ? servicesStore.getCommercialRows() : getRows().map(serializeRow).filter(Boolean);
+      },
+      endHydration: function () {
+        commercialTableHydrating = false;
       },
       replaceRows: function (rowsData, meta) {
         renderHeader(getAssetRows());
@@ -6428,12 +7617,58 @@
           servicesStore.commitCommercialRows(rowsData || [], { ...(meta || {}), source: 'commercial-view' });
           return;
         }
-        renderRows(rowsData || []);
+        renderRows(rowsData || [], meta);
         updatePayload(meta);
       },
     };
     scope.__proposalCommercialTableApi = api;
     return api;
+  }
+
+  function attachProposalActionsStickyState(root, actionBarSelector) {
+    const actionBar = root?.querySelector(actionBarSelector);
+    const editor = actionBar?.closest('.proposal-assets-editor');
+    if (!actionBar || !editor || !root.closest('#proposals-pane')) return;
+    if (actionBar.dataset.stickyStateBound === '1') return;
+    actionBar.dataset.stickyStateBound = '1';
+
+    const marker = document.createElement('span');
+    marker.className = 'proposal-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    actionBar.insertAdjacentElement('afterend', marker);
+
+    let intersectionObserver = null;
+    let resizeObserver = null;
+
+    function syncStickyState() {
+      if (!actionBar.isConnected) {
+        intersectionObserver?.disconnect();
+        resizeObserver?.disconnect();
+        return;
+      }
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const editorRect = editor.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const isStuck = (
+        editorRect.top < viewportHeight
+        && editorRect.bottom > 0
+        && markerRect.top >= viewportHeight
+      );
+      actionBar.classList.toggle('is-stuck', isStuck);
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(syncStickyState, {
+        threshold: [0, 1],
+      });
+      intersectionObserver.observe(editor);
+      intersectionObserver.observe(marker);
+    }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(syncStickyState);
+      resizeObserver.observe(editor);
+    }
+    window.requestAnimationFrame(syncStickyState);
   }
 
   function attachProposalServiceSectionsTable(root) {
@@ -6452,6 +7687,18 @@
     if (!payloadInput || !tbody || !addBtn || !actions || !upBtn || !downBtn || !deleteBtn) return null;
     if (scope.dataset.serviceSectionsBound === '1') return scope.__proposalServiceSectionsTableApi || null;
     scope.dataset.serviceSectionsBound = '1';
+    attachProposalActionsStickyState(scope, '.proposal-service-sections-actions');
+    const SERVICE_MOVE_SYNC_DELAY_MS = 1200;
+    const owningForm = getProposalOwningForm(scope);
+    const stageKey = getProposalStageKey(scope);
+    const relatedCommercialRoot = owningForm && stageKey
+      ? getProposalStageRootByKind(owningForm, stageKey, 'commercial')
+      : null;
+    const rowInsertButton = createProposalRowInsertButton('Добавить услугу в этом месте');
+    let serviceMoveSyncTimerId = null;
+    let deferredServiceMoveMeta = null;
+    let rowInsertTarget = null;
+    let rowInsertPosition = '';
 
     function parsePayload() {
       if (servicesStore) return servicesStore.getServiceRows();
@@ -6471,6 +7718,39 @@
       return getRows().filter(function (row) {
         return row.dataset.systemDsc !== '1' && !!row.querySelector('.proposal-service-section-check:checked');
       });
+    }
+
+    function clearRowInsertMarker() {
+      rowInsertTarget?.classList.remove('proposal-service-insert-before', 'proposal-service-insert-after');
+      tbody.classList.remove('proposal-service-insert-active');
+      rowInsertButton.remove();
+      rowInsertTarget = null;
+      rowInsertPosition = '';
+    }
+
+    function showRowInsertMarker(row, position) {
+      if (!row || (position !== 'before' && position !== 'after')) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (row.dataset.systemDsc === '1' && position === 'before') {
+        clearRowInsertMarker();
+        return;
+      }
+      if (rowInsertTarget !== row || rowInsertPosition !== position) {
+        clearRowInsertMarker();
+        rowInsertTarget = row;
+        rowInsertPosition = position;
+        row.classList.add(position === 'before'
+          ? 'proposal-service-insert-before'
+          : 'proposal-service-insert-after');
+      }
+      const checkCell = row.querySelector('.proposal-asset-check-cell');
+      if (checkCell && rowInsertButton.parentElement !== checkCell) {
+        checkCell.appendChild(rowInsertButton);
+      }
+      syncProposalRowInsertGeometry(rowInsertButton, row, checkCell);
+      tbody.classList.add('proposal-service-insert-active');
     }
 
     function syncActions() {
@@ -6504,11 +7784,124 @@
       };
     }
 
+    function setRelatedCommercialEditingLocked(locked) {
+      if (!relatedCommercialRoot) return;
+      if (locked) {
+        if (relatedCommercialRoot.classList.contains('proposal-commercial-sync-pending')) return;
+        relatedCommercialRoot.dataset.serviceMoveHadInert = relatedCommercialRoot.hasAttribute('inert') ? '1' : '0';
+        relatedCommercialRoot.dataset.serviceMoveHadAriaBusy = relatedCommercialRoot.hasAttribute('aria-busy') ? '1' : '0';
+        relatedCommercialRoot.classList.add('proposal-commercial-sync-pending');
+        relatedCommercialRoot.setAttribute('inert', '');
+        relatedCommercialRoot.setAttribute('aria-busy', 'true');
+        return;
+      }
+      if (!relatedCommercialRoot.classList.contains('proposal-commercial-sync-pending')) return;
+      relatedCommercialRoot.classList.remove('proposal-commercial-sync-pending');
+      if (relatedCommercialRoot.dataset.serviceMoveHadInert !== '1') {
+        relatedCommercialRoot.removeAttribute('inert');
+      }
+      if (relatedCommercialRoot.dataset.serviceMoveHadAriaBusy !== '1') {
+        relatedCommercialRoot.removeAttribute('aria-busy');
+      }
+      delete relatedCommercialRoot.dataset.serviceMoveHadInert;
+      delete relatedCommercialRoot.dataset.serviceMoveHadAriaBusy;
+    }
+
+    function cancelDeferredServiceMoveSync() {
+      if (serviceMoveSyncTimerId !== null) {
+        window.clearTimeout(serviceMoveSyncTimerId);
+        serviceMoveSyncTimerId = null;
+      }
+      deferredServiceMoveMeta = null;
+      setRelatedCommercialEditingLocked(false);
+    }
+
+    function flushDeferredServiceMoveSync() {
+      if (!servicesStore || !deferredServiceMoveMeta) {
+        setRelatedCommercialEditingLocked(false);
+        return false;
+      }
+      if (serviceMoveSyncTimerId !== null) {
+        window.clearTimeout(serviceMoveSyncTimerId);
+        serviceMoveSyncTimerId = null;
+      }
+      const meta = deferredServiceMoveMeta;
+      deferredServiceMoveMeta = null;
+      try {
+        servicesStore.flushDeferredServiceRows(meta);
+      } finally {
+        setRelatedCommercialEditingLocked(false);
+      }
+      return true;
+    }
+
+    function composeCommercialRowPermutations(previousPermutation, nextPermutation) {
+      if (
+        !Array.isArray(previousPermutation)
+        || !Array.isArray(nextPermutation)
+        || previousPermutation.length !== nextPermutation.length
+      ) {
+        return null;
+      }
+      const length = previousPermutation.length;
+      const seenPrevious = new Set();
+      const seenNext = new Set();
+      for (let index = 0; index < length; index += 1) {
+        const previousIndex = previousPermutation[index];
+        const nextIndex = nextPermutation[index];
+        if (
+          !Number.isInteger(previousIndex)
+          || previousIndex < 0
+          || previousIndex >= length
+          || seenPrevious.has(previousIndex)
+          || !Number.isInteger(nextIndex)
+          || nextIndex < 0
+          || nextIndex >= length
+          || seenNext.has(nextIndex)
+        ) {
+          return null;
+        }
+        seenPrevious.add(previousIndex);
+        seenNext.add(nextIndex);
+      }
+      return nextPermutation.map(function (sourceIndex) {
+        return previousPermutation[sourceIndex];
+      });
+    }
+
+    function scheduleDeferredServiceMoveSync(meta) {
+      if (!servicesStore) return;
+      if (serviceMoveSyncTimerId !== null) {
+        window.clearTimeout(serviceMoveSyncTimerId);
+      }
+      const cumulativeCommercialPermutation = composeCommercialRowPermutations(
+        deferredServiceMoveMeta?.commercialRowPermutation,
+        meta?.commercialRowPermutation
+      );
+      deferredServiceMoveMeta = cumulativeCommercialPermutation
+        ? { ...meta, commercialRowPermutation: cumulativeCommercialPermutation }
+        : meta;
+      setRelatedCommercialEditingLocked(true);
+      serviceMoveSyncTimerId = window.setTimeout(function () {
+        serviceMoveSyncTimerId = null;
+        flushDeferredServiceMoveSync();
+      }, SERVICE_MOVE_SYNC_DELAY_MS);
+    }
+
     function updatePayload(meta) {
       const rows = getRows().map(serializeRow);
       syncActions();
       if (servicesStore) {
-        servicesStore.commitServiceRows(rows, { ...(meta || {}), source: 'service-view' });
+        const storeMeta = { ...(meta || {}), source: 'service-view' };
+        const deferLinkedRender = storeMeta.reason === 'row-move';
+        // The row and shared payload move immediately; only expensive linked
+        // commercial/editor renders are coalesced while the user keeps moving rows.
+        if (!deferLinkedRender) cancelDeferredServiceMoveSync();
+        servicesStore.commitServiceRows(rows, {
+          ...storeMeta,
+          deferLinkedRender: deferLinkedRender,
+        });
+        if (deferLinkedRender) scheduleDeferredServiceMoveSync(storeMeta);
         return;
       }
       payloadInput.value = JSON.stringify(rows);
@@ -6618,6 +8011,7 @@
     }
 
     function renderRows(rowsData) {
+      clearRowInsertMarker();
       tbody.innerHTML = '';
       rowsData.forEach(function (item) {
         tbody.appendChild(createRow(item));
@@ -6627,35 +8021,100 @@
 
     function moveSelected(direction) {
       const rows = getRows();
-      if (direction === 'up') {
-        for (let i = 1; i < rows.length; i += 1) {
-          if (rows[i].querySelector('.proposal-service-section-check:checked') && !rows[i - 1].querySelector('.proposal-service-section-check:checked')) {
-            if (rows[i - 1].dataset.systemDsc === '1') continue;
-            tbody.insertBefore(rows[i], rows[i - 1]);
-          }
-        }
-      } else {
-        for (let i = rows.length - 2; i >= 0; i -= 1) {
-          if (rows[i].querySelector('.proposal-service-section-check:checked') && !rows[i + 1].querySelector('.proposal-service-section-check:checked')) {
-            tbody.insertBefore(rows[i + 1], rows[i]);
-          }
-        }
-      }
-      updatePayload({ reason: 'row-move' });
+      const moved = moveSelectedProposalRowBlocks(tbody, rows, direction, function (row) {
+        return !!row.querySelector('.proposal-service-section-check:checked');
+      }, function (crossingRow) {
+        return crossingRow.dataset.systemDsc !== '1';
+      });
+      if (!moved) return;
+      const reorderedRows = getRows();
+      const rowPermutation = reorderedRows.map(function (row) {
+        return rows.indexOf(row);
+      });
+      const currentCommercialRows = rows.filter(function (row) {
+        return row.dataset.systemDsc !== '1';
+      });
+      const commercialRowPermutation = reorderedRows.filter(function (row) {
+        return row.dataset.systemDsc !== '1';
+      }).map(function (row) {
+        return currentCommercialRows.indexOf(row);
+      });
+      updatePayload({
+        reason: 'row-move',
+        rowPermutation: rowPermutation,
+        commercialRowPermutation: commercialRowPermutation,
+      });
     }
 
     function deleteSelected() {
+      clearRowInsertMarker();
       getSelectedRows().forEach(function (row) {
         row.remove();
       });
       updatePayload({ reason: 'row-delete' });
     }
 
-    addBtn.addEventListener('click', function () {
+    function addRowAt(referenceRow, position) {
+      const sourceRows = getRows();
       const row = createRow({});
-      tbody.appendChild(row);
-      updatePayload({ reason: 'row-add', rowIndex: getRows().length - 1 });
+      if (referenceRow && referenceRow.parentElement === tbody) {
+        const anchor = position === 'before' ? referenceRow : referenceRow.nextElementSibling;
+        tbody.insertBefore(row, anchor);
+      } else {
+        tbody.appendChild(row);
+      }
+      clearRowInsertMarker();
+      const nextRows = getRows();
+      updatePayload({
+        reason: 'row-add',
+        rowIndex: nextRows.indexOf(row),
+        rowSourceIndexes: nextRows.map(function (nextRow) {
+          return sourceRows.indexOf(nextRow);
+        }),
+      });
       row.querySelector('.proposal-service-section-name')?.focus();
+    }
+
+    addBtn.addEventListener('click', function () {
+      addRowAt(null, 'after');
+    });
+
+    tbody.addEventListener('pointermove', function (event) {
+      if (event.pointerType === 'touch') {
+        clearRowInsertMarker();
+        return;
+      }
+      if (event.target.closest('.proposal-row-insert')) return;
+      if (rowInsertTarget && rowInsertButton.isConnected) {
+        const activeRect = rowInsertTarget.getBoundingClientRect();
+        const activeBoundaryY = rowInsertPosition === 'before' ? activeRect.top : activeRect.bottom;
+        if (Math.abs(event.clientY - activeBoundaryY) <= 14) return;
+      }
+      const row = event.target.closest('tr');
+      if (!row || row.parentElement !== tbody) {
+        clearRowInsertMarker();
+        return;
+      }
+      const rect = row.getBoundingClientRect();
+      const distanceFromTop = event.clientY - rect.top;
+      const distanceFromBottom = rect.bottom - event.clientY;
+      const boundaryHoverSize = 10;
+      if (Math.min(distanceFromTop, distanceFromBottom) > boundaryHoverSize) {
+        clearRowInsertMarker();
+        return;
+      }
+      showRowInsertMarker(row, distanceFromTop <= distanceFromBottom ? 'before' : 'after');
+    });
+
+    tbody.addEventListener('pointerleave', function () {
+      clearRowInsertMarker();
+    });
+
+    rowInsertButton.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!rowInsertTarget || !rowInsertPosition) return;
+      addRowAt(rowInsertTarget, rowInsertPosition);
     });
 
     upBtn.addEventListener('click', function () { moveSelected('up'); });
@@ -6669,6 +8128,11 @@
       });
       syncActions();
     });
+
+    if (owningForm) {
+      owningForm.addEventListener('submit', flushDeferredServiceMoveSync, true);
+      owningForm.addEventListener('htmx:beforeRequest', flushDeferredServiceMoveSync, true);
+    }
 
     if (servicesStore) {
       servicesStore.subscribe(function (detail) {
@@ -6700,6 +8164,7 @@
         return servicesStore ? servicesStore.getServiceRows() : getRows().map(serializeRow);
       },
       replaceRows: function (rowsData, meta) {
+        cancelDeferredServiceMoveSync();
         if (servicesStore) {
           servicesStore.commitServiceRows(rowsData || [], { ...(meta || {}), source: 'service-view' });
           return;
@@ -7605,10 +9070,66 @@
     return api;
   }
 
+  function proposalServiceRowsFromCurrentType(root) {
+    return getProposalTypicalSectionEntries(root).map(function (entry) {
+      return {
+        service_name: (entry?.name || '').trim(),
+        code: (entry?.code || '').trim(),
+        merge_without_code: false,
+        exclude_from_tkp_autofill: !!entry?.exclude_from_tkp_autofill,
+      };
+    }).filter(function (entry) {
+      return !!entry.service_name && !entry.exclude_from_tkp_autofill;
+    }).map(function (entry) {
+      return {
+        service_name: entry.service_name,
+        code: entry.code,
+        merge_without_code: false,
+      };
+    });
+  }
+
+  function hasUserServiceRows(block, api) {
+    const rows = Array.isArray(api?.getSerializedRows?.()) ? api.getSerializedRows() : [];
+    return rows.some(function (row) {
+      return !isProposalSystemDscRow(row) && String(row?.service_name || row?.code || '').trim();
+    });
+  }
+
+  function replaceProposalServiceBlockFromType(block, meta) {
+    const api = attachProposalServiceSectionsTable(block);
+    attachProposalServiceTextEditor(block);
+    if (!api || typeof api.replaceRows !== 'function') return;
+    api.replaceRows(proposalServiceRowsFromCurrentType(block), { ...(meta || {}), forceAutofill: true });
+  }
+
+  function initProposalServiceBlocks(root, options) {
+    const scope = root || document;
+    qa('.proposal-stage-service-block', scope).forEach(function (block) {
+      const api = attachProposalServiceSectionsTable(block);
+      attachProposalServiceTextEditor(block);
+      if (
+        options?.autofillEmpty === true
+        && getProposalTypeId(block)
+        && !hasUserServiceRows(block, api)
+      ) {
+        replaceProposalServiceBlockFromType(block, { reason: 'autofill-service-sections-by-type' });
+      }
+    });
+  }
+
+  window.ProposalServiceBlocks = {
+    init: initProposalServiceBlocks,
+    replaceFromType: replaceProposalServiceBlockFromType,
+  };
+
   function initProposalForm() {
     const root = pane();
     const form = root?.querySelector('form[data-proposal-form]');
-    if (!form) return;
+    if (!form) {
+      destroyProposalFormSession();
+      return;
+    }
 
     function parsePercentValue(input) {
       const raw = String(input?.value || '').trim().replace(',', '.');
@@ -7668,7 +9189,6 @@
       stageFields?.classList.toggle('d-none', isCommon);
       if (commonFields) {
         commonFields.querySelectorAll('input, select, textarea').forEach(function (input) {
-          if (input.name === 'final_report_percent') return;
           input.disabled = !isCommon;
         });
       }
@@ -7775,12 +9295,24 @@
       const finalReportWeeksInput = form.querySelector('[name="final_report_term_weeks"]');
       const entry = getProposalTypicalServiceTermEntry(form);
       if (!entry) return;
+      const preliminaryUnitSelect = serviceTermInput
+        ?.closest('.proposal-stage-terms-row')
+        ?.querySelector('.proposal-stage-preliminary-term-unit');
+      const finalUnitSelect = finalReportWeeksInput
+        ?.closest('.proposal-stage-terms-row')
+        ?.querySelector('.proposal-stage-final-term-unit');
       if (force || !String(serviceTermInput?.value || '').trim()) {
+        if (preliminaryUnitSelect && entry.preliminary_report_term_unit) {
+          preliminaryUnitSelect.value = entry.preliminary_report_term_unit;
+        }
         if (serviceTermInput) {
           serviceTermInput.value = entry.preliminary_report_months;
         }
       }
       if (force || !String(finalReportWeeksInput?.value || '').trim()) {
+        if (finalUnitSelect && entry.final_report_term_unit) {
+          finalUnitSelect.value = entry.final_report_term_unit;
+        }
         if (finalReportWeeksInput) {
           finalReportWeeksInput.value = entry.final_report_weeks;
         }
@@ -7873,6 +9405,80 @@
     function subtractDecimalWeeks(date, weeks) {
       const safeWeeks = Number.isFinite(weeks) ? Math.max(weeks, 0) : 0;
       return addDays(date, -Math.round(safeWeeks * 7));
+    }
+
+    const proposalPreliminaryTermUnits = new Set(['months', 'days', 'weeks']);
+    const proposalFinalTermUnits = new Set(['days', 'weeks', 'months']);
+
+    function getProposalPreliminaryTermUnit(select) {
+      const raw = String(select?.value || '').trim();
+      return proposalPreliminaryTermUnits.has(raw) ? raw : 'months';
+    }
+
+    function getProposalFinalTermUnit(select) {
+      const raw = String(select?.value || '').trim();
+      return proposalFinalTermUnits.has(raw) ? raw : 'weeks';
+    }
+
+    function formatProposalTermAmount(value, unit) {
+      if (!Number.isFinite(value)) return '';
+      if (unit === 'days') return String(Math.round(Math.max(value, 0)));
+      return formatProposalDecimal(value);
+    }
+
+    function normalizeProposalTermInput(input, unit) {
+      if (!input) return null;
+      const parsed = parseProposalDecimal(input.value);
+      input.step = unit === 'days' ? '1' : '0.1';
+      input.inputMode = unit === 'days' ? 'numeric' : 'decimal';
+      if (parsed === null) {
+        input.value = '';
+        return null;
+      }
+      const normalized = unit === 'days' ? Math.round(Math.max(parsed, 0)) : parsed;
+      input.value = formatProposalTermAmount(normalized, unit);
+      return normalized;
+    }
+
+    function addProposalTerm(date, value, unit) {
+      if (unit === 'days') return addDays(date, Math.round(Math.max(value, 0)));
+      if (unit === 'weeks') return addDecimalWeeks(date, value);
+      return addDecimalMonths(date, value);
+    }
+
+    function subtractProposalTerm(date, value, unit) {
+      if (unit === 'days') return addDays(date, -Math.round(Math.max(value, 0)));
+      if (unit === 'weeks') return subtractDecimalWeeks(date, value);
+      return subtractDecimalMonths(date, value);
+    }
+
+    function proposalStageTermValueToDays(value, unit) {
+      const safeValue = Number.isFinite(value) ? Math.max(value, 0) : 0;
+      if (unit === 'months') return safeValue * 30;
+      if (unit === 'weeks') return safeValue * 7;
+      return Math.round(safeValue);
+    }
+
+    function setProposalTotalTermValue(input, totalDays, unit) {
+      if (!input) return;
+      input.step = unit === 'days' ? '1' : '0.1';
+      input.inputMode = unit === 'days' ? 'numeric' : 'decimal';
+      if (!Number.isFinite(totalDays)) {
+        input.value = '';
+        return;
+      }
+      if (unit === 'months') input.value = formatProposalDecimal(totalDays / 30);
+      else if (unit === 'weeks') input.value = formatProposalDecimal(totalDays / 7);
+      else input.value = String(Math.round(totalDays));
+    }
+
+    function setProposalTermUnitLocked(select, shell, locked) {
+      if (select) {
+        select.tabIndex = locked ? -1 : 0;
+        select.style.pointerEvents = locked ? 'none' : '';
+        select.setAttribute('aria-disabled', locked ? 'true' : 'false');
+      }
+      shell?.classList.toggle('readonly-field', locked);
     }
 
     function diffProposalDays(start, end) {
@@ -8050,6 +9656,16 @@
           setProposalReadonly(row.querySelector('.proposal-stage-final-report-date'), proposalReportTermsEditMode, { lockPicker: true });
           setProposalReadonly(row.querySelector('.proposal-stage-service-term-months'), !proposalReportTermsEditMode);
           setProposalReadonly(row.querySelector('.proposal-stage-final-report-term-weeks'), !proposalReportTermsEditMode);
+          setProposalTermUnitLocked(
+            row.querySelector('.proposal-stage-preliminary-term-unit'),
+            row.querySelector('.proposal-stage-preliminary-term-shell'),
+            !proposalReportTermsEditMode
+          );
+          setProposalTermUnitLocked(
+            row.querySelector('.proposal-stage-final-term-unit'),
+            row.querySelector('.proposal-stage-final-term-shell'),
+            !proposalReportTermsEditMode
+          );
         });
         lockIcons.forEach(function (icon) {
           icon.classList.toggle('bi-lock-fill', !proposalReportTermsEditMode);
@@ -8096,6 +9712,7 @@
       if (!container || !addBtn || !metaEl || !serviceStagesContainer || !commercialStagesContainer || !paymentStagesContainer || !termsTbody) return null;
       if (form.dataset.stageProductsBound === '1') return form.__proposalStageProductsApi || null;
       form.dataset.stageProductsBound = '1';
+      form.dataset.proposalCommercialHydrating = '1';
 
       let meta = {};
       try {
@@ -8124,7 +9741,38 @@
       }
 
       function getProductRows() {
-        return Array.from(container.querySelectorAll('.proposal-product-row'));
+        return Array.from(container.querySelectorAll('.proposal-product-row')).filter(function (row) {
+          return row.dataset.productGroupLabel !== '1';
+        });
+      }
+
+      function proposalGroupOptions() {
+        return {
+          container: container,
+          productRowClass: 'proposal-product-row',
+          labelClass: 'proposal-product-group-label',
+          badgeSelector: '.proposal-product-badge',
+          displaySelector: '.proposal-product-display',
+          productById: productById,
+          bindRow: bindProductRow,
+          assignStageUid: function (member) {
+            member.dataset.stageUid = nextStageUid();
+          },
+          restoreNames: function (row) {
+            [
+              ['.proposal-consulting-select', 'type_consulting'],
+              ['.proposal-service-category-select', 'type_service_category'],
+              ['.proposal-service-subtype-select', 'type_service_subtype'],
+              ['.proposal-product-select', 'type'],
+            ].forEach(function (pair) {
+              const field = row.querySelector(pair[0]);
+              if (field) field.setAttribute('name', pair[1]);
+            });
+          },
+          after: function () {
+            syncStageContent();
+          },
+        };
       }
 
       function getServiceBlocks() {
@@ -8466,6 +10114,13 @@
             if (delayRow) delayRow.dataset.proposalDelayForStageKey = stageUid;
           }
         });
+        commercialBlocks.forEach(function (block, index) {
+          const exportButton = block.querySelector('[data-proposal-commercial-xlsx="1"]');
+          if (!exportButton) return;
+          const isLastBlock = index === commercialBlocks.length - 1;
+          exportButton.classList.toggle('d-none', !isLastBlock);
+          exportButton.classList.toggle('d-flex', isLastBlock);
+        });
         if (summaryCommercialBlock) {
           summaryCommercialBlock.classList.toggle('d-none', !hasMultipleStages);
           summaryCommercialBlock.dataset.proposalStageKey = 'summary';
@@ -8561,11 +10216,31 @@
         });
         productSelect?.addEventListener('change', function () {
           const selectedProductId = String(productSelect.value || '').trim();
+          const selected = productById.get(selectedProductId);
+          if (window.ProductGroupPicker && ProductGroupPicker.allow(container)) {
+            if (ProductGroupPicker.isGroup(selected)) {
+              if (row.dataset.productGroupLabel === '1' && row.dataset.groupProductId !== String(selected.id)) {
+                ProductGroupPicker.reifyLabel(row, proposalGroupOptions());
+              }
+              if (ProductGroupPicker.expand(row, selected, proposalGroupOptions())) return;
+              return;
+            }
+            if (row.dataset.productGroupLabel === '1') {
+              ProductGroupPicker.reifyLabel(row, proposalGroupOptions());
+            } else if (row.dataset.productGroupParent) {
+              const parent = productById.get(String(row.dataset.productGroupParent));
+              const stillMember = parent && (parent.member_ids || []).map(String).includes(selectedProductId);
+              if (!stillMember) ProductGroupPicker.clearMemberMarker(row);
+              ProductGroupPicker.prune(container, proposalGroupOptions());
+            }
+          }
           const refreshSeq = productAutofillRefreshSeq + 1;
           productAutofillRefreshSeq = refreshSeq;
           syncRow({ productId: selectedProductId });
           syncStageContent();
+          const releaseProgressCursor = beginProposalProductAutofillProgressCursor();
           refreshProposalProductAutofillData(form, selectedProductId).finally(function () {
+            releaseProgressCursor();
             if (refreshSeq !== productAutofillRefreshSeq) return;
             syncStageContent();
           });
@@ -8588,19 +10263,33 @@
           });
           const monthsInput = row.querySelector('.proposal-stage-service-term-months');
           const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
-          normalizeProposalDecimalInputValue(monthsInput);
-          normalizeProposalDecimalInputValue(weeksInput);
+          const preliminaryUnitSelect = row.querySelector('.proposal-stage-preliminary-term-unit');
+          const finalUnitSelect = row.querySelector('.proposal-stage-final-term-unit');
+          normalizeProposalTermInput(monthsInput, getProposalPreliminaryTermUnit(preliminaryUnitSelect));
+          normalizeProposalTermInput(weeksInput, getProposalFinalTermUnit(finalUnitSelect));
           ['input', 'change'].forEach(function (eventName) {
             row.querySelector('.proposal-stage-evaluation-date')?.addEventListener(eventName, function () {
               syncStageEvaluationDates(row.querySelector('.proposal-stage-evaluation-date')?.value || '');
             });
             monthsInput?.addEventListener(eventName, function () {
               syncStageTerms();
-              if (eventName === 'change') normalizeProposalDecimalInputValue(monthsInput);
+              if (eventName === 'change') {
+                normalizeProposalTermInput(monthsInput, getProposalPreliminaryTermUnit(preliminaryUnitSelect));
+              }
             });
             weeksInput?.addEventListener(eventName, function () {
               syncStageTerms();
-              if (eventName === 'change') normalizeProposalDecimalInputValue(weeksInput);
+              if (eventName === 'change') {
+                normalizeProposalTermInput(weeksInput, getProposalFinalTermUnit(finalUnitSelect));
+              }
+            });
+            preliminaryUnitSelect?.addEventListener(eventName, function () {
+              normalizeProposalTermInput(monthsInput, getProposalPreliminaryTermUnit(preliminaryUnitSelect));
+              syncStageTerms();
+            });
+            finalUnitSelect?.addEventListener(eventName, function () {
+              normalizeProposalTermInput(weeksInput, getProposalFinalTermUnit(finalUnitSelect));
+              syncStageTerms();
             });
             row.querySelector('.proposal-stage-preliminary-report-date')?.addEventListener(eventName, function () {
               if (!proposalReportTermsEditMode) {
@@ -8614,6 +10303,17 @@
                 syncStageTerms();
               }
             });
+          });
+        });
+      }
+
+      function bindStageTotalsUnits() {
+        const totalsRow = getTotalsRow();
+        if (!totalsRow || totalsRow.dataset.eventsBound === '1') return;
+        totalsRow.dataset.eventsBound = '1';
+        totalsRow.querySelectorAll('.proposal-stage-total-preliminary-term-unit, .proposal-stage-total-final-term-unit').forEach(function (select) {
+          select.addEventListener('change', function () {
+            syncStageTerms();
           });
         });
       }
@@ -8788,6 +10488,7 @@
                 professional_status: String(row?.professional_status || '').trim(),
                 service_name: serviceName,
                 code: code,
+                codes: new Set(code ? [code] : []),
                 merge_without_code: mergeWithoutCode,
                 rate_eur_per_day: String(row?.rate_eur_per_day || '').trim(),
                 asset_day_counts: Array.from({ length: assetCount }, function () { return 0; }),
@@ -8800,6 +10501,9 @@
               groupedRows.push(bucket);
             } else if (serviceName) {
               bucket.service_name = serviceName;
+            }
+            if (code) {
+              bucket.codes.add(code);
             }
             (Array.isArray(row?.asset_day_counts) ? row.asset_day_counts : []).slice(0, assetCount).forEach(function (value, index) {
               const numericValue = parseInt(String(value || '').trim(), 10);
@@ -8838,7 +10542,7 @@
             professional_status: bucket.professional_status,
             service_name: serviceName,
             service_name_auto: bucket.service_name,
-            code: bucket.code,
+            code: bucket.merge_without_code && bucket.codes.size > 1 ? '' : bucket.code,
             merge_without_code: bucket.merge_without_code,
             rate_eur_per_day: bucket.rate_eur_per_day,
             asset_day_counts: bucket.asset_day_counts.map(function (value) { return value > 0 ? String(value) : ''; }),
@@ -8909,6 +10613,22 @@
         };
       }
 
+      function finishProposalCommercialHydration() {
+        if (form.dataset.proposalCommercialHydrating !== '1') return;
+        const scheduleFrame = window.requestAnimationFrame || function (callback) { return window.setTimeout(callback, 0); };
+        scheduleFrame(function () {
+          if (form.dataset.proposalCommercialHydrating !== '1') return;
+          form.dataset.proposalCommercialHydrating = '0';
+          getCommercialBlocks().forEach(function (block) {
+            attachProposalCommercialTable(block, assetsApi)?.endHydration?.();
+          });
+          const summaryBlock = getSummaryCommercialBlock();
+          if (summaryBlock) {
+            attachProposalCommercialTable(summaryBlock, assetsApi)?.endHydration?.();
+          }
+        });
+      }
+
       function syncSummaryCommercialBlock() {
         const summaryCommercialBlock = getSummaryCommercialBlock();
         const hasMultipleStages = getProductRows().length > 1;
@@ -8926,6 +10646,117 @@
         }
         summaryApi.replaceRows(summaryPayload.rows, { reason: 'summary-sync' });
       }
+
+      function buildCommercialXlsxSnapshot() {
+        const commercialBlocks = getCommercialBlocks();
+        commercialBlocks.forEach(function (block) {
+          attachProposalCommercialTable(block, assetsApi)?.flush?.({ reason: 'xlsx-export' });
+        });
+        syncSummaryCommercialBlock();
+
+        const productRows = getProductRows();
+        const assets = getAssetRows().map(function (asset, index) {
+          return String(asset?.short_name || '').trim() || ('Актив ' + (index + 1));
+        });
+        const stages = commercialBlocks.map(function (block, index) {
+          const productId = String(productRows[index]?.querySelector('.proposal-product-select')?.value || '').trim();
+          const product = productById.get(productId) || null;
+          const api = attachProposalCommercialTable(block, assetsApi);
+          api?.flush?.({ reason: 'xlsx-export' });
+          return {
+            label: String(block.querySelector('.proposal-stage-block-title')?.textContent || '').trim()
+              || ('Коммерческое предложение: Этап ' + (index + 1)),
+            product_label: String(product?.short_label || product?.label || '').trim(),
+            rows: api?.getSerializedRows?.() || [],
+            totals: parseCommercialTotalsPayload(block),
+          };
+        });
+
+        let summary = null;
+        const summaryBlock = getSummaryCommercialBlock();
+        if (summaryBlock && productRows.length > 1) {
+          const summaryApi = attachProposalCommercialTable(summaryBlock, assetsApi);
+          summaryApi?.flush?.({ reason: 'xlsx-export' });
+          summary = {
+            label: String(summaryBlock.querySelector('.proposal-stage-block-title')?.textContent || '').trim()
+              || 'Коммерческое предложение: все этапы',
+            rows: summaryApi?.getSerializedRows?.() || [],
+            totals: parseCommercialTotalsPayload(summaryBlock),
+          };
+        }
+
+        const page = form.closest('[data-header-current-label]');
+        return {
+          proposal_label: String(page?.dataset?.headerCurrentLabel || form.querySelector('[name="name"]')?.value || '').trim(),
+          assets: assets,
+          stages: stages,
+          summary: summary,
+        };
+      }
+
+      function commercialXlsxFilename(response) {
+        const disposition = String(response.headers.get('Content-Disposition') || '');
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utf8Match) {
+          try {
+            return decodeURIComponent(utf8Match[1].trim());
+          } catch (error) {
+            return utf8Match[1].trim();
+          }
+        }
+        const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+        return plainMatch ? plainMatch[1].trim() : 'commercial_offer.xlsx';
+      }
+
+      async function downloadCommercialXlsx(button) {
+        const exportUrl = String(form.dataset.commercialXlsxUrl || '').trim();
+        if (!exportUrl || button.disabled) return;
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        try {
+          const response = await fetch(exportUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': form.querySelector('[name="csrfmiddlewaretoken"]')?.value || '',
+            },
+            body: JSON.stringify(buildCommercialXlsxSnapshot()),
+          });
+          if (!response.ok) {
+            const rawError = String(await response.text()).trim();
+            let message = rawError;
+            try {
+              const data = JSON.parse(rawError || '{}');
+              message = String(data?.message || data?.error || '').trim();
+            } catch (error) {
+              message = rawError;
+            }
+            throw new Error(message || 'Не удалось сформировать XLSX.');
+          }
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = objectUrl;
+          link.download = commercialXlsxFilename(response);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 0);
+        } catch (error) {
+          alert(error.message || 'Не удалось сформировать XLSX.');
+        } finally {
+          button.disabled = false;
+          button.removeAttribute('aria-busy');
+        }
+      }
+
+      commercialStagesContainer.addEventListener('click', function (event) {
+        const button = event.target.closest('[data-proposal-commercial-xlsx="1"]');
+        if (!button || !commercialStagesContainer.contains(button)) return;
+        event.preventDefault();
+        downloadCommercialXlsx(button);
+      });
 
       let summaryCommercialSyncQueued = false;
 
@@ -8966,9 +10797,11 @@
         const states = termRows.map(function (row) {
           const monthsInput = row.querySelector('.proposal-stage-service-term-months');
           const weeksInput = row.querySelector('.proposal-stage-final-report-term-weeks');
+          const preliminaryUnit = getProposalPreliminaryTermUnit(row.querySelector('.proposal-stage-preliminary-term-unit'));
+          const finalUnit = getProposalFinalTermUnit(row.querySelector('.proposal-stage-final-term-unit'));
           const delayInput = getStageDelayRowForTermRow(row)?.querySelector('.proposal-stage-next-delay-days');
-          const months = normalizeProposalDecimalInputValue(monthsInput);
-          const weeks = normalizeProposalDecimalInputValue(weeksInput);
+          const months = normalizeProposalTermInput(monthsInput, preliminaryUnit);
+          const weeks = normalizeProposalTermInput(weeksInput, finalUnit);
           return {
             row: row,
             monthsInput: monthsInput,
@@ -8978,6 +10811,8 @@
             delayInput: delayInput,
             months: months,
             weeks: weeks,
+            preliminaryUnit: preliminaryUnit,
+            finalUnit: finalUnit,
             nextDelayDays: parseProposalInteger(delayInput?.value) || 0,
             preliminaryDate: parseProposalDate(row.querySelector('.proposal-stage-preliminary-report-date')?.value),
             finalDate: parseProposalDate(row.querySelector('.proposal-stage-final-report-date')?.value),
@@ -9010,12 +10845,12 @@
             state.calculatedFinalDate = null;
             return applyNextStageDelay(startDate, state);
           }
-          state.calculatedPreliminaryDate = addDecimalMonths(startDate, state.months);
+          state.calculatedPreliminaryDate = addProposalTerm(startDate, state.months, state.preliminaryUnit);
           if (state.weeks === null) {
             state.calculatedFinalDate = null;
             return applyNextStageDelay(state.calculatedPreliminaryDate, state);
           }
-          state.calculatedFinalDate = addDecimalWeeks(state.calculatedPreliminaryDate, state.weeks);
+          state.calculatedFinalDate = addProposalTerm(state.calculatedPreliminaryDate, state.weeks, state.finalUnit);
           return applyNextStageDelay(state.calculatedFinalDate, state);
         }
 
@@ -9041,18 +10876,18 @@
             if (manualState.manualDateSource === 'preliminary') {
               manualState.calculatedPreliminaryDate = manualState.preliminaryDate;
               manualState.calculatedFinalDate = manualState.weeks !== null
-                ? addDecimalWeeks(manualState.preliminaryDate, manualState.weeks)
+                ? addProposalTerm(manualState.preliminaryDate, manualState.weeks, manualState.finalUnit)
                 : null;
               manualStageStartDate = manualState.preliminaryDate && manualState.months !== null
-                ? subtractDecimalMonths(manualState.preliminaryDate, manualState.months)
+                ? subtractProposalTerm(manualState.preliminaryDate, manualState.months, manualState.preliminaryUnit)
                 : null;
             } else {
               manualState.calculatedFinalDate = manualState.finalDate;
               manualState.calculatedPreliminaryDate = manualState.weeks !== null
-                ? subtractDecimalWeeks(manualState.finalDate, manualState.weeks)
+                ? subtractProposalTerm(manualState.finalDate, manualState.weeks, manualState.finalUnit)
                 : null;
               manualStageStartDate = manualState.calculatedPreliminaryDate && manualState.months !== null
-                ? subtractDecimalMonths(manualState.calculatedPreliminaryDate, manualState.months)
+                ? subtractProposalTerm(manualState.calculatedPreliminaryDate, manualState.months, manualState.preliminaryUnit)
                 : null;
             }
 
@@ -9065,10 +10900,10 @@
                 : rollingStartDate;
               state.calculatedFinalDate = stageEndDate;
               state.calculatedPreliminaryDate = stageEndDate && state.weeks !== null
-                ? subtractDecimalWeeks(stageEndDate, state.weeks)
+                ? subtractProposalTerm(stageEndDate, state.weeks, state.finalUnit)
                 : null;
               rollingStartDate = state.calculatedPreliminaryDate && state.months !== null
-                ? subtractDecimalMonths(state.calculatedPreliminaryDate, state.months)
+                ? subtractProposalTerm(state.calculatedPreliminaryDate, state.months, state.preliminaryUnit)
                 : rollingStartDate;
             }
 
@@ -9107,16 +10942,36 @@
         }
         const totalsRow = getTotalsRow();
         if (!totalsRow) return;
-        const totalMonths = termRows.reduce(function (sum, row) {
-          return sum + (parseProposalDecimal(row.querySelector('.proposal-stage-service-term-months')?.value) || 0);
+        const totalPreliminaryUnit = getProposalPreliminaryTermUnit(
+          totalsRow.querySelector('.proposal-stage-total-preliminary-term-unit')
+        );
+        const totalFinalUnit = getProposalFinalTermUnit(
+          totalsRow.querySelector('.proposal-stage-total-final-term-unit')
+        );
+        const totalPreliminaryDays = termRows.reduce(function (sum, row) {
+          const unit = getProposalPreliminaryTermUnit(row.querySelector('.proposal-stage-preliminary-term-unit'));
+          return sum + proposalStageTermValueToDays(
+            parseProposalDecimal(row.querySelector('.proposal-stage-service-term-months')?.value),
+            unit
+          );
         }, 0);
-        const totalWeeks = termRows.reduce(function (sum, row) {
-          return sum + (parseProposalDecimal(row.querySelector('.proposal-stage-final-report-term-weeks')?.value) || 0);
+        const totalFinalDays = termRows.reduce(function (sum, row) {
+          const unit = getProposalFinalTermUnit(row.querySelector('.proposal-stage-final-term-unit'));
+          return sum + proposalStageTermValueToDays(
+            parseProposalDecimal(row.querySelector('.proposal-stage-final-report-term-weeks')?.value),
+            unit
+          );
         }, 0);
-        const totalMonthsInput = totalsRow.querySelector('.proposal-stage-total-service-term-months');
-        const totalWeeksInput = totalsRow.querySelector('.proposal-stage-total-final-report-term-weeks');
-        if (totalMonthsInput) totalMonthsInput.value = termRows.length > 1 ? formatProposalDecimal(totalMonths) : '';
-        if (totalWeeksInput) totalWeeksInput.value = termRows.length > 1 ? formatProposalDecimal(totalWeeks) : '';
+        setProposalTotalTermValue(
+          totalsRow.querySelector('.proposal-stage-total-service-term-months'),
+          termRows.length > 1 ? totalPreliminaryDays : null,
+          totalPreliminaryUnit
+        );
+        setProposalTotalTermValue(
+          totalsRow.querySelector('.proposal-stage-total-final-report-term-weeks'),
+          termRows.length > 1 ? totalFinalDays : null,
+          totalFinalUnit
+        );
       }
 
       function syncStageContent() {
@@ -9126,6 +10981,7 @@
         ensureStageEditorsInitialized();
         bindSummaryCommercialSync();
         bindTermsRows();
+        bindStageTotalsUnits();
         bindStageDelayRows();
         getProductRows().forEach(function (row, index) {
           const productId = String(row.querySelector('.proposal-product-select')?.value || '').trim();
@@ -9159,16 +11015,24 @@
             const evaluationInput = termsRow.querySelector('.proposal-stage-evaluation-date');
             const monthsInput = termsRow.querySelector('.proposal-stage-service-term-months');
             const weeksInput = termsRow.querySelector('.proposal-stage-final-report-term-weeks');
+            const preliminaryUnitSelect = termsRow.querySelector('.proposal-stage-preliminary-term-unit');
+            const finalUnitSelect = termsRow.querySelector('.proposal-stage-final-term-unit');
             const previousProductId = String(termsRow.dataset.productId || '');
             if (evaluationInput && (!String(evaluationInput.value || '').trim() || productId !== String(termsRow.dataset.productId || ''))) {
               setDateFieldValue(evaluationInput, getSharedEvaluationDateValue());
             }
             if (termEntry && monthsInput && weeksInput) {
               if (!String(monthsInput.value || '').trim() || productId !== previousProductId) {
-                monthsInput.value = formatProposalDecimal(parseProposalDecimal(termEntry.preliminary_report_months) || 0);
+                if (preliminaryUnitSelect && termEntry.preliminary_report_term_unit) {
+                  preliminaryUnitSelect.value = termEntry.preliminary_report_term_unit;
+                }
+                monthsInput.value = termEntry.preliminary_report_months;
               }
               if (!String(weeksInput.value || '').trim() || productId !== previousProductId) {
-                weeksInput.value = formatProposalDecimal(parseProposalDecimal(termEntry.final_report_weeks) || 0);
+                if (finalUnitSelect && termEntry.final_report_term_unit) {
+                  finalUnitSelect.value = termEntry.final_report_term_unit;
+                }
+                weeksInput.value = termEntry.final_report_weeks;
               }
             }
             if (productId !== previousProductId) {
@@ -9183,6 +11047,7 @@
         syncSummaryCommercialBlock();
         syncPaymentScheduleMode();
         form.dispatchEvent(new CustomEvent('proposal-stage-products-changed'));
+        finishProposalCommercialHydration();
       }
 
       termsTbody.addEventListener('click', function (event) {
@@ -9252,6 +11117,11 @@
         clone.dataset.selectedServiceSubtype = copiedState?.serviceSubtype || '';
         clone.dataset.selectedProductId = '';
         delete clone.dataset.eventsBound;
+        delete clone.dataset.productGroupParent;
+        delete clone.dataset.productGroupLabel;
+        clone.classList.remove('proposal-product-group-label');
+        const clonedGroupInput = clone.querySelector('input[name="row_group_id"]');
+        if (clonedGroupInput) clonedGroupInput.value = '';
         container.appendChild(clone);
         bindProductRow(clone);
         syncStageContent();
@@ -9260,10 +11130,16 @@
       container.addEventListener('click', function (event) {
         const removeBtn = event.target.closest('.proposal-product-remove');
         if (!removeBtn) return;
-        const rows = getProductRows();
         const row = removeBtn.closest('.proposal-product-row');
         if (!row) return;
+        if (row.dataset.productGroupLabel === '1' && window.ProductGroupPicker) {
+          ProductGroupPicker.releaseLabel(container, row, proposalGroupOptions());
+          syncStageContent();
+          return;
+        }
+        const rows = getProductRows();
         if (rows.length === 1) {
+          if (window.ProductGroupPicker) ProductGroupPicker.clearMemberMarker(row);
           row.dataset.selectedConsultingType = '';
           row.dataset.selectedServiceCategory = '';
           row.dataset.selectedServiceSubtype = '';
@@ -9274,10 +11150,14 @@
         } else {
           row.remove();
         }
+        if (window.ProductGroupPicker) ProductGroupPicker.prune(container, proposalGroupOptions());
         syncStageContent();
       });
 
-      getProductRows().forEach(bindProductRow);
+      if (window.ProductGroupPicker && ProductGroupPicker.allow(container)) {
+        ProductGroupPicker.restore(container, proposalGroupOptions());
+      }
+      container.querySelectorAll('.proposal-product-row').forEach(bindProductRow);
       syncStageContent();
 
       const api = {
@@ -9412,6 +11292,7 @@
       syncFinalReportPercent(event.target.closest('.js-proposal-payment-group') || form);
     });
     form.querySelector('input[type="checkbox"][name="payment_schedule_common"]')?.addEventListener('change', syncPaymentScheduleMode);
+    form.addEventListener('htmx:beforeRequest', syncPaymentScheduleMode);
     syncPaymentScheduleMode();
     qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
       icon.addEventListener('click', function () {
@@ -9461,6 +11342,7 @@
     assetsApi?.fillEmptyRowsFromDefaults();
       applyProposalReportTermsLockState();
     stageProductsApi?.sync();
+    ensureProposalFormSession(form);
   }
 
   function initProposalDispatchForm() {
@@ -9488,7 +11370,7 @@
     if (!(target instanceof Element)) return null;
     if (target.matches('form[data-proposal-form]')) return target;
     if (target.matches('[data-proposal-form-save-btn]')) {
-      return target.closest('form[data-proposal-form]');
+      return target.closest('form[data-proposal-form]') || getProposalRegistrationForm();
     }
     return null;
   }
@@ -9515,9 +11397,9 @@
   }
 
   function setProposalFormSaveLoading(form, isLoading) {
-    if (!form) return;
-    const saveBtn = form.querySelector('[data-proposal-form-save-btn]');
+    const saveBtn = proposalFormSaveBtn() || form?.querySelector?.('[data-proposal-form-save-btn]');
     if (!(saveBtn instanceof HTMLButtonElement)) return;
+    if (proposalFormSession) proposalFormSession.saving = !!isLoading;
 
     if (isLoading) {
       if (saveBtn.dataset.loading === '1') return;
@@ -9525,14 +11407,16 @@
       saveBtn.dataset.originalHtml = saveBtn.innerHTML;
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Сохранение...';
+      const cancelBtn = proposalFormCancelBtn();
+      if (cancelBtn && cancelBtn.dataset.loading !== '1') cancelBtn.disabled = true;
       return;
     }
 
     if (saveBtn.dataset.originalHtml) {
       saveBtn.innerHTML = saveBtn.dataset.originalHtml;
     }
-    saveBtn.disabled = false;
     delete saveBtn.dataset.loading;
+    syncProposalFormActions();
   }
 
   function getProposalFormCancelButtonForRequest(target) {
@@ -9550,6 +11434,7 @@
       button.dataset.originalHtml = button.innerHTML;
       button.disabled = true;
       button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Отмена';
+      syncProposalFormActions();
       return;
     }
 
@@ -9558,6 +11443,7 @@
     }
     button.disabled = false;
     delete button.dataset.loading;
+    syncProposalFormActions();
   }
 
   function getProposalCreateButtonForRequest(target) {
@@ -9590,6 +11476,21 @@
     if (target.matches('.proposal-header-link[hx-target="#proposals-pane"]')) return target;
     return target.closest('.proposal-header-link[hx-target="#proposals-pane"]');
   }
+
+  document.addEventListener('click', async (event) => {
+    const headerSaveBtn = event.target.closest('#proposal-form-actions [data-proposal-form-save-btn]');
+    if (headerSaveBtn) {
+      event.preventDefault();
+      saveProposalForm();
+      return;
+    }
+    const headerCancelBtn = event.target.closest('#proposal-form-actions [data-proposal-form-cancel-btn]');
+    if (headerCancelBtn) {
+      event.preventDefault();
+      await cancelProposalForm();
+      return;
+    }
+  });
 
   document.addEventListener('click', async (event) => {
     const root = pane();
@@ -9625,13 +11526,18 @@
     if (action === 'delete') {
       if (!window.confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
       const urls = checked.map((box) => box.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i += 1) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i += 1) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
@@ -9648,7 +11554,7 @@
         if (isLast) {
           await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
         }
       }
       syncSelectionState('proposal-select');
@@ -9733,6 +11639,11 @@
     if (action === 'edit') {
       const url = checked[0].closest('tr')?.dataset?.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы перерисовка после «Сохранить» его не восстановила.
+      try { delete window.__tableSel['proposal-template-select']; } catch (_) { window.__tableSel['proposal-template-select'] = []; }
+      if (window.__tableSelLast === 'proposal-template-select') window.__tableSelLast = null;
+      window.TableSelection?.clearOnModalHide('proposals-modal', 'proposal-template-select', root);
       await htmx.ajax('GET', url, { target: '#proposals-modal .modal-content', swap: 'innerHTML' });
       return;
     }
@@ -9740,18 +11651,30 @@
     if (action === 'delete') {
       if (!window.confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
       const urls = checked.map((box) => box.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i += 1) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i += 1) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        refresh: () => loadProposalCatalogShell(),
+      })) {
+        return;
+      }
       let urls = checked
         .map((box) => box.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
@@ -9761,7 +11684,7 @@
         if (isLast) {
           await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
         } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
         }
       }
     }
@@ -9786,6 +11709,11 @@
     if (action === 'edit') {
       const url = checked[0].closest('tr')?.dataset?.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы перерисовка после «Сохранить» его не восстановила.
+      try { delete window.__tableSel['proposal-variable-select']; } catch (_) { window.__tableSel['proposal-variable-select'] = []; }
+      if (window.__tableSelLast === 'proposal-variable-select') window.__tableSelLast = null;
+      window.TableSelection?.clearOnModalHide('proposals-modal', 'proposal-variable-select', root);
       await htmx.ajax('GET', url, { target: '#proposals-modal .modal-content', swap: 'innerHTML' });
       return;
     }
@@ -9793,18 +11721,33 @@
     if (action === 'delete') {
       if (!window.confirm('Удалить ' + checked.length + ' строк(у/и)?')) return;
       const urls = checked.map((box) => box.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i += 1) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#proposals-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i += 1) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            // Сервер отдаёт только секцию переменных (без реестра ТКП и
+            // резолва ссылок Nextcloud) — меняем её, как при up/down.
+            await htmx.ajax('POST', urls[i], { target: '#proposal-variables-section', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        refresh: () => loadProposalCatalogShell(),
+      })) {
+        if (typeof btn.blur === 'function') btn.blur();
+        return;
+      }
       const scrollX = window.scrollX;
       const scrollY = window.scrollY;
       const actionsPanel = root.querySelector('#proposal-variable-actions');
@@ -9829,7 +11772,7 @@
             awaitingSettle = true;
             await htmx.ajax('POST', urls[i], { target: '#proposal-variables-section', swap: 'outerHTML' });
           } else {
-            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken, 'X-Skip-Render': '1' } }).catch(() => {});
           }
         }
       } catch (error) {
@@ -10096,6 +12039,20 @@
     }
   });
 
+  document.body.addEventListener('htmx:afterSwap', function (event) {
+    const target = event.target;
+    if (!(target instanceof Element) || target.id !== 'proposals-pane') return;
+    if (typeof window.__applyProposalColPickers === 'function') {
+      window.__applyProposalColPickers();
+    }
+    updateProposalTableScrollGaps();
+    if (!target.querySelector('form[data-proposal-form]')) {
+      clearProposalFormActionLoading();
+      syncProposalFormActions();
+    }
+    initProposalLazyShell(target);
+  });
+
   document.body.addEventListener('htmx:afterSettle', function (event) {
     if (!(event.target && event.target.id === 'proposals-pane')) return;
     const last = window.__tableSelLast;
@@ -10107,6 +12064,7 @@
     initProposalMasterFilters();
     syncProposalRelatedTablesOrder();
     initProposalPaymentScheduleViewSwitch();
+    initProposalSectionToggles();
     initProposalForm();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
@@ -10135,6 +12093,7 @@
     const root = pane();
     const table = event.detail?.table;
     if (!root || !table || !root.contains(table)) return;
+    if (event.detail?.generic) return; // generic tables refresh themselves
     const url = root.getAttribute('hx-get') || '';
     if (!url || !window.htmx) return;
     window.htmx.ajax('GET', url, { target: '#proposals-pane', swap: 'outerHTML' });
@@ -10171,7 +12130,7 @@
   document.addEventListener('change', function (event) {
     const root = pane();
     if (!root) return;
-    const input = event.target.closest('#proposal-colpicker-menu input.form-check-input');
+    const input = event.target.closest('#proposal-colpicker-menu input.form-check-input, #proposal-payment-colpicker-menu input.form-check-input, #proposal-dispatch-colpicker-menu input.form-check-input');
     if (!input || !root.contains(input)) return;
     scheduleProposalTableScrollGapsUpdate();
   });
@@ -10184,6 +12143,29 @@
     if (!(target instanceof Element)) return;
     if (!target.closest('#proposals-modal .modal-content')) return;
     initProposalDispatchForm();
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    if (!proposalFormSession?.isDirty()) return;
+    const target = event.detail?.target;
+    if (!target || target.id !== 'proposals-pane') return;
+    const elt = event.detail?.elt;
+    if (elt && elt.matches?.('form[data-proposal-form]')) return;
+    if (!confirmProposalFormLeave()) {
+      event.preventDefault();
+      document.documentElement.classList.remove('proposal-progress-cursor');
+      return;
+    }
+    destroyProposalFormSession();
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    if (event.defaultPrevented) return;
+    const target = event.detail?.target;
+    if (!target || target.id !== 'proposals-pane') return;
+    if (!isProposalCatalogPartialRequest(event)) return;
+    if (isProposalTablesRequest(event) && target.dataset.proposalLazyShell === '1') return;
+    fillProposalCatalogSkeleton(target);
   });
 
   document.body.addEventListener('htmx:beforeRequest', function (event) {
@@ -10211,6 +12193,7 @@
   });
 
   document.body.addEventListener('htmx:beforeRequest', function (event) {
+    if (event.defaultPrevented) return;
     const headerLink = getProposalHeaderLinkForRequest(event.detail?.elt);
     if (!headerLink) return;
     document.documentElement.classList.add('proposal-progress-cursor');
@@ -10218,7 +12201,7 @@
 
   document.body.addEventListener('htmx:afterRequest', function (event) {
     const form = getProposalFormForRequest(event.detail?.elt);
-    if (!form || !document.body.contains(form)) return;
+    if (!form) return;
     setProposalFormSaveLoading(form, false);
   });
 
@@ -10247,6 +12230,17 @@
     const headerLink = getProposalHeaderLinkForRequest(event.detail?.elt);
     if (!headerLink) return;
     document.documentElement.classList.remove('proposal-progress-cursor');
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    if (event.detail?.successful) return;
+    const target = event.detail?.target;
+    if (!target || target.id !== 'proposals-pane') return;
+    const cancelBtn = proposalFormCancelBtn();
+    if (cancelBtn?.dataset?.loading === '1') setProposalFormCancelLoading(cancelBtn, false);
+    if (isProposalCatalogPartialRequest(event) || pane()?.dataset?.proposalLazyShell === '1') {
+      showProposalCatalogLoadError(pane());
+    }
   });
 
   document.body.addEventListener('htmx:afterRequest', function (event) {
@@ -10258,7 +12252,7 @@
 
   document.body.addEventListener('htmx:sendError', function (event) {
     const form = getProposalFormForRequest(event.detail?.elt);
-    if (!form || !document.body.contains(form)) return;
+    if (!form) return;
     setProposalFormSaveLoading(form, false);
   });
 
@@ -10290,6 +12284,14 @@
     const target = event.detail?.target || event.target;
     if (!isProposalVariablesSectionElement(target)) return;
     clearProposalPendingScrollRestore();
+  });
+
+  document.body.addEventListener('htmx:sendError', function (event) {
+    const target = event.detail?.target;
+    if (!target || target.id !== 'proposals-pane') return;
+    if (isProposalCatalogPartialRequest(event) || pane()?.dataset?.proposalLazyShell === '1') {
+      showProposalCatalogLoadError(pane());
+    }
   });
 
   document.body.addEventListener('htmx:afterSwap', function (event) {
@@ -10312,12 +12314,43 @@
     disposeProposalPaymentGanttInstance();
   });
 
+  document.addEventListener('click', function (event) {
+    const retry = event.target.closest('[data-proposal-lazy-retry="1"]');
+    if (!retry) return;
+    const root = retry.closest('#proposals-pane');
+    if (!root) return;
+    event.preventDefault();
+    const error = root.querySelector('.proposal-table-placeholder-error');
+    if (error) error.classList.add('d-none');
+    delete root.dataset.proposalLazyInitialized;
+    root.setAttribute('aria-busy', 'true');
+    initProposalLazyShell(root);
+  });
+
+  document.addEventListener('click', function (event) {
+    const tabLink = event.target.closest('[data-bs-toggle="tab"]');
+    if (!tabLink) return;
+    const href = tabLink.getAttribute('href');
+    if (!href || href === '#proposals') return;
+    if (!confirmProposalFormLeave()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+
+  window.addEventListener('beforeunload', function (event) {
+    if (!proposalFormSession?.isDirty()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
   document.addEventListener('DOMContentLoaded', function () {
     updateHeaderPath();
     syncAllSelectionStates();
     initProposalMasterFilters();
     syncProposalRelatedTablesOrder();
     initProposalPaymentScheduleViewSwitch();
+    initProposalSectionToggles();
     initProposalForm();
     restoreProposalSendSettings();
     scheduleProposalTableScrollGapsUpdate();

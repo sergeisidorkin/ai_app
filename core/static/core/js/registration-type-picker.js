@@ -69,7 +69,9 @@ function attachRegistrationProducts(node) {
   const serviceCategories = Array.isArray(meta.service_categories) ? meta.service_categories : [];
   const productById = new Map(products.map((product) => [String(product.id), product]));
 
-  const getProductRows = () => Array.from(container.querySelectorAll(".registration-product-row"));
+  const getProductRows = () => Array.from(container.querySelectorAll(".registration-product-row")).filter(
+    (row) => row.dataset.productGroupLabel !== "1"
+  );
   const getTermsTbody = () => termsConfig.getTbody();
   const getEvaluationTbody = () => termsConfig.getEvaluationTbody();
   const getTermsRows = () => Array.from(node.querySelectorAll(termsConfig.termRowSelector));
@@ -428,12 +430,40 @@ function attachRegistrationProducts(node) {
 
   const filteredProducts = (consultingType, serviceCategory, serviceSubtype) => (
     products.filter((product) => {
+      if (product.is_group && !(window.ProductGroupPicker && ProductGroupPicker.allow(container))) return false;
       if (consultingType && product.consulting_type !== consultingType) return false;
       if (serviceCategory && product.service_category !== serviceCategory) return false;
       if (serviceSubtype && product.service_subtype !== serviceSubtype) return false;
       return true;
     })
   );
+
+  function registrationGroupOptions() {
+    return {
+      container,
+      productRowClass: "registration-product-row",
+      labelClass: "registration-product-group-label",
+      badgeSelector: ".registration-product-badge",
+      displaySelector: ".registration-product-display",
+      productById,
+      bindRow,
+      syncRow,
+      restoreNames(row) {
+        [
+          [".registration-consulting-select", "type_consulting"],
+          [".registration-service-category-select", "type_service_category"],
+          [".registration-service-subtype-select", "type_service_subtype"],
+          [".registration-product-select", "type_id"],
+        ].forEach(function (pair) {
+          const field = row.querySelector(pair[0]);
+          if (field) field.setAttribute("name", pair[1]);
+        });
+      },
+      after() {
+        renumberRows();
+      },
+    };
+  }
 
   const syncRow = (row, state = {}) => {
     const consultingSelect = row.querySelector(".registration-consulting-select");
@@ -553,6 +583,24 @@ function attachRegistrationProducts(node) {
       syncTermsRowsWithProducts();
     });
     productSelect?.addEventListener("change", () => {
+      const selected = productById.get(String(productSelect.value || ""));
+      if (window.ProductGroupPicker && ProductGroupPicker.allow(container)) {
+        if (ProductGroupPicker.isGroup(selected)) {
+          if (row.dataset.productGroupLabel === "1" && row.dataset.groupProductId !== String(selected.id)) {
+            ProductGroupPicker.reifyLabel(row, registrationGroupOptions());
+          }
+          if (ProductGroupPicker.expand(row, selected, registrationGroupOptions())) return;
+          return;
+        }
+        if (row.dataset.productGroupLabel === "1") {
+          ProductGroupPicker.reifyLabel(row, registrationGroupOptions());
+        } else if (row.dataset.productGroupParent) {
+          const parent = productById.get(String(row.dataset.productGroupParent));
+          const stillMember = parent && (parent.member_ids || []).map(String).includes(String(productSelect.value || ""));
+          if (!stillMember) ProductGroupPicker.clearMemberMarker(row);
+          ProductGroupPicker.prune(container, registrationGroupOptions());
+        }
+      }
       syncRow(row, { productId: productSelect.value });
       syncTermsRowsWithProducts();
     });
@@ -574,7 +622,8 @@ function attachRegistrationProducts(node) {
       + '<div class="col-12 col-xl-3"><div class="registration-product-select-shell"><select name="type_id" class="form-select registration-product-select"></select><div class="registration-product-display" aria-hidden="true"></div></div></div>'
       + '</div>'
       + '<button type="button" class="btn btn-sm registration-product-remove" title="Удалить" aria-label="Удалить строку типа">&times;</button>'
-      + '</div>';
+      + '</div>'
+      + '<input type="hidden" name="row_group_id" value="">';
     row.innerHTML = html;
     bindRow(row);
     syncRow(row, initialState);
@@ -589,10 +638,16 @@ function attachRegistrationProducts(node) {
   container.addEventListener("click", (event) => {
     const removeBtn = event.target.closest(".registration-product-remove");
     if (!removeBtn) return;
-    const rows = container.querySelectorAll(".registration-product-row");
     const row = removeBtn.closest(".registration-product-row");
+    if (row && row.dataset.productGroupLabel === "1" && window.ProductGroupPicker) {
+      ProductGroupPicker.releaseLabel(container, row, registrationGroupOptions());
+      renumberRows();
+      return;
+    }
+    const rows = getProductRows();
     const isFirstRow = row && rows[0] === row;
     if (isFirstRow) {
+      if (window.ProductGroupPicker) ProductGroupPicker.clearMemberMarker(row);
       row.dataset.selectedConsultingType = "";
       row.dataset.selectedServiceCategory = "";
       row.dataset.selectedServiceSubtype = "";
@@ -603,13 +658,18 @@ function attachRegistrationProducts(node) {
         serviceSubtype: "",
         productId: "",
       });
+      if (window.ProductGroupPicker) ProductGroupPicker.prune(container, registrationGroupOptions());
       syncTermsRowsWithProducts();
       return;
     }
-    removeBtn.closest(".registration-product-row")?.remove();
+    row?.remove();
+    if (window.ProductGroupPicker) ProductGroupPicker.prune(container, registrationGroupOptions());
     renumberRows();
   });
 
+  if (window.ProductGroupPicker && ProductGroupPicker.allow(container)) {
+    ProductGroupPicker.restore(container, registrationGroupOptions());
+  }
   container.querySelectorAll(".registration-product-row").forEach((row) => {
     bindRow(row);
     syncRow(row, {

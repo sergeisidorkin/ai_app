@@ -40,9 +40,9 @@ from policy_app.models import (
     SpecialtyTariff,
     SYSTEM_DSC_SECTION_CODE,
     SYSTEM_DSC_SECTION_DEFAULTS,
+    ServiceBlockClassifierSpecialty,
     Tariff,
     TypicalSection,
-    TypicalSectionSpecialty,
     TypicalServiceComposition,
     TypicalServiceTerm,
     build_consulting_catalog_meta,
@@ -1617,7 +1617,9 @@ def _resolve_workspace_folder_file_id(workspace_path: str) -> str:
 
 
 def _proposal_product_catalog():
-    products = list(Product.objects.order_by("position", "id"))
+    from policy_app.product_groups import catalog_group_payload, product_catalog_queryset
+
+    products = list(product_catalog_queryset())
     catalog_meta = build_consulting_catalog_meta()
     consulting_types = []
     service_categories = []
@@ -1648,6 +1650,7 @@ def _proposal_product_catalog():
                 "consulting_type": (product.consulting_type_display or "").strip(),
                 "service_category": (product.service_category_display or "").strip(),
                 "service_subtype": (product.service_subtype_display or "").strip(),
+                **catalog_group_payload(product),
             }
             for product in products
         ],
@@ -1815,12 +1818,17 @@ def _proposal_product_autofill_data(product_ids=None, group_member=None):
 
     sections_qs = (
         TypicalSection.objects
-        .select_related("product", "expertise_dir", "expertise_direction")
+        .select_related(
+            "product",
+            "service_block",
+            "service_block__expertise_dir",
+            "service_block__expertise_direction",
+        )
         .prefetch_related(
             Prefetch(
-                "ranked_specialties",
+                "service_block__ranked_specialties",
                 queryset=(
-                    TypicalSectionSpecialty.objects
+                    ServiceBlockClassifierSpecialty.objects
                     .select_related("specialty")
                     .order_by("rank", "id")
                 ),

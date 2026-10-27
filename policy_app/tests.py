@@ -48,7 +48,6 @@ from policy_app.forms import (
     TypicalServiceCompositionForm,
 )
 from policy_app.service_block_link import (
-    backfill_service_block_executors,
     link_typical_sections_to_service_blocks,
 )
 from policy_app.models import (
@@ -302,10 +301,10 @@ class PolicyTablePartialEndpointsTests(TestCase):
             "policy-service-block-classifiers-section",
             "Классификатор типовых блоков услуг",
         ),
-        ("policy_expert_specialties_table", "policy-expert-specialties-section", "Специальности исполнителей"),
+        ("policy_expert_specialties_table", "policy-expert-specialties-section", "Классификатор специальностей исполнителей"),
         ("policy_products_table", "policy-products-section", "Типовые продукты"),
         ("policy_service_goal_reports_table", "policy-service-goal-reports-section", "Цели услуг и названия отчетов"),
-        ("policy_typical_sections_table", "policy-typical-sections-section", "Типовые разделы (услуги)"),
+        ("policy_typical_sections_table", "policy-typical-sections-section", "Типовые блоки услуг"),
         (
             "policy_section_structures_table",
             "policy-section-structures-section",
@@ -439,7 +438,7 @@ class PolicyStageFiveQueryBudgetTests(TestCase):
         create_products(2, 51)
         fifty_count, response = self._endpoint_query_count("policy_products_table")
 
-        self.assertEqual((one_count, fifty_count), (5, 5))
+        self.assertEqual((one_count, fifty_count), (10, 10))
         self.assertEqual(len(response.context["products"]), 25)
         self.assertLessEqual(len(response.context["products"]), policy_views.POLICY_TABLE_PAGE_SIZE)
 
@@ -654,12 +653,22 @@ class PolicyStageFiveRoutingAndReorderTests(TestCase):
             name_ru="Другой",
             position=2,
         )
+        blocks = ServiceBlockClassifier.objects.bulk_create(
+            [
+                ServiceBlockClassifier(
+                    code=f"M{index:02d}",
+                    short_name=f"s5-{index:03d}",
+                    position=index,
+                )
+                for index in range(1, 52)
+            ]
+        )
         sections = TypicalSection.objects.bulk_create(
             [
                 TypicalSection(
                     product=product,
-                    code=f"S5-{index:03d}",
-                    short_name=f"s5-{index:03d}",
+                    service_block=blocks[index - 1],
+                    code=blocks[index - 1].code,
                     name_en=f"Section {index}",
                     name_ru=f"Раздел {index}",
                     position=index * 2,
@@ -1538,17 +1547,17 @@ class PolicyProductWorkspaceTests(TestCase):
         self.assertNotContains(sections, 'data-inline-field="short_name"', html=False)
         self.assertNotContains(sections, 'data-inline-field="short_name_ru"', html=False)
         self.assertIn('"service_blocks"', sections.context["policy_inline_options_json"])
+        self.assertNotIn('"specialties"', sections.context["policy_inline_options_json"])
+        self.assertContains(sections, 'data-inline-field="service_block"', html=False)
         self.assertContains(sections, 'data-inline-field="name_ru"', html=False)
-        self.assertContains(sections, 'data-inline-field="accounting_type"', html=False)
-        self.assertContains(sections, 'data-inline-field="expertise_dir"', html=False)
+        self.assertNotContains(sections, 'data-inline-field="accounting_type"', html=False)
+        self.assertNotContains(sections, 'data-inline-field="expertise_dir"', html=False)
         self.assertNotContains(sections, 'data-inline-field="expertise_direction"', html=False)
+        self.assertNotContains(sections, 'data-inline-field="specialty_ids"', html=False)
+        self.assertContains(sections, 'data-service-block-accounting', html=False)
         self.assertContains(sections, 'data-inline-field="exclude_from_tkp_autofill"', html=False)
         self.assertContains(sections, 'data-inline-type="checkbox"', html=False)
         self.assertContains(sections, 'data-inline-type="select"', html=False)
-        self.assertContains(sections, 'data-inline-field="specialty_ids"', html=False)
-        self.assertContains(sections, 'data-inline-type="specialties"', html=False)
-        self.assertContains(sections, "inline-specialty-row", html=False)
-        self.assertIn('"specialties"', sections.context["policy_inline_options_json"])
         self.assertContains(sections, "policy-workspace-product-cell", html=False)
         self.assertContains(sections, "policy-row-check-cell", html=False)
         self.assertContains(sections, 'data-policy-row-insert="1"', html=False)
@@ -2196,6 +2205,74 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         self.assertEqual(self.product.service_subtype_ref_id, self.other_subtype.pk)
         self.assertEqual(self.product.service_code, "EWS")
 
+    def test_workspace_save_updates_and_clears_accuracy(self):
+        self.product.accuracy = ">50%"
+        self.product.save(update_fields=["accuracy"])
+
+        kept = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {"display_name": "Still accurate"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(kept.status_code, 200)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.accuracy, ">50%")
+        self.assertEqual(self.product.display_name, "Still accurate")
+
+        updated = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {"accuracy": "<10%"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.accuracy, "<10%")
+
+        cleared = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {"accuracy": ""},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(cleared.status_code, 200)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.accuracy, "")
+
+        rejected = self._save(
+            {
+                "tables": {
+                    "products": [
+                        {
+                            "id": self.product.pk,
+                            "fields": {"accuracy": "примерно"},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertTrue(any(item["field"] == "accuracy" for item in rejected.json()["errors"]))
+
     def test_workspace_save_sets_group_owner(self):
         response = self._save(
             {
@@ -2367,8 +2444,8 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         self.assertEqual(section.short_name_ru, "разд-ws")
         self.assertEqual(section.name_en, "New EN")
         self.assertEqual(section.name_ru, "Новый RU")
-        self.assertEqual(section.accounting_type, "Услуги")
-        self.assertEqual(section.expertise_dir_id, other_expertise.pk)
+        self.assertEqual(section.accounting_type, "Разделы")
+        self.assertEqual(section.expertise_dir_id, expertise.pk)
         self.assertEqual(section.expertise_direction_id, department.pk)
         self.assertEqual(section.product_id, self.product.pk)
         self.assertTrue(section.exclude_from_tkp_autofill)
@@ -2598,6 +2675,74 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         self.assertEqual(created.product_id, self.product.pk)
         self.assertGreater(created.position, current.position)
 
+    def test_workspace_save_replaces_section_when_name_differs_from_classifier(self):
+        ensure_system_dsc_section(self.product)
+        block = ServiceBlockClassifier.objects.create(
+            code="EGM",
+            short_name="egm",
+            short_name_ru="эгм",
+            name_en="Environmental  management",
+            name_ru="Экологический  менеджмент",
+            position=3,
+        )
+        section = TypicalSection.objects.create(
+            product=self.product,
+            service_block=block,
+            code="EGM",
+            name_en="Environmental management",
+            name_ru="Экологический менеджмент",
+            position=2,
+        )
+        response = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {"id": section.pk, "deleted": True},
+                        {
+                            "id": "new-egm",
+                            "new": True,
+                            "fields": {
+                                "service_block": block.pk,
+                                "name_en": "Environmental management",
+                                "name_ru": "Экологический менеджмент",
+                            },
+                        },
+                    ]
+                }
+            }
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertFalse(TypicalSection.objects.filter(pk=section.pk).exists())
+        created = TypicalSection.objects.get(product=self.product, code="EGM")
+        self.assertEqual(created.service_block_id, block.pk)
+        self.assertEqual(created.name_en, "Environmental management")
+        self.assertEqual(created.name_ru, "Экологический менеджмент")
+        block.refresh_from_db()
+        self.assertEqual(block.name_en, "Environmental  management")
+        self.assertEqual(block.name_ru, "Экологический  менеджмент")
+
+        duplicate = self._save(
+            {
+                "tables": {
+                    "typical-sections": [
+                        {
+                            "id": "new-egm-again",
+                            "new": True,
+                            "fields": {
+                                "service_block": block.pk,
+                                "name_en": "Environmental management",
+                                "name_ru": "Экологический менеджмент",
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertFalse(duplicate.json()["ok"])
+
     def test_workspace_save_typical_section_specialty_ids(self):
         geology = ExpertSpecialty.objects.create(specialty="Геология WS", position=1)
         mining = ExpertSpecialty.objects.create(specialty="Горное дело WS", position=2)
@@ -2631,7 +2776,7 @@ class PolicyProductWorkspaceSaveTests(TestCase):
         self.assertTrue(response.json()["ok"])
         self.assertEqual(
             list(section.ranked_specialties.values_list("specialty_id", "rank")),
-            [(mining.pk, 1), (ecology.pk, 2), (geology.pk, 3)],
+            [(geology.pk, 1), (mining.pk, 2)],
         )
 
         cleared = self._save(
@@ -2647,7 +2792,10 @@ class PolicyProductWorkspaceSaveTests(TestCase):
             }
         )
         self.assertEqual(cleared.status_code, 200)
-        self.assertFalse(section.ranked_specialties.exists())
+        self.assertEqual(
+            list(section.ranked_specialties.values_list("specialty_id", "rank")),
+            [(geology.pk, 1), (mining.pk, 2)],
+        )
 
     def test_workspace_save_updates_section_structure_fields(self):
         current = TypicalSection.objects.create(
@@ -4008,25 +4156,28 @@ class ServiceBlockClassifierTableTests(TestCase):
             "Краткое имя EN",
             "Краткое имя RU",
             "Тип учета",
-            "Направление экспертизы",
-            "Подразделение",
-            "Организация",
+            "Экспертиза",
+            "Исполнитель",
         ):
             self.assertContains(response, heading)
+        self.assertNotContains(response, ">Подразделение<")
+        self.assertNotContains(response, ">Организация<")
         self.assertContains(response, "ABC")
         self.assertContains(response, "первый")
         self.assertContains(response, "Материалы")
         self.assertContains(response, "ГЭ")
-        self.assertContains(response, "Горное направление")
-        self.assertContains(response, "SBC Co")
+        self.assertNotContains(response, "Горное направление")
+        self.assertNotContains(response, "SBC Co")
         html = response.content.decode()
         self.assertLess(html.index("ABC"), html.index("DEF"))
         headers = re.findall(r"<th[^>]*>(.*?)</th>", html, flags=re.S)
-        self.assertEqual([re.sub(r"\s+", " ", h).strip() for h in headers][-2:], ["Подразделение", "Организация"])
+        self.assertEqual(
+            [re.sub(r"\s+", " ", h).strip() for h in headers][-2:],
+            ["Экспертиза", "Исполнитель"],
+        )
         first_row = html[html.index("ABC"):html.index("DEF")]
-        self.assertIn("SBC Co", first_row)
-        second_row = html[html.index("DEF"):html.index("</tbody>")]
-        self.assertNotIn("SBC Co", second_row)
+        self.assertNotIn("SBC Co", first_row)
+        self.assertNotIn("Горное направление", first_row)
 
     def test_form_locks_department_and_organization_from_expertise(self):
         create = self.client.get(reverse("service_block_classifier_form_create"))
@@ -4393,6 +4544,10 @@ class ServiceBlockClassifierTableTests(TestCase):
         self.assertEqual(table.status_code, 200)
         self.assertNotContains(table, 'id="sbc-master"', html=False)
         self.assertNotContains(table, 'id="sbc-actions"', html=False)
+        self.assertNotContains(table, "Скачать CSV")
+        self.assertNotContains(table, "Загрузить CSV")
+        self.assertContains(table, "Показано строк")
+        self.assertContains(table, 'class="policy-table-pagination"', html=False)
 
         for url in (
             reverse("service_block_classifier_form_create"),
@@ -4409,6 +4564,222 @@ class ServiceBlockClassifierTableTests(TestCase):
         self.assertEqual(bulk.status_code, 403)
         self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
         self.assertEqual(self._ordered_codes(), ["ABC", "DEF"])
+        for url in (
+            reverse("service_block_classifier_csv_download"),
+            reverse("service_block_classifier_csv_upload"),
+        ):
+            response = self.client.get(url) if url.endswith("csv-download/") else self.client.post(url)
+            self.assertEqual(response.status_code, 302, url)
+
+    def test_table_paginates_rows_and_keeps_csv_actions(self):
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        codes = [
+            f"Z{alphabet[index // 26]}{alphabet[index % 26]}"
+            for index in range(28)
+        ]
+        ServiceBlockClassifier.objects.bulk_create(
+            [
+                ServiceBlockClassifier(
+                    code=code,
+                    short_name=code.lower(),
+                    short_name_ru=code,
+                    accounting_type="Разделы",
+                    position=index + 3,
+                )
+                for index, code in enumerate(codes)
+            ]
+        )
+
+        response = self.client.get(reverse("policy_service_block_classifiers_table"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["policy_pagination_enabled"])
+        self.assertEqual(response.context["paginator"].count, 30)
+        self.assertEqual(len(response.context["service_block_classifiers"]), 25)
+        self.assertContains(response, "Показано строк")
+        self.assertContains(response, "1–25 из 30")
+        self.assertContains(response, 'hx-target="#policy-service-block-classifiers-section"', html=False)
+        self.assertContains(response, 'id="service-block-classifiers-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="service-block-classifiers-csv-upload-btn"', html=False)
+        self.assertContains(response, "ABC")
+        self.assertNotContains(response, codes[-1])
+
+        page_two = self.client.get(reverse("policy_service_block_classifiers_table"), {"page": 2})
+        self.assertEqual(len(page_two.context["service_block_classifiers"]), 5)
+        self.assertContains(page_two, codes[-1])
+        self.assertContains(page_two, "26–30 из 30")
+        self.assertContains(page_two, 'data-policy-table-page="2"', html=False)
+
+        wide = self.client.get(
+            reverse("policy_service_block_classifiers_table"),
+            {"page_size": 100},
+        )
+        self.assertEqual(len(wide.context["service_block_classifiers"]), 30)
+        self.assertContains(wide, "1–30 из 30")
+
+    def test_csv_download_exports_every_row_without_pagination(self):
+        geology = ExpertSpecialty.objects.create(
+            specialty="Геология блока",
+            position=1,
+            expertise_dir=self.expertise,
+        )
+        mining = ExpertSpecialty.objects.create(
+            specialty="Горное дело блока",
+            position=2,
+            expertise_dir=self.expertise,
+        )
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.first,
+            specialty=geology,
+            rank=1,
+        )
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.first,
+            specialty=mining,
+            rank=2,
+        )
+        for index in range(1, 27):
+            ServiceBlockClassifier.objects.create(
+                code=f"P{index:02d}",
+                short_name=f"extra-{index}",
+                accounting_type="Разделы",
+                position=index + 2,
+            )
+
+        response = self.client.get(
+            reverse("service_block_classifier_csv_download"),
+            {"page": 1, "page_size": 25},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("service_block_classifiers.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "Код",
+                "Краткое имя EN",
+                "Краткое имя RU",
+                "Наименование раздела (услуги) EN",
+                "Наименование раздела (услуги) RU",
+                "Тип учета",
+                "Направление экспертизы",
+                "Исполнитель",
+                "Подразделение",
+                "Организация",
+            ],
+        )
+        self.assertEqual(len(rows), 29)
+        self.assertEqual(rows[1][0], "ABC")
+        self.assertEqual(rows[1][6], "ГЭ")
+        self.assertEqual(rows[1][7], "Геология блока\nГорное дело блока")
+        self.assertEqual(rows[1][8], "Горное направление")
+        self.assertEqual(rows[1][9], "SBC Co")
+        self.assertEqual(rows[2][0], "DEF")
+        self.assertEqual(rows[2][6], "")
+        self.assertEqual(rows[-1][0], "P26")
+
+    def test_csv_upload_creates_updates_and_skips_invalid_rows(self):
+        geology = ExpertSpecialty.objects.create(
+            specialty="Геология блока",
+            position=1,
+            expertise_dir=self.expertise,
+        )
+        foreign = ExpertSpecialty.objects.create(
+            specialty="Чужая специальность",
+            position=2,
+        )
+        product = Product.objects.create(
+            short_name="SBC",
+            name_en="Block",
+            display_name="Block",
+            name_ru="Блок",
+            position=1,
+        )
+        section = TypicalSection.objects.create(
+            product=product,
+            service_block=self.first,
+            code="ABC",
+            short_name="first",
+            short_name_ru="первый",
+            name_en="Name EN",
+            name_ru="Имя RU",
+            accounting_type="Раздел",
+            position=1,
+        )
+        csv_file = SimpleUploadedFile(
+            "blocks.csv",
+            (
+                "Код;Краткое имя EN;Краткое имя RU;"
+                "Наименование раздела (услуги) EN;Наименование раздела (услуги) RU;"
+                "Тип учета;Направление экспертизы;Исполнитель;Подразделение;Организация\n"
+                'abc;first-upd;первый-обн;Audit EN;Аудит RU;Управление;ГЭ;"Геология блока\nЧужая специальность";Чужое;Чужая\n'
+                "new;created;создан;Created EN;Создан RU;Материалы;ГЭ;;Чужое подразделение;Чужая организация\n"
+                "AB1;bad;плохой;;;Разделы;;;\n"
+                ";empty-code;пусто;;;Разделы;;;\n"
+                "QWE;;пустое имя;;;Разделы;;;\n"
+                "RTY;unknown-dir;направление;;;Разделы;Нет такого;Нет специальности\n"
+                "ABC;duplicate;повтор;;;Разделы;;;\n"
+                "DEF;second-kept;второй;;;Неизвестный;;;;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            reverse("service_block_classifier_csv_upload"),
+            {"csv_file": csv_file},
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 2)
+        self.assertEqual(payload["updated"], 1)
+        self.assertEqual(
+            payload["policyUpdate"]["tables"],
+            ["service-block-classifiers"],
+        )
+        self.assertFalse(payload["policyUpdate"]["refreshFilters"])
+        self.assertTrue(any("трёх латинских" in item for item in payload["warnings"]))
+        self.assertTrue(any("не заполнен код" in item for item in payload["warnings"]))
+        self.assertTrue(any("краткое имя EN" in item for item in payload["warnings"]))
+        self.assertTrue(any("Нет такого" in item for item in payload["warnings"]))
+        self.assertTrue(any("не найдены" in item for item in payload["warnings"]))
+        self.assertTrue(any("не относятся" in item for item in payload["warnings"]))
+        self.assertTrue(any("повторяет" in item for item in payload["warnings"]))
+        self.assertTrue(any("Неизвестный" in item for item in payload["warnings"]))
+        self.first.refresh_from_db()
+        self.second.refresh_from_db()
+        section.refresh_from_db()
+        self.assertEqual(self.first.short_name, "first-upd")
+        self.assertEqual(self.first.short_name_ru, "первый-обн")
+        self.assertEqual(self.first.accounting_type, "Управление")
+        self.assertEqual(self.first.expertise_dir, self.expertise)
+        self.assertEqual(section.short_name, "first-upd")
+        self.assertEqual(section.short_name_ru, "первый-обн")
+        self.assertEqual(
+            list(self.first.ranked_specialties.order_by("rank").values_list("specialty_id", flat=True)),
+            [geology.pk],
+        )
+        created = ServiceBlockClassifier.objects.get(code="NEW")
+        self.assertEqual(created.short_name, "created")
+        self.assertEqual(created.accounting_type, "Материалы")
+        self.assertEqual(created.expertise_dir, self.expertise)
+        self.assertEqual(created.department_display, "Горное направление")
+        self.assertEqual(created.organization_display, "SBC Co")
+        self.assertIsNone(created.expertise_direction_id)
+        self.assertEqual(created.position, 3)
+        unknown = ServiceBlockClassifier.objects.get(code="RTY")
+        self.assertIsNone(unknown.expertise_dir_id)
+        self.assertFalse(unknown.ranked_specialties.exists())
+        self.assertFalse(ServiceBlockClassifier.objects.filter(code="AB1").exists())
+        self.assertFalse(ServiceBlockClassifier.objects.filter(code="QWE").exists())
+        self.second.refresh_from_db()
+        self.assertEqual(self.second.short_name, "second")
+        self.assertEqual(self.second.accounting_type, "Материалы")
+        self.assertFalse(
+            ServiceBlockClassifierSpecialty.objects.filter(specialty=foreign, classifier=self.first).exists()
+        )
 
 
 class ServiceBlockSectionLinkTests(TestCase):
@@ -4460,7 +4831,7 @@ class ServiceBlockSectionLinkTests(TestCase):
         second.refresh_from_db()
         self.assertEqual(first.service_block_id, block.pk)
         self.assertEqual(second.service_block_id, block.pk)
-        self.assertEqual(first.code, "aud")
+        self.assertEqual(first.code, "AUD")
         self.assertEqual(second.code, "AUD")
         self.assertEqual(first.short_name, "audit")
         self.assertEqual(second.short_name_ru, "аудит")
@@ -4475,13 +4846,13 @@ class ServiceBlockSectionLinkTests(TestCase):
         left.refresh_from_db()
         right.refresh_from_db()
         legacy.refresh_from_db()
-        self.assertFalse(ServiceBlockClassifier.objects.filter(code="XYZ").exists())
-        self.assertIsNone(left.service_block_id)
-        self.assertIsNone(right.service_block_id)
-        self.assertIsNone(legacy.service_block_id)
-        self.assertEqual(left.short_name, "left")
+        block = ServiceBlockClassifier.objects.get(code="XYZ")
+        self.assertEqual(left.service_block_id, block.pk)
+        self.assertEqual(right.service_block_id, block.pk)
+        self.assertEqual(left.short_name, "right")
         self.assertEqual(right.short_name_ru, "право")
         self.assertEqual(legacy.code, "SEC-1")
+        self.assertIsNotNone(legacy.service_block_id)
 
     def test_link_uses_existing_block_only_for_exact_names(self):
         block = ServiceBlockClassifier.objects.create(
@@ -4499,8 +4870,9 @@ class ServiceBlockSectionLinkTests(TestCase):
         different.refresh_from_db()
         self.assertEqual(ServiceBlockClassifier.objects.filter(code="ABC").count(), 1)
         self.assertEqual(matched.service_block_id, block.pk)
-        self.assertIsNone(different.service_block_id)
+        self.assertEqual(different.service_block_id, block.pk)
         self.assertEqual(different.short_name, "other")
+        self.assertEqual(matched.short_name, "other")
         self.assertEqual(different.code, "ABC")
 
     def test_link_attaches_system_dsc_without_rewriting_names(self):
@@ -4517,9 +4889,9 @@ class ServiceBlockSectionLinkTests(TestCase):
         section.refresh_from_db()
         block = ServiceBlockClassifier.objects.get(code="DSC")
         self.assertEqual(section.service_block_id, block.pk)
-        self.assertEqual(section.code, "dsc")
-        self.assertEqual(section.short_name, "Своё")
-        self.assertEqual(section.short_name_ru, "Свой")
+        self.assertEqual(section.code, "DSC")
+        self.assertEqual(section.short_name, "Description")
+        self.assertEqual(section.short_name_ru, "Описание")
         self.assertEqual(block.short_name, "Description")
 
     def test_create_copies_classifier_and_can_repeat_on_another_product(self):
@@ -4577,12 +4949,12 @@ class ServiceBlockSectionLinkTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         section.refresh_from_db()
-        self.assertIsNone(section.service_block_id)
+        self.assertIsNotNone(section.service_block_id)
         self.assertEqual(section.code, "SEC-OLD")
         self.assertEqual(section.short_name, "old-en")
         self.assertEqual(section.short_name_ru, "old-ru")
         self.assertEqual(section.name_en, "Updated EN")
-        self.assertEqual(section.accounting_type, "Услуги")
+        self.assertEqual(section.accounting_type, "Разделы")
 
     def test_classifier_rename_updates_linked_short_names_only(self):
         block = ServiceBlockClassifier.objects.create(
@@ -4656,13 +5028,13 @@ class ServiceBlockSectionLinkTests(TestCase):
         self.assertEqual(response.json()["updated"], 1)
         self.assertEqual(response.json()["created"], 0)
         section.refresh_from_db()
-        self.assertIsNone(section.service_block_id)
+        self.assertIsNotNone(section.service_block_id)
         self.assertEqual(section.code, "SEC-OLD")
         self.assertEqual(section.short_name, "kept-en")
         self.assertEqual(section.short_name_ru, "kept-ru")
         self.assertEqual(section.name_en, "New EN")
         self.assertEqual(section.name_ru, "Новый RU")
-        self.assertEqual(section.accounting_type, "Услуги")
+        self.assertEqual(section.accounting_type, "Разделы")
 
 
 class ServiceBlockClassifierExecutorTests(TestCase):
@@ -4745,8 +5117,8 @@ class ServiceBlockClassifierExecutorTests(TestCase):
         response = self.client.get(reverse("policy_service_block_classifiers_table"))
         html = response.content.decode()
         self.assertEqual(response.status_code, 200)
-        self.assertLess(html.index(">Тип учета<"), html.index(">Направление экспертизы<"))
-        self.assertLess(html.index(">Направление экспертизы<"), html.index(">Исполнитель<"))
+        self.assertLess(html.index(">Тип учета<"), html.index(">Экспертиза<"))
+        self.assertLess(html.index(">Экспертиза<"), html.index(">Исполнитель<"))
         self.assertContains(response, 'data-inline-type="specialties"', html=False)
         self.assertContains(response, 'data-specialty-action="add"', html=False)
         self.assertContains(response, 'data-specialty-action="move"', html=False)
@@ -4776,7 +5148,7 @@ class ServiceBlockClassifierExecutorTests(TestCase):
             [(self.mining.pk, 1), (self.geology.pk, 2)],
         )
         section.refresh_from_db()
-        self.assertEqual(self._ranks(section), [(self.mining.pk, 1)])
+        self.assertEqual(self._ranks(section), [(self.mining.pk, 1), (self.geology.pk, 2)])
 
     def test_form_saves_executor_without_changing_linked_section(self):
         section = self._section(self.product)
@@ -4800,7 +5172,7 @@ class ServiceBlockClassifierExecutorTests(TestCase):
             self._ranks(self.block),
             [(self.geology.pk, 1), (self.mining.pk, 2)],
         )
-        self.assertEqual(self._ranks(section), [(self.geology.pk, 1)])
+        self.assertEqual(self._ranks(section), [(self.geology.pk, 1), (self.mining.pk, 2)])
 
     def test_executor_list_is_empty_until_expertise_is_chosen(self):
         create = self.client.get(reverse("service_block_classifier_form_create"))
@@ -4863,74 +5235,25 @@ class ServiceBlockClassifierExecutorTests(TestCase):
         self.assertEqual(self.block.expertise_dir_id, self.other_direction.pk)
         self.assertEqual(self._ranks(self.block), [(self.ecology.pk, 1)])
 
-    def test_backfill_copies_only_unanimous_order_and_keeps_sections(self):
-        same_left = self._section(self.product)
-        same_right = self._section(self.other_product)
-        TypicalSectionSpecialty.objects.create(section=same_left, specialty=self.geology, rank=1)
-        TypicalSectionSpecialty.objects.create(section=same_left, specialty=self.mining, rank=2)
-        TypicalSectionSpecialty.objects.create(section=same_right, specialty=self.geology, rank=1)
-        TypicalSectionSpecialty.objects.create(section=same_right, specialty=self.mining, rank=2)
-        backfill_service_block_executors(
-            TypicalSection,
-            TypicalSectionSpecialty,
-            ServiceBlockClassifierSpecialty,
+    def test_section_executor_follows_the_classifier(self):
+        section = self._section(self.product)
+        other = self._section(self.other_product)
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.block,
+            specialty=self.geology,
+            rank=1,
         )
-        self.assertEqual(
-            self._ranks(self.block),
-            [(self.geology.pk, 1), (self.mining.pk, 2)],
-        )
-        self.assertEqual(self._ranks(same_left), [(self.geology.pk, 1), (self.mining.pk, 2)])
-
-        conflict = ServiceBlockClassifier.objects.create(
-            code="CNF",
-            short_name="conflict",
-            short_name_ru="конфликт",
-            position=2,
-        )
-        first = TypicalSection.objects.create(
-            product=self.product,
-            service_block=conflict,
-            code="CNF",
-            short_name="conflict",
-            short_name_ru="конфликт",
-            name_en="Conflict",
-            name_ru="Конфликт",
-            accounting_type="Раздел",
-            position=2,
-        )
-        second = TypicalSection.objects.create(
-            product=self.other_product,
-            service_block=conflict,
-            code="CNF",
-            short_name="conflict",
-            short_name_ru="конфликт",
-            name_en="Conflict",
-            name_ru="Конфликт",
-            accounting_type="Раздел",
-            position=1,
-        )
-        TypicalSectionSpecialty.objects.create(section=first, specialty=self.geology, rank=1)
-        TypicalSectionSpecialty.objects.create(section=second, specialty=self.mining, rank=1)
-        backfill_service_block_executors(
-            TypicalSection,
-            TypicalSectionSpecialty,
-            ServiceBlockClassifierSpecialty,
-        )
-        self.assertFalse(conflict.ranked_specialties.exists())
-        self.assertEqual(self._ranks(self.block), [(self.geology.pk, 1), (self.mining.pk, 2)])
-        ServiceBlockClassifierSpecialty.objects.filter(classifier=self.block).delete()
         ServiceBlockClassifierSpecialty.objects.create(
             classifier=self.block,
             specialty=self.mining,
-            rank=1,
+            rank=2,
         )
-        backfill_service_block_executors(
-            TypicalSection,
-            TypicalSectionSpecialty,
-            ServiceBlockClassifierSpecialty,
+
+        self.assertEqual(
+            self._ranks(section),
+            [(self.geology.pk, 1), (self.mining.pk, 2)],
         )
-        self.assertEqual(self._ranks(self.block), [(self.mining.pk, 1)])
-        self.assertEqual(self._ranks(same_left), [(self.geology.pk, 1), (self.mining.pk, 2)])
+        self.assertEqual(self._ranks(other), self._ranks(section))
 
 
 class ExpertiseDirectionDepartmentTests(TestCase):
@@ -5585,6 +5908,8 @@ class PolicyManagedTablePaginationTests(TestCase):
             "policy_typical_service_terms_table",
             "policy_tariffs_table",
             "policy_expert_specialties_table",
+            "policy_consulting_directions_table",
+            "policy_service_block_classifiers_table",
         )
         for endpoint_name in endpoint_names:
             with self.subTest(endpoint=endpoint_name):
@@ -5943,11 +6268,33 @@ class ProductCsvUploadTests(TestCase):
         self.assertEqual(product.service_category, "Аудит")
         self.assertEqual(product.service_code, "A")
         self.assertEqual(product.service_subtype, "Аудит проектных решений")
+        self.assertEqual(product.accuracy, "")
         self.assertIsNotNone(product.consulting_type_ref_id)
         self.assertIsNotNone(product.service_category_ref_id)
         self.assertIsNotNone(product.service_subtype_ref_id)
         self.assertFalse(product.is_group_owner)
         self.assertEqual(list(product.owners.values_list("short_name", flat=True)), ["IMC Montan"])
+
+    def test_product_csv_upload_reads_accuracy_column(self):
+        csv_file = SimpleUploadedFile(
+            "products.csv",
+            (
+                "Краткое имя;Наименование на английском языке;Наименование на русском языке;"
+                "Отображаемое в системе имя;Вид консалтинга;Тип услуг;Код;Подтип услуги;Точность;Владелец\n"
+                "AUD;Audit;Аудит;Аудит продукта;Горный;Аудит;Z;Аудит проектных решений;±10-20%;IMC Montan\n"
+                "BAD;Audit;Аудит;Аудит продукта;Горный;Аудит;Z;Аудит проектных решений;примерно;IMC Montan\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("product_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertTrue(any("точности" in item for item in response.json()["warnings"]))
+        product = Product.objects.get(short_name="AUD")
+        self.assertEqual(product.accuracy, "±10\u201320%")
+        self.assertFalse(Product.objects.filter(short_name="BAD").exists())
 
     def test_policy_partial_renders_product_csv_download_button(self):
         response = self.client.get(reverse("policy_partial"))
@@ -6022,6 +6369,7 @@ class ProductCsvUploadTests(TestCase):
             service_category="Аудит",
             service_code="A",
             service_subtype="Аудит проектных решений",
+            accuracy=">50%",
             position=1,
         )
         product.owners.set([self.owner])
@@ -6042,7 +6390,9 @@ class ProductCsvUploadTests(TestCase):
                 "Тип услуг",
                 "Код",
                 "Подтип услуги",
+                "Точность",
                 "Владелец",
+                "Групповой продукт",
             ],
         )
         self.assertEqual(
@@ -6056,7 +6406,9 @@ class ProductCsvUploadTests(TestCase):
                 "Аудит",
                 "A",
                 "Аудит проектных решений",
+                ">50%",
                 "IMC Montan",
+                "",
             ],
         )
 
@@ -6093,6 +6445,50 @@ class ProductCsvUploadTests(TestCase):
         rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[1][0], "TAX")
+
+    def test_products_table_and_form_show_accuracy_after_subtype(self):
+        product = Product.objects.create(
+            short_name="ACC",
+            name_en="Accuracy",
+            name_ru="Точность продукта",
+            display_name="Точность продукта",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_code="A",
+            service_subtype="Аудит проектных решений",
+            accuracy="<10%",
+            position=1,
+        )
+
+        table = self.client.get(reverse("policy_products_table"))
+        self.assertEqual(table.status_code, 200)
+        html = table.content.decode()
+        self.assertLess(html.find(">Подтип услуги<"), html.find(">Точность<"))
+        self.assertLess(html.find(">Точность<"), html.find(">Владелец<"))
+        self.assertIn("&lt;10%", html)
+
+        form = self.client.get(reverse("product_form_edit", args=[product.pk]))
+        self.assertEqual(form.status_code, 200)
+        form_html = form.content.decode()
+        self.assertLess(form_html.find(">Подтип услуги<"), form_html.find(">Точность<"))
+        self.assertLess(form_html.find(">Точность<"), form_html.find(">Владелец<"))
+        self.assertIn('id="id_accuracy"', form_html)
+        self.assertIn('value="&lt;10%" selected', form_html)
+        self.assertIn('value=""', form_html)
+        for label in (">50%", "±30\u201350%", "±20\u201330%", "±10\u201320%"):
+            self.assertIn(label.replace(">", "&gt;").replace("<", "&lt;"), form_html)
+
+        workspace = self.client.get(
+            reverse("policy_products_table"),
+            {"workspace": "1", "product": product.pk},
+        )
+        self.assertEqual(workspace.status_code, 200)
+        workspace_html = workspace.content.decode()
+        self.assertIn('data-inline-field="accuracy"', workspace_html)
+        self.assertIn('data-inline-type="select"', workspace_html)
+        self.assertIn('data-inline-value="&lt;10%"', workspace_html)
+        for label in (">50%", "±30\u201350%", "±20\u201330%", "±10\u201320%", "<10%"):
+            self.assertIn(f'"value": "{label}"', workspace_html)
 
 
 class ProductFormTests(TestCase):
@@ -6133,6 +6529,44 @@ class ProductFormTests(TestCase):
 
         self.assertEqual(list(form.fields["service_category_ref"].queryset), [])
         self.assertEqual(list(form.fields["service_subtype_ref"].queryset), [])
+
+    def _bound_form(self, **extra):
+        data = QueryDict("", mutable=True)
+        data.update(
+            {
+                "short_name": "AUD-ACC",
+                "name_en": "Audit",
+                "display_name": "Audit",
+                "name_ru": "Аудит",
+                "consulting_type_ref": str(self.consulting_type.pk),
+                "service_category_ref": str(self.service_type.pk),
+                "service_subtype_ref": str(self.service_subtype.pk),
+                "owner_ids": "__group__",
+            }
+        )
+        data.update(extra)
+        return ProductForm(data=data)
+
+    def test_accuracy_accepts_blank_and_closed_list(self):
+        blank = self._bound_form()
+        self.assertTrue(blank.is_valid(), blank.errors)
+        self.assertEqual(blank.cleaned_data["accuracy"], "")
+        saved = blank.save()
+        self.assertEqual(saved.accuracy, "")
+
+        chosen = self._bound_form(short_name="AUD-ACC-2", accuracy="±30-50%")
+        self.assertTrue(chosen.is_valid(), chosen.errors)
+        self.assertEqual(chosen.cleaned_data["accuracy"], "±30\u201350%")
+
+        invalid = self._bound_form(short_name="AUD-ACC-3", accuracy="примерно")
+        self.assertFalse(invalid.is_valid())
+        self.assertIn("accuracy", invalid.errors)
+
+        labels = [label for _value, label in ProductForm().fields["accuracy"].choices]
+        self.assertEqual(
+            labels,
+            ["", ">50%", "±30\u201350%", "±20\u201330%", "±10\u201320%", "<10%"],
+        )
 
 
 class PolicyMasterFilterTests(TestCase):
@@ -6397,6 +6831,196 @@ class ConsultingDirectionViewsTests(TestCase):
         self.assertEqual(first.position, 2)
         self.assertEqual(second.position, 1)
 
+    def _catalog_row(self, direction, consulting_type, service_type, code, subtype, position):
+        consulting = ConsultingDirectionType.objects.create(
+            direction=direction,
+            name=consulting_type,
+            position=position,
+        )
+        service = ConsultingServiceType.objects.create(
+            direction=direction,
+            consulting_type=consulting,
+            name=service_type,
+            code=code,
+            position=position,
+        )
+        ConsultingServiceSubtype.objects.create(
+            direction=direction,
+            service_type=service,
+            name=subtype,
+            position=position,
+        )
+        return service
+
+    def test_table_paginates_visible_rows_and_keeps_csv_actions(self):
+        direction = ConsultingDirection.objects.create(position=1)
+        for index in range(1, 31):
+            self._catalog_row(
+                direction,
+                f"Вид {index}",
+                f"Тип {index}",
+                f"C{index}",
+                f"Подтип {index}",
+                index,
+            )
+
+        response = self.client.get(reverse("policy_consulting_directions_table"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["policy_pagination_enabled"])
+        self.assertEqual(response.context["paginator"].count, 30)
+        self.assertEqual(len(response.context["consulting_direction_rows"]), 25)
+        self.assertContains(response, "Показано строк")
+        self.assertContains(response, "1–25 из 30")
+        self.assertContains(response, 'id="consulting-directions-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="consulting-directions-csv-upload-btn"', html=False)
+        self.assertContains(response, "Подтип 1")
+        self.assertNotContains(response, "Подтип 30")
+
+        page_two = self.client.get(reverse("policy_consulting_directions_table"), {"page": 2})
+        self.assertEqual(len(page_two.context["consulting_direction_rows"]), 5)
+        self.assertContains(page_two, "Подтип 30")
+        self.assertContains(page_two, "26–30 из 30")
+
+    def test_table_filters_rows_before_pagination(self):
+        direction = ConsultingDirection.objects.create(position=1)
+        kept = self._catalog_row(direction, "Горный", "Аудит", "A", "Полный", 1)
+        self._catalog_row(direction, "Финансовый", "Оценка", "F", "Экспресс", 2)
+        product = Product.objects.create(
+            short_name="CSV-FLT",
+            name_en="Filter",
+            name_ru="Фильтр",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Полный",
+            service_category_ref=kept,
+            position=1,
+        )
+
+        response = self.client.get(
+            reverse("policy_consulting_directions_table"),
+            {"consulting": "Горный", "product": product.pk},
+        )
+
+        self.assertEqual(response.context["paginator"].count, 1)
+        self.assertContains(response, "Полный")
+        self.assertNotContains(response, "Экспресс")
+
+    def test_csv_download_exports_filtered_rows_without_pagination(self):
+        direction = ConsultingDirection.objects.create(position=1)
+        mining = ConsultingDirectionType.objects.create(
+            direction=direction,
+            name="Горный",
+            position=1,
+        )
+        finance = ConsultingDirectionType.objects.create(
+            direction=direction,
+            name="Финансовый",
+            position=2,
+        )
+        for index in range(1, 28):
+            consulting_type = mining if index < 27 else finance
+            service = ConsultingServiceType.objects.create(
+                direction=direction,
+                consulting_type=consulting_type,
+                name=f"Тип {index}",
+                code=f"C{index}",
+                position=index,
+            )
+            ConsultingServiceSubtype.objects.create(
+                direction=direction,
+                service_type=service,
+                name=f"Подтип {index}",
+                position=index,
+            )
+
+        response = self.client.get(
+            reverse("consulting_direction_csv_download"),
+            {"consulting": "Горный"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("consulting_directions.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(rows[0], ["Вид консалтинга", "Код", "Тип услуг", "Подтип услуги"])
+        self.assertEqual(len(rows), 27)
+        self.assertTrue(all(row[0] == "Горный" for row in rows[1:]))
+
+    def test_csv_upload_creates_rows_updates_code_and_skips_existing(self):
+        direction = ConsultingDirection.objects.create(position=1)
+        service = self._catalog_row(direction, "Горный", "Аудит", "A", "Полный", 1)
+        product = Product.objects.create(
+            short_name="CSV-UPD",
+            name_en="Update",
+            name_ru="Обновление",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Полный",
+            service_code="A",
+            service_category_ref=service,
+            position=1,
+        )
+        csv_file = SimpleUploadedFile(
+            "consulting.csv",
+            (
+                "Вид консалтинга;Код;Тип услуг;Подтип услуги\n"
+                "Горный;B;Аудит;Полный\n"
+                "Горный;B;Аудит;Экспресс\n"
+                "Финансовый;F;Оценка;Сделки\n"
+                "Горный;;Аудит;Без кода\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            reverse("consulting_direction_csv_upload"),
+            {"csv_file": csv_file},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["created"], 2)
+        self.assertEqual(payload["updated"], 1)
+        self.assertTrue(any("Код" in item for item in payload["warnings"]))
+        service.refresh_from_db()
+        product.refresh_from_db()
+        self.assertEqual(service.code, "B")
+        self.assertEqual(product.service_code, "B")
+        self.assertTrue(
+            ConsultingServiceSubtype.objects.filter(
+                service_type=service,
+                name="Экспресс",
+            ).exists()
+        )
+        financial = ConsultingDirectionType.objects.get(name="Финансовый")
+        self.assertEqual(financial.direction_id, direction.pk)
+        self.assertEqual(
+            financial.service_types.get().service_subtypes.get().name,
+            "Сделки",
+        )
+        self.assertFalse(
+            ConsultingServiceSubtype.objects.filter(name="Без кода").exists()
+        )
+
+        repeat = SimpleUploadedFile(
+            "consulting-repeat.csv",
+            (
+                "Вид консалтинга;Код;Тип услуг;Подтип услуги\n"
+                "Горный;B;Аудит;Полный\n"
+                "Финансовый;F;Оценка;Сделки\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+        repeat_response = self.client.post(
+            reverse("consulting_direction_csv_upload"),
+            {"csv_file": repeat},
+        )
+        self.assertEqual(repeat_response.json()["created"], 0)
+        self.assertEqual(repeat_response.json()["updated"], 0)
+        self.assertEqual(ConsultingDirectionType.objects.filter(name="Финансовый").count(), 1)
+        self.assertEqual(ConsultingServiceSubtype.objects.filter(name="Сделки").count(), 1)
+
 
 class TypicalSectionViewsTests(TestCase):
     def setUp(self):
@@ -6434,8 +7058,16 @@ class TypicalSectionViewsTests(TestCase):
         response = self.client.get(reverse("policy_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Типовые разделы (услуги)")
-        self.assertContains(response, '<th><i class="bi bi-ban me-1"></i>ТКП</th>', html=False)
+        self.assertContains(response, "Типовые блоки услуг")
+        self.assertContains(
+            response,
+            '<th class="typical-section-tkp-col"><span class="typical-section-tkp-heading"><i class="bi bi-ban" aria-hidden="true"></i>ТКП</span></th>',
+            html=False,
+        )
+        self.assertContains(response, 'class="typical-section-derived-col">Тип учета</th>', html=False)
+        self.assertContains(response, 'typical-section-derived-col typical-section-executor-col">Исполнитель</th>', html=False)
+        self.assertContains(response, 'class="typical-section-derived-col">Экспертиза</th>', html=False)
+        self.assertContains(response, 'class="typical-section-derived-col">Подразделение</th>', html=False)
         self.assertContains(response, 'aria-label="Исключить из автозаполнения в ТКП"', html=False)
         self.assertContains(response, 'id="sections-csv-download-btn"', html=False)
 
@@ -6464,6 +7096,74 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(section.short_name, "audit-en")
         self.assertTrue(section.exclude_from_tkp_autofill)
 
+    def test_names_copy_from_classifier_until_edited(self):
+        first = ServiceBlockClassifier.objects.create(
+            code="AUD",
+            short_name="audit-en",
+            short_name_ru="audit-ru",
+            name_en="Audit EN",
+            name_ru="Аудит RU",
+            accounting_type="Разделы",
+            position=1,
+        )
+        second = ServiceBlockClassifier.objects.create(
+            code="TAX",
+            short_name="tax-en",
+            short_name_ru="tax-ru",
+            name_en="Tax EN",
+            name_ru="Налоги RU",
+            accounting_type="Управление",
+            position=2,
+        )
+        created = self.client.post(
+            reverse("section_form_create"),
+            {"product": self.product.pk, "service_block": first.pk, "name_en": "", "name_ru": ""},
+        )
+        self.assertEqual(created.status_code, 200)
+        section = TypicalSection.objects.get(product=self.product, service_block=first)
+        self.assertEqual(section.name_en, "Audit EN")
+        self.assertEqual(section.name_ru, "Аудит RU")
+        self.assertEqual(section.accounting_type, "Разделы")
+
+        edited = self.client.post(
+            reverse("section_form_edit", args=[section.pk]),
+            {
+                "product": self.product.pk,
+                "service_block": second.pk,
+                "name_en": "Custom EN",
+                "name_ru": "Аудит RU",
+            },
+        )
+        self.assertEqual(edited.status_code, 200)
+        section.refresh_from_db()
+        self.assertEqual(section.code, "TAX")
+        self.assertEqual(section.short_name, "tax-en")
+        self.assertEqual(section.accounting_type, "Управление")
+        self.assertEqual(section.name_en, "Custom EN")
+        self.assertEqual(section.name_ru, "Налоги RU")
+
+        renamed = self.client.post(
+            reverse("service_block_classifier_name_save", args=[second.pk]),
+            {"field": "name_en", "value": "Tax renamed"},
+        )
+        self.assertEqual(renamed.status_code, 200)
+        section.refresh_from_db()
+        self.assertEqual(second.name_en, "Tax EN")
+        second.refresh_from_db()
+        self.assertEqual(second.name_en, "Tax renamed")
+        self.assertEqual(section.name_en, "Custom EN")
+
+        table = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"product": self.product.pk, "workspace": "1"},
+        )
+        self.assertEqual(table.status_code, 200)
+        html = table.content.decode()
+        self.assertIn('data-service-block-accounting', html)
+        self.assertNotIn('data-inline-field="short_name"', html)
+        self.assertNotIn('data-inline-field="accounting_type"', html)
+        self.assertIn('data-inline-field="name_en"', html)
+
     def test_create_section_auto_creates_system_dsc_first(self):
         block = ServiceBlockClassifier.objects.create(
             code="AUT",
@@ -6491,7 +7191,7 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(dsc.short_name_ru, "Описание")
         self.assertEqual(dsc.name_en, "Product description")
         self.assertEqual(dsc.name_ru, "Описание продукта")
-        self.assertEqual(dsc.accounting_type, "Раздел")
+        self.assertEqual(dsc.accounting_type, "Разделы")
         self.assertFalse(dsc.exclude_from_tkp_autofill)
         self.assertFalse(dsc.ranked_specialties.exists())
 
@@ -6702,7 +7402,7 @@ class TypicalSectionViewsTests(TestCase):
                 "нал-dd",
                 "Tax DD",
                 "Налоговый ДД",
-                "Услуги",
+                "Управление",
                 "Налоговый due diligence",
                 "TAX",
                 "Налоговый департамент",
@@ -6810,13 +7510,15 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["warnings"], [])
         section = TypicalSection.objects.get(code="SC5")
-        self.assertEqual(section.expertise_dir, expertise)
+        self.assertIsNone(section.expertise_dir)
         self.assertIsNone(section.expertise_direction_id)
+        self.assertEqual(section.name_en, "Tax DD")
+        self.assertEqual(section.name_ru, "Налоговый ДД")
+        self.assertEqual(section.accounting_type, "Разделы")
         self.assertTrue(section.exclude_from_tkp_autofill)
-        self.assertEqual(
-            list(section.ranked_specialties.values_list("specialty", flat=True)),
-            [first_specialty.pk, second_specialty.pk],
-        )
+        self.assertEqual(list(section.ranked_specialties.values_list("specialty", flat=True)), [])
+        self.assertTrue(first_specialty.pk)
+        self.assertTrue(second_specialty.pk)
 
     def test_section_csv_upload_updates_existing_section_by_product_and_code(self):
         block = ServiceBlockClassifier.objects.create(
@@ -6854,11 +7556,11 @@ class TypicalSectionViewsTests(TestCase):
         self.assertEqual(response.json()["updated"], 1)
         section.refresh_from_db()
         self.assertEqual(section.service_block_id, block.pk)
-        self.assertEqual(section.short_name, "new-en")
-        self.assertEqual(section.short_name_ru, "new-ru")
+        self.assertEqual(section.short_name, "old-en")
+        self.assertEqual(section.short_name_ru, "old-ru")
         self.assertEqual(section.name_en, "New EN")
         self.assertEqual(section.name_ru, "Новый раздел")
-        self.assertEqual(section.accounting_type, "Услуги")
+        self.assertEqual(section.accounting_type, "Разделы")
         self.assertTrue(section.exclude_from_tkp_autofill)
 
     def test_section_csv_upload_rolls_back_row_when_specialty_insert_fails(self):
@@ -6909,10 +7611,9 @@ class TypicalSectionViewsTests(TestCase):
         response = self.client.post(reverse("section_csv_upload"), {"csv_file": csv_file})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["created"], 0)
-        self.assertEqual(len(response.json()["warnings"]), 1)
-        self.assertIn("ошибка сохранения", response.json()["warnings"][0])
-        self.assertFalse(TypicalSection.objects.filter(code="SC6").exists())
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        self.assertTrue(TypicalSection.objects.filter(code="SC6").exists())
         self.assertFalse(TypicalSectionSpecialty.objects.filter(specialty=specialty).exists())
 
 
@@ -10739,7 +11440,6 @@ class PolicyStageSixCacheTests(TestCase):
                 Product.owners.through,
                 ExpertiseDirection.owners.through,
                 SpecialtyTariff.specialties.through,
-                TypicalSection.specialties.through,
             },
         )
         self.assertSetEqual(
@@ -10949,3 +11649,637 @@ class PolicyStageSixCacheTests(TestCase):
             response.headers["X-Policy-Cache"],
             policy_cache.POLICY_CACHE_BYPASS,
         )
+
+
+def _product_map_topics(node):
+    topics = [node["topic"]]
+    for child in node.get("children") or []:
+        topics.extend(_product_map_topics(child))
+    return topics
+
+
+def _product_map_find(node, topic):
+    if node["topic"] == topic:
+        return node
+    for child in node.get("children") or []:
+        found = _product_map_find(child, topic)
+        if found:
+            return found
+    return None
+
+
+class PolicyProductMapTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="policy-product-map",
+            password="secret123",
+            is_staff=False,
+        )
+        self.client.force_login(self.user)
+        direction = ConsultingDirection.objects.create(position=1)
+        self.consulting_type = ConsultingDirectionType.objects.create(
+            direction=direction,
+            name="Горный MAP",
+            position=1,
+        )
+        self.empty_type = ConsultingDirectionType.objects.create(
+            direction=direction,
+            name="Пустой вид",
+            position=2,
+        )
+        self.service_type = ConsultingServiceType.objects.create(
+            direction=direction,
+            consulting_type=self.consulting_type,
+            name="Аудит MAP",
+            code="MAP",
+            position=1,
+        )
+        self.empty_service = ConsultingServiceType.objects.create(
+            direction=direction,
+            consulting_type=self.empty_type,
+            name="Пустой тип",
+            code="EMP",
+            position=1,
+        )
+        self.service_subtype = ConsultingServiceSubtype.objects.create(
+            direction=direction,
+            service_type=self.service_type,
+            name="Подтип MAP",
+            position=1,
+        )
+        ConsultingServiceSubtype.objects.create(
+            direction=direction,
+            service_type=self.empty_service,
+            name="Пустой подтип",
+            position=1,
+        )
+        self.management = GroupMember.objects.create(
+            short_name="УК Тест",
+            country_name="Россия",
+            is_management_company=True,
+            position=0,
+        )
+        self.alpha = GroupMember.objects.create(
+            short_name="Альфа",
+            country_name="Россия",
+            position=1,
+        )
+        self.beta = GroupMember.objects.create(
+            short_name="Бета",
+            country_name="Россия",
+            position=2,
+        )
+        self.group_product = Product.objects.create(
+            short_name="GRP",
+            name_en="Group product",
+            display_name="Групповой",
+            name_ru="Групповой продукт",
+            consulting_type_ref=self.consulting_type,
+            service_category_ref=self.service_type,
+            service_subtype_ref=self.service_subtype,
+            accuracy="<10%",
+            is_group_owner=True,
+            position=1,
+        )
+        self.shared_product = Product.objects.create(
+            short_name="BOTH",
+            name_en="Shared product",
+            display_name="Два",
+            name_ru="Общий продукт",
+            consulting_type_ref=self.consulting_type,
+            service_category_ref=self.service_type,
+            service_subtype_ref=self.service_subtype,
+            accuracy=">50%",
+            position=2,
+        )
+        self.shared_product.owners.set([self.alpha, self.beta])
+        self.orphan = Product.objects.create(
+            short_name="ORPHAN",
+            name_en="Orphan product",
+            display_name="Сирота",
+            name_ru="Продукт без владельца",
+            position=3,
+        )
+
+    def _maps(self, response):
+        html = response.content.decode()
+        match = re.search(
+            r'<script id="product-map-data" type="application/json">(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return json.loads(match.group(1))
+
+    def test_products_table_includes_map_button_for_any_user(self):
+        response = self.client.get(reverse("policy_products_table"))
+        self.assertContains(response, "Карта продуктов")
+        self.assertContains(response, "bi-map", html=False)
+        self.assertContains(
+            response,
+            f'data-product-map-url="{reverse("product_map")}"',
+            html=False,
+        )
+        self.assertContains(response, "policy-map-open-btn", html=False)
+        header = response.content.decode().split("policy-table-editor", 1)[0]
+        self.assertLess(header.index("Типовые продукты"), header.index("policy-map-open-btn"))
+        self.assertNotIn("justify-content-between", header)
+
+        staff = get_user_model().objects.create_user(
+            username="policy-product-map-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(staff)
+        staff_response = self.client.get(reverse("policy_products_table"))
+        self.assertContains(staff_response, "Карта продуктов")
+        self.assertContains(staff_response, "bi-map", html=False)
+
+    def test_product_map_page_builds_owner_trees(self):
+        response = self.client.get(reverse("product_map"))
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-header-root-label="Продукты"', html=False)
+        self.assertContains(response, 'data-header-current-label="Карта продуктов"', html=False)
+        self.assertContains(response, reverse("policy_partial"), html=False)
+        self.assertContains(response, reverse("product_map"), html=False)
+        self.assertNotIn('data-policy-workspace="1"', html)
+        self.assertContains(response, 'id="product-map-field"', html=False)
+        self.assertNotIn("data-product-workspace-template", html)
+        self.assertEqual(html.count('class="product-map-canvas"'), 4)
+        self.assertIn('class="product-map-toolbar"', html)
+        for level in range(1, 6):
+            self.assertIn(f'data-product-map-level="{level}"', html)
+        self.assertIn('data-product-map-zoom="out"', html)
+        self.assertIn('data-product-map-zoom="in"', html)
+        self.assertIn('data-product-map-zoom-value', html)
+        self.assertIn('data-product-map-fullscreen="1"', html)
+        self.assertIn('bi-arrows-fullscreen', html)
+        self.assertLess(html.find('data-product-map-level="5"'), html.find("Вид консалтинга:"))
+        self.assertLess(html.find("Вид консалтинга:"), html.find("Тип услуги:"))
+        self.assertLess(html.find("Тип услуги:"), html.find("Подтип услуги:"))
+        self.assertLess(html.find("Подтип услуги:"), html.find('data-product-map-zoom="out"'))
+        self.assertLess(
+            html.find('data-product-map-zoom="in"'),
+            html.find('data-product-map-fullscreen="1"'),
+        )
+        self.assertIn('data-product-map-filter="consulting"', html)
+        self.assertIn('data-product-map-filter="category"', html)
+        self.assertIn('data-product-map-filter="subtype"', html)
+
+        maps = self._maps(response)
+        self.assertEqual(
+            [item["mind"]["data"]["topic"] for item in maps],
+            ["УК Тест", "Альфа", "Бета", "Без владельца"],
+        )
+        group, alpha, beta, none = [item["mind"]["data"] for item in maps]
+        for root in (group, alpha, beta, none):
+            topics = _product_map_topics(root)
+            self.assertNotIn("Пустой вид", topics)
+            self.assertNotIn("Пустой тип", topics)
+            self.assertNotIn("Пустой подтип", topics)
+        self.assertNotIn("Горный MAP", _product_map_topics(none))
+        for root in (group, alpha, beta):
+            consulting = _product_map_find(root, "Горный MAP")
+            self.assertIsNotNone(consulting)
+            self.assertIs(consulting.get("expanded"), False)
+            self.assertEqual(consulting.get("mapKind"), "type")
+            self.assertEqual(consulting.get("consultingId"), self.consulting_type.pk)
+            service = _product_map_find(consulting, "Аудит MAP")
+            self.assertEqual(service.get("mapKind"), "service")
+            self.assertEqual(service.get("serviceId"), self.service_type.pk)
+            subtype = _product_map_find(service, "Подтип MAP")
+            self.assertEqual(subtype.get("mapKind"), "subtype")
+            self.assertEqual(subtype.get("subtypeId"), self.service_subtype.pk)
+            product = _product_map_find(subtype, "GRP Групповой")
+            if product is not None:
+                self.assertEqual(product.get("mapKind"), "product")
+                self.assertEqual(product.get("productId"), self.group_product.pk)
+                self.assertEqual(product.get("consultingId"), self.consulting_type.pk)
+                self.assertEqual(product.get("serviceId"), self.service_type.pk)
+                self.assertEqual(product.get("subtypeId"), self.service_subtype.pk)
+                self.assertEqual(product.get("accuracy"), "<10%")
+
+        self.assertIn("GRP Групповой", _product_map_topics(group))
+        self.assertNotIn("BOTH Два", _product_map_topics(group))
+        self.assertIn("BOTH Два", _product_map_topics(alpha))
+        self.assertEqual(_product_map_find(alpha, "BOTH Два").get("productId"), self.shared_product.pk)
+        self.assertEqual(_product_map_find(alpha, "BOTH Два").get("accuracy"), ">50%")
+        self.assertIn("BOTH Два", _product_map_topics(beta))
+        self.assertNotIn("GRP Групповой", _product_map_topics(alpha))
+        orphan_branch = _product_map_find(none, "Без классификации")
+        self.assertIsNotNone(orphan_branch)
+        self.assertEqual(
+            [child["topic"] for child in orphan_branch["children"]],
+            ["ORPHAN Сирота"],
+        )
+        self.assertIs(orphan_branch.get("expanded"), False)
+
+        source = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "policy-panels.js"
+        ).read_text()
+        self.assertIn("data-product-map-url", source)
+        self.assertIn("function initProductMap(root)", source)
+        self.assertIn("mode: 'side'", source)
+        self.assertIn("expander_style: 'char'", source)
+        css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertIn(".policy-map-open-btn", css)
+        self.assertIn("#product-map-field jmexpander", css)
+        self.assertIn("background: #f2f7fb;", css)
+        self.assertIn("function markProductMapProductLinks(jm)", source)
+        self.assertIn("function openProductMapProduct(canvas, productId)", source)
+        self.assertIn("function alignProductMapColumns(jm)", source)
+        self.assertIn("return { x: width / 2, y: 0 };", source)
+        self.assertIn("engine: 'svg'", source)
+        self.assertIn("function setProductMapLevel(field, level)", source)
+        self.assertIn("function fitProductMapView(state)", source)
+        self.assertIn("function ensureProductMapSurface(canvas)", source)
+        self.assertIn("function layoutProductMapScreen(field)", source)
+        self.assertIn("function setProductMapFullscreen(field, active)", source)
+        self.assertIn("function pruneProductMapNode(node, filters)", source)
+        self.assertIn("function applyProductMapFilters(field)", source)
+        self.assertIn("function filterProductMapMind(mind, filters)", source)
+        self.assertIn("function groupProductMapFilterItems(rows)", source)
+        self.assertIn("Math.min((viewW - pad) / bounds.w, (viewH - pad) / bounds.h, 1)", source)
+        self.assertIn("function placeProductMapAccuracyRow(node, products, columns, parentAbsX, compact)", source)
+        self.assertIn("function buildProductMapAccuracyColumns(jm, root, gap)", source)
+        self.assertIn("±30\\u201350%", source)
+        self.assertIn("function unifyProductMapRails(canvas)", source)
+        self.assertIn("#product-map-field[data-product-workspace-template] jmnode[data-product-id]:hover", css)
+        self.assertIn("text-decoration: underline;", css)
+        self.assertIn(".product-map-accuracy-header", css)
+        self.assertIn(".product-map-accuracy-band", css)
+        self.assertIn(
+            "if (pane?.querySelector?.('#product-map-field')) {\n"
+            "      setProductMapFullscreen(pane.querySelector('#product-map-field'), false);\n"
+            "      window.__policyScrollRestoreY = null;\n"
+            "      loadPolicyCatalogShell();",
+            source,
+        )
+        self.assertIn("product-map-board--fullscreen", source)
+        self.assertIn("enable_mousewheel_handle: false", source)
+        self.assertIn("return text === '-' ? '\\u2212' : text;", source)
+        self.assertIn("overflow-y: hidden;", css)
+        self.assertIn(".product-map-board--fullscreen", css)
+
+        staff = get_user_model().objects.create_user(
+            username="policy-product-map-link",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(staff)
+        staff_html = self.client.get(reverse("product_map")).content.decode()
+        self.assertIn(
+            f'data-product-workspace-template="{reverse("product_workspace", args=[0])}"',
+            staff_html,
+        )
+
+    def test_product_map_shows_product_groups_without_accuracy(self):
+        from policy_app.product_groups import create_product_group
+
+        first = Product.objects.create(
+            short_name="MAP-A",
+            name_en="Map member A",
+            display_name="Участник А",
+            name_ru="Участник А",
+            consulting_type_ref=self.consulting_type,
+            service_category_ref=self.service_type,
+            service_subtype_ref=self.service_subtype,
+            accuracy="<10%",
+            position=10,
+        )
+        second = Product.objects.create(
+            short_name="MAP-B",
+            name_en="Map member B",
+            display_name="Участник Б",
+            name_ru="Участник Б",
+            consulting_type_ref=self.consulting_type,
+            service_category_ref=self.service_type,
+            service_subtype_ref=self.service_subtype,
+            accuracy=">50%",
+            position=11,
+        )
+        first.owners.set([self.alpha])
+        second.owners.set([self.alpha])
+        label = create_product_group([first, second], "MAPG", "Map group", "Группа карты", "Группа карты")
+        label.accuracy = "<10%"
+        label.save(update_fields=["accuracy"])
+
+        maps = self._maps(self.client.get(reverse("product_map")))
+        alpha = next(item["mind"]["data"] for item in maps if item["mind"]["data"]["topic"] == "Альфа")
+        group_node = _product_map_find(alpha, "MAPG\u29c9 Группа карты")
+        self.assertIsNotNone(group_node)
+        self.assertEqual(group_node.get("mapKind"), "product")
+        self.assertNotIn("accuracy", group_node)
+        self.assertEqual(group_node.get("productGroupId"), label.pk)
+        member = _product_map_find(alpha, "MAP-A Участник А")
+        self.assertEqual(member.get("accuracy"), "<10%")
+        self.assertEqual(member.get("productGroupId"), label.pk)
+
+    def test_group_owner_falls_back_when_management_company_is_missing(self):
+        self.management.is_management_company = False
+        self.management.save(update_fields=["is_management_company"])
+        maps = self._maps(self.client.get(reverse("product_map")))
+        self.assertEqual(maps[0]["mind"]["data"]["topic"], "Группа")
+
+    def test_product_map_requires_login(self):
+        anonymous = Client()
+        response = anonymous.get(reverse("product_map"))
+        self.assertEqual(response.status_code, 302)
+
+
+class ProductGroupTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="product-group-staff",
+            password="secret123",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+
+    def _product(self, short_name, **extra):
+        payload = {
+            "name_en": f"{short_name} en",
+            "name_ru": f"{short_name} ru",
+            "display_name": f"{short_name} display",
+            "consulting_type": "Горный",
+            "service_category": "Аудит",
+            "service_subtype": "Аудит соответствия стандартам",
+            "position": 1,
+        }
+        payload.update(extra)
+        return Product.objects.create(short_name=short_name, **payload)
+
+    def test_merge_requires_matching_classification_and_owner(self):
+        from policy_app.product_groups import create_product_group, validate_group_members
+
+        first = self._product("ESIA-A", position=1)
+        second = self._product("ESIA-B", position=2)
+        validate_group_members([first, second])
+        mismatched = self._product("ESIA-C", position=3)
+        Product.objects.filter(pk=mismatched.pk).update(service_code="ZZ")
+        mismatched.refresh_from_db()
+        with self.assertRaises(ValidationError):
+            validate_group_members([first, mismatched])
+
+        owner = GroupMember.objects.create(
+            short_name="Owner A",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        owned = self._product("ESIA-D", position=4)
+        owned.owners.add(owner)
+        with self.assertRaises(ValidationError):
+            validate_group_members([first, owned])
+
+        group = create_product_group([first, second], "ESIA", "ESIA bundle", "ЕСИА", "ESIA bundle")
+        self.assertEqual(group.short_name, "ESIA\u29c9")
+        self.assertTrue(group.is_product_group)
+        self.assertEqual(
+            list(group.grouped_products.order_by("position").values_list("short_name", flat=True)),
+            ["ESIA-A", "ESIA-B"],
+        )
+        group.short_name = "ESIA"
+        group.save()
+        group.refresh_from_db()
+        self.assertEqual(group.short_name, "ESIA\u29c9")
+
+    def test_ungroup_and_sparse_group_keep_members(self):
+        from policy_app.product_groups import create_product_group
+
+        first = self._product("ESIA-A", position=1)
+        second = self._product("ESIA-B", position=2)
+        third = self._product("ESIA-C", position=3)
+        group = create_product_group([first, second, third], "ESIA", "ESIA bundle", "ЕСИА", "ESIA bundle")
+
+        response = self.client.post(reverse("product_delete", args=[first.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(Product.objects.filter(pk=group.pk, is_product_group=True).exists())
+        second.refresh_from_db()
+        self.assertEqual(second.group_id, group.pk)
+
+        response = self.client.post(reverse("product_delete", args=[second.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Product.objects.filter(pk=group.pk).exists())
+        third.refresh_from_db()
+        self.assertIsNone(third.group_id)
+        self.assertEqual(third.short_name, "ESIA-C")
+
+        first = self._product("KEEP-A", position=1)
+        second = self._product("KEEP-B", position=2)
+        group = create_product_group([first, second], "KEEP", "Keep bundle", "Оставить", "Keep bundle")
+        response = self.client.post(reverse("product_group_ungroup"), {"product_ids": str(group.pk)})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Product.objects.filter(pk=group.pk).exists())
+        self.assertEqual(Product.objects.filter(short_name__in=["KEEP-A", "KEEP-B"]).count(), 2)
+        self.assertFalse(Product.objects.filter(group__isnull=False, short_name__in=["KEEP-A", "KEEP-B"]).exists())
+
+    def test_grouped_product_form_locks_classification_and_workspace_ignores_it(self):
+        from policy_app.product_groups import create_product_group
+
+        first = self._product("ESIA-A", position=1)
+        second = self._product("ESIA-B", position=2)
+        group = create_product_group([first, second], "ESIA", "ESIA bundle", "ЕСИА", "ESIA bundle")
+        first.refresh_from_db()
+        form = ProductForm(instance=first)
+        self.assertTrue(form.fields["consulting_type_ref"].disabled)
+        self.assertTrue(form.fields["service_category_ref"].disabled)
+        self.assertTrue(form.fields["service_subtype_ref"].disabled)
+        self.assertFalse(form.fields["name_en"].disabled)
+        self.assertFalse(form.fields["accuracy"].disabled)
+
+        response = self.client.post(
+            reverse("product_workspace_save", args=[first.pk]),
+            data=json.dumps({
+                "tables": {
+                    "products": [{
+                        "id": first.pk,
+                        "fields": {
+                            "name_en": "Updated member",
+                            "consulting_type_ref": "999999",
+                            "short_name": "ESIA-A",
+                        },
+                    }],
+                },
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        self.assertEqual(first.name_en, "Updated member")
+        self.assertEqual(first.consulting_type_ref_id, group.consulting_type_ref_id)
+        self.assertEqual(first.group_id, group.pk)
+
+        response = self.client.post(
+            reverse("product_workspace_save", args=[group.pk]),
+            data=json.dumps({
+                "tables": {
+                    "products": [{
+                        "id": group.pk,
+                        "fields": {"short_name": "ESIA", "name_en": "Renamed bundle"},
+                    }],
+                },
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        group.refresh_from_db()
+        self.assertEqual(group.short_name, "ESIA\u29c9")
+        self.assertEqual(group.name_en, "Renamed bundle")
+
+    def test_product_csv_round_trip_keeps_group_and_old_file_imports(self):
+        header = (
+            "Краткое имя;Наименование на английском языке;Наименование на русском языке;"
+            "Отображаемое в системе имя;Вид консалтинга;Тип услуг;Код;Подтип услуги;Точность;Владелец;"
+            "Групповой продукт\n"
+        )
+        csv_file = SimpleUploadedFile(
+            "products.csv",
+            (
+                header
+                + "ESIA-A;A en;A ru;A display;Горный;Аудит;Z;Аудит проектных решений;;Группа;ESIA\u29c9\n"
+                + "ESIA-B;B en;B ru;B display;Горный;Аудит;Z;Аудит проектных решений;;Группа;ESIA\u29c9\n"
+                + "ESIA\u29c9;Bundle en;Bundle ru;Bundle display;Горный;Аудит;Z;Аудит проектных решений;;Группа;\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("product_csv_upload"), {"csv_file": csv_file})
+        self.assertEqual(response.status_code, 200, response.content)
+        label = Product.objects.get(short_name="ESIA\u29c9")
+        self.assertTrue(label.is_product_group)
+        self.assertEqual(
+            set(label.grouped_products.values_list("short_name", flat=True)),
+            {"ESIA-A", "ESIA-B"},
+        )
+
+        download = self.client.get(reverse("product_csv_download"))
+        self.assertEqual(download.status_code, 200)
+        body = download.content.decode("utf-8-sig")
+        self.assertIn("Групповой продукт", body.splitlines()[0])
+        Product.objects.all().delete()
+        again = SimpleUploadedFile("products.csv", body.encode("utf-8"), content_type="text/csv")
+        response = self.client.post(reverse("product_csv_upload"), {"csv_file": again})
+        self.assertEqual(response.status_code, 200, response.content)
+        label = Product.objects.get(short_name="ESIA\u29c9")
+        self.assertEqual(
+            set(label.grouped_products.values_list("short_name", flat=True)),
+            {"ESIA-A", "ESIA-B"},
+        )
+
+        existing = self._product("AUD", name_en="Keep me")
+        update = SimpleUploadedFile(
+            "products.csv",
+            (
+                header
+                + "AUD;Changed;A ru;A display;Горный;Аудит;Z;Аудит проектных решений;;Группа;ESIA\u29c9\n"
+                + "AUD-B;B en;B ru;B display;Горный;Аудит;Z;Аудит проектных решений;;Группа;ESIA\u29c9\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("product_csv_upload"), {"csv_file": update})
+        self.assertEqual(response.status_code, 200, response.content)
+        existing.refresh_from_db()
+        self.assertEqual(existing.name_en, "Keep me")
+        self.assertEqual(existing.group.short_name, "ESIA\u29c9")
+
+        old = SimpleUploadedFile(
+            "products.csv",
+            (
+                "Краткое имя;Наименование на английском языке;Наименование на русском языке;"
+                "Отображаемое в системе имя;Вид консалтинга;Тип услуг;Код;Подтип услуги;Владелец\n"
+                "LEGACY;Legacy;Наследие;Наследие;Горный;Аудит;Z;Аудит проектных решений;Группа\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("product_csv_upload"), {"csv_file": old})
+        self.assertEqual(response.status_code, 200, response.content)
+        legacy = Product.objects.get(short_name="LEGACY")
+        self.assertFalse(legacy.is_product_group)
+        self.assertIsNone(legacy.group_id)
+
+    def test_merge_view_and_group_row_caret(self):
+        first = self._product("ESIA-A", position=1)
+        second = self._product("ESIA-B", position=2)
+        response = self.client.get(reverse("product_group_merge"), {"product_id": [first.pk, second.pk]})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Объединить продукты")
+        response = self.client.post(reverse("product_group_merge"), {
+            "short_name": "ESIA",
+            "name_en": "ESIA bundle",
+            "name_ru": "ЕСИА",
+            "display_name": "ESIA bundle",
+            "product_ids": f"{first.pk},{second.pk}",
+        })
+        self.assertEqual(response.status_code, 200)
+        label = Product.objects.get(is_product_group=True)
+        label.grouped_members = list(label.grouped_products.order_by("position", "id"))
+        request = RequestFactory().get("/")
+        request.user = self.user
+        html = render_to_string(
+            "policy_app/_policy_product_row.html",
+            {"p": label, "group_parent": None, "policy_inline_edit": True},
+            request=request,
+        )
+        self.assertIn("bi-caret-down-fill", html)
+        self.assertIn("ESIA\u29c9", html)
+        self.assertIn('data-is-product-group="1"', html)
+
+        workspace_html = render_to_string(
+            "policy_app/_policy_product_row.html",
+            {
+                "p": label,
+                "group_parent": None,
+                "policy_inline_edit": False,
+                "policy_workspace": True,
+            },
+            request=request,
+        )
+        self.assertNotIn("bi-caret-down-fill", workspace_html)
+        self.assertNotIn("data-product-group-toggle", workspace_html)
+
+    def test_workspace_table_keeps_only_the_clicked_member(self):
+        from policy_app.product_groups import create_product_group
+
+        first = self._product("ESIA-A", position=1)
+        second = self._product("ESIA-B", position=2)
+        group = create_product_group([first, second], "ESIA", "ESIA bundle", "ЕСИА", "ESIA bundle")
+
+        response = self.client.get(
+            reverse("policy_products_table"),
+            {"workspace": "1", "product": str(first.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        group_part, member_part = html.split("ESIA-A", 1)
+        self.assertIn("ESIA\u29c9", group_part)
+        self.assertNotIn("ESIA-B", html)
+        self.assertNotIn("data-product-group-toggle", html)
+        self.assertNotIn("bi-caret-down-fill", html)
+        self.assertNotIn('data-inline-field="short_name"', group_part)
+        self.assertIn('data-inline-field="short_name"', member_part)
+        self.assertEqual(html.count('data-product-id="'), 2)
+
+        group_response = self.client.get(
+            reverse("policy_products_table"),
+            {"workspace": "1", "product": str(group.pk)},
+        )
+        group_html = group_response.content.decode()
+        self.assertIn("ESIA\u29c9", group_html)
+        self.assertNotIn("ESIA-A", group_html)
+        self.assertNotIn("ESIA-B", group_html)
+        self.assertNotIn("data-product-group-toggle", group_html)
+        self.assertIn('data-inline-field="short_name"', group_html)
+        self.assertEqual(group_html.count('data-product-id="'), 1)
+
+        catalog = self.client.get(
+            reverse("policy_products_table"),
+            {"product": str(first.pk)},
+        ).content.decode()
+        self.assertIn("ESIA-A", catalog)
+        self.assertIn("ESIA-B", catalog)
+        self.assertIn("data-product-group-toggle", catalog)

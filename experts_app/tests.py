@@ -854,7 +854,7 @@ class ExpertSpecialtyCsvTests(TestCase):
         response = self.client.get(reverse("policy_expert_specialties_table"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Специальности исполнителей")
+        self.assertContains(response, "Классификатор специальностей исполнителей")
         self.assertContains(response, 'id="esp-colpicker-wrap"', html=False)
         self.assertContains(response, 'id="esp-colpicker-btn"', html=False)
         self.assertContains(response, 'id="esp-col-all"', html=False)
@@ -993,8 +993,18 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertIn("#policy-pane .table-section-header:has(.epr-colpicker-menu.show)", policy_css)
         self.assertIn("width: max-content; min-width: 100%; max-width: none;", policy_css)
         self.assertIn("overflow-x: hidden; overflow-y: auto;", policy_css)
-        self.assertIn("#policy-pane .epr-colpicker .form-check {\n  padding-left: 1.5em !important;", policy_css)
-        self.assertIn("#policy-pane .epr-colpicker .form-check-input {\n  margin-left: -1.5em !important;", policy_css)
+        self.assertIn(
+            "#policy-pane .epr-colpicker .form-check,\n"
+            "#policy-pane .product-map-filters .form-check {\n"
+            "  padding-left: 1.5em !important;",
+            policy_css,
+        )
+        self.assertIn(
+            "#policy-pane .epr-colpicker .form-check-input,\n"
+            "#policy-pane .product-map-filters .form-check-input {\n"
+            "  margin-left: -1.5em !important;",
+            policy_css,
+        )
 
     def test_policy_expert_specialties_table_paginates_like_other_product_tables(self):
         ExpertSpecialty.objects.bulk_create(

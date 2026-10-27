@@ -12,13 +12,15 @@
       </div>
       <span aria-hidden="true"></span>
     </div>
-    <div id="registration-products-container" class="registration-products-container">
+    <div id="registration-products-container" class="registration-products-container"{% if allow_multiple_products %} data-allow-product-groups="1"{% endif %}>
       {% for rp in ranked_products %}
         <div class="registration-product-row"
              data-selected-product-id="{{ rp.product_id|default:'' }}"
              data-selected-consulting-type="{{ rp.consulting_type|default:'' }}"
              data-selected-service-category="{{ rp.service_category|default:'' }}"
-             data-selected-service-subtype="{{ rp.service_subtype|default:'' }}">
+             data-selected-service-subtype="{{ rp.service_subtype|default:'' }}"
+             data-product-group-id="{{ rp.product_group_id|default:'' }}">
+          <input type="hidden" name="row_group_id" value="{{ rp.product_group_id|default:'' }}">
           <div class="registration-product-row-inner">
             <span class="badge rounded-circle d-flex align-items-center justify-content-center registration-product-badge">{{ rp.rank }}</span>
             <div class="row g-2 flex-grow-1 registration-product-fields">

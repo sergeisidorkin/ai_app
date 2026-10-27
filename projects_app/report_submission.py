@@ -171,7 +171,7 @@ FULL_REPORT_LABEL = "Весь отчет"
 LOCAL_REPORT_PATH_PREFIX = "local:"
 REPORT_ASSET_FOLDER_NAME_MAX_LEN = 50
 EMPTY_REPORT_ASSET_FOLDER_LABEL = "без_актива"
-REPORT_SECTION_ACCOUNTING_TYPE = "Раздел"
+REPORT_SECTION_ACCOUNTING_TYPE = "Разделы"
 _ASSET_FOLDER_IN_PATH_RE = re.compile(r"(?:^|/)A[1-9]\d* ")
 _ASSET_CODE_IN_FILENAME_RE = re.compile(r"_A[1-9]\d*_")
 
@@ -1416,7 +1416,7 @@ def asset_report_section_performers(project, asset_name="") -> list:
         Performer.objects.filter(
             registration=project,
             asset_name=asset_name or "",
-            typical_section__accounting_type=REPORT_SECTION_ACCOUNTING_TYPE,
+            typical_section__service_block__accounting_type=REPORT_SECTION_ACCOUNTING_TYPE,
         )
         .select_related("typical_section")
         .order_by("position", "id")

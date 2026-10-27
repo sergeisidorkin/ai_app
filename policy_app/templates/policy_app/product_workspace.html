@@ -23,7 +23,7 @@
       {% url 'policy_service_goal_reports_table' as table_url %}
       {% include "policy_app/_policy_table_placeholder.html" with table_key="service-goal-reports" table_id="policy-service-goal-reports-section" table_label="Цели услуг и названия отчетов" table_url=table_url load_priority="deferred" master_managed="1" %}
       {% url 'policy_typical_sections_table' as table_url %}
-      {% include "policy_app/_policy_table_placeholder.html" with table_key="typical-sections" table_id="policy-typical-sections-section" table_label="Типовые разделы (услуги)" table_url=table_url load_priority="deferred" master_managed="1" %}
+      {% include "policy_app/_policy_table_placeholder.html" with table_key="typical-sections" table_id="policy-typical-sections-section" table_label="Типовые блоки услуг" table_url=table_url load_priority="deferred" master_managed="1" %}
       {% url 'policy_section_structures_table' as table_url %}
       {% include "policy_app/_policy_table_placeholder.html" with table_key="section-structures" table_id="policy-section-structures-section" table_label="Типовая структура раздела (состава услуг)" table_url=table_url load_priority="deferred" master_managed="1" %}
       {% url 'policy_report_structures_table' as table_url %}

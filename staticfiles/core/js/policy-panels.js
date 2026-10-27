@@ -5,6 +5,11 @@
   window.__tableSel = window.__tableSel || {};
   window.__tableSelLast = window.__tableSelLast || null;
 
+  function policyPane() {
+    const panes = document.querySelectorAll('#policy-pane');
+    return panes.length ? panes[panes.length - 1] : null;
+  }
+
   function pane() {
     // The typical-service-term-gantt editor is reused (with the same ids) by
     // other sections of the application — currently the projects' "График
@@ -60,6 +65,10 @@
     return m ? m.pop() : '';
   }
   const csrftoken = getCookie('csrftoken');
+  const POLICY_WORKSPACE_LEAVE_MESSAGE = 'Есть несохранённые изменения. Уйти без сохранения?';
+  const POLICY_WORKSPACE_CANCEL_MESSAGE = 'Сбросить внесённые изменения?';
+  let policyWorkspaceSession = null;
+  let policyWorkspaceSessionUnsub = null;
   var P = window.UIPref;
   const POLICY_FILTER_ALL = '__all__';
   const POLICY_FILTER_PREF_KEY = 'policy:masterFilters';
@@ -283,6 +292,7 @@
     const fallbackLabel = String(selected?.textContent || '').trim();
     display.textContent = hasValue ? (shortLabel || fallbackLabel) : (fallbackLabel || '---------');
     display.classList.toggle('is-placeholder', !hasValue);
+    display.classList.toggle('readonly-field', !!select.disabled);
   }
 
   function enhancePolicyProductSelect(select) {
@@ -311,6 +321,47 @@
       enhancePolicyProductSelect(select);
     });
   }
+
+  function syncPolicySectionSelectDisplay(select) {
+    const shell = select?.closest('.policy-section-select-shell');
+    const display = shell?.querySelector('.policy-section-select-display');
+    if (!display) return;
+    const selected = select.options[select.selectedIndex];
+    const hasValue = !!String(selected?.value || '').trim();
+    const shortLabel = String(selected?.dataset?.shortLabel || '').trim();
+    const fallbackLabel = String(selected?.textContent || '').trim();
+    display.textContent = hasValue ? (shortLabel || fallbackLabel) : (fallbackLabel || '---------');
+    display.classList.toggle('is-placeholder', !hasValue);
+  }
+
+  function enhancePolicySectionSelect(select) {
+    if (!select || select.dataset.policySectionEnhanced === '1') {
+      if (select) syncPolicySectionSelectDisplay(select);
+      return;
+    }
+    const parent = select.parentElement;
+    if (!parent) return;
+    const shell = document.createElement('div');
+    shell.className = 'policy-section-select-shell';
+    parent.insertBefore(shell, select);
+    shell.appendChild(select);
+    const display = document.createElement('div');
+    display.className = 'policy-section-select-display';
+    shell.appendChild(display);
+    select.dataset.policySectionEnhanced = '1';
+    select.addEventListener('change', function () {
+      syncPolicySectionSelectDisplay(select);
+    });
+    syncPolicySectionSelectDisplay(select);
+  }
+
+  function initPolicySectionSelects(root) {
+    qa('select.policy-section-select', root).forEach(function (select) {
+      enhancePolicySectionSelect(select);
+    });
+  }
+
+  window.syncPolicySectionSelectDisplay = syncPolicySectionSelectDisplay;
 
   function bindPolicyFilterMenuWidth(dropdown) {
     if (!dropdown) return;
@@ -1038,6 +1089,12 @@
   }
 
   function getPolicyProductCatalog(root) {
+    if (
+      window.__policyProductCatalogAuthoritative === true
+      && Array.isArray(window.__policyProductCatalog)
+    ) {
+      return window.__policyProductCatalog;
+    }
     const products = [];
     const seen = new Set();
     qa('tr[data-policy-filter-row="1"][data-product-id][data-consulting-type-ref]', root).forEach(function (row) {
@@ -1055,7 +1112,25 @@
         subtypeRef: normalizeFilterValue(row.dataset.serviceSubtypeRef),
       });
     });
-    return products;
+    const productsWrapper = root?.querySelector?.('[data-policy-table-key="products"]');
+    const isLegacyFullPanel = productsWrapper
+      && !productsWrapper.matches('[data-policy-lazy-placeholder="1"]')
+      && !productsWrapper.querySelector('.policy-table-pagination');
+    return isLegacyFullPanel ? products : [];
+  }
+
+  function hasAuthoritativePolicyProductCatalog() {
+    return window.__policyProductCatalogAuthoritative === true
+      && Array.isArray(window.__policyProductCatalog);
+  }
+
+  function requiresAuthoritativePolicyProductCatalog(root) {
+    const productsWrapper = root?.querySelector?.('[data-policy-table-key="products"]');
+    return !!(
+      root?.matches?.('[data-policy-lazy-shell="1"]')
+      || productsWrapper?.matches?.('[data-policy-lazy-placeholder="1"]')
+      || productsWrapper?.querySelector?.('.policy-table-pagination')
+    );
   }
 
   function buildPolicyFilterOptions(rows, products) {
@@ -1282,6 +1357,10 @@
       return selectedProductIds.includes(product.id);
     });
     rows.forEach(function (row) {
+      if (row.closest('[data-policy-master-managed="1"]')) {
+        row.classList.remove('d-none');
+        return;
+      }
       let visible = rowMatchesPolicySelection(row, state);
       if (visible && selectedProductIds.length) {
         const rowProductId = normalizeFilterValue(row.dataset.productId);
@@ -1312,19 +1391,35 @@
       P.set(POLICY_FILTER_PREF_KEY, state);
     }
     syncAllPolicySelectionStates(root);
+    updatePolicyMasterFilterDownloadLinks();
   }
 
-  function initPolicyMasterFilters() {
-    const root = pane();
+  function initPolicyMasterFilters(options) {
+    options = options || {};
+    const root = policyPane();
     if (!root) return;
     const missing = POLICY_FILTER_ORDER.some(function (key) {
       const cfg = POLICY_FILTER_CONFIG[key];
       return !document.getElementById(cfg.dropdownId) || !document.getElementById(cfg.listId);
     });
-    if (missing) return;
+    if (missing) {
+      updatePolicyMasterFilterDownloadLinks();
+      return;
+    }
 
     const rows = qa('tr[data-policy-filter-row="1"]', root);
-    if (!rows.length) return;
+    if (!rows.length) {
+      updatePolicyMasterFilterDownloadLinks();
+      return;
+    }
+    if (
+      requiresAuthoritativePolicyProductCatalog(root)
+      && !hasAuthoritativePolicyProductCatalog()
+    ) {
+      schedulePolicyProductCatalogRetry();
+      updatePolicyMasterFilterDownloadLinks();
+      return;
+    }
     const products = getPolicyProductCatalog(root);
     renderPolicyFilterOptions(buildPolicyFilterOptions(rows, products));
     const savedState = filterStateWithDefaults(readPolicyMasterFilterPrefs() || window.__policyMasterFilters);
@@ -1359,14 +1454,824 @@
             }
           }
           applyPolicyMasterFilters(root, rows, products, nextState);
+          refreshManagedPolicyTables(nextState, true);
         };
       });
     });
     applyPolicyMasterFilters(root, rows, products, savedState);
+    if (!options.skipManagedRefresh) refreshManagedPolicyTables(savedState, false);
+  }
+
+  function getPolicyWorkspaceProduct(root) {
+    root = root || policyPane();
+    const id = normalizeFilterValue(root?.dataset?.policyWorkspaceProductId);
+    if (!id || root?.dataset?.policyWorkspace !== '1') return null;
+    return {
+      id: id,
+      label: normalizeFilterValue(root.dataset.headerCurrentLabel) || id,
+      consultingRef: normalizeFilterValue(root.dataset.policyWorkspaceConsultingRef),
+      categoryRef: normalizeFilterValue(root.dataset.policyWorkspaceCategoryRef),
+      subtypeRef: normalizeFilterValue(root.dataset.policyWorkspaceSubtypeRef),
+    };
+  }
+
+  function isPolicyWorkspaceActive(root) {
+    root = root || policyPane();
+    return root?.dataset?.policyWorkspace === '1';
+  }
+
+  function policyWorkspaceActionsEl() {
+    return document.getElementById('policy-workspace-actions');
+  }
+
+  function policyWorkspaceSaveBtn() {
+    return document.querySelector('[data-policy-workspace-save-btn]');
+  }
+
+  function policyWorkspaceCancelBtn() {
+    return document.querySelector('[data-policy-workspace-cancel-btn]');
+  }
+
+  function confirmPolicyWorkspaceLeave() {
+    if (!policyWorkspaceSession?.isDirty()) return true;
+    return window.confirm(POLICY_WORKSPACE_LEAVE_MESSAGE);
+  }
+
+  function syncPolicyWorkspaceActions() {
+    const actions = policyWorkspaceActionsEl();
+    const saveBtn = policyWorkspaceSaveBtn();
+    const cancelBtn = policyWorkspaceCancelBtn();
+    const active = isPolicyWorkspaceActive();
+    if (actions) {
+      actions.classList.toggle('d-none', !active);
+      actions.classList.toggle('d-flex', active);
+    }
+    const dirty = !!(policyWorkspaceSession && policyWorkspaceSession.isDirty());
+    const saving = !!(policyWorkspaceSession && policyWorkspaceSession.saving);
+    if (saveBtn && !saving) saveBtn.disabled = !dirty;
+    if (cancelBtn) cancelBtn.disabled = !!saving;
+  }
+
+  function setPolicyWorkspaceSaveLoading(isLoading) {
+    const saveBtn = policyWorkspaceSaveBtn();
+    if (!saveBtn) return;
+    if (isLoading) {
+      if (!saveBtn.dataset.originalHtml) saveBtn.dataset.originalHtml = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Сохранение...';
+      return;
+    }
+    saveBtn.innerHTML = saveBtn.dataset.originalHtml || 'Сохранить';
+    syncPolicyWorkspaceActions();
+  }
+
+  function destroyPolicyWorkspaceSession() {
+    if (policyWorkspaceSessionUnsub) {
+      policyWorkspaceSessionUnsub();
+      policyWorkspaceSessionUnsub = null;
+    }
+    if (policyWorkspaceSession && window.WorkspaceInlineEditor) {
+      window.WorkspaceInlineEditor.detach(policyWorkspaceSession);
+    }
+    policyWorkspaceSession = null;
+    syncPolicyWorkspaceActions();
+  }
+
+  function ensurePolicyWorkspaceSession(root) {
+    root = root || policyPane();
+    if (!isPolicyWorkspaceActive(root) || !window.WorkspaceInlineEditor) {
+      destroyPolicyWorkspaceSession();
+      return null;
+    }
+    if (policyWorkspaceSession) return policyWorkspaceSession;
+    policyWorkspaceSession = window.WorkspaceInlineEditor.createSession();
+    window.WorkspaceInlineEditor.attach(policyWorkspaceSession);
+    policyWorkspaceSessionUnsub = policyWorkspaceSession.onChange(syncPolicyWorkspaceActions);
+    syncPolicyWorkspaceActions();
+    return policyWorkspaceSession;
+  }
+
+  function bindPolicyWorkspaceInlineSection(session, root, tableKey, createAdapter) {
+    const section = root.querySelector(
+      '[data-policy-table-key="' + tableKey + '"][data-policy-inline="1"]'
+    );
+    if (!section || section.matches('[data-policy-lazy-placeholder="1"]')) return;
+    if (!session.hasSection(section)) {
+      window.WorkspaceInlineEditor.bindSection(
+        session,
+        section,
+        createAdapter ? createAdapter(section) : {}
+      );
+    }
+    attachPolicyWorkspaceRowInsert(section, session);
+  }
+
+  const POLICY_WORKSPACE_ROW_INSERT_KEYS = {
+    'typical-sections': true,
+    'section-structures': true,
+    'typical-service-compositions': true,
+    'tariffs': true,
+  };
+
+  function policyRowPersistId(row) {
+    if (!row) return '';
+    if (row.dataset.inlineRowId) return String(row.dataset.inlineRowId);
+    const checkbox = row.querySelector('.policy-row-check-cell input.form-check-input, input.form-check-input');
+    return checkbox ? String(checkbox.value || '') : '';
+  }
+
+  function policySectionPersistId(row) {
+    return policyRowPersistId(row);
+  }
+
+  function isPolicyInlineNewRow(row) {
+    if (!row) return false;
+    return row.dataset.inlineNew === '1' || String(row.dataset.inlineRowId || '').startsWith('new-');
+  }
+
+  function syncPolicyWorkspaceNewRowAfterIds(tbody, tableKey) {
+    if (!policyWorkspaceSession || !tbody || !tableKey) return;
+    Array.from(tbody.querySelectorAll('tr[data-inline-new="1"]')).forEach(function (item) {
+      policyWorkspaceSession.updateNewRowAfterId(
+        tableKey,
+        item.dataset.inlineRowId,
+        policyRowPersistId(item.previousElementSibling)
+      );
+    });
+  }
+
+  function syncTypicalSectionNewRowAfterIds(tbody) {
+    syncPolicyWorkspaceNewRowAfterIds(tbody, 'typical-sections');
+  }
+
+  function removePolicyInlineNewRow(row) {
+    if (!row) return;
+    const tbody = row.parentElement;
+    const tableKey = row.closest('[data-policy-table-key]')?.dataset?.policyTableKey || '';
+    const rowId = row.dataset.inlineRowId;
+    if (window.WorkspaceInlineEditor) {
+      window.WorkspaceInlineEditor.closeEditors({ commitText: false, commitOwners: false });
+    }
+    row.remove();
+    if (policyWorkspaceSession && rowId) {
+      policyWorkspaceSession.removeRow(tableKey, rowId);
+      if (POLICY_WORKSPACE_ROW_INSERT_KEYS[tableKey]) {
+        syncPolicyWorkspaceNewRowAfterIds(tbody, tableKey);
+      }
+    }
+  }
+
+  function queuePolicyWorkspaceTypicalSectionDelete(row) {
+    if (!row || !policyWorkspaceSession) return;
+    if (row.dataset.systemSection === '1') return;
+    if (isPolicyInlineNewRow(row)) {
+      removePolicyInlineNewRow(row);
+      return;
+    }
+    const tbody = row.parentElement;
+    const rowId = row.dataset.inlineRowId || policySectionPersistId(row);
+    if (window.WorkspaceInlineEditor) {
+      window.WorkspaceInlineEditor.closeEditors({ commitText: false, commitOwners: false });
+    }
+    row.remove();
+    if (rowId) policyWorkspaceSession.markDeletedRow('typical-sections', rowId);
+    syncTypicalSectionNewRowAfterIds(tbody);
+  }
+
+  function createPolicyRowInsertButton() {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'proposal-row-insert';
+    button.title = 'Добавить строку в этом месте';
+    button.setAttribute('aria-label', button.title);
+    button.innerHTML = '<i class="bi bi-plus-circle" aria-hidden="true"></i>';
+    return button;
+  }
+
+  function syncPolicyRowInsertGeometry(button, row, checkCell, wrap, position) {
+    const wrapRect = wrap?.getBoundingClientRect();
+    const rowRect = row?.getBoundingClientRect();
+    const checkCellRect = checkCell?.getBoundingClientRect();
+    if (!button || !wrapRect || !rowRect || !checkCellRect) return;
+    const boundaryY = position === 'before' ? rowRect.top : rowRect.bottom;
+    button.style.left = (checkCellRect.left - wrapRect.left + wrap.scrollLeft) + 'px';
+    button.style.top = (boundaryY - wrapRect.top + wrap.scrollTop) + 'px';
+    const iconRect = button.querySelector('.bi')?.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    if (!iconRect || !buttonRect) return;
+    button.style.setProperty(
+      '--proposal-service-row-insert-mask-left',
+      Math.max(0, checkCellRect.left - buttonRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-mask-width',
+      Math.max(0, iconRect.left - checkCellRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-line-left',
+      Math.max(0, iconRect.right - buttonRect.left) + 'px'
+    );
+    button.style.setProperty(
+      '--proposal-service-row-insert-line-width',
+      Math.max(0, rowRect.right - iconRect.right) + 'px'
+    );
+  }
+
+  function visiblePolicyRowInsertCells(row) {
+    return Array.from(row.children).filter(function (cell) {
+      return cell.tagName === 'TD' && getComputedStyle(cell).display !== 'none';
+    });
+  }
+
+  function getPolicyRowInsertHoverRight(row) {
+    const cells = visiblePolicyRowInsertCells(row);
+    if (!cells.length) return 0;
+    const limitCell = cells[1] || cells[0];
+    return limitCell.getBoundingClientRect().right;
+  }
+
+  function getTypicalSectionInsertHoverRight(row) {
+    return getPolicyRowInsertHoverRight(row);
+  }
+
+  function visibleTypicalSectionCells(row) {
+    return visiblePolicyRowInsertCells(row);
+  }
+
+  function applyPolicyWorkspaceProductAttrs(row, sample) {
+    row.setAttribute('data-policy-filter-row', '1');
+    row.dataset.productId = sample?.dataset.productId || '';
+    row.dataset.productLabel = sample?.dataset.productLabel || '';
+    row.dataset.consultingType = sample?.dataset.consultingType || '';
+    row.dataset.serviceCategory = sample?.dataset.serviceCategory || '';
+    row.dataset.serviceSubtype = sample?.dataset.serviceSubtype || '';
+  }
+
+  function appendPolicyWorkspaceProductCell(row, sample) {
+    const productTd = document.createElement('td');
+    productTd.className = 'text-nowrap policy-workspace-product-cell';
+    const productCell = sample?.querySelector('.policy-workspace-product-cell');
+    productTd.textContent = productCell ? productCell.textContent.trim() : '';
+    row.appendChild(productTd);
+  }
+
+  function appendPolicyWorkspaceCheckCell(row, rowId, name, ariaLabel) {
+    const checkTd = document.createElement('td');
+    checkTd.className = 'text-nowrap policy-row-check-cell';
+    checkTd.innerHTML = (
+      '<div class="form-check">'
+      + '<input class="form-check-input" type="checkbox" id="' + name + '-' + rowId
+      + '" name="' + name + '" value="' + rowId
+      + '" aria-label="' + ariaLabel + '">'
+      + '</div>'
+    );
+    row.appendChild(checkTd);
+  }
+
+  function policyWorkspaceNeighborSection(row) {
+    const cell = row && row.querySelector('td[data-inline-field="section"]');
+    const code = row && row.querySelector('.typical-section-dsc-code');
+    return {
+      id: cell ? String(cell.getAttribute('data-inline-value') || '') : '',
+      label: cell ? cell.textContent.trim() : '',
+      code: code ? code.textContent.trim() : '',
+    };
+  }
+
+  function appendPolicyWorkspaceSectionCells(row, neighbor) {
+    const codeTd = document.createElement('td');
+    codeTd.className = 'text-nowrap typical-section-code-col';
+    const span = document.createElement('span');
+    span.className = 'typical-section-dsc-code';
+    span.textContent = neighbor.code || '';
+    codeTd.appendChild(span);
+    row.appendChild(codeTd);
+
+    const sectionTd = document.createElement('td');
+    sectionTd.className = 'text-nowrap';
+    sectionTd.setAttribute('data-inline-field', 'section');
+    sectionTd.setAttribute('data-inline-type', 'select');
+    sectionTd.setAttribute('data-inline-value', neighbor.id || '');
+    sectionTd.textContent = neighbor.label || '';
+    row.appendChild(sectionTd);
+    return sectionTd;
+  }
+
+  function createTypicalSectionWorkspaceRow(section, rowId) {
+    const sample = section.querySelector('tbody tr[data-product-id]');
+    const productId = sample?.dataset.productId || '';
+    const productLabel = sample?.dataset.productLabel || '';
+    const consultingType = sample?.dataset.consultingType || '';
+    const serviceCategory = sample?.dataset.serviceCategory || '';
+    const serviceSubtype = sample?.dataset.serviceSubtype || '';
+    const productCell = sample?.querySelector('.policy-workspace-product-cell');
+
+    const row = document.createElement('tr');
+    row.setAttribute('data-policy-filter-row', '1');
+    row.dataset.productId = productId;
+    row.dataset.inlineRowId = rowId;
+    row.dataset.inlineNew = '1';
+    row.dataset.productLabel = productLabel;
+    row.dataset.consultingType = consultingType;
+    row.dataset.serviceCategory = serviceCategory;
+    row.dataset.serviceSubtype = serviceSubtype;
+    row.dataset.systemSection = '0';
+
+    const checkTd = document.createElement('td');
+    checkTd.className = 'text-nowrap policy-row-check-cell';
+    checkTd.innerHTML = (
+      '<div class="form-check">'
+      + '<input class="form-check-input" type="checkbox" id="section-sel-' + rowId
+      + '" name="section-select" value="' + rowId
+      + '" aria-label="Выделить строку раздела">'
+      + '</div>'
+    );
+    row.appendChild(checkTd);
+
+    const productTd = document.createElement('td');
+    productTd.className = 'text-nowrap policy-workspace-product-cell';
+    productTd.textContent = productCell ? productCell.textContent.trim() : '';
+    row.appendChild(productTd);
+
+    function textCell(field, extraClass) {
+      const td = document.createElement('td');
+      td.className = extraClass || '';
+      td.setAttribute('data-inline-field', field);
+      td.setAttribute('data-inline-type', 'text');
+      td.setAttribute('data-inline-value', '');
+      return td;
+    }
+
+    const blockTd = document.createElement('td');
+    blockTd.className = 'text-nowrap typical-section-code-col';
+    blockTd.setAttribute('data-inline-field', 'service_block');
+    blockTd.setAttribute('data-inline-type', 'select');
+    blockTd.setAttribute('data-inline-value', '');
+    row.appendChild(blockTd);
+    const shortNameTd = document.createElement('td');
+    shortNameTd.className = 'text-nowrap';
+    shortNameTd.setAttribute('data-service-block-name', 'en');
+    row.appendChild(shortNameTd);
+    const shortNameRuTd = document.createElement('td');
+    shortNameRuTd.className = 'text-nowrap';
+    shortNameRuTd.setAttribute('data-service-block-name', 'ru');
+    row.appendChild(shortNameRuTd);
+    row.appendChild(textCell('name_en'));
+    row.appendChild(textCell('name_ru'));
+
+    const typeTd = document.createElement('td');
+    typeTd.className = 'text-nowrap';
+    typeTd.setAttribute('data-service-block-accounting', '');
+    row.appendChild(typeTd);
+
+    const specTd = document.createElement('td');
+    specTd.className = 'text-nowrap typical-section-executor-col';
+    specTd.setAttribute('data-service-block-executor', '');
+    specTd.textContent = '—';
+    row.appendChild(specTd);
+
+    const expertiseTd = document.createElement('td');
+    expertiseTd.className = 'text-nowrap';
+    expertiseTd.setAttribute('data-service-block-expertise', '');
+    row.appendChild(expertiseTd);
+    const departmentTd = document.createElement('td');
+    departmentTd.className = 'text-nowrap';
+    departmentTd.setAttribute('data-service-block-department', '');
+    row.appendChild(departmentTd);
+
+    const tkpTd = document.createElement('td');
+    tkpTd.className = 'text-center';
+    tkpTd.setAttribute('data-inline-field', 'exclude_from_tkp_autofill');
+    tkpTd.setAttribute('data-inline-type', 'checkbox');
+    tkpTd.setAttribute('data-inline-value', 'false');
+    tkpTd.innerHTML = (
+      '<input class="form-check-input" type="checkbox" aria-label="Исключить из автозаполнения в ТКП">'
+    );
+    row.appendChild(tkpTd);
+    return row;
+  }
+
+  function createSectionStructureWorkspaceRow(section, rowId, referenceRow) {
+    const sample = referenceRow || section.querySelector('tbody tr[data-product-id]');
+    const neighbor = policyWorkspaceNeighborSection(referenceRow || sample);
+    const row = document.createElement('tr');
+    applyPolicyWorkspaceProductAttrs(row, sample);
+    row.dataset.inlineRowId = rowId;
+    row.dataset.inlineNew = '1';
+    appendPolicyWorkspaceCheckCell(row, rowId, 'structure-select', 'Выделить строку структуры');
+    appendPolicyWorkspaceProductCell(row, sample);
+    const sectionTd = appendPolicyWorkspaceSectionCells(row, neighbor);
+    sectionTd.className = 'text-nowrap';
+    const subTd = document.createElement('td');
+    subTd.setAttribute('data-inline-field', 'subsections');
+    subTd.setAttribute('data-inline-type', 'text');
+    subTd.setAttribute('data-inline-value', '');
+    row.appendChild(subTd);
+    return row;
+  }
+
+  function createTypicalServiceCompositionWorkspaceRow(section, rowId, referenceRow) {
+    const sample = referenceRow || section.querySelector('tbody tr[data-product-id]');
+    const neighbor = policyWorkspaceNeighborSection(referenceRow || sample);
+    const row = document.createElement('tr');
+    applyPolicyWorkspaceProductAttrs(row, sample);
+    row.dataset.inlineRowId = rowId;
+    row.dataset.inlineNew = '1';
+    appendPolicyWorkspaceCheckCell(
+      row,
+      rowId,
+      'typical-service-composition-select',
+      'Выделить строку типового состава услуг'
+    );
+    appendPolicyWorkspaceProductCell(row, sample);
+    const sectionTd = appendPolicyWorkspaceSectionCells(row, neighbor);
+    sectionTd.className = 'policy-service-composition-section-col';
+    const richTd = document.createElement('td');
+    richTd.className = 'policy-service-composition-cell';
+    richTd.setAttribute('data-inline-field', 'service_composition_editor_state');
+    richTd.setAttribute('data-inline-type', 'rich');
+    richTd.setAttribute('data-inline-value', '{"html":"","plain_text":""}');
+    richTd.innerHTML = '<div class="policy-service-composition-content policy-service-composition-content--rich ql-editor"></div>';
+    row.appendChild(richTd);
+    return row;
+  }
+
+  function createTariffWorkspaceRow(section, rowId, referenceRow) {
+    const sample = referenceRow || section.querySelector('tbody tr[data-product-id]');
+    const neighbor = policyWorkspaceNeighborSection(referenceRow || sample);
+    const row = document.createElement('tr');
+    applyPolicyWorkspaceProductAttrs(row, sample);
+    row.dataset.inlineRowId = rowId;
+    row.dataset.inlineNew = '1';
+    appendPolicyWorkspaceCheckCell(row, rowId, 'tariff-select', 'Выделить строку тарифа');
+    appendPolicyWorkspaceProductCell(row, sample);
+    appendPolicyWorkspaceSectionCells(row, neighbor);
+
+    function numberCell(field, value, label, step) {
+      const td = document.createElement('td');
+      td.className = 'text-nowrap';
+      td.setAttribute('data-inline-field', field);
+      td.setAttribute('data-inline-type', 'number');
+      td.setAttribute('data-inline-step', step);
+      td.setAttribute('data-inline-min', '0');
+      td.setAttribute('data-inline-value', value);
+      td.textContent = label;
+      return td;
+    }
+    row.appendChild(numberCell('base_rate_vpm', '1.00', '1,00', '0.01'));
+    row.appendChild(numberCell('service_hours', '0', '0', '1'));
+    row.appendChild(numberCell('service_days_tkp', '0', '0', '1'));
+
+    const ownerSample = sample && sample.querySelector('td[data-inline-field="owner"]');
+    if (ownerSample) {
+      const ownerTd = document.createElement('td');
+      ownerTd.className = 'text-nowrap text-muted';
+      ownerTd.setAttribute('data-inline-field', 'owner');
+      ownerTd.setAttribute('data-inline-type', 'select');
+      ownerTd.setAttribute('data-inline-value', ownerSample.getAttribute('data-inline-value') || '');
+      ownerTd.textContent = ownerSample.textContent.trim();
+      row.appendChild(ownerTd);
+    }
+    return row;
+  }
+
+  function snapshotPolicyWorkspaceInsertRow(session, tableKey, row, afterId) {
+    const fields = {};
+    row.querySelectorAll('td[data-inline-field]').forEach(function (cell) {
+      fields[cell.dataset.inlineField] = window.WorkspaceInlineEditor.readCellValue(cell);
+    });
+    session.markNewRow(tableKey, row.dataset.inlineRowId, fields, { afterId: afterId || '' });
+  }
+
+  function snapshotTypicalSectionRow(session, row, afterId) {
+    snapshotPolicyWorkspaceInsertRow(session, 'typical-sections', row, afterId);
+  }
+
+  const POLICY_WORKSPACE_ROW_INSERT = {
+    'typical-sections': {
+      skipBeforeSystem: true,
+      focusField: 'service_block',
+      createRow: createTypicalSectionWorkspaceRow,
+    },
+    'section-structures': {
+      focusField: 'subsections',
+      createRow: createSectionStructureWorkspaceRow,
+    },
+    'typical-service-compositions': {
+      focusField: 'service_composition_editor_state',
+      createRow: createTypicalServiceCompositionWorkspaceRow,
+    },
+    'tariffs': {
+      focusField: 'base_rate_vpm',
+      createRow: createTariffWorkspaceRow,
+    },
+  };
+
+  function attachTypicalSectionRowInsert(section, session) {
+    attachPolicyWorkspaceRowInsert(section, session);
+  }
+
+  function attachPolicyWorkspaceRowInsert(section, session) {
+    if (!section || !session || section.dataset.policyRowInsertBound === '1') return;
+    const tableKey = section.dataset.policyTableKey;
+    const config = POLICY_WORKSPACE_ROW_INSERT[tableKey];
+    if (!config) return;
+    const tbody = section.querySelector('table tbody');
+    const wrap = section.querySelector('.table-responsive');
+    if (!tbody || !wrap) return;
+    section.dataset.policyRowInsertBound = '1';
+
+    const rowInsertButton = createPolicyRowInsertButton();
+    let rowInsertTarget = null;
+    let rowInsertPosition = '';
+    let newRowSeq = 0;
+
+    function isPolicyRowInsertPointerInside(target) {
+      return !!(target && (
+        rowInsertButton.contains(target)
+        || target === rowInsertButton
+        || tbody.contains(target)
+      ));
+    }
+
+    function clearRowInsertMarker() {
+      rowInsertTarget?.classList.remove('proposal-service-insert-before', 'proposal-service-insert-after');
+      tbody.classList.remove('policy-row-insert-active');
+      rowInsertButton.remove();
+      rowInsertTarget = null;
+      rowInsertPosition = '';
+    }
+
+    function showRowInsertMarker(row, position) {
+      if (!row || (position !== 'before' && position !== 'after')) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (config.skipBeforeSystem && row.dataset.systemSection === '1' && position === 'before') {
+        clearRowInsertMarker();
+        return;
+      }
+      if (rowInsertTarget === row && rowInsertPosition === position && rowInsertButton.isConnected) {
+        return;
+      }
+      if (rowInsertTarget !== row || rowInsertPosition !== position) {
+        clearRowInsertMarker();
+        rowInsertTarget = row;
+        rowInsertPosition = position;
+        row.classList.add(position === 'before'
+          ? 'proposal-service-insert-before'
+          : 'proposal-service-insert-after');
+      }
+      const checkCell = row.querySelector('.policy-row-check-cell');
+      if (!checkCell) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (rowInsertButton.parentElement !== wrap) {
+        wrap.appendChild(rowInsertButton);
+      }
+      syncPolicyRowInsertGeometry(rowInsertButton, row, checkCell, wrap, position);
+      tbody.classList.add('policy-row-insert-active');
+    }
+
+    function addRowAt(referenceRow, position) {
+      newRowSeq += 1;
+      const rowId = 'new-' + newRowSeq;
+      const row = config.createRow(section, rowId, referenceRow);
+      if (referenceRow && referenceRow.parentElement === tbody) {
+        const anchor = position === 'before' ? referenceRow : referenceRow.nextElementSibling;
+        tbody.insertBefore(row, anchor);
+      } else {
+        tbody.appendChild(row);
+      }
+      clearRowInsertMarker();
+      snapshotPolicyWorkspaceInsertRow(session, tableKey, row, policyRowPersistId(row.previousElementSibling));
+      const focusCell = row.querySelector('td[data-inline-field="' + config.focusField + '"]');
+      window.requestAnimationFrame(function () {
+        if (!focusCell) return;
+        focusCell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        focusCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+      });
+    }
+
+    tbody.addEventListener('pointermove', function (event) {
+      if (event.pointerType === 'touch') {
+        clearRowInsertMarker();
+        return;
+      }
+      if (event.target.closest('.proposal-row-insert')) return;
+      if (rowInsertTarget && rowInsertButton.isConnected) {
+        if (event.clientX > getPolicyRowInsertHoverRight(rowInsertTarget)) {
+          clearRowInsertMarker();
+          return;
+        }
+        const activeRect = rowInsertTarget.getBoundingClientRect();
+        const activeBoundaryY = rowInsertPosition === 'before' ? activeRect.top : activeRect.bottom;
+        if (Math.abs(event.clientY - activeBoundaryY) <= 14) return;
+      }
+      const row = event.target.closest('tr');
+      if (!row || row.parentElement !== tbody || row.querySelector('td[colspan]')) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (event.clientX > getPolicyRowInsertHoverRight(row)) {
+        clearRowInsertMarker();
+        return;
+      }
+      const rect = row.getBoundingClientRect();
+      const distanceFromTop = event.clientY - rect.top;
+      const distanceFromBottom = rect.bottom - event.clientY;
+      const boundaryHoverSize = 10;
+      if (Math.min(distanceFromTop, distanceFromBottom) > boundaryHoverSize) {
+        clearRowInsertMarker();
+        return;
+      }
+      showRowInsertMarker(row, distanceFromTop <= distanceFromBottom ? 'before' : 'after');
+    });
+
+    tbody.addEventListener('pointerleave', function (event) {
+      if (isPolicyRowInsertPointerInside(event.relatedTarget)) return;
+      clearRowInsertMarker();
+    });
+
+    rowInsertButton.addEventListener('pointerleave', function (event) {
+      if (isPolicyRowInsertPointerInside(event.relatedTarget)) return;
+      clearRowInsertMarker();
+    });
+
+    wrap.addEventListener('scroll', function () {
+      if (!rowInsertTarget || !rowInsertButton.isConnected) return;
+      syncPolicyRowInsertGeometry(
+        rowInsertButton,
+        rowInsertTarget,
+        rowInsertTarget.querySelector('.policy-row-check-cell'),
+        wrap,
+        rowInsertPosition
+      );
+    });
+
+    rowInsertButton.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!rowInsertTarget || !rowInsertPosition) return;
+      addRowAt(rowInsertTarget, rowInsertPosition);
+    });
+  }
+
+  function bindPolicyWorkspaceInlineTables(root) {
+    root = root || policyPane();
+    const session = ensurePolicyWorkspaceSession(root);
+    if (!session || !window.WorkspaceInlineEditor) return;
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'products',
+      window.WorkspaceInlineEditor.createPolicyProductsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'service-goal-reports',
+      window.WorkspaceInlineEditor.createPolicyServiceGoalReportsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'typical-sections',
+      window.WorkspaceInlineEditor.createPolicyTypicalSectionsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'section-structures',
+      window.WorkspaceInlineEditor.createPolicySectionStructuresAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'report-structures',
+      window.WorkspaceInlineEditor.createPolicyReportStructuresAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'tariffs',
+      window.WorkspaceInlineEditor.createPolicyTariffsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'typical-service-terms',
+      window.WorkspaceInlineEditor.createPolicyTypicalServiceTermsAdapter
+    );
+    bindPolicyWorkspaceInlineSection(
+      session,
+      root,
+      'typical-service-compositions',
+      window.WorkspaceInlineEditor.createPolicyTypicalServiceCompositionsAdapter
+    );
+  }
+
+  function refreshPolicyWorkspaceInlineFragments(tableKeys) {
+    const keys = tableKeys && tableKeys.length
+      ? tableKeys
+      : ['products', 'service-goal-reports', 'typical-sections', 'section-structures', 'report-structures', 'typical-service-terms', 'typical-service-compositions', 'tariffs'];
+    return Promise.all(keys.map(function (tableKey) {
+      return refreshLoadedPolicyFragment(tableKey);
+    }));
+  }
+
+  function applyPolicyWorkspaceSaveResult(data) {
+    const root = policyPane();
+    if (!root || !data) return;
+    if (data.label) {
+      root.dataset.headerCurrentLabel = data.label;
+      updatePolicyHeaderPath();
+    }
+    const product = data.product || {};
+    if (Object.prototype.hasOwnProperty.call(product, 'consulting_type_ref')) {
+      root.dataset.policyWorkspaceConsultingRef = String(product.consulting_type_ref || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(product, 'service_category_ref')) {
+      root.dataset.policyWorkspaceCategoryRef = String(product.service_category_ref || '');
+    }
+    if (Object.prototype.hasOwnProperty.call(product, 'service_subtype_ref')) {
+      root.dataset.policyWorkspaceSubtypeRef = String(product.service_subtype_ref || '');
+    }
+  }
+
+  async function savePolicyWorkspace() {
+    const root = policyPane();
+    const session = policyWorkspaceSession;
+    const url = root?.dataset?.policyWorkspaceSaveUrl;
+    if (!session || !url || session.saving) return;
+    if (window.WorkspaceInlineEditor) {
+      window.WorkspaceInlineEditor.closeEditors({ commitText: true, commitOwners: true });
+    }
+    if (!session.isDirty()) return;
+    const tables = session.collectTables();
+    session.clearErrors();
+    session.setSaving(true);
+    setPolicyWorkspaceSaveLoading(true);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrftoken,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ tables: tables }),
+      });
+      const data = await response.json().catch(function () { return {}; });
+      if (!response.ok || data.ok === false) {
+        session.setErrors(data.errors || [{
+          table: 'products',
+          id: root.dataset.policyWorkspaceProductId,
+          field: '',
+          message: data.error || 'Не удалось сохранить изменения.',
+        }]);
+        if (window.WorkspaceInlineEditor) window.WorkspaceInlineEditor.applyErrorsToDom(session, root);
+        return;
+      }
+      applyPolicyWorkspaceSaveResult(data);
+      destroyPolicyWorkspaceSession();
+      await refreshPolicyWorkspaceInlineFragments(data.tables);
+      bindPolicyWorkspaceInlineTables(policyPane());
+    } catch (err) {
+      session.setErrors([{
+        table: 'products',
+        id: root?.dataset?.policyWorkspaceProductId,
+        field: '',
+        message: 'Не удалось сохранить изменения.',
+      }]);
+      if (window.WorkspaceInlineEditor) window.WorkspaceInlineEditor.applyErrorsToDom(session, root);
+    } finally {
+      if (policyWorkspaceSession) policyWorkspaceSession.setSaving(false);
+      setPolicyWorkspaceSaveLoading(false);
+    }
+  }
+
+  async function cancelPolicyWorkspace() {
+    const session = policyWorkspaceSession;
+    if (!session || session.saving) return;
+    if (window.WorkspaceInlineEditor) window.WorkspaceInlineEditor.closeEditors();
+    if (!session.isDirty()) {
+      destroyPolicyWorkspaceSession();
+      await loadPolicyCatalogShell();
+      return;
+    }
+    if (!window.confirm(POLICY_WORKSPACE_CANCEL_MESSAGE)) return;
+    forgetPolicyTableSelection('section-select');
+    destroyPolicyWorkspaceSession();
+    await refreshPolicyWorkspaceInlineFragments();
+    bindPolicyWorkspaceInlineTables(policyPane());
   }
 
   function getSelectedPolicyMasterProduct() {
     const root = pane();
+    const workspaceProduct = getPolicyWorkspaceProduct(root);
+    if (workspaceProduct) return workspaceProduct;
     if (!root) return null;
     const state = filterStateWithDefaults(window.__policyMasterFilters);
     const productValues = state.product || [];
@@ -1374,6 +2279,864 @@
     return getPolicyProductCatalog(root).find(function (product) {
       return product.id === productValues[0];
     }) || null;
+  }
+
+  function buildPolicyMasterFilterQueryString(state) {
+    const workspaceProduct = getPolicyWorkspaceProduct(policyPane());
+    if (workspaceProduct) {
+      const params = new URLSearchParams();
+      params.set('product', workspaceProduct.id);
+      params.set('workspace', '1');
+      return '?' + params.toString();
+    }
+    state = filterStateWithDefaults(state || window.__policyMasterFilters);
+    const params = new URLSearchParams();
+    POLICY_FILTER_ORDER.forEach(function (key) {
+      const values = (state[key] || []).filter(function (value) {
+        return value && value !== POLICY_FILTER_ALL;
+      });
+      if (!values.length) return;
+      const paramName = key === 'category' ? 'category' : key;
+      values.forEach(function (value) {
+        params.append(paramName, value);
+      });
+    });
+    const query = params.toString();
+    return query ? ('?' + query) : '';
+  }
+
+  function getPolicyTablePageSize(wrapper) {
+    const value = normalizeFilterValue(wrapper?.dataset?.policyTablePageSize);
+    return ['25', '50', '100'].includes(value) ? value : '25';
+  }
+
+  let policyManagedRefreshTimer = null;
+  let policyManagedRefreshQueue = [];
+  let policyManagedRefreshActive = 0;
+  let policyManagedRefreshGeneration = 0;
+  let policyLoadedFragmentRequestToken = 0;
+  const policyLoadedFragmentRequests = new Map();
+  const policyManagedOutstandingTableKeys = new Set();
+  const POLICY_MANAGED_REFRESH_CONCURRENCY = 2;
+  let policyLazyRefreshQueue = [];
+  let policyLazyRefreshActive = 0;
+  let policyLazyObserver = null;
+  const policyLazyRequestTokens = new Map();
+  const policyLazyRequestControllers = new Map();
+  const POLICY_LAZY_REFRESH_CONCURRENCY = 2;
+
+  function syncPolicyLazyPlaceholderQuery(placeholder) {
+    if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) return;
+    placeholder.dataset.policyFilterQuery =
+      buildPolicyMasterFilterQueryString(window.__policyMasterFilters).replace(/^\?/, '');
+  }
+
+  function nextPolicyLazyRequestToken(tableKey) {
+    const token = (policyLazyRequestTokens.get(tableKey) || 0) + 1;
+    policyLazyRequestTokens.set(tableKey, token);
+    return token;
+  }
+
+  function isPolicyLazyPlaceholderNearViewport(placeholder) {
+    const rect = placeholder.getBoundingClientRect();
+    return rect.bottom >= -500 && rect.top <= window.innerHeight + 500;
+  }
+
+  function updatePolicyLazyPlaceholderState(placeholder, options) {
+    if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) return;
+    options = options || {};
+    syncPolicyLazyPlaceholderQuery(placeholder);
+    const tableKey = normalizeFilterValue(placeholder.dataset.policyTableKey);
+    const state = placeholder.dataset.policyLazyState;
+    const wasLoading = state === 'loading';
+    if (wasLoading && options.invalidateLoading) {
+      nextPolicyLazyRequestToken(tableKey);
+      policyLazyRequestControllers.get(tableKey)?.abort();
+      setPolicyLazyPlaceholderStatus(placeholder, 'pending', 'Ожидает актуальной загрузки');
+    }
+    if (
+      options.requeueNear
+      && placeholder.dataset.policyLazyState !== 'queued'
+      && placeholder.dataset.policyLazyState !== 'loading'
+      && (wasLoading || isPolicyLazyPlaceholderNearViewport(placeholder))
+    ) {
+      enqueuePolicyLazyPlaceholder(placeholder, { priority: !!options.priority });
+    }
+  }
+
+  function updateAllPolicyLazyPlaceholderStates(options) {
+    qa('[data-policy-lazy-placeholder="1"]', policyPane()).forEach(function (placeholder) {
+      updatePolicyLazyPlaceholderState(placeholder, options);
+    });
+  }
+
+  function policyLazyPlaceholderUrl(placeholder) {
+    syncPolicyLazyPlaceholderQuery(placeholder);
+    const baseUrl = normalizeFilterValue(placeholder.dataset.policyTableUrl);
+    const query = normalizeFilterValue(placeholder.dataset.policyFilterQuery);
+    const page = normalizeFilterValue(placeholder.dataset.policyTablePage) || '1';
+    const pageSize = getPolicyTablePageSize(placeholder);
+    const params = new URLSearchParams(query);
+    params.set('page', page);
+    params.set('page_size', pageSize);
+    return baseUrl + '?' + params.toString();
+  }
+
+  function setPolicyLazyPlaceholderStatus(placeholder, state, label) {
+    placeholder.dataset.policyLazyState = state;
+    placeholder.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false');
+    const status = placeholder.querySelector('.policy-table-placeholder-status');
+    const error = placeholder.querySelector('.policy-table-placeholder-error');
+    if (status) status.textContent = label;
+    if (error) error.classList.toggle('d-none', state !== 'error');
+  }
+
+  function pumpPolicyLazyRefreshQueue() {
+    while (
+      policyLazyRefreshActive < POLICY_LAZY_REFRESH_CONCURRENCY
+      && policyLazyRefreshQueue.length
+    ) {
+      const placeholderId = policyLazyRefreshQueue.shift();
+      const placeholder = document.getElementById(placeholderId);
+      if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) continue;
+      if (placeholder.dataset.policyLazyState !== 'queued') continue;
+      policyLazyRefreshActive += 1;
+      const tableKey = normalizeFilterValue(placeholder.dataset.policyTableKey);
+      const requestToken = nextPolicyLazyRequestToken(tableKey);
+      const controller = new AbortController();
+      policyLazyRequestControllers.set(tableKey, controller);
+      placeholder.dataset.policyLazyRequestToken = String(requestToken);
+      setPolicyLazyPlaceholderStatus(placeholder, 'loading', 'Загрузка…');
+      fetch(policyLazyPlaceholderUrl(placeholder), {
+        signal: controller.signal,
+        headers: { 'HX-Request': 'true', 'X-Requested-With': 'fetch' },
+      }).then(function (response) {
+        if (!response.ok) throw new Error('Не удалось загрузить таблицу.');
+        return response.text();
+      }).then(function (html) {
+        const current = document.getElementById(placeholderId);
+        if (
+          !current?.matches?.('[data-policy-lazy-placeholder="1"]')
+          || policyLazyRequestTokens.get(tableKey) !== requestToken
+          || current.dataset.policyLazyRequestToken !== String(requestToken)
+        ) return;
+        const template = document.createElement('template');
+        template.innerHTML = html.trim();
+        const replacement = template.content.firstElementChild;
+        if (!replacement || replacement.id !== placeholderId) {
+          throw new Error('Сервер вернул некорректный фрагмент таблицы.');
+        }
+        current.replaceWith(replacement);
+        if (window.htmx) window.htmx.process(replacement);
+        initializeArrivingPolicyFragment(replacement);
+      }).catch(function () {
+        const current = document.getElementById(placeholderId);
+        if (
+          current?.matches?.('[data-policy-lazy-placeholder="1"]')
+          && policyLazyRequestTokens.get(tableKey) === requestToken
+        ) {
+          setPolicyLazyPlaceholderStatus(current, 'error', 'Ошибка загрузки');
+        }
+      }).finally(function () {
+        if (policyLazyRequestControllers.get(tableKey) === controller) {
+          policyLazyRequestControllers.delete(tableKey);
+        }
+        policyLazyRefreshActive -= 1;
+        pumpPolicyLazyRefreshQueue();
+      });
+    }
+  }
+
+  function enqueuePolicyLazyPlaceholder(placeholder, options) {
+    if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) return;
+    options = options || {};
+    const state = placeholder.dataset.policyLazyState;
+    if (state === 'queued') {
+      if (options.priority) {
+        policyLazyRefreshQueue = policyLazyRefreshQueue.filter(function (id) {
+          return id !== placeholder.id;
+        });
+        policyLazyRefreshQueue.unshift(placeholder.id);
+        pumpPolicyLazyRefreshQueue();
+      }
+      return;
+    }
+    if (state === 'loading') return;
+    if (policyLazyObserver) policyLazyObserver.unobserve(placeholder);
+    syncPolicyLazyPlaceholderQuery(placeholder);
+    setPolicyLazyPlaceholderStatus(placeholder, 'queued', 'В очереди…');
+    if (options.priority) policyLazyRefreshQueue.unshift(placeholder.id);
+    else policyLazyRefreshQueue.push(placeholder.id);
+    pumpPolicyLazyRefreshQueue();
+  }
+
+  function initPolicyLazyShell(root) {
+    if (!root?.matches?.('#policy-pane[data-policy-lazy-shell="1"]')) return;
+    if (root.dataset.policyLazyInitialized === '1') return;
+    root.dataset.policyLazyInitialized = '1';
+    policyLazyRefreshQueue = [];
+    updateAllPolicyLazyPlaceholderStates();
+    qa('[data-policy-lazy-priority="immediate"]', root).forEach(
+      enqueuePolicyLazyPlaceholder
+    );
+    const isWorkspace = root.dataset.policyWorkspace === '1';
+    if (isWorkspace) {
+      if (policyLazyObserver) {
+        policyLazyObserver.disconnect();
+        policyLazyObserver = null;
+      }
+      qa('[data-policy-lazy-priority="deferred"]', root).forEach(
+        enqueuePolicyLazyPlaceholder
+      );
+    } else if ('IntersectionObserver' in window) {
+      if (policyLazyObserver) policyLazyObserver.disconnect();
+      policyLazyObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) enqueuePolicyLazyPlaceholder(entry.target);
+        });
+      }, { root: null, rootMargin: '500px 0px', threshold: 0.01 });
+      qa('[data-policy-lazy-priority="deferred"]', root).forEach(function (placeholder) {
+        policyLazyObserver.observe(placeholder);
+      });
+    } else {
+      qa('[data-policy-lazy-priority="deferred"]', root).forEach(
+        enqueuePolicyLazyPlaceholder
+      );
+    }
+    if (!isWorkspace) {
+      refreshPolicyProductCatalog().catch(function () {
+        // Table loading remains available if the lightweight catalog fails.
+      });
+      destroyPolicyWorkspaceSession();
+    } else {
+      ensurePolicyWorkspaceSession(root);
+    }
+    updatePolicyHeaderPath();
+    if (isWorkspace) {
+      bindPolicyWorkspaceInlineTables(root);
+      scrollPolicyWorkspaceToTop(root);
+    }
+  }
+
+  function scrollPolicyWorkspaceToTop(root) {
+    root = root || policyPane();
+    if (root?.dataset?.policyWorkspace !== '1') return;
+    window.__policyScrollRestoreY = null;
+    const jump = function () {
+      window.scrollTo(0, 0);
+    };
+    jump();
+    window.requestAnimationFrame(jump);
+  }
+
+  function updatePolicyHeaderPath() {
+    const heading = document.getElementById('policy-section-heading');
+    if (!heading) return;
+    const root = policyPane();
+    const filterDropdowns = Object.keys(POLICY_FILTER_CONFIG).map(function (key) {
+      return document.getElementById(POLICY_FILTER_CONFIG[key].dropdownId);
+    });
+    if (!root) {
+      heading.textContent = 'Продукты';
+      filterDropdowns.forEach(function (dropdown) {
+        if (dropdown) dropdown.classList.remove('d-none');
+      });
+      syncPolicyWorkspaceActions();
+      return;
+    }
+
+    const rootLabel = root.dataset.headerRootLabel || 'Продукты';
+    const rootUrl = root.dataset.headerRootUrl || '';
+    const currentLabel = root.dataset.headerCurrentLabel || '';
+    const currentUrl = root.dataset.headerCurrentUrl || '';
+    filterDropdowns.forEach(function (dropdown) {
+      if (dropdown) dropdown.classList.toggle('d-none', !!currentLabel);
+    });
+
+    if (!currentLabel) {
+      heading.textContent = rootLabel;
+      syncPolicyWorkspaceActions();
+      return;
+    }
+
+    heading.replaceChildren();
+    const rootLink = document.createElement('a');
+    rootLink.className = 'proposal-header-link';
+    rootLink.href = '#policy';
+    rootLink.textContent = rootLabel;
+    if (rootUrl) {
+      rootLink.setAttribute('hx-get', rootUrl);
+      rootLink.setAttribute('hx-target', '#policy-pane');
+      rootLink.setAttribute('hx-swap', 'outerHTML');
+    }
+    const separator = document.createElement('span');
+    separator.className = 'proposal-header-separator';
+    separator.textContent = ' / ';
+    const currentLink = document.createElement('a');
+    currentLink.className = 'proposal-header-link';
+    currentLink.href = '#policy';
+    currentLink.textContent = currentLabel;
+    if (currentUrl) {
+      currentLink.setAttribute('hx-get', currentUrl);
+      currentLink.setAttribute('hx-target', '#policy-pane');
+      currentLink.setAttribute('hx-swap', 'outerHTML');
+    }
+    heading.append(rootLink, separator, currentLink);
+    if (window.htmx) window.htmx.process(heading);
+    syncPolicyWorkspaceActions();
+  }
+
+  function loadPolicyCatalogShell() {
+    const root = policyPane();
+    const catalogUrl = normalizeFilterValue(root?.dataset?.headerRootUrl) || '/policy/policy/partial/';
+    if (!window.htmx) return Promise.resolve();
+    return Promise.resolve(
+      htmx.ajax('GET', catalogUrl, { target: '#policy-pane', swap: 'outerHTML' })
+    );
+  }
+
+  function loadPolicyShellOnce() {
+    const root = policyPane();
+    const shellUrl = normalizeFilterValue(root?.dataset?.policyShellUrl);
+    if (!root || !shellUrl || root.dataset.policyShellState === 'loading' || root.dataset.policyShellState === 'loaded') {
+      return Promise.resolve();
+    }
+    root.dataset.policyShellState = 'loading';
+    const loading = root.querySelector('#policy-loading');
+    if (loading) {
+      loading.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span><span>Загрузка таблиц…</span>';
+    }
+    return Promise.resolve(
+      htmx.ajax('GET', shellUrl, { target: '#policy-pane', swap: 'outerHTML' })
+    ).then(function () {
+      const shell = policyPane();
+      if (shell) shell.dataset.policyShellState = 'loaded';
+      initPolicyLazyShell(shell);
+    }).catch(function () {
+      const current = policyPane();
+      if (!current) return;
+      current.dataset.policyShellState = 'error';
+      current.innerHTML =
+        '<div class="alert alert-danger mb-0">Не удалось загрузить таблицы. ' +
+        '<button type="button" class="btn btn-sm btn-outline-danger ms-2" data-policy-shell-retry="1">Повторить</button></div>';
+    });
+  }
+
+  function clearManagedPolicyTableSelection(wrapper) {
+    qa('tbody input.form-check-input[name]', wrapper).forEach(function (checkbox) {
+      checkbox.checked = false;
+    });
+    qa('input.form-check-input[data-target-name]', wrapper).forEach(function (master) {
+      master.checked = false;
+      master.indeterminate = false;
+    });
+    qa('div[id$="-actions"]:not([data-policy-actions-always-visible="1"])', wrapper).forEach(function (actions) {
+      actions.classList.add('d-none');
+    });
+  }
+
+  function pumpManagedPolicyRefreshQueue() {
+    while (
+      policyManagedRefreshActive < POLICY_MANAGED_REFRESH_CONCURRENCY
+      && policyManagedRefreshQueue.length
+    ) {
+      const task = policyManagedRefreshQueue.shift();
+      const current = document.getElementById(task.wrapperId);
+      if (!current || task.generation !== policyManagedRefreshGeneration) {
+        if (task.generation === policyManagedRefreshGeneration) {
+          policyManagedOutstandingTableKeys.delete(task.tableKey);
+        }
+        continue;
+      }
+      policyManagedRefreshActive += 1;
+      Promise.resolve(
+        refreshLoadedPolicyFragment(task.tableKey, {
+          preserveScroll: true,
+          page: task.page,
+          generation: task.generation,
+        })
+      ).catch(function () {
+        // The existing fragment remains visible on network failure.
+      }).finally(function () {
+        policyManagedRefreshActive -= 1;
+        if (task.generation === policyManagedRefreshGeneration) {
+          policyManagedOutstandingTableKeys.delete(task.tableKey);
+        }
+        pumpManagedPolicyRefreshQueue();
+      });
+    }
+  }
+
+  function abortOlderPolicyLoadedFragmentRequests(generation) {
+    policyLoadedFragmentRequests.forEach(function (request) {
+      if (request.generation < generation) request.controller.abort();
+    });
+  }
+
+  function enqueueManagedPolicyTableRefreshes(state) {
+    const requested = new Set(policyManagedOutstandingTableKeys);
+    const resetToFirstPage = new Set();
+    qa('[data-policy-master-managed="1"][data-policy-table-url]', policyPane()).forEach(function (wrapper) {
+      const tableKey = normalizeFilterValue(wrapper.dataset.policyTableKey);
+      if (!tableKey) return;
+      if (wrapper.matches('[data-policy-lazy-placeholder="1"]')) {
+        updatePolicyLazyPlaceholderState(wrapper, {
+          invalidateLoading: true,
+          requeueNear: true,
+          priority: true,
+        });
+        return;
+      }
+      requested.add(tableKey);
+      resetToFirstPage.add(tableKey);
+      clearManagedPolicyTableSelection(wrapper);
+    });
+    policyManagedRefreshGeneration += 1;
+    const generation = policyManagedRefreshGeneration;
+    abortOlderPolicyLoadedFragmentRequests(generation);
+    policyManagedRefreshQueue = [];
+    policyManagedOutstandingTableKeys.clear();
+    requested.forEach(function (tableKey) {
+      const wrapper = policyPane()?.querySelector(
+        '[data-policy-table-key="' + CSS.escape(tableKey) + '"][data-policy-table-url]'
+      );
+      if (!wrapper?.id) return;
+      if (wrapper.matches('[data-policy-lazy-placeholder="1"]')) {
+        updatePolicyLazyPlaceholderState(wrapper, {
+          invalidateLoading: true,
+          requeueNear: true,
+          priority: true,
+        });
+        return;
+      }
+      policyManagedOutstandingTableKeys.add(tableKey);
+      policyManagedRefreshQueue.push({
+        generation: generation,
+        wrapperId: wrapper.id,
+        tableKey: tableKey,
+        page: resetToFirstPage.has(tableKey) ? '1' : undefined,
+      });
+    });
+    pumpManagedPolicyRefreshQueue();
+  }
+
+  function refreshManagedPolicyTables(state, debounce) {
+    if (!window.htmx) return;
+    updateAllPolicyLazyPlaceholderStates({
+      invalidateLoading: true,
+      requeueNear: true,
+    });
+    if (policyManagedRefreshTimer) {
+      window.clearTimeout(policyManagedRefreshTimer);
+    }
+    if (debounce) {
+      policyManagedRefreshTimer = window.setTimeout(function () {
+        policyManagedRefreshTimer = null;
+        enqueueManagedPolicyTableRefreshes(state);
+      }, 250);
+    } else {
+      policyManagedRefreshTimer = null;
+      enqueueManagedPolicyTableRefreshes(state);
+    }
+  }
+
+  function refreshLoadedPolicyFragment(tableKey, options) {
+    options = options || {};
+    const root = policyPane();
+    const wrapper = root?.querySelector(
+      '[data-policy-table-key="' + CSS.escape(tableKey) + '"][data-policy-table-url]'
+    );
+    const baseUrl = normalizeFilterValue(wrapper?.dataset?.policyTableUrl);
+    if (!wrapper || !baseUrl || !window.htmx) return Promise.resolve();
+    if (wrapper.matches('[data-policy-lazy-placeholder="1"]')) {
+      updatePolicyLazyPlaceholderState(wrapper, {
+        invalidateLoading: true,
+        requeueNear: true,
+        priority: true,
+      });
+      return Promise.resolve();
+    }
+
+    const page = normalizeFilterValue(options.page || wrapper.dataset.policyTablePage) || '1';
+    const pageSize = getPolicyTablePageSize(wrapper);
+    const query = buildPolicyMasterFilterQueryString(window.__policyMasterFilters);
+    const params = new URLSearchParams(query.replace(/^\?/, ''));
+    params.set('page', page);
+    params.set('page_size', pageSize);
+    const requestUrl = baseUrl + '?' + params.toString();
+    const beforeRect = wrapper.getBoundingClientRect();
+    const beforeTop = beforeRect.top;
+    const preserveAnchor = beforeRect.bottom >= 0 && beforeRect.top <= window.innerHeight;
+    const master = wrapper.querySelector('input.form-check-input[data-target-name]');
+    const selectionName = master?.dataset?.targetName || '';
+    const selectedIds = selectionName && window.__tableSel?.[selectionName]
+      ? Array.from(window.__tableSel[selectionName])
+      : [];
+
+    const previousRequest = policyLoadedFragmentRequests.get(tableKey);
+    if (previousRequest) previousRequest.controller.abort();
+    const controller = new AbortController();
+    policyLoadedFragmentRequestToken += 1;
+    const requestToken = policyLoadedFragmentRequestToken;
+    const requestGeneration = options.generation || policyManagedRefreshGeneration;
+    policyLoadedFragmentRequests.set(tableKey, {
+      controller: controller,
+      token: requestToken,
+      generation: requestGeneration,
+    });
+
+    return fetch(requestUrl, {
+      signal: controller.signal,
+      headers: { 'HX-Request': 'true', 'X-Requested-With': 'fetch' },
+    }).then(function (response) {
+      if (!response.ok) throw new Error('Не удалось обновить таблицу.');
+      return response.text();
+    }).then(function (html) {
+      const activeRequest = policyLoadedFragmentRequests.get(tableKey);
+      const current = document.getElementById(wrapper.id);
+      if (
+        !activeRequest
+        || activeRequest.token !== requestToken
+        || requestGeneration !== policyManagedRefreshGeneration
+        || !current
+        || current.dataset.policyTableKey !== tableKey
+      ) return;
+      const template = document.createElement('template');
+      template.innerHTML = html.trim();
+      const refreshed = template.content.firstElementChild;
+      if (!refreshed || refreshed.id !== wrapper.id) {
+        throw new Error('Сервер вернул некорректный фрагмент таблицы.');
+      }
+      current.replaceWith(refreshed);
+      if (window.htmx) window.htmx.process(refreshed);
+      initializeArrivingPolicyFragment(refreshed);
+      if (selectionName && selectedIds.length) {
+        const selected = new Set(selectedIds.map(String));
+        qa(
+          'tbody input.form-check-input[name="' + CSS.escape(selectionName) + '"]',
+          refreshed
+        ).forEach(function (checkbox) {
+          checkbox.checked = selected.has(String(checkbox.value));
+        });
+        updateMasterStateFor(selectionName);
+        updateRowHighlightFor(selectionName);
+        ensureActionsVisibility(selectionName);
+      }
+      if (options.preserveScroll !== false && preserveAnchor) {
+        const afterTop = refreshed.getBoundingClientRect().top;
+        window.scrollBy(0, afterTop - beforeTop);
+      }
+      if (selectionName) {
+        try { delete window.__tableSel[selectionName]; } catch (_) { window.__tableSel[selectionName] = []; }
+        if (window.__tableSelLast === selectionName) window.__tableSelLast = null;
+      }
+    }).catch(function (error) {
+      if (error.name === 'AbortError') return;
+      const current = document.getElementById(wrapper.id);
+      if (current?.dataset?.policyTableKey === tableKey) {
+        current.dataset.policyRefreshError = '1';
+        current.dispatchEvent(new CustomEvent('policy-fragment-error', {
+          bubbles: true,
+          detail: { table: tableKey },
+        }));
+      }
+      throw error;
+    }).finally(function () {
+      const activeRequest = policyLoadedFragmentRequests.get(tableKey);
+      if (activeRequest?.token === requestToken) {
+        policyLoadedFragmentRequests.delete(tableKey);
+      }
+    });
+  }
+
+  function enqueuePolicyDependencyRefreshes(tables, options) {
+    options = options || {};
+    const skipTables = new Set(options.skipTables || []);
+    skipTables.forEach(function (tableKey) {
+      const activeRequest = policyLoadedFragmentRequests.get(tableKey);
+      if (activeRequest) {
+        activeRequest.controller.abort();
+        policyLoadedFragmentRequests.delete(tableKey);
+      }
+      policyManagedOutstandingTableKeys.delete(tableKey);
+    });
+    const requested = new Set(policyManagedOutstandingTableKeys);
+    policyManagedRefreshQueue.forEach(function (task) {
+      if (task.tableKey) requested.add(task.tableKey);
+    });
+    policyLoadedFragmentRequests.forEach(function (_, tableKey) {
+      requested.add(tableKey);
+    });
+    (Array.isArray(tables) ? tables : []).forEach(function (tableKey) {
+      requested.add(tableKey);
+    });
+    skipTables.forEach(function (tableKey) {
+      requested.delete(tableKey);
+    });
+    policyManagedRefreshGeneration += 1;
+    const generation = policyManagedRefreshGeneration;
+    abortOlderPolicyLoadedFragmentRequests(generation);
+    policyManagedRefreshQueue = [];
+    policyManagedOutstandingTableKeys.clear();
+    requested.forEach(function (tableKey) {
+      if (skipTables.has(tableKey)) return;
+      const wrapper = policyPane()?.querySelector(
+        '[data-policy-table-key="' + CSS.escape(tableKey) + '"][data-policy-table-url]'
+      );
+      if (!wrapper?.id) return;
+      if (wrapper.matches('[data-policy-lazy-placeholder="1"]')) {
+        updatePolicyLazyPlaceholderState(wrapper, {
+          invalidateLoading: true,
+          requeueNear: true,
+          priority: true,
+        });
+        return;
+      }
+      policyManagedOutstandingTableKeys.add(tableKey);
+      policyManagedRefreshQueue.push({
+        generation: generation,
+        wrapperId: wrapper.id,
+        tableKey: tableKey,
+      });
+    });
+    pumpManagedPolicyRefreshQueue();
+  }
+
+  let policyProductCatalogRequest = null;
+  let policyProductCatalogRetryTimer = null;
+  let policyProductCatalogNeedsRefresh = true;
+  let policyProductCatalogRetryAttempt = 0;
+
+  function schedulePolicyProductCatalogRetry() {
+    if (
+      policyProductCatalogRequest
+      || policyProductCatalogRetryTimer
+      || !policyProductCatalogNeedsRefresh
+      || !policyPane()?.matches?.('[data-policy-lazy-shell="1"]')
+    ) return;
+    const retryDelay = Math.min(30000, 1500 * (2 ** policyProductCatalogRetryAttempt));
+    policyProductCatalogRetryAttempt += 1;
+    policyProductCatalogRetryTimer = window.setTimeout(function () {
+      policyProductCatalogRetryTimer = null;
+      refreshPolicyProductCatalog().catch(function () {
+        // refreshPolicyProductCatalog schedules the next bounded retry.
+      });
+    }, retryDelay);
+  }
+
+  function refreshPolicyProductCatalog() {
+    if (policyProductCatalogRequest) return policyProductCatalogRequest;
+    policyProductCatalogNeedsRefresh = true;
+    if (policyProductCatalogRetryTimer) {
+      window.clearTimeout(policyProductCatalogRetryTimer);
+      policyProductCatalogRetryTimer = null;
+    }
+    policyProductCatalogRequest = fetch('/policy/policy/filter-catalog/', {
+      headers: { 'X-Requested-With': 'fetch' },
+    }).then(function (response) {
+      if (!response.ok) throw new Error('Не удалось обновить каталог продуктов.');
+      return response.json();
+    }).then(function (data) {
+      const catalog = (Array.isArray(data.products) ? data.products : []).map(function (product) {
+        return {
+          id: normalizeFilterValue(product.id),
+          label: normalizeFilterValue(product.label),
+          consulting: normalizeFilterValue(product.consulting),
+          category: normalizeFilterValue(product.category),
+          subtype: normalizeFilterValue(product.subtype),
+          consultingRef: normalizeFilterValue(product.consulting_ref_id),
+          categoryRef: normalizeFilterValue(product.category_ref_id),
+          subtypeRef: normalizeFilterValue(product.subtype_ref_id),
+        };
+      });
+      window.__policyProductCatalog = catalog;
+      window.__policyProductCatalogAuthoritative = true;
+      policyProductCatalogNeedsRefresh = false;
+      policyProductCatalogRetryAttempt = 0;
+      initPolicyMasterFilters({ skipManagedRefresh: true });
+      document.body.dispatchEvent(new CustomEvent('products-reordered', {
+        detail: { catalog: catalog },
+      }));
+      return catalog;
+    }).finally(function () {
+      policyProductCatalogRequest = null;
+      if (policyProductCatalogNeedsRefresh) schedulePolicyProductCatalogRetry();
+    });
+    return policyProductCatalogRequest;
+  }
+
+  function moveSelectedPolicyRowBlocks(tbody, rows, direction, isSelected, canCross) {
+    const selected = rows.map(function (row) {
+      return !!isSelected(row);
+    });
+    let moved = false;
+
+    if (direction === 'up') {
+      for (let index = 1; index < rows.length; index += 1) {
+        if (!selected[index] || selected[index - 1]) continue;
+        let blockEnd = index;
+        while (blockEnd + 1 < rows.length && selected[blockEnd + 1]) {
+          blockEnd += 1;
+        }
+        const crossingRow = rows[index - 1];
+        if (!canCross || canCross(crossingRow, direction, rows[index])) {
+          tbody.insertBefore(crossingRow, rows[blockEnd].nextElementSibling);
+          moved = true;
+        }
+        index = blockEnd;
+      }
+      return moved;
+    }
+
+    for (let index = rows.length - 2; index >= 0; index -= 1) {
+      if (!selected[index] || selected[index + 1]) continue;
+      let blockStart = index;
+      while (blockStart - 1 >= 0 && selected[blockStart - 1]) {
+        blockStart -= 1;
+      }
+      const crossingRow = rows[index + 1];
+      if (!canCross || canCross(crossingRow, direction, rows[blockStart])) {
+        tbody.insertBefore(crossingRow, rows[blockStart]);
+        moved = true;
+      }
+      index = blockStart;
+    }
+    return moved;
+  }
+
+  function getPolicyReorderRows(wrapper) {
+    const tbody = wrapper?.querySelector('table tbody');
+    if (!tbody) return { tbody: null, rows: [] };
+    const rows = Array.from(tbody.children).filter(function (row) {
+      return row.tagName === 'TR'
+        && !row.classList.contains('d-none')
+        && (row.dataset.moveUpUrl || row.dataset.moveDownUrl || isPolicyInlineNewRow(row));
+    });
+    return { tbody: tbody, rows: rows };
+  }
+
+  function makePolicyReorderCanCross(tableKey) {
+    if (tableKey === 'typical-sections') {
+      return function (crossingRow, _direction, anchorRow) {
+        if (crossingRow.dataset.systemSection === '1') return false;
+        return String(crossingRow.dataset.productId || '') === String(anchorRow?.dataset?.productId || '');
+      };
+    }
+    if (tableKey === 'report-structures') {
+      return function (crossingRow, _direction, anchorRow) {
+        return String(crossingRow.dataset.productId || '') === String(anchorRow?.dataset?.productId || '');
+      };
+    }
+    return null;
+  }
+
+  function parsePolicyUpdatedPayloadFromTrigger(header) {
+    if (!header) return null;
+    const trimmed = String(header).trim();
+    if (trimmed === 'policy-updated') return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      const detail = parsed && parsed['policy-updated'];
+      if (detail && typeof detail === 'object') return detail;
+      if (detail) return {};
+    } catch (_) {
+      // HX-Trigger can be a plain event name when the legacy fallback is used.
+    }
+    return null;
+  }
+
+  let policyReorderPersistQueue = Promise.resolve();
+
+  function persistPolicyRowMoves(urls, options) {
+    options = options || {};
+    const headers = {
+      'X-CSRFToken': csrftoken,
+      'HX-Request': 'true',
+      'X-Requested-With': 'fetch',
+    };
+    let lastPayload = null;
+    return urls.reduce(function (chain, url) {
+      return chain.then(function () {
+        return fetch(url, { method: 'POST', headers: headers }).then(function (response) {
+          if (!response.ok) throw new Error('Не удалось переместить строку.');
+          lastPayload = parsePolicyUpdatedPayloadFromTrigger(response.headers.get('HX-Trigger'));
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      if (!lastPayload) return;
+      if (options.skipSourceRefresh && options.tableKey) {
+        lastPayload = Object.assign({}, lastPayload, { skipTable: options.tableKey });
+      }
+      handlePolicyUpdated(lastPayload);
+    });
+  }
+
+  function enqueuePolicyReorderPersist(urls, options) {
+    policyReorderPersistQueue = policyReorderPersistQueue.then(function () {
+      return persistPolicyRowMoves(urls, options).catch(function () {
+        if (options.tableKey) return refreshLoadedPolicyFragment(options.tableKey);
+      });
+    });
+  }
+
+  function refreshExpertsPaneIfLoaded() {
+    const expertsPane = document.getElementById('experts-pane');
+    const url = expertsPane?.getAttribute('hx-get');
+    if (!expertsPane || !url || !window.htmx) return;
+    if (document.querySelector('#experts-modal.show, #experts-profile-modal.show, #experts-contract-details-modal.show')) {
+      window.__expertsPaneDirty = true;
+      return;
+    }
+    window.htmx.ajax('GET', url, { target: '#experts-pane', swap: 'outerHTML' });
+  }
+
+  function handlePolicyUpdated(payload) {
+    payload = payload && typeof payload === 'object' ? payload : {};
+    const skipTables = payload.skipTable ? [payload.skipTable] : [];
+    const tables = payload.tables || [];
+    const refresh = function () {
+      enqueuePolicyDependencyRefreshes(tables, { skipTables: skipTables });
+      if (tables.indexOf('expert-specialties') !== -1) {
+        refreshExpertsPaneIfLoaded();
+      }
+    };
+    if (payload.refreshFilters) {
+      refreshPolicyProductCatalog().catch(function () {
+        // Keep the current catalog if the lightweight refresh fails.
+      }).finally(refresh);
+    } else {
+      refresh();
+    }
+  }
+
+  document.body.addEventListener('policy-updated', function (event) {
+    const detail = event.detail || {};
+    handlePolicyUpdated(detail.value && typeof detail.value === 'object' ? detail.value : detail);
+  });
+
+  const POLICY_MASTER_FILTER_DOWNLOAD_BTN_IDS = [
+    'typical-service-compositions-csv-download-btn',
+    'typical-service-compositions-docx-download-btn',
+    'tariffs-csv-download-btn',
+    'typical-service-terms-csv-download-btn',
+    'structures-csv-download-btn',
+    'report-structures-csv-download-btn',
+    'sections-csv-download-btn',
+    'service-goal-reports-csv-download-btn',
+    'products-csv-download-btn',
+    'consulting-directions-csv-download-btn',
+    'service-block-classifiers-csv-download-btn',
+  ];
+
+  function updatePolicyMasterFilterDownloadLinks() {
+    const query = buildPolicyMasterFilterQueryString(window.__policyMasterFilters);
+    POLICY_MASTER_FILTER_DOWNLOAD_BTN_IDS.forEach(function (btnId) {
+      const btn = document.getElementById(btnId);
+      if (!btn) return;
+      const baseUrl = btn.dataset.baseUrl || btn.getAttribute('href').split('?')[0];
+      btn.dataset.baseUrl = baseUrl;
+      btn.setAttribute('href', baseUrl + query);
+    });
   }
 
   function getMasterForPanel(panel) {
@@ -1387,7 +3150,10 @@
   }
   function isVisiblePolicyRowCheckbox(box) {
     const tr = box?.closest('tr');
-    return !!tr && !tr.classList.contains('d-none') && !box.disabled;
+    return !!tr
+      && !tr.classList.contains('d-none')
+      && !tr.classList.contains('product-group-member-collapsed')
+      && !box.disabled;
   }
   function getRowChecksByName(name) {
     const root = pane();
@@ -1404,10 +3170,27 @@
   function getCheckedByName(name) {
     return getVisibleRowChecksByName(name).filter(b => b.checked);
   }
+  function groupedRowKey(tr) {
+    if (!tr) return '';
+    return tr.getAttribute('data-row-group') || tr.getAttribute('data-expdir-group') || '';
+  }
+  function highlightExpdirGroup(tr, active) {
+    const group = groupedRowKey(tr);
+    if (!group || !tr.parentElement) return;
+    const key = CSS.escape(group);
+    tr.parentElement.querySelectorAll(
+      'tr[data-row-group="' + key + '"], tr[data-expdir-group="' + key + '"]'
+    ).forEach(function (row) {
+      row.classList.toggle('table-active', active);
+    });
+  }
   function updateRowHighlightFor(name) {
     getRowChecksByName(name).forEach(b => {
       const tr = b.closest('tr');
-      if (tr) tr.classList.toggle('table-active', !!b.checked);
+      if (!tr) return;
+      const active = !!b.checked;
+      tr.classList.toggle('table-active', active);
+      highlightExpdirGroup(tr, active);
     });
   }
   function syncPolicySelectionToVisible(name) {
@@ -1436,16 +3219,159 @@
     if (!actionsId) return null;
     return root.querySelector('#' + actionsId);
   }
+  function productGroupSignature(row) {
+    return [
+      row.dataset.consultingTypeRef || '',
+      row.dataset.serviceCategoryRef || '',
+      row.dataset.serviceCode || '',
+      row.dataset.serviceSubtypeRef || '',
+      row.dataset.ownerKey || '',
+    ].join('\u0001');
+  }
+
+  function syncProductGroupButtons() {
+    const merge = document.getElementById('products-merge-btn');
+    const ungroup = document.getElementById('products-ungroup-btn');
+    if (!merge && !ungroup) return;
+    const rows = getCheckedByName('product-select').map(function (box) {
+      return box.closest('tr');
+    }).filter(Boolean);
+    const hasGroup = rows.some(function (row) { return row.dataset.isProductGroup === '1'; });
+    let canMerge = false;
+    if (
+      !hasGroup
+      && rows.length >= 2
+      && rows.every(function (row) {
+        return row.dataset.inProductGroup !== '1' && row.dataset.isProductGroup !== '1';
+      })
+    ) {
+      const signature = productGroupSignature(rows[0]);
+      canMerge = rows.every(function (row) { return productGroupSignature(row) === signature; });
+    }
+    if (merge) {
+      merge.classList.toggle('d-none', !canMerge);
+      merge.classList.toggle('d-flex', canMerge);
+    }
+    if (ungroup) {
+      ungroup.classList.toggle('d-none', !hasGroup);
+      ungroup.classList.toggle('d-flex', hasGroup);
+    }
+  }
+
+  var PRODUCT_GROUP_COLLAPSE_KEY = 'product-groups-collapsed';
+
+  function loadProductGroupCollapsed() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(PRODUCT_GROUP_COLLAPSE_KEY) || '[]');
+      return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    } catch (err) {
+      return new Set();
+    }
+  }
+
+  function saveProductGroupCollapsed(collapsed) {
+    try {
+      window.localStorage.setItem(PRODUCT_GROUP_COLLAPSE_KEY, JSON.stringify(Array.from(collapsed)));
+    } catch (err) {
+      // The table still collapses for this page view.
+    }
+  }
+
+  function applyProductGroupCollapsed(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    const collapsed = loadProductGroupCollapsed();
+    scope.querySelectorAll('[data-product-group-toggle]').forEach(function (button) {
+      const id = String(button.getAttribute('data-product-group-toggle') || '');
+      button.setAttribute('aria-expanded', collapsed.has(id) ? 'false' : 'true');
+    });
+    scope.querySelectorAll('tr[data-product-group-member="1"]').forEach(function (row) {
+      if (row.closest('[data-policy-workspace="1"]')) {
+        row.classList.remove('product-group-member-collapsed');
+        return;
+      }
+      const hidden = collapsed.has(String(row.getAttribute('data-parent-id') || ''));
+      row.classList.toggle('product-group-member-collapsed', hidden);
+      if (hidden) {
+        row.querySelectorAll('input[name="product-select"]').forEach(function (box) {
+          box.checked = false;
+        });
+      }
+    });
+    syncProductGroupButtons();
+  }
+
+  function toggleProductGroupCollapsed(groupId) {
+    const collapsed = loadProductGroupCollapsed();
+    const id = String(groupId || '');
+    if (!id) return;
+    if (collapsed.has(id)) collapsed.delete(id);
+    else collapsed.add(id);
+    saveProductGroupCollapsed(collapsed);
+    applyProductGroupCollapsed(pane() || document);
+    updateMasterStateFor('product-select');
+    updateRowHighlightFor('product-select');
+    ensureActionsVisibility('product-select');
+  }
+
   function ensureActionsVisibility(name) {
     const panel = findActionsByName(name);
     if (!panel) return;
     const anyChecked = getCheckedByName(name).length > 0;
     panel.classList.toggle('d-none', !anyChecked);
+    if (name === 'product-select') syncProductGroupButtons();
+  }
+
+  function forgetPolicyTableSelection(name) {
+    try { delete window.__tableSel[name]; } catch (_) { window.__tableSel[name] = []; }
+    if (window.__tableSelLast === name) window.__tableSelLast = null;
+  }
+
+  function markPolicyModalClearSelectionOnHide(name) {
+    if (!name) return;
+    // Общий механизм (core/js/table-selection.js): после закрытия модалки
+    // выделение строк таблицы снимается; кэш забываем, чтобы afterSettle
+    // после «Сохранить» не восстановил галочки.
+    forgetPolicyTableSelection(name);
+    if (window.TableSelection) {
+      window.TableSelection.clearOnModalHide('policy-modal', name, pane());
+    }
+  }
+
+  function typicalServiceTermSectionIn(root) {
+    return (root || document).querySelector('#policy-typical-service-terms-section');
+  }
+
+  function typicalServiceTermDataRows(root) {
+    const section = typicalServiceTermSectionIn(root);
+    if (!section) return [];
+    return Array.from(section.querySelectorAll('tbody tr[data-gantt-url]'));
+  }
+
+  function isTypicalServiceTermWorkspaceChrome(button) {
+    const paneEl = (button && button.closest('#policy-pane')) || policyPane();
+    return paneEl?.dataset?.policyWorkspace === '1';
+  }
+
+  function selectTypicalServiceTermWorkspaceRow(row, root) {
+    typicalServiceTermDataRows(root).forEach(function (item) {
+      item.classList.toggle('typical-service-term-workspace-selected', item === row);
+    });
+  }
+
+  function getTypicalServiceTermWorkspaceRow(root) {
+    const rows = typicalServiceTermDataRows(root);
+    if (!rows.length) return null;
+    return rows.find(function (row) {
+      return row.classList.contains('typical-service-term-workspace-selected');
+    }) || rows[0];
   }
 
   function getTypicalServiceTermSelectedRow() {
     const checked = getCheckedByName(TYPICAL_SERVICE_TERM_GANTT_SELECTION_NAME);
-    return checked.length === 1 ? checked[0].closest('tr') : null;
+    if (checked.length === 1) return checked[0].closest('tr');
+    const button = pane()?.querySelector('[data-typical-service-term-gantt-edit]');
+    if (isTypicalServiceTermWorkspaceChrome(button)) return getTypicalServiceTermWorkspaceRow(pane());
+    return null;
   }
 
   function syncTypicalServiceTermGanttEditButton() {
@@ -1453,14 +3379,28 @@
     if (!root) return;
     const button = root.querySelector('[data-typical-service-term-gantt-edit]');
     if (!button) return;
+    const workspace = isTypicalServiceTermWorkspaceChrome(button);
+    if (workspace) {
+      const current = getTypicalServiceTermSelectedRow();
+      if (current) selectTypicalServiceTermWorkspaceRow(current, root);
+    }
     const row = getTypicalServiceTermSelectedRow();
     const ganttUrl = normalizeFilterValue(row?.dataset?.ganttUrl);
     const enabled = !!row && !!ganttUrl;
     button.disabled = !enabled;
-    button.classList.toggle('d-none', !enabled);
+    if (workspace) {
+      button.classList.remove('d-none');
+      button.classList.add('d-flex');
+    } else {
+      button.classList.toggle('d-none', !enabled);
+    }
     button.dataset.ganttUrl = enabled ? ganttUrl : '';
-    button.dataset.termId = enabled ? normalizeFilterValue(row.querySelector('input[name="typical-service-term-select"]')?.value) : '';
-    button.dataset.productLabel = enabled ? normalizeFilterValue(row.dataset.productLabel || row.children[1]?.textContent) : '';
+    button.dataset.termId = enabled ? normalizeFilterValue(
+      row.querySelector('input[name="typical-service-term-select"]')?.value
+      || row.dataset.inlineRowId
+      || ''
+    ) : '';
+    button.dataset.productLabel = enabled ? normalizeFilterValue(row.dataset.productLabel || '') : '';
   }
 
   function getTypicalServiceTermGanttScale(root) {
@@ -8700,10 +10640,14 @@
         window.__tableSelLast = null;
       }
       setTypicalServiceTermGanttFullscreen(root, false);
-      rememberPolicyScrollPosition();
-      var refreshUrl = normalizeFilterValue(editor?.dataset?.refreshUrl) || '/policy/policy/partial/';
-      var refreshTarget = normalizeFilterValue(editor?.dataset?.refreshTarget) || '#policy-pane';
-      await htmx.ajax('GET', refreshUrl, { target: refreshTarget, swap: 'outerHTML' });
+      if (root.id === 'policy-pane' && data.policyUpdate) {
+        handlePolicyUpdated(data.policyUpdate);
+      } else {
+        rememberPolicyScrollPosition();
+        var refreshUrl = normalizeFilterValue(editor?.dataset?.refreshUrl) || '/policy/policy/partial/';
+        var refreshTarget = normalizeFilterValue(editor?.dataset?.refreshTarget) || '#policy-pane';
+        await htmx.ajax('GET', refreshUrl, { target: refreshTarget, swap: 'outerHTML' });
+      }
     } catch (error) {
       showTypicalServiceTermGanttMessage(root, error.message || 'Не удалось сохранить диаграмму.', true);
       setTypicalServiceTermGanttSaveLoading(saveButton, false);
@@ -9241,14 +11185,1836 @@
     window.__policyScrollRestoreY = window.scrollY || window.pageYOffset || 0;
   }
 
+  const PRODUCT_MAP_CSS = '/static/policy_app/vendor/jsmind/jsmind.css?v=20261024-1';
+  const PRODUCT_MAP_JS = '/static/policy_app/vendor/jsmind/jsmind.js?v=20261024-1';
+
+  function loadProductMapAssets() {
+    if (window.__productMapAssetsLoading) return window.__productMapAssetsLoading;
+    const cssLoaded = new Promise(function (resolve) {
+      let link = document.querySelector('link[href*="policy_app/vendor/jsmind/jsmind.css"]');
+      if (link?.sheet) {
+        resolve(true);
+        return;
+      }
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = PRODUCT_MAP_CSS;
+        link.addEventListener('load', function () { resolve(true); }, { once: true });
+        link.addEventListener('error', function () { resolve(false); }, { once: true });
+        document.head.appendChild(link);
+      } else {
+        link.addEventListener('load', function () { resolve(true); }, { once: true });
+        link.addEventListener('error', function () { resolve(false); }, { once: true });
+      }
+      window.setTimeout(function () { resolve(!!link.sheet); }, 2500);
+    });
+    window.__productMapAssetsLoading = new Promise(function (resolve) {
+      const finish = function (scriptLoaded) {
+        cssLoaded.then(function (styleLoaded) {
+          resolve(!!scriptLoaded && !!styleLoaded && typeof window.jsMind === 'function');
+        });
+      };
+      if (typeof window.jsMind === 'function') {
+        finish(true);
+        return;
+      }
+      const existingScript = document.querySelector('script[src*="policy_app/vendor/jsmind/jsmind.js"]');
+      if (existingScript) {
+        existingScript.addEventListener('load', function () { finish(true); }, { once: true });
+        existingScript.addEventListener('error', function () { resolve(false); }, { once: true });
+        window.setTimeout(function () { finish(typeof window.jsMind === 'function'); }, 2500);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = PRODUCT_MAP_JS;
+      script.onload = function () { finish(true); };
+      script.onerror = function () { resolve(false); };
+      document.head.appendChild(script);
+    });
+    return window.__productMapAssetsLoading;
+  }
+
+  const PRODUCT_MAP_EXPANDER_SIZE = 16;
+  const PRODUCT_MAP_ZOOM_MIN = 0.25;
+  const PRODUCT_MAP_ZOOM_MAX = 2;
+  const PRODUCT_MAP_ZOOM_STEP = 1.25;
+
+  function layoutProductMapScreen(field) {
+    const board = field && field.querySelector('.product-map-board');
+    if (!board || !field.isConnected || !board.getClientRects().length) return;
+    const canvas = board.querySelector('.product-map-canvas') || board;
+    const gutter = field.closest('.ps-3') || field;
+    if (board.classList.contains('product-map-board--fullscreen')) {
+      board.style.height = window.innerHeight + 'px';
+      return;
+    }
+    const top = Math.max(0, board.getBoundingClientRect().top);
+    // Keep the same inset under the canvas as there is to its left:
+    // gray page background, then the white card edge, then the blue field.
+    const inset = Math.max(0, Math.round(canvas.getBoundingClientRect().left - gutter.getBoundingClientRect().left));
+    const borderBottom = parseFloat(getComputedStyle(board).borderBottomWidth) || 0;
+    let height = Math.max(160, Math.floor(window.innerHeight - top - inset + borderBottom));
+    board.style.height = height + 'px';
+    for (let guard = 0; guard < 4; guard += 1) {
+      const overflow = document.documentElement.scrollHeight - window.innerHeight;
+      if (overflow <= 1) break;
+      const next = Math.floor(board.getBoundingClientRect().height - overflow);
+      if (next >= height) break;
+      height = Math.max(160, next);
+      board.style.height = height + 'px';
+    }
+  }
+
+  // jsMind sizes the drawing to the visible panel. Deeper levels extend past
+  // that box, and a scale transform only magnifies what was already clipped.
+  function ensureProductMapSurface(canvas) {
+    const inner = canvas && canvas.querySelector('.jsmind-inner');
+    const nodes = canvas && canvas.querySelector('jmnodes');
+    const svg = canvas && canvas.querySelector('svg.jsmind');
+    if (!inner || !nodes) return;
+    let maxX = 0;
+    let maxY = 0;
+    canvas.querySelectorAll('jmnode, jmexpander, .product-map-accuracy-header, .product-map-accuracy-band').forEach(function (element) {
+      if (element.style.display === 'none') return;
+      const left = parseFloat(element.style.left);
+      const top = parseFloat(element.style.top);
+      if (!isFinite(left) || !isFinite(top)) return;
+      maxX = Math.max(maxX, left + element.offsetWidth);
+      maxY = Math.max(maxY, top + element.offsetHeight);
+    });
+    const pad = 8;
+    const width = Math.max(canvas.clientWidth, Math.ceil(maxX + pad));
+    const height = Math.max(canvas.clientHeight, Math.ceil(maxY + pad));
+    inner.style.width = width + 'px';
+    inner.style.height = height + 'px';
+    nodes.style.width = width + 'px';
+    nodes.style.height = height + 'px';
+    if (!svg) return;
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    svg.style.overflow = 'visible';
+  }
+
+  function markProductMapZoom(canvas, scale) {
+    const field = canvas && canvas.closest && canvas.closest('#product-map-field');
+    if (!field || !isFinite(scale)) return;
+    const label = field.querySelector('[data-product-map-zoom-value]');
+    if (label) label.textContent = Math.round(scale * 100) + '%';
+    const outBtn = field.querySelector('[data-product-map-zoom="out"]');
+    const inBtn = field.querySelector('[data-product-map-zoom="in"]');
+    if (outBtn) outBtn.disabled = scale <= PRODUCT_MAP_ZOOM_MIN + 0.001;
+    if (inBtn) inBtn.disabled = scale >= PRODUCT_MAP_ZOOM_MAX - 0.001;
+  }
+
+  function setProductMapTransform(canvas, x, y, scale) {
+    const inner = canvas && canvas.querySelector('.jsmind-inner');
+    if (!inner) return;
+    markProductMapZoom(canvas, scale);
+    if (scale === 1 && x === 0 && y === 0) {
+      inner.style.transform = '';
+      inner.style.transformOrigin = '';
+      return;
+    }
+    inner.style.transformOrigin = '0 0';
+    inner.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(' + scale + ')';
+  }
+
+  function productMapContentBounds(canvas) {
+    const inner = canvas.querySelector('.jsmind-inner');
+    if (!inner) return null;
+    const origin = inner.getBoundingClientRect();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    function include(element) {
+      if (!element || element.style.display === 'none') return;
+      if (!element.offsetWidth && !element.offsetHeight) return;
+      const rect = element.getBoundingClientRect();
+      minX = Math.min(minX, rect.left - origin.left);
+      minY = Math.min(minY, rect.top - origin.top);
+      maxX = Math.max(maxX, rect.right - origin.left);
+      maxY = Math.max(maxY, rect.bottom - origin.top);
+    }
+    canvas.querySelectorAll('jmnode, jmexpander, .product-map-accuracy-header, .product-map-accuracy-band').forEach(include);
+    if (!isFinite(minX) || maxX <= minX || maxY <= minY) return null;
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
+  function fitProductMapView(state) {
+    const canvas = state && state.canvas;
+    if (!canvas) return;
+    setProductMapTransform(canvas, 0, 0, 1);
+    const bounds = productMapContentBounds(canvas);
+    const viewW = canvas.clientWidth;
+    const viewH = canvas.clientHeight;
+    if (!bounds || viewW <= 0 || viewH <= 0) return;
+    const pad = 24;
+    let scale = Math.min((viewW - pad) / bounds.w, (viewH - pad) / bounds.h, 1);
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    state.scale = scale;
+    state.x = (viewW - bounds.w * scale) / 2 - bounds.x * scale;
+    state.y = (viewH - bounds.h * scale) / 2 - bounds.y * scale;
+    setProductMapTransform(canvas, state.x, state.y, state.scale);
+  }
+
+  function zoomProductMapAt(state, factor, clientX, clientY) {
+    if (!state || !state.canvas || !isFinite(factor) || factor <= 0) return;
+    const current = state.scale || 1;
+    const floor = Math.min(PRODUCT_MAP_ZOOM_MIN, current);
+    const next = Math.min(PRODUCT_MAP_ZOOM_MAX, Math.max(floor, current * factor));
+    if (Math.abs(next - current) < 0.0001) return;
+    const rect = state.canvas.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const contentX = (px - state.x) / current;
+    const contentY = (py - state.y) / current;
+    state.scale = next;
+    state.x = px - contentX * next;
+    state.y = py - contentY * next;
+    setProductMapTransform(state.canvas, state.x, state.y, state.scale);
+  }
+
+  function bindProductMapPointer(state) {
+    const canvas = state.canvas;
+    if (!canvas || canvas.__productMapPointer) return;
+    canvas.__productMapPointer = true;
+    canvas.addEventListener('wheel', function (event) {
+      if (!canvas.isConnected) return;
+      event.preventDefault();
+      let delta = event.deltaY;
+      if (event.deltaMode === 1) delta *= 16;
+      else if (event.deltaMode === 2) delta *= canvas.clientHeight;
+      if (!delta) return;
+      zoomProductMapAt(state, Math.exp(-delta * 0.0015), event.clientX, event.clientY);
+    }, { passive: false });
+    canvas.addEventListener('pointerdown', function (event) {
+      if (event.button !== 0) return;
+      if (event.target.closest && event.target.closest('jmexpander')) return;
+      const productNode = event.target.closest && event.target.closest('jmnode[data-product-id]');
+      state.drag = {
+        id: event.pointerId,
+        sx: event.clientX,
+        sy: event.clientY,
+        x: state.x,
+        y: state.y,
+        productId: productNode ? productNode.dataset.productId : '',
+      };
+      if (!productNode) canvas.classList.add('is-panning');
+      try {
+        if (canvas.setPointerCapture) canvas.setPointerCapture(event.pointerId);
+      } catch (err) {}
+      event.preventDefault();
+    });
+    canvas.addEventListener('pointermove', function (event) {
+      const drag = state.drag;
+      if (!drag || event.pointerId !== drag.id) return;
+      const dx = event.clientX - drag.sx;
+      const dy = event.clientY - drag.sy;
+      if (drag.productId && !canvas.classList.contains('is-panning')) {
+        if (Math.abs(dx) <= 4 && Math.abs(dy) <= 4) return;
+        canvas.classList.add('is-panning');
+      }
+      state.x = drag.x + dx;
+      state.y = drag.y + dy;
+      setProductMapTransform(canvas, state.x, state.y, state.scale);
+    });
+    function endDrag(event, cancelled) {
+      const drag = state.drag;
+      if (!drag || (event && event.pointerId !== drag.id)) return;
+      const dx = event ? event.clientX - drag.sx : 0;
+      const dy = event ? event.clientY - drag.sy : 0;
+      const moved = Math.abs(dx) > 4 || Math.abs(dy) > 4;
+      state.drag = null;
+      canvas.classList.remove('is-panning');
+      if (!cancelled && drag.productId && !moved) openProductMapProduct(canvas, drag.productId);
+    }
+    canvas.addEventListener('pointerup', function (event) { endDrag(event, false); });
+    canvas.addEventListener('pointercancel', function (event) { endDrag(event, true); });
+  }
+
+  function bindProductMapScreen(field) {
+    if (field.__productMapScreenBound) return;
+    field.__productMapScreenBound = true;
+    let frame = 0;
+    let fittedWidth = 0;
+    let fittedHeight = 0;
+    field.__productMapRefitNow = function (force) {
+      if (!field.isConnected) return;
+      layoutProductMapScreen(field);
+      const board = field.querySelector('.product-map-board');
+      const width = board ? board.clientWidth : 0;
+      const height = board ? board.clientHeight : 0;
+      if (!force && Math.abs(width - fittedWidth) < 1 && Math.abs(height - fittedHeight) < 1) return;
+      fittedWidth = width;
+      fittedHeight = height;
+      (field.__productMapInstances || []).forEach(function (state) {
+        setProductMapTransform(state.canvas, 0, 0, 1);
+        state.jm.resize();
+        syncProductMapAccuracyHeaders(state);
+        unifyProductMapRails(state.canvas);
+        ensureProductMapSurface(state.canvas);
+        fitProductMapView(state);
+      });
+    };
+    const schedule = function () {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(function () {
+        frame = 0;
+        if (!field.isConnected) {
+          document.body.classList.remove('product-map-fullscreen-active');
+          window.removeEventListener('resize', schedule);
+          if (field.__productMapObserver) field.__productMapObserver.disconnect();
+          return;
+        }
+        field.__productMapRefitNow(false);
+      });
+    };
+    window.addEventListener('resize', schedule);
+    if (typeof ResizeObserver === 'function') {
+      const main = document.querySelector('main');
+      field.__productMapObserver = new ResizeObserver(schedule);
+      field.__productMapObserver.observe(main || field);
+    }
+  }
+
+  function renderProductMapLine(line) {
+    const path = line && line.ctx;
+    const start = line && line.start_point;
+    const end = line && line.end_point;
+    if (!path || !start || !end || typeof path.setAttribute !== 'function') return;
+    const x1 = Math.round(start.x);
+    const y1 = Math.round(start.y);
+    const x2 = Math.round(end.x);
+    const y2 = Math.round(end.y);
+    // A single child, and the middle child of an odd group, sit on the
+    // parent's center. A curve there shows up as a kink, so draw a line.
+    if (Math.abs(y1 - y2) <= 2) {
+      const y = Math.round((y1 + y2) / 2);
+      path.setAttribute('d', 'M ' + x1 + ' ' + y + ' L ' + x2 + ' ' + y);
+      return;
+    }
+    const bend = x1 + Math.round((x2 - x1) * 2 / 3);
+    path.setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + bend + ' ' + y1 + ', ' + x1 + ' ' + y2 + ', ' + x2 + ' ' + y2);
+  }
+
+  function syncProductMapExpanders(container) {
+    if (!container) return;
+    container.querySelectorAll('jmexpander').forEach(function (expander) {
+      const open = expander.textContent.trim() === '\u2212' || expander.textContent.trim() === '-';
+      if (open) expander.textContent = '\u2212';
+      expander.classList.toggle('is-open', open);
+      const inner = container.querySelector('.jsmind-inner');
+      const transform = inner && inner.style.transform;
+      if (transform && !/scale\(1(?:\.0+)?\)/.test(transform)) return;
+      const node = container.querySelector('jmnode[nodeid="' + expander.getAttribute('nodeid') + '"]');
+      if (!node) return;
+      const nodeRect = node.getBoundingClientRect();
+      const expanderRect = expander.getBoundingClientRect();
+      const dx = nodeRect.right - (expanderRect.left + expanderRect.width / 2);
+      const dy = ((nodeRect.top + nodeRect.bottom) / 2) - ((expanderRect.top + expanderRect.bottom) / 2);
+      if (Math.abs(dx) < 0.4 && Math.abs(dy) < 0.4) return;
+      const left = parseFloat(expander.style.left) || 0;
+      const top = parseFloat(expander.style.top) || 0;
+      expander.style.left = (left + dx) + 'px';
+      expander.style.top = (top + dy) + 'px';
+    });
+  }
+
+  function productMapVisibleDepth(root) {
+    let maxDepth = 1;
+    (function walk(node, depth) {
+      if (depth > maxDepth) maxDepth = depth;
+      if (!node.expanded) return;
+      (node.children || []).forEach(function (child) { walk(child, depth + 1); });
+    })(root, 1);
+    return maxDepth;
+  }
+
+  function markProductMapLevel(field, level) {
+    field.querySelectorAll('[data-product-map-level]').forEach(function (button) {
+      const active = String(button.dataset.productMapLevel) === String(level);
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  function clearProductMapOffsetCache(node) {
+    const layout = node && node._data && node._data.layout;
+    if (layout) {
+      delete layout._offset_;
+      delete layout._pout_;
+    }
+    (node.children || []).forEach(clearProductMapOffsetCache);
+  }
+
+  // Shorten a column gap when only some filter options are enabled. Every
+  // option keeps the full gap; a single option uses the compact gap.
+  function productMapFilteredColumnGap(jm, field, filterKey, openSteps, fullGap, baseGap) {
+    const group = field && field.querySelector('[data-product-map-filter="' + filterKey + '"]');
+    const boxes = group ? Array.from(group.querySelectorAll('[data-product-map-filter-value]')) : [];
+    const total = boxes.length;
+    const state = field && field.__productMapFilterState && field.__productMapFilterState[filterKey];
+    const selected = !total || !state || state.all
+      ? total
+      : boxes.filter(function (box) { return box.checked; }).length;
+    if (!jm.__productMapFullColumnGap) jm.__productMapFullColumnGap = {};
+    const key = filterKey + ':' + openSteps;
+    if (!total || selected >= total) {
+      if (total) jm.__productMapFullColumnGap[key] = fullGap;
+      return fullGap;
+    }
+    const maxGap = jm.__productMapFullColumnGap[key] || fullGap;
+    if (openSteps <= 0 || total <= 1) return maxGap;
+    const share = Math.max(0, selected - 1) / (total - 1);
+    return Math.round(baseGap + (maxGap - baseGap) * share);
+  }
+
+  function productMapServiceFan(root) {
+    return (root.children || []).reduce(function (max, node) {
+      const children = node.children || [];
+      let minY = Infinity;
+      let maxY = -Infinity;
+      children.forEach(function (child) {
+        const layout = child._data && child._data.layout;
+        if (!layout || layout.offset_y == null) return;
+        minY = Math.min(minY, layout.offset_y);
+        maxY = Math.max(maxY, layout.offset_y);
+      });
+      return Math.max(max, maxY > minY ? maxY - minY : 0);
+    }, 0);
+  }
+
+  // Same-depth nodes share a left edge. The root keeps its center at the
+  // origin, so every line can leave the middle of its right edge.
+  function alignProductMapColumns(jm) {
+    const root = jm.get_root && jm.get_root();
+    const rootWidth = root && root._data && root._data.view ? root._data.view.width : 0;
+    if (!root || !rootWidth) return;
+    const baseGap = (jm.options.layout && jm.options.layout.hspace) || 36;
+    const visibleDepth = productMapVisibleDepth(root);
+    const openSteps = Math.max(0, visibleDepth - 2);
+    const span = Math.max(
+      root._data.layout.outer_height_right || 0,
+      root._data.layout.outer_height_left || 0
+    );
+    // Levels 1–2 stay compact. Each deeper opened level lengthens the run
+    // from the root so those curves do not collapse into vertical strokes.
+    // That full run is the distance with every consulting type enabled. Fewer
+    // links from the root shorten it, down to the compact gap for a single type.
+    const spreadGap = openSteps === 0
+      ? baseGap
+      : Math.round(Math.min(760, Math.max(baseGap + openSteps * 80, span * 0.22)));
+    const linkCount = (root.children || []).length;
+    const field = jm.view && jm.view.container && jm.view.container.closest
+      ? jm.view.container.closest('#product-map-field')
+      : null;
+    const catalog = field && field.__productMapCatalog && field.__productMapCatalog.consulting;
+    const totalLinks = Math.max(linkCount, catalog ? catalog.length : linkCount);
+    const filter = field && field.__productMapFilterState && field.__productMapFilterState.consulting;
+    const selectedLinks = filter && !filter.all ? filter.ids.size : totalLinks;
+    if (!jm.__productMapFullRootGap) jm.__productMapFullRootGap = {};
+    const treeFilters = field && field.__productMapFilterState;
+    const treeComplete = !treeFilters
+      || ((!treeFilters.category || treeFilters.category.all) && (!treeFilters.subtype || treeFilters.subtype.all));
+    if (selectedLinks >= totalLinks && treeComplete) jm.__productMapFullRootGap[openSteps] = spreadGap;
+    const maxGap = jm.__productMapFullRootGap[openSteps] || spreadGap;
+    let rootGap = maxGap;
+    if (openSteps > 0 && totalLinks > 1 && selectedLinks < totalLinks) {
+      const share = Math.max(0, selectedLinks - 1) / (totalLinks - 1);
+      rootGap = Math.round(baseGap + (maxGap - baseGap) * share);
+    }
+    const laterGap = baseGap + openSteps * 18;
+    // Provisional run. The real one is measured from the loose product stack
+    // below, so the compact pass cannot shrink this horizontal gap.
+    let serviceSpan = jm.__productMapLooseServiceFan || 0;
+    const nodesByDepth = [];
+    (function walk(node, depth) {
+      if (!nodesByDepth[depth]) nodesByDepth[depth] = [];
+      nodesByDepth[depth].push(node);
+      (node.children || []).forEach(function (child) { walk(child, depth + 1); });
+    })(root, 0);
+    function serviceFullGapFor(span) {
+      // Five service types under one consulting type fan out much farther than
+      // the compact column gap. Lengthen that run the same way as the root,
+      // from the tallest loose fan, and only while every service type is enabled.
+      if (openSteps === 0) return baseGap;
+      return Math.round(Math.min(760, Math.max(baseGap + openSteps * 80, span * 0.22)));
+    }
+    function placeColumns(serviceGap) {
+      const columnLeft = [-rootWidth / 2];
+      for (let depth = 1; depth < nodesByDepth.length; depth += 1) {
+        const maxWidth = nodesByDepth[depth - 1].reduce(function (max, node) {
+          if (isProductMapProduct(node)) return max;
+          const width = node._data && node._data.view ? node._data.view.width || 0 : 0;
+          return Math.max(max, width);
+        }, 0);
+        const gap = depth === 1 ? rootGap : (depth === 2 ? serviceGap : laterGap);
+        columnLeft[depth] = columnLeft[depth - 1] + maxWidth + gap;
+      }
+      (function place(node, depth, parentOffsetX) {
+        const layout = node._data && node._data.layout;
+        const product = isProductMapProduct(node);
+        if (!node.isroot && layout && !product) {
+          layout.offset_x = columnLeft[depth] - parentOffsetX;
+        }
+        const nextOffsetX = node.isroot || !layout || product ? 0 : parentOffsetX + layout.offset_x;
+        (node.children || []).forEach(function (child) {
+          place(child, depth + 1, node.isroot ? 0 : nextOffsetX);
+        });
+      })(root, 0, 0);
+    }
+    let serviceGap = productMapFilteredColumnGap(
+      jm, field, 'category', openSteps, serviceFullGapFor(serviceSpan), baseGap
+    );
+    placeColumns(serviceGap);
+    let accuracyColumns = buildProductMapAccuracyColumns(jm, root, laterGap);
+    if (openSteps > 0) {
+      clearProductMapOffsetCache(root);
+      reflowProductMapVertical(jm, root, accuracyColumns, false);
+      const measured = productMapServiceFan(root);
+      if (measured > 0) {
+        jm.__productMapLooseServiceFan = measured;
+        const looseGap = productMapFilteredColumnGap(
+          jm, field, 'category', openSteps, serviceFullGapFor(measured), baseGap
+        );
+        if (looseGap !== serviceGap) {
+          serviceGap = looseGap;
+          placeColumns(serviceGap);
+          accuracyColumns = buildProductMapAccuracyColumns(jm, root, laterGap);
+        }
+      }
+    }
+    clearProductMapOffsetCache(root);
+    reflowProductMapVertical(jm, root, accuracyColumns, true);
+    placeProductMapAccuracyHeader(jm, root);
+    clearProductMapOffsetCache(root);
+    jm.layout.cache_valid = false;
+  }
+
+  const PRODUCT_MAP_ACCURACY = ['>50%', '±30\u201350%', '±20\u201330%', '±10\u201320%', '<10%'];
+  const PRODUCT_MAP_ACCURACY_HEADER = 28;
+  const PRODUCT_MAP_ACCURACY_HEADER_GAP = 24;
+  const PRODUCT_MAP_ACCURACY_BAND_GAP = 12;
+  const PRODUCT_MAP_ACCURACY_STEP = 12;
+
+  function isProductMapProduct(node) {
+    return !!(node && node.data && node.data.mapKind === 'product');
+  }
+
+  function productMapAccuracyIndex(node) {
+    const accuracy = node && node.data && node.data.accuracy;
+    if (accuracy == null || String(accuracy).trim() === '') return -1;
+    const index = PRODUCT_MAP_ACCURACY.indexOf(accuracy);
+    return index >= 0 ? index : -1;
+  }
+
+  function collectVisibleProductMapProducts(root) {
+    const products = [];
+    (function walk(node) {
+      if (!node || !node.expanded) return;
+      (node.children || []).forEach(function (child) {
+        if (isProductMapProduct(child)) products.push(child);
+        else walk(child);
+      });
+    })(root);
+    return products;
+  }
+
+  // One accuracy scale for the whole map. Every product of a given accuracy
+  // shares the column's left edge, whichever branch it belongs to.
+  function buildProductMapAccuracyColumns(jm, root, gap) {
+    const products = collectVisibleProductMapProducts(root);
+    if (!products.length) {
+      jm.__productMapAccuracy = null;
+      return null;
+    }
+    let structureRight = 0;
+    (function walk(node) {
+      if (!node || isProductMapProduct(node)) return;
+      const width = node._data && node._data.view ? node._data.view.width || 0 : 0;
+      const offset = jm.layout.get_node_offset(node);
+      const left = node.isroot ? offset.x - width / 2 : offset.x;
+      structureRight = Math.max(structureRight, left + width);
+      if (!node.expanded) return;
+      (node.children || []).forEach(walk);
+    })(root);
+    const hasBlank = products.some(function (product) {
+      return productMapAccuracyIndex(product) < 0;
+    });
+    const slots = [];
+    if (hasBlank) slots.push({ accuracyIndex: -1, label: '', plain: true });
+    PRODUCT_MAP_ACCURACY.forEach(function (label, index) {
+      slots.push({ accuracyIndex: index, label: label, plain: false });
+    });
+    const widths = slots.map(function () { return 84; });
+    products.forEach(function (product) {
+      const accuracyIndex = productMapAccuracyIndex(product);
+      const slot = slots.findIndex(function (item) { return item.accuracyIndex === accuracyIndex; });
+      if (slot < 0) return;
+      const view = product._data && product._data.view;
+      const element = view && view.element;
+      const width = element && element.offsetWidth ? element.offsetWidth : (view ? view.width || 0 : 0);
+      widths[slot] = Math.max(widths[slot], width);
+    });
+    const columnWidth = widths.reduce(function (max, width) { return Math.max(max, width); }, 0);
+    const columns = [];
+    // Pad the shade by the visible gap between two products stacked under one
+    // subtype. The layout gap is partly covered by the node border.
+    const vspace = 12;
+    let borderExtra = 0;
+    products.forEach(function (product) {
+      const view = product._data && product._data.view;
+      const element = view && view.element;
+      if (!view || !element || !element.offsetHeight) return;
+      borderExtra = Math.max(borderExtra, element.offsetHeight - (view.height || 0));
+    });
+    const inset = Math.max(0, Math.round(vspace - borderExtra));
+    let bandLeft = structureRight + gap;
+    slots.forEach(function (slot) {
+      columns.push({
+        left: bandLeft + inset,
+        width: columnWidth,
+        bandLeft: bandLeft,
+        bandWidth: columnWidth + inset * 2,
+        label: slot.label,
+        plain: slot.plain,
+        accuracyIndex: slot.accuracyIndex,
+      });
+      bandLeft += columnWidth + inset * 2 + PRODUCT_MAP_ACCURACY_BAND_GAP;
+    });
+    jm.__productMapAccuracy = { columns: columns, top: 0 };
+    return columns;
+  }
+
+  function placeProductMapAccuracyHeader(jm, root) {
+    const spec = jm.__productMapAccuracy;
+    if (!spec) return;
+    let minTop = Infinity;
+    let maxBottom = -Infinity;
+    (function walk(node) {
+      if (!node) return;
+      const view = node._data && node._data.view;
+      const offset = jm.layout.get_node_offset(node);
+      const height = view ? view.height || 0 : 0;
+      minTop = Math.min(minTop, offset.y - height / 2);
+      maxBottom = Math.max(maxBottom, offset.y + height / 2);
+      if (!node.expanded) return;
+      (node.children || []).forEach(walk);
+    })(root);
+    const contentTop = isFinite(minTop) ? minTop : 0;
+    spec.headerTop = contentTop - PRODUCT_MAP_ACCURACY_HEADER_GAP - PRODUCT_MAP_ACCURACY_HEADER;
+    spec.top = spec.headerTop + PRODUCT_MAP_ACCURACY_HEADER;
+    spec.bottom = (isFinite(maxBottom) ? maxBottom : spec.top) + 16;
+  }
+
+  // Products that share a parent use one accuracy scale. Members of one group
+  // stay on a single row across those columns, so the row can be one straight line.
+  function placeProductMapAccuracyRow(node, products, columns, parentAbsX, compact) {
+    const vspace = 12;
+    const parentView = node._data && node._data.view;
+    const parentH = parentView ? parentView.height || 0 : 0;
+    const annotated = [];
+    products.forEach(function (product) {
+      const accuracyIndex = productMapAccuracyIndex(product);
+      const column = columns.findIndex(function (item) {
+        return item.accuracyIndex === accuracyIndex;
+      });
+      if (column < 0) return;
+      const groupId = product.data && product.data.productGroupId;
+      annotated.push({
+        product: product,
+        column: column,
+        height: product._data && product._data.view ? product._data.view.height || 0 : 0,
+        groupId: groupId == null || groupId === '' ? null : String(groupId),
+      });
+    });
+    const rows = [];
+    const placed = new Set();
+    function addRow(groupId) {
+      const row = { cells: new Map(), groupId: groupId || null };
+      rows.push(row);
+      return row;
+    }
+    // A group row holds only that group's products. Another product, even in a
+    // free accuracy column, stays on its own line.
+    function findOpenRow(column, groupId, start) {
+      for (let index = start; index < rows.length; index += 1) {
+        if (rows[index].groupId !== groupId) continue;
+        if (!rows[index].cells.has(column)) return rows[index];
+      }
+      return addRow(groupId);
+    }
+    annotated.forEach(function (item) {
+      if (placed.has(item)) return;
+      if (!item.groupId) {
+        findOpenRow(item.column, null, 0).cells.set(item.column, item);
+        placed.add(item);
+        return;
+      }
+      const members = annotated.filter(function (other) { return other.groupId === item.groupId; });
+      const primary = [];
+      const overflow = [];
+      const seen = new Set();
+      members.forEach(function (member) {
+        if (seen.has(member.column)) overflow.push(member);
+        else {
+          seen.add(member.column);
+          primary.push(member);
+        }
+      });
+      let row = null;
+      for (let index = 0; index < rows.length; index += 1) {
+        if (rows[index].groupId !== item.groupId) continue;
+        if (primary.every(function (member) { return !rows[index].cells.has(member.column); })) {
+          row = rows[index];
+          break;
+        }
+      }
+      if (!row) row = addRow(item.groupId);
+      primary.forEach(function (member) {
+        row.cells.set(member.column, member);
+        placed.add(member);
+      });
+      const afterGroup = rows.indexOf(row) + 1;
+      overflow.forEach(function (member) {
+        findOpenRow(member.column, item.groupId, afterGroup).cells.set(member.column, member);
+        placed.add(member);
+      });
+    });
+    let below = 0;
+    let aboveLine = 0;
+    let belowLine = 0;
+    rows.forEach(function (row, rowIndex) {
+      let rowHeight = 0;
+      row.cells.forEach(function (item) {
+        rowHeight = Math.max(rowHeight, item.height);
+      });
+      const center = rowIndex === 0 ? 0 : below + vspace + rowHeight / 2;
+      below = rowIndex === 0 ? rowHeight / 2 : center + rowHeight / 2;
+      row.cells.forEach(function (item) {
+        const layout = item.product._data && item.product._data.layout;
+        if (!layout) return;
+        layout.offset_x = columns[item.column].left - parentAbsX;
+        layout.offset_y = center;
+        aboveLine = Math.max(aboveLine, item.height / 2 - center);
+        belowLine = Math.max(belowLine, center + item.height / 2);
+      });
+    });
+    const above = Math.max(parentH / 2, aboveLine);
+    const belowExtent = Math.max(parentH / 2, belowLine);
+    // The first row stays on the subtype line. A symmetric slot would reserve
+    // the same empty space above that row; compact mode keeps only the real extent.
+    return {
+      slot: compact ? above + belowExtent : Math.max(above, belowExtent) * 2,
+      above: above,
+      below: belowExtent,
+      centerShift: 0,
+    };
+  }
+
+  // Pack each child by the box it actually occupies. The anchor stays on the
+  // node's own center, so a product row that starts there is not lifted.
+  function productMapStackPacked(items, vspace) {
+    const count = items.length;
+    if (!count) return { centers: [], total: 0 };
+    const raw = new Array(count);
+    let cursor = 0;
+    for (let index = 0; index < count; index += 1) {
+      const above = items[index].above || 0;
+      const below = items[index].below || 0;
+      raw[index] = cursor + above;
+      cursor += above + below + vspace;
+    }
+    const total = cursor - vspace;
+    const shift = -total / 2;
+    return {
+      centers: raw.map(function (value) { return value + shift; }),
+      total: total,
+    };
+  }
+
+  function productMapStackCenters(heights, vspace) {
+    const count = heights.length;
+    if (!count) return { centers: [], total: 0 };
+    const raw = new Array(count);
+    let cursor = 0;
+    for (let index = count - 1; index >= 0; index -= 1) {
+      const height = heights[index];
+      raw[index] = cursor - height / 2;
+      cursor = cursor - height - vspace;
+    }
+    let total = 0;
+    heights.forEach(function (height) { total += height; });
+    if (count > 1) total += vspace * (count - 1);
+    const shift = total / 2;
+    return {
+      centers: raw.map(function (value) { return value + shift; }),
+      total: total,
+    };
+  }
+
+  function reflowProductMapVertical(jm, node, columns, compact) {
+    const view = node && node._data && node._data.view;
+    const viewH = view ? view.height || 0 : 0;
+    const layout = node && node._data && node._data.layout;
+    if (!layout) return viewH;
+    if (layout.productMapAccuracy) delete layout.productMapAccuracy;
+    if (!node.expanded) {
+      layout.outer_height = viewH;
+      layout.productMapAbove = viewH / 2;
+      layout.productMapBelow = viewH / 2;
+      return viewH;
+    }
+    const products = [];
+    const others = [];
+    (node.children || []).forEach(function (child) {
+      if (child.data && child.data.mapKind === 'product') products.push(child);
+      else others.push(child);
+    });
+    const heights = others.map(function (child) {
+      return reflowProductMapVertical(jm, child, columns, compact);
+    });
+    let metrics = null;
+    if (products.length && columns) {
+      const parentAbsX = jm.layout.get_node_offset(node).x;
+      metrics = placeProductMapAccuracyRow(node, products, columns, parentAbsX, compact);
+      if (!compact) heights.push(metrics.slot);
+    }
+    const vspace = (jm.options.layout && jm.options.layout.vspace) || 12;
+    const placed = compact
+      ? productMapStackPacked(others.map(function (child) {
+        const childLayout = child._data && child._data.layout;
+        return {
+          above: childLayout ? childLayout.productMapAbove || 0 : 0,
+          below: childLayout ? childLayout.productMapBelow || 0 : 0,
+        };
+      }).concat(metrics ? [{ above: metrics.above, below: metrics.below }] : []), vspace)
+      : productMapStackCenters(heights, vspace);
+    others.forEach(function (child, index) {
+      if (child._data && child._data.layout) child._data.layout.offset_y = placed.centers[index];
+    });
+    if (metrics) {
+      // A subtype's first product row is anchored on the subtype itself.
+      // Shifting that row would lift every product off the branch line.
+      const shift = others.length ? (placed.centers[others.length] || 0) : 0;
+      metrics.centerShift = shift;
+      products.forEach(function (product) {
+        if (product._data && product._data.layout) product._data.layout.offset_y += shift;
+      });
+      layout.productMapAccuracy = metrics;
+    }
+    if (compact) {
+      let contentTop = -viewH / 2;
+      let contentBottom = viewH / 2;
+      others.forEach(function (child) {
+        const childLayout = child._data && child._data.layout;
+        if (!childLayout) return;
+        contentTop = Math.min(contentTop, childLayout.offset_y - (childLayout.productMapAbove || 0));
+        contentBottom = Math.max(contentBottom, childLayout.offset_y + (childLayout.productMapBelow || 0));
+      });
+      if (metrics) {
+        contentTop = Math.min(contentTop, metrics.centerShift - metrics.above);
+        contentBottom = Math.max(contentBottom, metrics.centerShift + metrics.below);
+      }
+      layout.productMapAbove = -contentTop;
+      layout.productMapBelow = contentBottom;
+      layout.outer_height = Math.max(viewH, layout.productMapAbove + layout.productMapBelow);
+      return layout.outer_height;
+    }
+    layout.outer_height = Math.max(viewH, placed.total || 0);
+    layout.productMapAbove = layout.outer_height / 2;
+    layout.productMapBelow = layout.outer_height / 2;
+    return layout.outer_height;
+  }
+
+  function syncProductMapAccuracyHeaders(state) {
+    const jm = state && state.jm;
+    const canvas = state && state.canvas;
+    const inner = canvas && canvas.querySelector('.jsmind-inner');
+    if (!jm || !inner || typeof jm.get_root !== 'function') return;
+    let layer = inner.querySelector('.product-map-accuracy-headers');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.className = 'product-map-accuracy-headers';
+      inner.appendChild(layer);
+    }
+    let bands = inner.querySelector('.product-map-accuracy-bands');
+    if (!bands) {
+      bands = document.createElement('div');
+      bands.className = 'product-map-accuracy-bands';
+      inner.insertBefore(bands, inner.firstChild);
+    }
+    const viewOffset = jm.view.get_view_offset();
+    const headers = [];
+    const shades = [];
+    const spec = jm.__productMapAccuracy;
+    const sampleNode = canvas.querySelector('jmnode:not(.root)');
+    const sampleStyle = sampleNode ? getComputedStyle(sampleNode) : null;
+    const productTextInset = sampleStyle
+      ? (parseFloat(sampleStyle.borderLeftWidth) || 0) + (parseFloat(sampleStyle.paddingLeft) || 0)
+      : 12;
+    if (spec && spec.columns) {
+      const headerTop = viewOffset.y + (spec.headerTop != null ? spec.headerTop : spec.top);
+      const bandTop = spec.headerTop != null
+        ? Math.round(headerTop) + PRODUCT_MAP_ACCURACY_HEADER
+        : viewOffset.y + spec.top;
+      spec.columns.forEach(function (column) {
+        const bandLeft = column.bandLeft != null ? column.bandLeft : column.left;
+        const bandWidth = column.bandWidth != null ? column.bandWidth : column.width;
+        shades.push({
+          left: viewOffset.x + bandLeft,
+          top: bandTop,
+          width: bandWidth,
+          height: Math.max(0, spec.bottom - spec.top),
+          plain: !!column.plain,
+        });
+        if (!column.label) return;
+        headers.push({
+          left: viewOffset.x + bandLeft,
+          top: headerTop,
+          width: bandWidth,
+          pad: Math.max(0, column.left - bandLeft) + productTextInset,
+          text: column.label,
+        });
+      });
+    }
+    const rails = [];
+    (function walk(node) {
+      if (!node || !node.expanded) return;
+      const metrics = node._data && node._data.layout && node._data.layout.productMapAccuracy;
+      if (metrics) {
+        const origin = jm.layout.get_node_offset(node);
+        const out = jm.layout.get_node_point_out(node);
+        const rowY = viewOffset.y + origin.y + (metrics.centerShift || 0);
+        const straight = Math.abs(metrics.centerShift || 0) <= 1;
+        const y = straight ? viewOffset.y + out.y : rowY;
+        const placed = [];
+        (node.children || []).forEach(function (child) {
+          if (!child.data || child.data.mapKind !== 'product') return;
+          const abs = jm.layout.get_node_offset(child);
+          const width = child._data && child._data.view ? child._data.view.width || 0 : 0;
+          placed.push({
+            y: viewOffset.y + abs.y,
+            left: viewOffset.x + abs.x,
+            right: viewOffset.x + abs.x + width,
+            groupId: child.data.productGroupId,
+            hasAccuracy: productMapAccuracyIndex(child) >= 0,
+          });
+        });
+        const stops = placed.filter(function (product) {
+          return Math.abs(product.y - y) <= 2;
+        });
+        stops.sort(function (a, b) { return a.left - b.left; });
+        const segments = [];
+        let cursor = straight ? viewOffset.x + out.x : (stops.length ? stops[0].right : y);
+        const rest = straight ? stops : stops.slice(1);
+        if (!straight && stops.length) cursor = stops[0].right;
+        rest.forEach(function (stop) {
+          if (stop.left - cursor > 1) segments.push([cursor, stop.left]);
+          cursor = Math.max(cursor, stop.right);
+        });
+        if (segments.length) {
+          rails.push({
+            y: y,
+            segments: segments,
+            hideParent: straight,
+            startX: viewOffset.x + out.x,
+            hideStarts: straight ? stops.map(function (stop) {
+              return { x: Math.round(stop.left), y: Math.round(stop.y) };
+            }) : [],
+          });
+        }
+        productMapGroupRowRails(placed, y).forEach(function (rail) {
+          rails.push(rail);
+        });
+        productMapOffsetRowSteps(placed, viewOffset.x + out.x, viewOffset.y + out.y).forEach(function (rail) {
+          rails.push(rail);
+        });
+      }
+      (node.children || []).forEach(walk);
+    })(jm.get_root());
+    canvas.__productMapRails = rails;
+    while (bands.firstChild) bands.removeChild(bands.firstChild);
+    shades.forEach(function (item) {
+      const band = document.createElement('div');
+      band.className = 'product-map-accuracy-band' + (item.plain ? ' is-plain' : '');
+      band.style.left = Math.round(item.left) + 'px';
+      band.style.top = Math.round(item.top) + 'px';
+      band.style.width = Math.round(item.width) + 'px';
+      band.style.height = Math.round(item.height) + 'px';
+      bands.appendChild(band);
+    });
+    while (layer.firstChild) layer.removeChild(layer.firstChild);
+    headers.forEach(function (item) {
+      const label = document.createElement('div');
+      label.className = 'product-map-accuracy-header';
+      label.textContent = item.text;
+      if (sampleStyle) {
+        label.style.fontFamily = sampleStyle.fontFamily;
+        label.style.fontSize = sampleStyle.fontSize;
+        label.style.fontWeight = sampleStyle.fontWeight;
+        label.style.color = sampleStyle.color;
+      }
+      label.style.left = Math.round(item.left) + 'px';
+      label.style.top = Math.round(item.top) + 'px';
+      label.style.width = Math.round(item.width) + 'px';
+      if (item.pad) label.style.paddingLeft = Math.round(item.pad) + 'px';
+      layer.appendChild(label);
+    });
+  }
+
+  // Members of one group that already share a horizontal row keep a single
+  // straight stroke across the accuracy bands. The line from the branch
+  // stays on the leftmost node; the separate strokes to the other members go.
+  function productMapGroupRowRails(products, parentRowY) {
+    const sorted = products.slice().sort(function (a, b) {
+      return a.y - b.y || a.left - b.left;
+    });
+    const rows = [];
+    sorted.forEach(function (product) {
+      const row = rows.length ? rows[rows.length - 1] : null;
+      if (!row || Math.abs(product.y - row.y) > 2) rows.push({ y: product.y, products: [product] });
+      else row.products.push(product);
+    });
+    const rails = [];
+    rows.forEach(function (row) {
+      if (Math.abs(row.y - parentRowY) <= 2) return;
+      const byGroup = new Map();
+      row.products.forEach(function (product) {
+        if (product.groupId == null || product.groupId === '') return;
+        const key = String(product.groupId);
+        if (!byGroup.has(key)) byGroup.set(key, []);
+        byGroup.get(key).push(product);
+      });
+      byGroup.forEach(function (members) {
+        if (members.length < 2) return;
+        members.sort(function (a, b) { return a.left - b.left; });
+        const segments = [];
+        for (let index = 0; index < members.length - 1; index += 1) {
+          const from = members[index].right;
+          const to = members[index + 1].left;
+          if (to - from > 1) segments.push([from, to]);
+        }
+        if (!segments.length) return;
+        rails.push({
+          y: row.y,
+          segments: segments,
+          hideStarts: members.slice(1).map(function (product) {
+            return { x: Math.round(product.left), y: Math.round(product.y) };
+          }),
+        });
+      });
+    });
+    return rails;
+  }
+
+  function productMapPathStartsAt(path, x, y) {
+    const match = (path.getAttribute('d') || '').match(/^M (-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/);
+    if (!match) return false;
+    return Math.abs(Number(match[1]) - x) <= 2 && Math.abs(Number(match[2]) - y) <= 2;
+  }
+
+  // A group row that already contains the group product is reached by the curve
+  // to that product and one horizontal line. Stepping every accuracy column of
+  // those rows draws one vertical through the whole column.
+  function productMapNeedsParentStep(product, placed) {
+    if (!product.hasAccuracy) return false;
+    if (!product.groupId) return true;
+    const companions = placed.filter(function (other) {
+      return other !== product && other.groupId === product.groupId && Math.abs(other.y - product.y) <= 2;
+    });
+    if (companions.some(function (other) { return !other.hasAccuracy; })) return false;
+    let leftmost = product;
+    companions.forEach(function (other) {
+      if (other.hasAccuracy && other.left < leftmost.left) leftmost = other;
+    });
+    return leftmost === product;
+  }
+
+  // Off the parent's row, a product that has an accuracy value meets its parent
+  // with a step: horizontal, then a vertical stroke just left of the block.
+  // Products with an empty accuracy stay on the curved link used by the tree.
+  function productMapOffsetRowSteps(placed, parentX, parentY) {
+    const rows = [];
+    placed.filter(function (product) {
+      return productMapNeedsParentStep(product, placed);
+    }).sort(function (a, b) {
+      return a.y - b.y || a.left - b.left;
+    }).forEach(function (product) {
+      const row = rows.length ? rows[rows.length - 1] : null;
+      if (!row || Math.abs(product.y - row.y) > 2) rows.push({ y: product.y, products: [product] });
+      else row.products.push(product);
+    });
+    const centerProducts = placed.filter(function (product) {
+      return Math.abs(product.y - parentY) <= 2;
+    });
+    const groups = [];
+    rows.forEach(function (row) {
+      if (Math.abs(row.y - parentY) <= 2) return;
+      row.products.sort(function (a, b) { return a.left - b.left; });
+      const dropX = Math.round(row.products[0].left - PRODUCT_MAP_ACCURACY_STEP);
+      let group = null;
+      groups.forEach(function (item) {
+        if (!group && Math.abs(item.dropX - dropX) <= 2) group = item;
+      });
+      if (!group) {
+        group = { dropX: dropX, rows: [] };
+        groups.push(group);
+      }
+      group.rows.push(row);
+    });
+    return groups.map(function (group) {
+      const dropX = group.dropX;
+      let anchor = parentX;
+      centerProducts.forEach(function (product) {
+        if (product.right <= dropX + 1) anchor = Math.max(anchor, product.right);
+      });
+      let far = parentY;
+      group.rows.forEach(function (row) {
+        if (Math.abs(row.y - parentY) > Math.abs(far - parentY)) far = row.y;
+      });
+      const polylines = [];
+      const spine = [];
+      if (dropX - anchor > 1) spine.push([anchor, parentY]);
+      spine.push([dropX, parentY], [dropX, far]);
+      polylines.push(spine);
+      const hideStarts = [];
+      group.rows.forEach(function (row) {
+        const first = row.products[0];
+        polylines.push([[dropX, row.y], [first.left, row.y]]);
+        for (let index = 0; index < row.products.length - 1; index += 1) {
+          const from = row.products[index].right;
+          const to = row.products[index + 1].left;
+          if (to - from > 1) polylines.push([[from, row.y], [to, row.y]]);
+        }
+        row.products.forEach(function (product) {
+          hideStarts.push({ x: Math.round(product.left), y: Math.round(product.y) });
+        });
+      });
+      return { polylines: polylines, hideStarts: hideStarts };
+    });
+  }
+
+  function unifyProductMapRails(canvas) {
+    const svg = canvas && canvas.querySelector('svg.jsmind');
+    if (!svg) return;
+    svg.querySelectorAll('.product-map-accuracy-rail').forEach(function (el) { el.remove(); });
+    (canvas.__productMapRails || []).forEach(function (rail) {
+      const y = Math.round(rail.y);
+      if (rail.hideParent) {
+        svg.querySelectorAll('path').forEach(function (path) {
+          if (path.classList.contains('product-map-accuracy-rail')) return;
+          const match = (path.getAttribute('d') || '').match(/^M (-?\d+) (-?\d+) L (-?\d+) \2$/);
+          if (!match || Math.abs(Number(match[2]) - y) > 2) return;
+          const startX = Math.round(rail.startX);
+          if (Math.abs(Number(match[1]) - startX) <= 2 || Math.abs(Number(match[3]) - startX) <= 2) {
+            path.setAttribute('display', 'none');
+          }
+        });
+      }
+      if (rail.hideStarts && rail.hideStarts.length) {
+        svg.querySelectorAll('path').forEach(function (path) {
+          if (path.classList.contains('product-map-accuracy-rail')) return;
+          rail.hideStarts.forEach(function (point) {
+            if (productMapPathStartsAt(path, point.x, point.y)) path.setAttribute('display', 'none');
+          });
+        });
+      }
+      const commands = [];
+      if (rail.polylines) {
+        rail.polylines.forEach(function (points) {
+          points.forEach(function (point, index) {
+            commands.push((index === 0 ? 'M ' : 'L ') + Math.round(point[0]) + ' ' + Math.round(point[1]));
+          });
+        });
+      } else if (rail.segments) {
+        rail.segments.forEach(function (segment) {
+          commands.push('M ' + Math.round(segment[0]) + ' ' + y + ' L ' + Math.round(segment[1]) + ' ' + y);
+        });
+      }
+      if (!commands.length) return;
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'product-map-accuracy-rail');
+      path.setAttribute('d', commands.join(' '));
+      path.setAttribute('stroke', '#075D94');
+      path.setAttribute('stroke-width', '1.5');
+      path.setAttribute('fill', 'transparent');
+      svg.appendChild(path);
+    });
+  }
+
+  function markProductMapProductLinks(jm) {
+    const root = jm && jm.get_root && jm.get_root();
+    if (!root) return;
+    (function walk(node) {
+      const element = node && node._data && node._data.view && node._data.view.element;
+      const data = (node && node.data) || {};
+      const productId = data.mapKind === 'product' ? data.productId : '';
+      if (element) {
+        if (productId) element.dataset.productId = String(productId);
+        else delete element.dataset.productId;
+      }
+      (node.children || []).forEach(walk);
+    })(root);
+  }
+
+  function openProductMapProduct(canvas, productId) {
+    const field = canvas && canvas.closest ? canvas.closest('#product-map-field') : null;
+    const template = field && field.dataset.productWorkspaceTemplate;
+    if (!template || !productId || !window.htmx) return;
+    const url = String(template).replace(/0\/?$/, String(productId) + '/');
+    const request = window.htmx.ajax('GET', url, { target: '#policy-pane', swap: 'outerHTML' });
+    if (request && typeof request.then === 'function') {
+      request.then(function () {
+        scrollPolicyWorkspaceToTop(policyPane());
+      });
+    }
+  }
+
+  function bindProductMapLayout(jm) {
+    if (jm.layout.__productMapBound) return;
+    jm.layout.__productMapBound = true;
+    jm.layout.get_node_point_out = function (node) {
+      const view = node && node._data && node._data.view;
+      const width = view ? view.width || 0 : 0;
+      const height = view ? view.height || 0 : 0;
+      const element = view && view.element;
+      const extraX = element ? Math.max(0, element.offsetWidth - width) : 0;
+      const extraY = element ? Math.max(0, element.offsetHeight - height) : 0;
+      if (node && node.isroot) return { x: width / 2, y: 0 };
+      const offset = this.get_node_offset(node);
+      // Meet the expander on the outer right edge. The stock outlet stops
+      // a full pspace short of that point, so the stroke looks detached.
+      return { x: offset.x + width + extraX, y: offset.y + extraY / 2 };
+    };
+    jm.layout.get_expander_point = function (node) {
+      const out = this.get_node_point_out(node);
+      return {
+        x: out.x - PRODUCT_MAP_EXPANDER_SIZE / 2,
+        y: out.y - PRODUCT_MAP_EXPANDER_SIZE / 2,
+      };
+    };
+    const originalExpanderText = jm.view._get_expander_text.bind(jm.view);
+    jm.view._get_expander_text = function (node) {
+      const text = originalExpanderText(node);
+      return text === '-' ? '\u2212' : text;
+    };
+    const originalLayout = jm.layout.layout.bind(jm.layout);
+    jm.layout.layout = function () {
+      originalLayout();
+      alignProductMapColumns(jm);
+    };
+    // Expand and collapse relayout before the deferred show-event. Finish the
+    // accuracy steps in that same turn, or the browser paints the plain curves.
+    const originalRelayout = jm.view.relayout.bind(jm.view);
+    jm.view.relayout = function () {
+      originalRelayout();
+      alignProductMapColumns(jm);
+      originalRelayout();
+      markProductMapProductLinks(jm);
+      const canvas = jm.view.e_panel && jm.view.e_panel.parentNode;
+      if (!canvas || !canvas.classList || !canvas.classList.contains('product-map-canvas')) return;
+      syncProductMapAccuracyHeaders({ jm: jm, canvas: canvas });
+      unifyProductMapRails(canvas);
+    };
+  }
+
+  function refreshProductMap(state) {
+    const jm = state.jm;
+    const canvas = state.canvas;
+    setProductMapTransform(canvas, 0, 0, 1);
+    alignProductMapColumns(jm);
+    markProductMapProductLinks(jm);
+    jm.resize();
+    syncProductMapAccuracyHeaders(state);
+    unifyProductMapRails(canvas);
+    ensureProductMapSurface(canvas);
+    syncProductMapExpanders(canvas);
+    setProductMapTransform(canvas, state.x || 0, state.y || 0, state.scale || 1);
+  }
+
+  function setProductMapLevel(field, level) {
+    markProductMapLevel(field, level);
+    const maps = field.__productMapInstances || [];
+    maps.forEach(function (item) {
+      const jm = item.jm;
+      const root = jm.get_root();
+      jm.__productMapDepthLock = true;
+      if (level <= 1) {
+        jm.layout.collapse_node(root);
+        jm.view.relayout();
+      } else {
+        if (!root.expanded) jm.layout.expand_node(root);
+        jm.expand_to_depth(level - 1);
+      }
+      refreshProductMap(item);
+      fitProductMapView(item);
+    });
+    window.setTimeout(function () {
+      maps.forEach(function (item) {
+        item.jm.__productMapDepthLock = false;
+        syncProductMapExpanders(item.canvas);
+      });
+    }, 0);
+  }
+
+  function productMapSelectedLevel(field) {
+    const active = field && field.querySelector('[data-product-map-level].is-active');
+    const level = active ? Number(active.dataset.productMapLevel) : 2;
+    return level >= 1 && level <= 5 ? level : 2;
+  }
+
+  function productMapIdSelected(ids, value) {
+    return value != null && ids.has(String(value));
+  }
+
+  function collectProductMapCatalog(maps) {
+    const consulting = [];
+    const services = [];
+    const subtypes = [];
+    const seen = { consulting: new Set(), service: new Set(), subtype: new Set() };
+    function walk(node) {
+      if (!node) return;
+      if (node.mapKind === 'type' && node.consultingId != null && !seen.consulting.has(node.consultingId)) {
+        seen.consulting.add(node.consultingId);
+        consulting.push({ id: node.consultingId, label: node.topic, consultingId: node.consultingId });
+      }
+      if (node.mapKind === 'service' && node.serviceId != null && !seen.service.has(node.serviceId)) {
+        seen.service.add(node.serviceId);
+        services.push({
+          id: node.serviceId,
+          label: node.topic,
+          consultingId: node.consultingId,
+          serviceId: node.serviceId,
+        });
+      }
+      if (node.mapKind === 'subtype' && node.subtypeId != null && !seen.subtype.has(node.subtypeId)) {
+        seen.subtype.add(node.subtypeId);
+        subtypes.push({
+          id: node.subtypeId,
+          label: node.topic,
+          consultingId: node.consultingId,
+          serviceId: node.serviceId,
+          subtypeId: node.subtypeId,
+        });
+      }
+      (node.children || []).forEach(walk);
+    }
+    (maps || []).forEach(function (map) {
+      walk(map && map.mind && map.mind.data);
+    });
+    return { consulting: consulting, services: services, subtypes: subtypes };
+  }
+
+  function productMapFilterLabel(label) {
+    return String(label || '').trim();
+  }
+
+  function groupProductMapFilterItems(rows) {
+    const grouped = [];
+    const seen = new Map();
+    (rows || []).forEach(function (row) {
+      const label = productMapFilterLabel(row.label);
+      if (!label) return;
+      let entry = seen.get(label);
+      if (!entry) {
+        entry = { label: label, ids: [] };
+        seen.set(label, entry);
+        grouped.push(entry);
+      }
+      const id = String(row.id);
+      if (entry.ids.indexOf(id) === -1) entry.ids.push(id);
+    });
+    return grouped;
+  }
+
+  function readProductMapFilterSelection(field, key) {
+    const group = field.querySelector('[data-product-map-filter="' + key + '"]');
+    const all = group && group.querySelector('[data-product-map-filter-all]');
+    if (!group || !all || all.checked) return { all: true, ids: new Set() };
+    const ids = new Set();
+    group.querySelectorAll('[data-product-map-filter-value]').forEach(function (box) {
+      if (!box.checked) return;
+      String(box.dataset.productMapFilterIds || '').split(',').forEach(function (id) {
+        if (id) ids.add(id);
+      });
+    });
+    if (!ids.size) return { all: true, ids: ids };
+    return { all: false, ids: ids };
+  }
+
+  function fillProductMapFilterList(field, key, items) {
+    const group = field.querySelector('[data-product-map-filter="' + key + '"]');
+    const list = group && group.querySelector('[data-product-map-filter-list]');
+    if (!list) return;
+    list.replaceChildren();
+    items.forEach(function (item, index) {
+      const row = document.createElement('div');
+      row.className = 'form-check';
+      const input = document.createElement('input');
+      input.className = 'form-check-input';
+      input.type = 'checkbox';
+      input.value = item.label;
+      input.id = 'product-map-filter-' + key + '-' + index;
+      input.setAttribute('data-product-map-filter-value', '1');
+      input.dataset.productMapFilterIds = item.ids.join(',');
+      input.dataset.summaryLabel = item.label;
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.htmlFor = input.id;
+      label.textContent = item.label;
+      row.append(input, label);
+      list.appendChild(row);
+    });
+  }
+
+  function renderProductMapFilterOptions(field, keys) {
+    const catalog = field.__productMapCatalog;
+    if (!catalog) return;
+    const consulting = readProductMapFilterSelection(field, 'consulting');
+    const category = readProductMapFilterSelection(field, 'category');
+    const targets = keys || ['consulting', 'category', 'subtype'];
+    if (targets.indexOf('consulting') !== -1) {
+      fillProductMapFilterList(field, 'consulting', groupProductMapFilterItems(catalog.consulting));
+    }
+    if (targets.indexOf('category') !== -1) {
+      fillProductMapFilterList(field, 'category', groupProductMapFilterItems(catalog.services.filter(function (item) {
+        return consulting.all || productMapIdSelected(consulting.ids, item.consultingId);
+      })));
+    }
+    if (targets.indexOf('subtype') !== -1) {
+      fillProductMapFilterList(field, 'subtype', groupProductMapFilterItems(catalog.subtypes.filter(function (item) {
+        if (!consulting.all && !productMapIdSelected(consulting.ids, item.consultingId)) return false;
+        if (!category.all && !productMapIdSelected(category.ids, item.serviceId)) return false;
+        return true;
+      })));
+    }
+  }
+
+  function resetProductMapFilterGroup(field, key) {
+    const group = field.querySelector('[data-product-map-filter="' + key + '"]');
+    if (!group) return;
+    const all = group.querySelector('[data-product-map-filter-all]');
+    if (all) all.checked = true;
+    group.querySelectorAll('[data-product-map-filter-value]').forEach(function (box) {
+      box.checked = false;
+    });
+  }
+
+  function updateProductMapFilterLabels(field) {
+    field.querySelectorAll('[data-product-map-filter]').forEach(function (group) {
+      const label = group.querySelector('[data-product-map-filter-label]');
+      const all = group.querySelector('[data-product-map-filter-all]');
+      if (!label) return;
+      if (!all || all.checked) {
+        label.textContent = 'Все';
+        return;
+      }
+      const checked = Array.from(group.querySelectorAll('[data-product-map-filter-value]')).filter(function (box) {
+        return box.checked;
+      });
+      if (checked.length === 1) label.textContent = checked[0].dataset.summaryLabel || '1 выбрано';
+      else label.textContent = checked.length + ' выбрано';
+    });
+  }
+
+  function syncProductMapFilterGroup(group, changed) {
+    const all = group.querySelector('[data-product-map-filter-all]');
+    const values = Array.from(group.querySelectorAll('[data-product-map-filter-value]'));
+    if (changed.hasAttribute('data-product-map-filter-all')) {
+      if (changed.checked) {
+        values.forEach(function (box) { box.checked = false; });
+      } else {
+        const first = values.find(function (box) { return !box.disabled; });
+        if (first) first.checked = true;
+        else changed.checked = true;
+      }
+      return;
+    }
+    if (changed.checked && all) all.checked = false;
+    if (!values.some(function (box) { return box.checked; }) && all) all.checked = true;
+  }
+
+  function keepProductMapNode(node, filters) {
+    const kind = node.mapKind || '';
+    if (kind === 'owner' || !kind) return true;
+    if (kind === 'unclassified') {
+      return filters.consulting.all && filters.category.all && filters.subtype.all;
+    }
+    if (!filters.consulting.all && !productMapIdSelected(filters.consulting.ids, node.consultingId)) {
+      return false;
+    }
+    if (!filters.category.all && kind !== 'type' && !productMapIdSelected(filters.category.ids, node.serviceId)) {
+      return false;
+    }
+    if (
+      !filters.subtype.all
+      && kind !== 'type'
+      && kind !== 'service'
+      && !productMapIdSelected(filters.subtype.ids, node.subtypeId)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  function pruneProductMapNode(node, filters) {
+    if (!node || !keepProductMapNode(node, filters)) return null;
+    const children = [];
+    (node.children || []).forEach(function (child) {
+      const next = pruneProductMapNode(child, filters);
+      if (next) children.push(next);
+    });
+    const copy = Object.assign({}, node);
+    if (children.length) copy.children = children;
+    else delete copy.children;
+    const kind = node.mapKind || '';
+    if (kind === 'owner' || kind === 'product') return copy;
+    // A consulting type, service type, or subtype with no product under it
+    // stays off the diagram at every expansion level.
+    if (!children.length) return null;
+    return copy;
+  }
+
+  function filterProductMapMind(mind, filters) {
+    const copy = JSON.parse(JSON.stringify(mind));
+    copy.data = pruneProductMapNode(copy.data, filters) || {
+      id: copy.data.id,
+      topic: copy.data.topic,
+      mapKind: 'owner',
+    };
+    return copy;
+  }
+
+  function applyProductMapFilters(field) {
+    if (!field) return;
+    const filters = {
+      consulting: readProductMapFilterSelection(field, 'consulting'),
+      category: readProductMapFilterSelection(field, 'category'),
+      subtype: readProductMapFilterSelection(field, 'subtype'),
+    };
+    field.__productMapFilterState = filters;
+    (field.__productMapInstances || []).forEach(function (state) {
+      if (!state.sourceMind || !state.jm) return;
+      state.jm.__productMapDepthLock = true;
+      state.jm.show(filterProductMapMind(state.sourceMind, filters));
+    });
+    setProductMapLevel(field, productMapSelectedLevel(field));
+  }
+
+  function initProductMapFilters(field, maps) {
+    field.__productMapCatalog = collectProductMapCatalog(maps);
+    field.__productMapFilterState = {
+      consulting: { all: true, ids: new Set() },
+      category: { all: true, ids: new Set() },
+      subtype: { all: true, ids: new Set() },
+    };
+    renderProductMapFilterOptions(field);
+    updateProductMapFilterLabels(field);
+    if (window.__productMapFilterChangeBound) return;
+    window.__productMapFilterChangeBound = true;
+    document.addEventListener('change', function (event) {
+      const changed = event.target;
+      if (!changed || !changed.closest) return;
+      const group = changed.closest('[data-product-map-filter]');
+      if (!group || !policyPane()?.contains(group)) return;
+      if (!changed.hasAttribute('data-product-map-filter-all') && !changed.hasAttribute('data-product-map-filter-value')) {
+        return;
+      }
+      const fieldNode = group.closest('#product-map-field');
+      if (!fieldNode) return;
+      syncProductMapFilterGroup(group, changed);
+      const key = group.dataset.productMapFilter;
+      if (key === 'consulting') {
+        resetProductMapFilterGroup(fieldNode, 'category');
+        resetProductMapFilterGroup(fieldNode, 'subtype');
+        renderProductMapFilterOptions(fieldNode, ['category', 'subtype']);
+      } else if (key === 'category') {
+        resetProductMapFilterGroup(fieldNode, 'subtype');
+        renderProductMapFilterOptions(fieldNode, ['subtype']);
+      }
+      updateProductMapFilterLabels(fieldNode);
+      applyProductMapFilters(fieldNode);
+    });
+  }
+
+  function renderProductMap(field, maps) {
+    layoutProductMapScreen(field);
+    const canvases = field.querySelectorAll('.product-map-canvas');
+    const instances = [];
+    maps.forEach(function (item, index) {
+      const canvas = canvases[index];
+      if (!canvas || !item || !item.mind) return;
+      const jm = new window.jsMind({
+        container: canvas.id,
+        editable: false,
+        theme: null,
+        mode: 'side',
+        support_html: false,
+        log_level: 'warn',
+        shortcut: { enable: false },
+        default_event_handle: {
+          enable_mousedown_handle: false,
+          enable_dblclick_handle: false,
+          enable_mousewheel_handle: false,
+        },
+        view: {
+          engine: 'svg',
+          draggable: false,
+          hmargin: 40,
+          vmargin: 24,
+          line_width: 1.5,
+          line_color: '#075D94',
+          line_style: 'curved',
+          custom_line_render: renderProductMapLine,
+          node_overflow: 'wrap',
+          expander_style: 'char',
+        },
+        layout: { hspace: 36, vspace: 12, pspace: PRODUCT_MAP_EXPANDER_SIZE },
+      });
+      const state = {
+        jm: jm,
+        canvas: canvas,
+        scale: 1,
+        x: 0,
+        y: 0,
+        drag: null,
+        sourceMind: item.mind,
+      };
+      bindProductMapLayout(jm);
+      jm.show(item.mind);
+      refreshProductMap(state);
+      bindProductMapPointer(state);
+      jm.add_event_listener(function (_type, data) {
+        if (!data || (data.evt !== 'expand_node' && data.evt !== 'collapse_node')) return;
+        if (jm.__productMapDepthLock) return;
+        refreshProductMap(state);
+        markProductMapLevel(field, productMapVisibleDepth(jm.get_root()));
+      });
+      instances.push(state);
+    });
+    field.__productMapInstances = instances;
+    initProductMapFilters(field, maps);
+    markProductMapLevel(field, 2);
+    field.dataset.productMapState = 'ready';
+    bindProductMapScreen(field);
+    bindProductMapFullscreen();
+    if (typeof field.__productMapRefitNow === 'function') field.__productMapRefitNow(true);
+    window.requestAnimationFrame(function () {
+      if (!field.isConnected || typeof field.__productMapRefitNow !== 'function') return;
+      field.__productMapRefitNow(true);
+    });
+  }
+
+  function setProductMapFullscreen(field, active) {
+    const board = field && field.querySelector('.product-map-board');
+    const button = field && field.querySelector('[data-product-map-fullscreen]');
+    if (!board) return;
+    const nextActive = !!active && !!field.isConnected;
+    board.classList.toggle('product-map-board--fullscreen', nextActive);
+    document.body.classList.toggle('product-map-fullscreen-active', nextActive);
+    if (button) {
+      const icon = button.querySelector('i');
+      const label = nextActive
+        ? 'Вернуть диаграмму в обычный режим'
+        : 'Развернуть диаграмму на весь экран';
+      button.setAttribute('aria-label', label);
+      button.title = label;
+      button.setAttribute('aria-pressed', nextActive ? 'true' : 'false');
+      if (icon) {
+        icon.classList.toggle('bi-arrows-fullscreen', !nextActive);
+        icon.classList.toggle('bi-fullscreen-exit', nextActive);
+      }
+    }
+    if (typeof field.__productMapRefitNow === 'function') {
+      window.requestAnimationFrame(function () {
+        if (!field.isConnected) return;
+        field.__productMapRefitNow(true);
+      });
+    }
+  }
+
+  function bindProductMapFullscreen() {
+    if (window.__productMapFullscreenBound) return;
+    window.__productMapFullscreenBound = true;
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape') return;
+      const field = document.querySelector('#product-map-field');
+      const board = field && field.querySelector('.product-map-board--fullscreen');
+      if (!board) return;
+      setProductMapFullscreen(field, false);
+      event.preventDefault();
+    });
+    document.body.addEventListener('htmx:beforeSwap', function (event) {
+      const board = document.querySelector('.product-map-board--fullscreen');
+      const target = event.detail && event.detail.target;
+      if (!board || !target) return;
+      if (target === board || target.contains(board) || board.contains(target)) {
+        document.body.classList.remove('product-map-fullscreen-active');
+      }
+    });
+  }
+
+  function initProductMap(root) {
+    root = root || policyPane();
+    const field = root?.querySelector?.('#product-map-field');
+    if (!field || field.dataset.productMapState === 'loading' || field.dataset.productMapState === 'ready') {
+      return;
+    }
+    const dataNode = root.querySelector('#product-map-data');
+    if (!dataNode) return;
+    let maps = [];
+    try {
+      maps = JSON.parse(dataNode.textContent || '[]');
+    } catch (err) {
+      maps = [];
+    }
+    if (!Array.isArray(maps) || !maps.length) return;
+    field.dataset.productMapState = 'loading';
+    destroyPolicyWorkspaceSession();
+    loadProductMapAssets().then(function (ready) {
+      if (!field.isConnected) return;
+      if (!ready) {
+        field.dataset.productMapState = 'error';
+        if (!field.querySelector('.product-map-error')) {
+          const alert = document.createElement('div');
+          alert.className = 'alert alert-danger product-map-error mb-3';
+          alert.textContent = 'Не удалось загрузить карту продуктов.';
+          field.prepend(alert);
+        }
+        return;
+      }
+      renderProductMap(field, maps);
+    });
+  }
+
   // Делегирование: клики по кнопкам панелей
   document.addEventListener('click', async (e) => {
+    const groupToggle = e.target.closest('[data-product-group-toggle]');
+    if (groupToggle) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (groupToggle.closest('[data-policy-workspace="1"]')) return;
+      toggleProductGroupCollapsed(groupToggle.getAttribute('data-product-group-toggle'));
+      return;
+    }
+    const shellRetry = e.target.closest('[data-policy-shell-retry="1"]');
+    if (shellRetry && policyPane()?.contains(shellRetry)) {
+      const shell = policyPane();
+      shell.dataset.policyShellState = 'pending';
+      await loadPolicyShellOnce();
+      return;
+    }
+    const lazyRetry = e.target.closest('[data-policy-lazy-retry="1"]');
+    if (lazyRetry && policyPane()?.contains(lazyRetry)) {
+      enqueuePolicyLazyPlaceholder(lazyRetry.closest('[data-policy-lazy-placeholder="1"]'));
+      return;
+    }
+    if (e.target.closest('[data-product-map-filter]')) return;
+    const productMapFullscreen = e.target.closest('[data-product-map-fullscreen]');
+    if (productMapFullscreen && policyPane()?.contains(productMapFullscreen)) {
+      e.preventDefault();
+      const field = productMapFullscreen.closest('#product-map-field');
+      const board = field && field.querySelector('.product-map-board');
+      setProductMapFullscreen(field, !(board && board.classList.contains('product-map-board--fullscreen')));
+      return;
+    }
+    const productMapZoom = e.target.closest('[data-product-map-zoom]');
+    if (productMapZoom && policyPane()?.contains(productMapZoom)) {
+      e.preventDefault();
+      const field = productMapZoom.closest('#product-map-field');
+      const factor = productMapZoom.dataset.productMapZoom === 'in'
+        ? PRODUCT_MAP_ZOOM_STEP
+        : 1 / PRODUCT_MAP_ZOOM_STEP;
+      (field?.__productMapInstances || []).forEach(function (state) {
+        const rect = state.canvas.getBoundingClientRect();
+        zoomProductMapAt(state, factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      });
+      return;
+    }
+    const productMapLevel = e.target.closest('[data-product-map-level]');
+    if (productMapLevel && policyPane()?.contains(productMapLevel)) {
+      e.preventDefault();
+      const field = productMapLevel.closest('#product-map-field');
+      const level = Number(productMapLevel.dataset.productMapLevel);
+      if (field && level >= 1 && level <= 5) setProductMapLevel(field, level);
+      return;
+    }
+    const productMapButton = e.target.closest('[data-product-map-url]');
+    if (productMapButton && policyPane()?.contains(productMapButton)) {
+      e.preventDefault();
+      const mapUrl = productMapButton.dataset.productMapUrl;
+      if (!mapUrl || !window.htmx) return;
+      await htmx.ajax('GET', mapUrl, { target: '#policy-pane', swap: 'outerHTML' });
+      window.__policyScrollRestoreY = null;
+      window.scrollTo(0, 0);
+      return;
+    }
+    const productQuickEdit = e.target.closest('.product-quick-edit');
+    const policyRoot = policyPane();
+    const workspaceSaveBtn = e.target.closest('[data-policy-workspace-save-btn]');
+    if (workspaceSaveBtn) {
+      e.preventDefault();
+      savePolicyWorkspace();
+      return;
+    }
+    const workspaceCancelBtn = e.target.closest('[data-policy-workspace-cancel-btn]');
+    if (workspaceCancelBtn) {
+      e.preventDefault();
+      cancelPolicyWorkspace();
+      return;
+    }
+    if (productQuickEdit && policyRoot?.contains(productQuickEdit)) {
+      e.preventDefault();
+      const tr = productQuickEdit.closest('tr');
+      if (tr?.dataset?.isProductGroup === '1') {
+        const editUrl = tr.dataset.editUrl;
+        if (!editUrl || !window.htmx) return;
+        markPolicyModalClearSelectionOnHide('product-select');
+        await htmx.ajax('GET', editUrl, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
+        return;
+      }
+      const url = tr?.dataset?.workspaceUrl;
+      if (!url || !window.htmx) return;
+      await htmx.ajax('GET', url, { target: '#policy-pane', swap: 'outerHTML' });
+      scrollPolicyWorkspaceToTop(policyPane());
+      return;
+    }
+    const mergeProductsBtn = e.target.closest('#products-merge-btn');
+    if (mergeProductsBtn && policyRoot?.contains(mergeProductsBtn)) {
+      e.preventDefault();
+      const ids = getCheckedByName('product-select').map(function (box) { return box.value; });
+      if (!ids.length || !window.htmx) return;
+      const mergeUrl = mergeProductsBtn.dataset.url + '?' + ids.map(function (id) {
+        return 'product_id=' + encodeURIComponent(id);
+      }).join('&');
+      await htmx.ajax('GET', mergeUrl, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
+      return;
+    }
+    const ungroupProductsBtn = e.target.closest('#products-ungroup-btn');
+    if (ungroupProductsBtn && policyRoot?.contains(ungroupProductsBtn)) {
+      e.preventDefault();
+      const groupIds = getCheckedByName('product-select').filter(function (box) {
+        return box.closest('tr')?.dataset?.isProductGroup === '1';
+      }).map(function (box) { return box.value; });
+      if (!groupIds.length || !window.htmx) return;
+      rememberPolicyScrollPosition();
+      await htmx.ajax('POST', ungroupProductsBtn.dataset.url, {
+        target: '#policy-pane',
+        swap: 'outerHTML',
+        values: { product_ids: groupIds.join(',') },
+      });
+      return;
+    }
     const root = pane();
     if (!root) return;
     const wrapToggle = e.target.closest('#typical-service-compositions-wrap-toggle');
     if (wrapToggle && root.contains(wrapToggle)) {
       const table = document.getElementById('typical-service-compositions-table');
       if (!table) return;
+      if (table.querySelector('.inline-cell-editing')) return;
       table.classList.toggle('clf-truncated');
       const active = table.classList.contains('clf-truncated');
       wrapToggle.classList.toggle('active', active);
@@ -9262,6 +13028,15 @@
       collapseSpecialtyTariffsSpecialties();
       if (P) P.set('policy:specialtyTariffsSpecialtiesCollapsed', !!window.__policySpecialtyTariffsSpecialtiesCollapsed);
       return;
+    }
+    const termWorkspaceRow = e.target.closest('#policy-typical-service-terms-section tbody tr[data-gantt-url]');
+    if (
+      termWorkspaceRow
+      && root.contains(termWorkspaceRow)
+      && isTypicalServiceTermWorkspaceChrome(root.querySelector('[data-typical-service-term-gantt-edit]'))
+    ) {
+      selectTypicalServiceTermWorkspaceRow(termWorkspaceRow, root);
+      syncTypicalServiceTermGanttEditButton();
     }
     const ganttEditButton = e.target.closest('[data-typical-service-term-gantt-edit]');
     if (ganttEditButton && root.contains(ganttEditButton)) {
@@ -9281,6 +13056,8 @@
     e.preventDefault();
     const panel = btn.closest('div[id$="-actions"]');
     if (!panel) return;
+    const managedWrapper = panel.closest('[data-policy-table-key][data-policy-table-url]');
+    const fragmentScopedPolicy = !!managedWrapper;
     const action = btn.dataset.panelAction; // "up" | "down" | "edit" | "delete"
     const name = getNameForPanel(panel);
     if (!name) return;
@@ -9295,8 +13072,20 @@
     if (action === 'edit') {
       const first = checked[0];
       const tr = first.closest('tr');
-      const url = tr?.dataset?.editUrl;
+      let url = tr?.dataset?.editUrl;
       if (!url) return;
+      const workspaceProduct = getPolicyWorkspaceProduct(policyPane());
+      if (workspaceProduct) {
+        try {
+          const parsed = new URL(url, window.location.origin);
+          parsed.searchParams.set('workspace', '1');
+          parsed.searchParams.set('product', String(workspaceProduct.id));
+          url = parsed.pathname + parsed.search;
+        } catch (err) {
+          // Keep the original edit URL if it cannot be rewritten.
+        }
+      }
+      markPolicyModalClearSelectionOnHide(name);
       await htmx.ajax('GET', url, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
       // На случай если модалка не перерисовывает pane — поддержим видимость панели
       ensureActionsVisibility(name);
@@ -9306,38 +13095,161 @@
     if (action === 'delete') {
       if (!confirm(`Удалить ${checked.length} строк(у/и)?`)) return;
       btn.blur();
-      rememberPolicyScrollPosition();
-      const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#policy-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const workspaceDelete = fragmentScopedPolicy
+        && policyPane()?.dataset?.policyWorkspace === '1'
+        && managedWrapper?.dataset?.policyTableKey === 'typical-sections'
+        && !!policyWorkspaceSession;
+      if (workspaceDelete) {
+        checked.forEach(function (ch) {
+          queuePolicyWorkspaceTypicalSectionDelete(ch.closest('tr'));
+        });
+        forgetPolicyTableSelection(name);
+        ensureActionsVisibility(name);
+        return;
+      }
+      const newRows = checked.filter(function (ch) {
+        return isPolicyInlineNewRow(ch.closest('tr'));
+      });
+      const persisted = checked.filter(function (ch) {
+        return !isPolicyInlineNewRow(ch.closest('tr'));
+      });
+      newRows.forEach(function (ch) {
+        removePolicyInlineNewRow(ch.closest('tr'));
+      });
+      if (!persisted.length) {
+        ensureActionsVisibility(name);
+        return;
+      }
+      if (!fragmentScopedPolicy) rememberPolicyScrollPosition();
+      const leavingWorkspace = name === 'product-select'
+        && !!normalizeFilterValue(policyPane()?.dataset?.policyWorkspaceProductId);
+      const urls = persisted.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
+      if (!urls.length) {
+        ensureActionsVisibility(name);
+        return;
+      }
+      const progress = window.TableActionProgress?.begin(persisted);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], {
+              target: fragmentScopedPolicy ? '#' + managedWrapper.id : '#policy-pane',
+              swap: fragmentScopedPolicy ? 'none' : 'outerHTML',
+            });
+          } else {
+            const headers = { 'X-CSRFToken': csrftoken };
+            if (fragmentScopedPolicy) headers['HX-Request'] = 'true';
+            await fetch(urls[i], { method: 'POST', headers: headers }).catch(() => {});
+          }
         }
+        if (leavingWorkspace) {
+          await loadPolicyCatalogShell();
+        }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
       btn.blur();
-      rememberPolicyScrollPosition();
+      if (!fragmentScopedPolicy) rememberPolicyScrollPosition();
+      {
+        // Shared optimistic reorder + single debounced bulk save (core/row_order.py).
+        const queuedTableKey = fragmentScopedPolicy
+          ? normalizeFilterValue(managedWrapper.dataset.policyTableKey)
+          : '';
+        const handledByQueue = !!window.__queuedRowOrder?.handleMoveAction({
+          checked,
+          action,
+          canCross: queuedTableKey ? makePolicyReorderCanCross(queuedTableKey) : null,
+          onAfterMove: (table) => {
+            if (queuedTableKey && POLICY_WORKSPACE_ROW_INSERT_KEYS[queuedTableKey]) {
+              syncPolicyWorkspaceNewRowAfterIds(table.tBodies[0], queuedTableKey);
+            }
+          },
+          // The server returns the policy-updated detail; dependent tables are refreshed
+          // exactly like after the legacy per-row persist, skipping the reordered table.
+          suppressEvents: true,
+          onSaved: (data) => {
+            const detail = data && data.events && data.events['policy-updated'];
+            if (!detail || typeof detail !== 'object') return;
+            handlePolicyUpdated(queuedTableKey
+              ? Object.assign({}, detail, { skipTable: queuedTableKey })
+              : detail);
+          },
+          refresh: () => {
+            if (queuedTableKey) return refreshLoadedPolicyFragment(queuedTableKey);
+            rememberPolicyScrollPosition();
+            return loadPolicyCatalogShell();
+          },
+        });
+        if (handledByQueue) {
+          ensureActionsVisibility(name);
+          return;
+        }
+      }
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);
       if (action === 'down') urls = urls.reverse();
+      if (fragmentScopedPolicy) {
+        const tableKey = normalizeFilterValue(managedWrapper.dataset.policyTableKey);
+        const reorder = getPolicyReorderRows(managedWrapper);
+        const moved = !!(reorder.tbody && reorder.rows.length && moveSelectedPolicyRowBlocks(
+          reorder.tbody,
+          reorder.rows,
+          action,
+          function (row) {
+            return !!row.querySelector(
+              'input.form-check-input[name="' + CSS.escape(name) + '"]:checked:not(:disabled)'
+            );
+          },
+          makePolicyReorderCanCross(tableKey)
+        ));
+        if (moved && POLICY_WORKSPACE_ROW_INSERT_KEYS[tableKey]) {
+          syncPolicyWorkspaceNewRowAfterIds(reorder.tbody, tableKey);
+        }
+        if (urls.length) {
+          enqueuePolicyReorderPersist(urls, {
+            tableKey: tableKey,
+            skipSourceRefresh: moved,
+          });
+        }
+        ensureActionsVisibility(name);
+        return;
+      }
       for (let i = 0; i < urls.length; i++) {
         const isLast = i === urls.length - 1;
         if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#policy-pane', swap: 'outerHTML' });
+          await htmx.ajax('POST', urls[i], {
+            target: '#policy-pane',
+            swap: 'outerHTML',
+          });
         } else {
           await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
         }
       }
-      // Пока ждём перерисовку, не прячем панель (на случай без перерисовки)
       ensureActionsVisibility(name);
       return;
     }
+  });
+
+  document.addEventListener('hidden.bs.modal', function (e) {
+    const modalEl = e.target;
+    if (!modalEl || modalEl.id !== 'policy-modal') return;
+    restorePolicyModalSize(modalEl);
+  });
+
+  // Снятие выделения выполняет общий модуль table-selection.js (hidden.bs.modal);
+  // здесь досинхронизируем состояние, зависящее от выделения в политиках.
+  document.addEventListener('table-selection:cleared', function (e) {
+    const name = e.detail && e.detail.name;
+    if (!name) return;
+    forgetPolicyTableSelection(name);
+    if (name === TYPICAL_SERVICE_TERM_GANTT_SELECTION_NAME) syncTypicalServiceTermGanttEditButton();
+    if (name === 'product-select') syncProductGroupButtons();
   });
 
   // Делегирование: мастер-чекбокс
@@ -9382,6 +13294,7 @@
       '/policy/policy/product/create/',
       '/policy/policy/section/create/',
       '/policy/policy/structure/create/',
+      '/policy/policy/report-structure/create/',
       '/policy/policy/service-goal-report/create/',
       '/policy/policy/typical-service-composition/create/',
       '/policy/policy/typical-service-term/create/',
@@ -9395,6 +13308,9 @@
     e.detail.parameters.consulting_type_ref = product.consultingRef;
     e.detail.parameters.service_category_ref = product.categoryRef;
     e.detail.parameters.service_subtype_ref = product.subtypeRef;
+    if (getPolicyWorkspaceProduct(policyPane())) {
+      e.detail.parameters.workspace = '1';
+    }
   });
 
   // CSV result modal helper
@@ -9433,7 +13349,7 @@
           html += '</div>';
         }
         showPolicyCsvResult(html);
-        await htmx.ajax('GET', '/policy/policy/partial/', { target: '#policy-pane', swap: 'innerHTML' });
+        handlePolicyUpdated(data.policyUpdate);
       } else {
         showPolicyCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
           (data.error || 'Неизвестная ошибка').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>');
@@ -9450,10 +13366,15 @@
       'service-goal-reports-csv-upload-btn': 'service-goal-reports-csv-file-input',
       'sections-csv-upload-btn': 'sections-csv-file-input',
       'structures-csv-upload-btn': 'structures-csv-file-input',
+      'report-structures-csv-upload-btn': 'report-structures-csv-file-input',
       'tariffs-csv-upload-btn': 'tariffs-csv-file-input',
       'typical-service-compositions-csv-upload-btn': 'typical-service-compositions-csv-file-input',
       'typical-service-compositions-docx-upload-btn': 'typical-service-compositions-docx-file-input',
+      'typical-service-compositions-xlsx-upload-btn': 'typical-service-compositions-xlsx-file-input',
       'typical-service-terms-csv-upload-btn': 'typical-service-terms-csv-file-input',
+      'esp-csv-upload-btn': 'esp-csv-file-input',
+      'consulting-directions-csv-upload-btn': 'consulting-directions-csv-file-input',
+      'service-block-classifiers-csv-upload-btn': 'service-block-classifiers-csv-file-input',
     };
     for (var btnId in mapping) {
       var btn = e.target.closest('#' + btnId);
@@ -9471,10 +13392,15 @@
       'service-goal-reports-csv-file-input': '/policy/policy/service-goal-report/csv-upload/',
       'sections-csv-file-input': '/policy/policy/section/csv-upload/',
       'structures-csv-file-input': '/policy/policy/structure/csv-upload/',
+      'report-structures-csv-file-input': '/policy/policy/report-structure/csv-upload/',
       'tariffs-csv-file-input': '/policy/policy/tariff/csv-upload/',
       'typical-service-compositions-csv-file-input': '/policy/policy/typical-service-composition/csv-upload/',
       'typical-service-compositions-docx-file-input': '/policy/policy/typical-service-composition/docx-upload/',
+      'typical-service-compositions-xlsx-file-input': '/policy/policy/typical-service-composition/xlsx-upload/',
       'typical-service-terms-csv-file-input': '/policy/policy/typical-service-term/csv-upload/',
+      'esp-csv-file-input': '/experts/specialty/csv-upload/',
+      'consulting-directions-csv-file-input': '/policy/policy/consulting-direction/csv-upload/',
+      'service-block-classifiers-csv-file-input': '/policy/policy/service-block-classifier/csv-upload/',
     };
     var url = mapping[e.target.id];
     if (!url) return;
@@ -9483,9 +13409,416 @@
     await handlePolicyTableUpload(url, file);
   });
 
+  function attachPolicyTableFooterStickyState(footer) {
+    const editor = footer?.closest('.policy-table-editor');
+    if (!footer || !editor || !footer.closest('#policy-pane')) return;
+    if (footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    const marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    let intersectionObserver = null;
+    let resizeObserver = null;
+
+    function syncStickyState() {
+      if (!footer.isConnected) {
+        intersectionObserver?.disconnect();
+        resizeObserver?.disconnect();
+        return;
+      }
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const editorRect = editor.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const isStuck = (
+        editorRect.top < viewportHeight
+        && editorRect.bottom > 0
+        && markerRect.top >= viewportHeight
+      );
+      footer.classList.toggle('is-stuck', isStuck);
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(syncStickyState, {
+        threshold: [0, 1],
+      });
+      intersectionObserver.observe(editor);
+      intersectionObserver.observe(marker);
+    }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(syncStickyState);
+      resizeObserver.observe(editor);
+    }
+    window.requestAnimationFrame(syncStickyState);
+  }
+
+  function attachPolicyTableHeaderStickyState(section) {
+    if (!section || !section.closest('#policy-pane[data-policy-workspace="1"]')) return;
+    if (section.dataset.policyTableKey !== 'typical-service-compositions') return;
+    const thead = section.querySelector('thead');
+    const wrap = section.querySelector('#typical-service-compositions-table-wrap');
+    if (!thead || !wrap || thead.dataset.stickyStateBound === '1') return;
+    thead.dataset.stickyStateBound = '1';
+
+    const pane = section.closest('#policy') || document.getElementById('policy');
+    const pageHeader = pane ? pane.querySelector('.section-header') : document.querySelector('#policy .section-header');
+    let intersectionObserver = null;
+
+    function syncStickyOffset() {
+      const headerHeight = pageHeader ? Math.round(pageHeader.getBoundingClientRect().height) : 76;
+      section.style.setProperty('--policy-sticky-thead-top', headerHeight + 'px');
+    }
+
+    function syncStickyState() {
+      if (!thead.isConnected) {
+        intersectionObserver?.disconnect();
+        return;
+      }
+      syncStickyOffset();
+      const headerHeight = pageHeader ? pageHeader.getBoundingClientRect().height : 76;
+      const wrapRect = wrap.getBoundingClientRect();
+      const theadRect = thead.getBoundingClientRect();
+      const isStuck = theadRect.top <= headerHeight + 1
+        && wrapRect.bottom > headerHeight + theadRect.height;
+      thead.classList.toggle('is-stuck', isStuck);
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(syncStickyState, {
+        threshold: [0, 1],
+      });
+      intersectionObserver.observe(wrap);
+      if (pageHeader) intersectionObserver.observe(pageHeader);
+    }
+    window.addEventListener('scroll', syncStickyState, true);
+    window.addEventListener('resize', syncStickyState);
+    window.requestAnimationFrame(syncStickyState);
+  }
+
+  function initPolicyTableHeaderStickyState(root) {
+    const scope = root || document;
+    const sections = scope.matches?.('[data-policy-table-key="typical-service-compositions"]')
+      ? [scope]
+      : qa('[data-policy-table-key="typical-service-compositions"]', scope);
+    sections.forEach(attachPolicyTableHeaderStickyState);
+  }
+
+  function initPolicyTableFooterStickyState(root) {
+    const scope = root || document;
+    const footers = scope.matches?.('.policy-table-footer')
+      ? [scope]
+      : qa('.policy-table-footer', scope);
+    footers.forEach(attachPolicyTableFooterStickyState);
+  }
+
+  function syncPolicyModalSize(modalEl) {
+    const dialog = modalEl?.querySelector('.modal-dialog');
+    if (!dialog) return;
+    const wantsXl = !!modalEl.querySelector('[data-policy-modal-size="xl"]');
+    dialog.classList.toggle('modal-xl', wantsXl);
+    dialog.classList.toggle('modal-lg', !wantsXl);
+    dialog.classList.toggle('modal-dialog-scrollable', !wantsXl);
+  }
+
+  function restorePolicyModalSize(modalEl) {
+    const dialog = modalEl?.querySelector('.modal-dialog');
+    if (!dialog) return;
+    dialog.classList.remove('modal-xl');
+    dialog.classList.add('modal-lg', 'modal-dialog-scrollable');
+  }
+
+  function updateExpertSpecialtiesTableScrollGaps(root) {
+    const wrap = (root || document).querySelector('.experts-specialties-table-wrap');
+    if (!wrap) return;
+    wrap.classList.toggle('has-horizontal-scroll', wrap.scrollWidth > wrap.clientWidth + 1);
+  }
+
+  function expertSpecialtiesColpickerEls() {
+    return {
+      wrap: document.getElementById('esp-colpicker-wrap'),
+      btn: document.getElementById('esp-colpicker-btn'),
+      menu: document.getElementById('esp-colpicker-menu'),
+      table: document.getElementById('esp-table'),
+      allCb: document.getElementById('esp-col-all'),
+    };
+  }
+
+  function setExpertSpecialtiesColpickerOpen(menu, wrap, shouldShow) {
+    if (menu) menu.classList.toggle('show', !!shouldShow);
+    const header = wrap && wrap.closest('.table-section-header');
+    if (header) header.classList.toggle('esp-colpicker-open', !!shouldShow);
+  }
+
+  function applyExpertSpecialtiesColumnVisibility() {
+    const els = expertSpecialtiesColpickerEls();
+    if (!els.menu || !els.table) return;
+    const pref = window.UIPref;
+    const stored = pref ? pref.get('experts:espHiddenCols', {}) : {};
+    const hidden = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    const items = els.menu.querySelectorAll('input.form-check-input:not([value="all"])');
+    items.forEach(function (cb) {
+      cb.checked = !hidden[cb.value];
+    });
+    if (els.allCb) {
+      let allChecked = true;
+      items.forEach(function (cb) { if (!cb.checked) allChecked = false; });
+      els.allCb.checked = allChecked;
+    }
+    if (els.btn) {
+      let checked = 0;
+      items.forEach(function (cb) { if (cb.checked) checked += 1; });
+      els.btn.textContent = checked === items.length ? 'Все поля' : (checked + ' из ' + items.length);
+    }
+    const hiddenKeys = Object.keys(hidden);
+    els.table.querySelectorAll('[data-col]').forEach(function (cell) {
+      cell.style.display = hiddenKeys.indexOf(cell.getAttribute('data-col')) !== -1 ? 'none' : '';
+    });
+    updateExpertSpecialtiesTableScrollGaps(els.table.closest('#policy-expert-specialties-section') || document);
+  }
+
+  function persistExpertSpecialtiesColumnVisibility(menu) {
+    const pref = window.UIPref;
+    const hidden = {};
+    menu.querySelectorAll('input.form-check-input:not([value="all"])').forEach(function (item) {
+      if (!item.checked) hidden[item.value] = true;
+    });
+    if (pref) pref.set('experts:espHiddenCols', hidden);
+    applyExpertSpecialtiesColumnVisibility();
+  }
+
+  function bindExpertSpecialtiesColumnPicker() {
+    if (window.__espColpickerDocBound) return;
+    window.__espColpickerDocBound = true;
+    document.addEventListener('click', function (event) {
+      const els = expertSpecialtiesColpickerEls();
+      if (!els.wrap || !els.btn || !els.menu) return;
+      if (els.btn === event.target || els.btn.contains(event.target)) {
+        event.stopPropagation();
+        setExpertSpecialtiesColpickerOpen(
+          els.menu,
+          els.wrap,
+          !els.menu.classList.contains('show')
+        );
+        return;
+      }
+      if (!els.wrap.contains(event.target)) {
+        setExpertSpecialtiesColpickerOpen(els.menu, els.wrap, false);
+      }
+    });
+    document.addEventListener('change', function (event) {
+      const els = expertSpecialtiesColpickerEls();
+      if (!els.menu || !els.menu.contains(event.target)) return;
+      const cb = event.target;
+      if (!cb.classList.contains('form-check-input')) return;
+      const items = els.menu.querySelectorAll('input.form-check-input:not([value="all"])');
+      if (cb.value === 'all') {
+        items.forEach(function (item) { item.checked = cb.checked; });
+      } else if (els.allCb) {
+        let all = true;
+        items.forEach(function (item) { if (!item.checked) all = false; });
+        els.allCb.checked = all;
+      }
+      persistExpertSpecialtiesColumnVisibility(els.menu);
+    });
+    window.addEventListener('resize', function () {
+      const section = document.getElementById('policy-expert-specialties-section');
+      if (section) updateExpertSpecialtiesTableScrollGaps(section);
+    });
+  }
+
+  function initExpertSpecialtiesColumnPicker(root) {
+    bindExpertSpecialtiesColumnPicker();
+    applyExpertSpecialtiesColumnVisibility();
+    if (root) updateExpertSpecialtiesTableScrollGaps(root);
+  }
+
+  let classifierSpecialtySession = null;
+  const classifierSpecialtySaveTokens = new Map();
+
+  function createServiceBlockClassifierSpecialtyAdapter(section) {
+    let specialties = [];
+    try {
+      const node = section.querySelector('[data-policy-inline-options]');
+      const parsed = JSON.parse(node ? node.textContent : '{}');
+      specialties = parsed.specialties || [];
+    } catch (err) {
+      specialties = [];
+    }
+    return {
+      getSelectOptions: function (ref) {
+        if (ref.field !== 'specialty_ids') return [];
+        let selected = [];
+        try {
+          const parsed = JSON.parse(ref.cell.getAttribute('data-inline-value') || '[]');
+          selected = Array.isArray(parsed) ? parsed.map(function (id) { return String(id); }) : [];
+        } catch (err) {
+          selected = [];
+        }
+        const currentId = ref.cell.dataset.inlineActiveIndex != null
+          ? (selected[Number(ref.cell.dataset.inlineActiveIndex)] || '')
+          : '';
+        const row = ref.cell.closest('tr');
+        const directionId = row ? String(row.dataset.expertiseDir || '') : '';
+        return [{ value: '', label: '—' }].concat(specialties.filter(function (item) {
+          const id = String(item.id);
+          const isCurrent = currentId && id === String(currentId);
+          const sameDirection = directionId && String(item.expertise_dir || '') === directionId;
+          if (!sameDirection && !isCurrent) return false;
+          return isCurrent || selected.indexOf(id) === -1;
+        }).map(function (item) {
+          return { value: String(item.id), label: item.label || '' };
+        }));
+      },
+      getSpecialtyOptions: function () {
+        return specialties;
+      },
+      normalizeValue: function (ref, value) {
+        if (ref.field === 'specialty_ids') {
+          return { value: Array.isArray(value) ? value : [], label: '' };
+        }
+        return { value: value, label: value };
+      },
+      afterChange: function (ref, value, session) {
+        if (ref.field === 'name_en' || ref.field === 'name_ru') {
+          const row = ref.cell.closest('tr');
+          const url = row && row.dataset.nameSaveUrl;
+          const rowId = row && row.dataset.inlineRowId;
+          if (!url || !rowId || !session) return;
+          const body = new URLSearchParams();
+          body.set('field', ref.field);
+          body.set('value', value == null ? '' : String(value));
+          fetch(url, {
+            method: 'POST',
+            headers: {
+              'X-CSRFToken': csrftoken,
+              'X-Requested-With': 'fetch',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+          }).then(function (response) {
+            if (!response.ok) throw new Error('save failed');
+            return response.json();
+          }).then(function (data) {
+            if (!data || data.ok === false) throw new Error((data && data.error) || 'save failed');
+            session.clearFieldError('service-block-classifiers', rowId, ref.field);
+            session.snapshotRow('service-block-classifiers', rowId, { [ref.field]: value });
+          }).catch(function () {
+            session.setErrors([{
+              table: 'service-block-classifiers',
+              id: rowId,
+              field: ref.field,
+              message: 'Не удалось сохранить наименование.',
+            }]);
+            if (window.WorkspaceInlineEditor) {
+              window.WorkspaceInlineEditor.applyErrorsToDom(session, section);
+            }
+          });
+          return;
+        }
+        if (ref.field !== 'specialty_ids') return;
+        const row = ref.cell.closest('tr');
+        const url = row && row.dataset.specialtiesSaveUrl;
+        const rowId = row && row.dataset.inlineRowId;
+        if (!url || !rowId || !session) return;
+        const token = (classifierSpecialtySaveTokens.get(rowId) || 0) + 1;
+        classifierSpecialtySaveTokens.set(rowId, token);
+        const body = new URLSearchParams();
+        (value || []).forEach(function (id) {
+          const text = String(id || '').trim();
+          if (text) body.append('specialty_id', text);
+        });
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'X-CSRFToken': csrftoken,
+            'X-Requested-With': 'fetch',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: body.toString(),
+        }).then(function (response) {
+          if (classifierSpecialtySaveTokens.get(rowId) !== token) return null;
+          if (!response.ok) throw new Error('save failed');
+          return response.json();
+        }).then(function (data) {
+          if (!data || classifierSpecialtySaveTokens.get(rowId) !== token) return;
+          if (data.ok === false) throw new Error(data.error || 'save failed');
+          session.clearFieldError('service-block-classifiers', rowId, 'specialty_ids');
+          session.snapshotRow('service-block-classifiers', rowId, { specialty_ids: value });
+          if (window.WorkspaceInlineEditor) {
+            window.WorkspaceInlineEditor.applyErrorsToDom(session, section);
+          }
+        }).catch(function () {
+          if (classifierSpecialtySaveTokens.get(rowId) !== token) return;
+          session.setErrors([{
+            table: 'service-block-classifiers',
+            id: rowId,
+            field: 'specialty_ids',
+            message: 'Не удалось сохранить исполнителей.',
+          }]);
+          if (window.WorkspaceInlineEditor) {
+            window.WorkspaceInlineEditor.applyErrorsToDom(session, section);
+          }
+        });
+      },
+    };
+  }
+
+  function bindServiceBlockClassifierSpecialties(section) {
+    if (!section || section.dataset.policyTableKey !== 'service-block-classifiers') return;
+    if (section.dataset.policyInline !== '1' || !window.WorkspaceInlineEditor) return;
+    if (policyPane()?.dataset?.policyWorkspace === '1') return;
+    if (classifierSpecialtySession && classifierSpecialtySession.hasSection(section)) return;
+    classifierSpecialtySession = window.WorkspaceInlineEditor.createSession();
+    window.WorkspaceInlineEditor.attach(classifierSpecialtySession);
+    window.WorkspaceInlineEditor.bindSection(
+      classifierSpecialtySession,
+      section,
+      createServiceBlockClassifierSpecialtyAdapter(section)
+    );
+  }
+
+  function initializeArrivingPolicyFragment(fragment) {
+    if (!fragment?.matches?.('[data-policy-table-key][data-policy-table-url]')) return;
+    clearManagedPolicyTableSelection(fragment);
+    qa('input.form-check-input[data-target-name]', fragment).forEach(function (master) {
+        syncPolicySelectionToVisible(master.dataset.targetName);
+    });
+    updatePolicyMasterFilterDownloadLinks();
+    if (fragment.dataset.policyTableKey === 'typical-service-compositions') {
+      initTypicalServiceCompositionWrapToggle();
+    }
+    if (fragment.dataset.policyTableKey === 'typical-service-terms') {
+      initTypicalServiceTermGanttEditor(fragment);
+    }
+    if (fragment.dataset.policyTableKey === 'expert-specialties') {
+      initExpertSpecialtiesColumnPicker(fragment);
+      updateExpertSpecialtiesTableScrollGaps(fragment);
+    }
+    initPolicyMasterFilters({ skipManagedRefresh: true });
+    initPolicyTableFooterStickyState(fragment);
+    initPolicyTableHeaderStickyState(fragment);
+    bindPolicyWorkspaceInlineTables(policyPane());
+    bindServiceBlockClassifierSpecialties(fragment);
+    if (fragment.querySelector('#products-merge-btn, [data-product-group-toggle]')) {
+      applyProductGroupCollapsed(fragment);
+    }
+  }
+
   // Восстановление выбора только для таблицы, где было действие
   document.body.addEventListener('htmx:afterSettle', function (e) {
+    if (e.target?.matches?.('[data-policy-table-key][data-policy-table-url]')) {
+      initializeArrivingPolicyFragment(e.target);
+      return;
+    }
     if (!(e.target && e.target.id === 'policy-pane')) return;
+    initProductMap(e.target);
+    if (e.target.matches('[data-policy-lazy-shell="1"]')) {
+      initPolicyLazyShell(e.target);
+      updatePolicyHeaderPath();
+      return;
+    }
     const restoreY = window.__policyScrollRestoreY;
     if (typeof restoreY === 'number') {
       requestAnimationFrame(function () {
@@ -9495,8 +13828,11 @@
     }
     initTypicalServiceCompositionWrapToggle();
     collapseSpecialtyTariffsSpecialties();
+    applyProductGroupCollapsed(e.target);
     initPolicyMasterFilters();
     initTypicalServiceTermGanttEditor(e.target);
+    initPolicyTableFooterStickyState(e.target);
+    initPolicyTableHeaderStickyState(e.target);
     const last = window.__tableSelLast;
     if (!last) return;
     const ids = (window.__tableSel && window.__tableSel[last]) || [];
@@ -9512,7 +13848,12 @@
 
   document.body.addEventListener('htmx:afterSwap', function (e) {
     if (!e.target) return;
+    if (e.target.id === 'policy-pane') updatePolicyHeaderPath();
+    if (e.target.closest && e.target.closest('#policy-modal')) {
+      syncPolicyModalSize(document.getElementById('policy-modal'));
+    }
     initPolicyProductSelects(e.target);
+    initPolicySectionSelects(e.target);
   });
 
   // After an htmx swap, the policy pane (and our chart container with it) may
@@ -9536,11 +13877,64 @@
     try { initTypicalServiceTermGanttEditor(e.target); } catch (_) { /* noop */ }
   });
 
+  document.addEventListener('click', function (event) {
+    const navLink = event.target.closest('a.nav-link[href="#policy"][data-bs-toggle="tab"]');
+    if (!navLink) return;
+    const pane = policyPane();
+    if (pane?.querySelector?.('#product-map-field')) {
+      setProductMapFullscreen(pane.querySelector('#product-map-field'), false);
+      window.__policyScrollRestoreY = null;
+      loadPolicyCatalogShell();
+      window.scrollTo(0, 0);
+      return;
+    }
+    if (pane?.dataset?.policyWorkspace !== '1') return;
+    if (!confirmPolicyWorkspaceLeave()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    destroyPolicyWorkspaceSession();
+    loadPolicyCatalogShell();
+  });
+  document.body.addEventListener('htmx:beforeRequest', function (e) {
+    if (!policyWorkspaceSession?.isDirty()) return;
+    const target = e.detail?.target;
+    if (!target || target.id !== 'policy-pane') return;
+    if (!confirmPolicyWorkspaceLeave()) {
+      e.preventDefault();
+      return;
+    }
+    destroyPolicyWorkspaceSession();
+  });
+  window.addEventListener('beforeunload', function (e) {
+    if (!policyWorkspaceSession?.isDirty()) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+  document.addEventListener('shown.bs.tab', function (event) {
+    if (event.target?.getAttribute?.('href') === '#policy') loadPolicyShellOnce();
+  });
+  document.addEventListener('policy:show', loadPolicyShellOnce);
+  window.addEventListener('hashchange', function () {
+    if (window.location.hash === '#policy') loadPolicyShellOnce();
+  });
+  if (
+    window.location.hash === '#policy'
+    || document.querySelector('a[href="#policy"][data-bs-toggle="tab"].active')
+  ) {
+    window.requestAnimationFrame(loadPolicyShellOnce);
+  }
+
   initPolicyProductSelects(document);
+  initPolicySectionSelects(document);
   initTypicalServiceCompositionWrapToggle();
   collapseSpecialtyTariffsSpecialties();
   initPolicyMasterFilters();
   initTypicalServiceTermGanttEditor(document);
+  initPolicyTableFooterStickyState(document);
+  initPolicyTableHeaderStickyState(document);
+  bindExpertSpecialtiesColumnPicker();
 
   // Public API so other panes (currently the projects "График проекта") can
   // drive the same typical-service-term-gantt editor without duplicating its
@@ -9579,6 +13973,12 @@
       var editor = typicalServiceTermGanttEditorEl();
       return !!(editor && !editor.classList.contains('d-none'));
     },
+    // Read-only access to the live DHTMLX instance (null until created).
+    // Used by project-schedule-gantt.js to restore the timeline scroll
+    // position after a pane re-render via gantt.scrollTo().
+    getInstance: function () {
+      return window.__policyTypicalServiceTermGantt || null;
+    },
     refresh: function () {
       var pane2 = pane();
       if (!pane2) return;
@@ -9593,4 +13993,5 @@
       } catch (_) { /* noop */ }
     },
   };
+  applyProductGroupCollapsed(document);
 })();

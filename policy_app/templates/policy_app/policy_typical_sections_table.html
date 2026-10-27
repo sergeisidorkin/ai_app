@@ -12,7 +12,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
     <h5 class="table-section-title">
         <i class="bi bi-table me-2"></i>
-        Типовые разделы (услуги)
+        Типовые блоки услуг
     </h5>
 </div>
 
@@ -39,11 +39,11 @@
             <th>Краткое имя RU</th>
             <th>Наименование раздела (услуги) EN</th>
             <th>Наименование раздела (услуги) RU</th>
-            <th>Тип учета</th>
-            <th class="typical-section-executor-col">Исполнитель</th>
-            <th>Экспертиза</th>
-            <th>Подразделение</th>
-            <th><i class="bi bi-ban me-1"></i>ТКП</th>
+            <th class="typical-section-derived-col">Тип учета</th>
+            <th class="typical-section-derived-col typical-section-executor-col">Исполнитель</th>
+            <th class="typical-section-derived-col">Экспертиза</th>
+            <th class="typical-section-derived-col">Подразделение</th>
+            <th class="typical-section-tkp-col"><span class="typical-section-tkp-heading"><i class="bi bi-ban" aria-hidden="true"></i>ТКП</span></th>
         </tr>
         </thead>
         <tbody>
@@ -56,6 +56,9 @@
                  data-service-category="{{ s.product.service_category_display }}"
                  data-service-subtype="{{ s.product.service_subtype_display }}"
                  data-system-section="{% if s.is_system_dsc %}1{% else %}0{% endif %}"
+                 data-source-block="{{ s.service_block_id|default_if_none:'' }}"
+                 data-source-name-en="{{ s.service_block.name_en }}"
+                 data-source-name-ru="{{ s.service_block.name_ru }}"
                  data-row-order-scope="{{ s.product_id }}"
                  {% if s.is_system_dsc %}data-row-order-locked="1"{% endif %}
                  data-edit-url="{% url 'section_form_edit' s.pk %}"
@@ -78,55 +81,27 @@
                     {% endif %}
                 </td>
                 <td class="text-nowrap policy-workspace-product-cell">{{ s.product.short_name }}</td>
-                <td class="text-nowrap typical-section-code-col">
+                <td class="text-nowrap typical-section-code-col"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="service_block" data-inline-type="select" data-inline-value="{{ s.service_block_id|default_if_none:'' }}"{% endif %}>
                     {% if s.is_system_dsc %}
                         <span class="typical-section-dsc-code">{{ s.code }}</span>
                     {% else %}
                         {{ s.code }}
                     {% endif %}
                 </td>
-                <td class="text-nowrap">{{ s.short_name }}</td>
-                <td class="text-nowrap">{{ s.short_name_ru }}</td>
+                <td class="text-nowrap" data-service-block-name="en">{{ s.short_name }}</td>
+                <td class="text-nowrap" data-service-block-name="ru">{{ s.short_name_ru }}</td>
                 <td{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ s.name_en }}"{% endif %}>{{ s.name_en }}</td>
                 <td{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ s.name_ru }}"{% endif %}>{{ s.name_ru }}</td>
-                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="accounting_type" data-inline-type="select" data-inline-value="{{ s.accounting_type }}"{% endif %}>{% if s.is_system_dsc %}{% else %}{{ s.accounting_type }}{% endif %}</td>
-                <td class="text-nowrap typical-section-executor-col{% if policy_inline_edit and not s.is_system_dsc %} inline-specialties-cell{% endif %}"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="specialty_ids" data-inline-type="specialties" data-inline-value="[{% for rs in s.ranked_specialties.all %}{% if not forloop.first %},{% endif %}{{ rs.specialty_id }}{% endfor %}]"{% endif %}>
+                <td class="text-nowrap typical-section-derived-col" data-service-block-accounting>{% if s.is_system_dsc %}{% else %}{{ s.accounting_type }}{% endif %}</td>
+                <td class="text-nowrap typical-section-derived-col typical-section-executor-col" data-service-block-executor>
                     {% if s.is_system_dsc %}
-                    {% elif policy_inline_edit %}
-                        {% with specs=s.ranked_specialties.all %}
-                        <div class="inline-specialties" data-count="{{ specs|length }}">
-                            {% for rs in specs %}
-                            <div class="inline-specialty-row" data-index="{{ forloop.counter0 }}" data-id="{{ rs.specialty_id }}">
-                                <span class="inline-specialty-label">{{ rs.specialty.specialty }}</span>
-                                <span class="inline-specialty-icons">
-                                    <span class="inline-specialty-actions">
-                                        <button type="button" class="inline-specialty-btn" data-specialty-action="move" data-dir="-1" title="Выше" aria-label="Выше"{% if forloop.first %} disabled{% endif %}><i class="bi bi-arrow-up"></i></button>
-                                        <button type="button" class="inline-specialty-btn" data-specialty-action="move" data-dir="1" title="Ниже" aria-label="Ниже"{% if forloop.last %} disabled{% endif %}><i class="bi bi-arrow-down"></i></button>
-                                        <button type="button" class="inline-specialty-btn" data-specialty-action="remove" title="Удалить" aria-label="Удалить"><i class="bi bi-x-lg"></i></button>
-                                    </span>
-                                    <span class="inline-specialty-chevron" aria-hidden="true"></span>
-                                    <button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>
-                                </span>
-                            </div>
-                            {% empty %}
-                            <div class="inline-specialty-row" data-index="0" data-id="">
-                                <span class="inline-specialty-label">—</span>
-                                <span class="inline-specialty-icons">
-                                    <span class="inline-specialty-actions"></span>
-                                    <span class="inline-specialty-chevron" aria-hidden="true"></span>
-                                    <button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>
-                                </span>
-                            </div>
-                            {% endfor %}
-                        </div>
-                        {% endwith %}
                     {% else %}
                         {% for rs in s.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}
                     {% endif %}
                 </td>
-                <td class="text-nowrap"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="expertise_dir" data-inline-type="select" data-inline-value="{{ s.expertise_dir_id|default_if_none:'' }}"{% endif %}>{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% endif %}</td>
-                <td class="text-nowrap">{{ s.managed_department_display }}</td>
-                <td class="text-center"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="exclude_from_tkp_autofill" data-inline-type="checkbox" data-inline-value="{% if s.exclude_from_tkp_autofill %}true{% else %}false{% endif %}"{% endif %}>
+                <td class="text-nowrap typical-section-derived-col" data-service-block-expertise>{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% endif %}</td>
+                <td class="text-nowrap typical-section-derived-col" data-service-block-department>{{ s.managed_department_display }}</td>
+                <td class="text-center typical-section-tkp-col"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="exclude_from_tkp_autofill" data-inline-type="checkbox" data-inline-value="{% if s.exclude_from_tkp_autofill %}true{% else %}false{% endif %}"{% endif %}>
                     <input
                         class="form-check-input"
                         type="checkbox"

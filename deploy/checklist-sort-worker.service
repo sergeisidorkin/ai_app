@@ -7,6 +7,10 @@ Wants=network-online.target docker.service dsh-compose.service
 Type=simple
 User=sergei
 Group=www-data
+# Group= replaces the login group, so the unit would lose access to
+# root:sergei files such as /opt/dsh/dsh.env. docker is already a supplementary
+# group of this user and stays available for the compose socket.
+SupplementaryGroups=sergei
 WorkingDirectory=/home/sergei/ai_appdir/ai_app
 Environment=DJANGO_SETTINGS_MODULE=settings
 Environment=DJANGO_ENV=prod

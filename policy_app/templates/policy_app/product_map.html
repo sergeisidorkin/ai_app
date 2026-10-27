@@ -1,0 +1,78 @@
+<div id="policy-pane"
+     data-header-root-label="Продукты"
+     data-header-root-url="{% url 'policy_partial' %}"
+     data-header-current-label="Карта продуктов"
+     data-header-current-url="{% url 'product_map' %}">
+  <div class="card shadow-sm policy-group-card">
+    <div class="card-body">
+      {% if product_maps %}
+        <div id="product-map-field" class="product-map-field"{% if request.user.is_authenticated and request.user.is_staff %} data-product-workspace-template="{% url 'product_workspace' 0 %}"{% endif %}>
+          <div class="product-map-board">
+            <div class="product-map-toolbar" role="toolbar" aria-label="Управление картой продуктов">
+              <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="1" aria-pressed="false">1</button>
+              <button type="button" class="btn btn-outline-primary btn-sm product-map-level is-active" data-product-map-level="2" aria-pressed="true">2</button>
+              <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="3" aria-pressed="false">3</button>
+              <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="4" aria-pressed="false">4</button>
+              <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="5" aria-pressed="false">5</button>
+              <div class="product-map-filters" role="group" aria-label="Фильтры карты продуктов">
+                  <div class="dropdown" data-product-map-filter="consulting">
+                    <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false">
+                      Вид консалтинга: <span data-product-map-filter-label>Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" value="__all__" id="product-map-consulting-filter-all" data-product-map-filter-all checked>
+                        <label class="form-check-label" for="product-map-consulting-filter-all">Все виды</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      <div data-product-map-filter-list></div>
+                    </div>
+                  </div>
+                  <div class="dropdown" data-product-map-filter="category">
+                    <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false">
+                      Тип услуги: <span data-product-map-filter-label>Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" value="__all__" id="product-map-category-filter-all" data-product-map-filter-all checked>
+                        <label class="form-check-label" for="product-map-category-filter-all">Все типы</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      <div data-product-map-filter-list></div>
+                    </div>
+                  </div>
+                  <div class="dropdown" data-product-map-filter="subtype">
+                    <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false">
+                      Подтип услуги: <span data-product-map-filter-label>Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" value="__all__" id="product-map-subtype-filter-all" data-product-map-filter-all checked>
+                        <label class="form-check-label" for="product-map-subtype-filter-all">Все подтипы</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      <div data-product-map-filter-list></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="product-map-zoom" role="group" aria-label="Масштаб">
+                  <span class="product-map-zoom-value" data-product-map-zoom-value>100%</span>
+                  <button type="button" class="btn btn-outline-primary btn-sm product-map-level product-map-zoom-btn" data-product-map-zoom="out" title="Уменьшить" aria-label="Уменьшить"></button>
+                  <button type="button" class="btn btn-outline-primary btn-sm product-map-level product-map-zoom-btn" data-product-map-zoom="in" title="Увеличить" aria-label="Увеличить"></button>
+                  <button type="button" class="btn btn-outline-primary btn-sm product-map-level product-map-fullscreen-btn" data-product-map-fullscreen="1" aria-pressed="false" title="Развернуть диаграмму на весь экран" aria-label="Развернуть диаграмму на весь экран">
+                    <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
+                  </button>
+                </div>
+            </div>
+            {% for item in product_maps %}
+              <div class="product-map-canvas" id="product-map-canvas-{{ forloop.counter }}"></div>
+            {% endfor %}
+          </div>
+        </div>
+      {% else %}
+        <p class="text-muted mb-0">Пока нет данных.</p>
+      {% endif %}
+    </div>
+  </div>
+  {{ product_maps|json_script:"product-map-data" }}
+</div>

@@ -22,7 +22,6 @@ from .models import (
     SpecialtyTariff,
     Tariff,
     TypicalSection,
-    TypicalSectionSpecialty,
     TypicalServiceComposition,
     TypicalServiceTerm,
 )
@@ -36,13 +35,6 @@ from .querysets import (
 
 class TimestampedAdmin(admin.ModelAdmin):
     readonly_fields = ("created_at", "updated_at")
-
-
-class TypicalSectionSpecialtyInline(admin.TabularInline):
-    model = TypicalSectionSpecialty
-    extra = 0
-    fields = ("rank", "specialty")
-    ordering = ("rank", "id")
 
 
 class ConsultingDirectionTypeInline(admin.TabularInline):
@@ -99,6 +91,7 @@ class ProductAdmin(TimestampedAdmin):
         "service_category_display",
         "service_code",
         "service_subtype_display",
+        "accuracy",
         "owner_display",
         "updated_at",
     )
@@ -113,6 +106,7 @@ class ProductAdmin(TimestampedAdmin):
         "service_category",
         "service_code",
         "service_subtype",
+        "accuracy",
     )
     filter_horizontal = ("owners",)
     ordering = ("position", "id")
@@ -127,10 +121,11 @@ class ProductAdmin(TimestampedAdmin):
                 "service_category_ref",
                 "service_code",
                 "service_subtype_ref",
+                "accuracy",
             ),
         }),
         ("Владельцы", {
-            "fields": ("is_group_owner", "owners"),
+            "fields": ("is_group_owner", "owners", "is_product_group", "group"),
         }),
         ("Служебные поля", {
             "fields": ("created_at", "updated_at"),
@@ -154,27 +149,31 @@ class TypicalSectionAdmin(TimestampedAdmin):
         "name_ru",
         "accounting_type",
         "expertise_dir",
-        "expertise_direction",
         "exclude_from_tkp_autofill",
         "is_system",
         "updated_at",
     )
     list_editable = ("position",)
     list_display_links = ("code",)
-    list_select_related = ("product", "expertise_dir", "expertise_direction")
-    list_filter = ("product", "accounting_type", "is_system", "expertise_dir", "expertise_direction")
-    search_fields = ("code", "short_name", "short_name_ru", "name_en", "name_ru", "product__short_name")
+    list_select_related = ("product", "service_block", "service_block__expertise_dir")
+    list_filter = ("product", "service_block__accounting_type", "is_system")
+    search_fields = (
+        "code",
+        "service_block__short_name",
+        "service_block__short_name_ru",
+        "name_en",
+        "name_ru",
+        "product__short_name",
+    )
     ordering = ("product__short_name", "position", "id")
-    inlines = (TypicalSectionSpecialtyInline,)
     fieldsets = (
         (None, {
             "fields": (
                 "position",
                 "product",
-                ("code", "accounting_type"),
-                ("short_name", "short_name_ru"),
+                "service_block",
+                "code",
                 ("name_en", "name_ru"),
-                ("expertise_dir", "expertise_direction"),
                 "exclude_from_tkp_autofill",
                 "is_system",
             ),
@@ -183,26 +182,6 @@ class TypicalSectionAdmin(TimestampedAdmin):
             "fields": ("created_at", "updated_at"),
         }),
     )
-
-
-@admin.register(TypicalSectionSpecialty)
-class TypicalSectionSpecialtyAdmin(admin.ModelAdmin):
-    list_display = ("rank", "section", "specialty", "section_product")
-    list_editable = ("rank",)
-    list_display_links = ("section",)
-    list_select_related = ("section", "section__product", "specialty")
-    list_filter = ("section__product",)
-    search_fields = (
-        "section__code",
-        "section__name_ru",
-        "section__product__short_name",
-        "specialty__specialty",
-    )
-    ordering = ("section__product__short_name", "section__position", "rank", "id")
-
-    @admin.display(description="Продукт", ordering="section__product__short_name")
-    def section_product(self, obj):
-        return obj.section.product
 
 
 @admin.register(SectionStructure)
@@ -381,6 +360,8 @@ class ServiceBlockClassifierAdmin(TimestampedAdmin):
         "code",
         "short_name",
         "short_name_ru",
+        "name_en",
+        "name_ru",
         "accounting_type",
         "expertise_dir",
         "expertise_direction",
@@ -390,7 +371,7 @@ class ServiceBlockClassifierAdmin(TimestampedAdmin):
     list_display_links = ("code",)
     list_select_related = ("expertise_dir", "expertise_direction")
     list_filter = ("accounting_type", "expertise_dir", "expertise_direction")
-    search_fields = ("code", "short_name", "short_name_ru")
+    search_fields = ("code", "short_name", "short_name_ru", "name_en", "name_ru")
     ordering = ("position", "id")
 
     def get_readonly_fields(self, request, obj=None):
@@ -405,6 +386,7 @@ class ServiceBlockClassifierAdmin(TimestampedAdmin):
                 "position",
                 "code",
                 ("short_name", "short_name_ru"),
+                ("name_en", "name_ru"),
                 "accounting_type",
                 ("expertise_dir", "expertise_direction"),
             ),

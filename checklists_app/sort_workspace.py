@@ -46,7 +46,7 @@ def project_sections(project):
         TypicalSection.objects.filter(product_id__in=product_ids)
         .exclude(is_system=True)
         .exclude(code__iexact="DSC")
-        .filter(accounting_type="Раздел")
+        .filter(service_block__accounting_type="Разделы")
         .order_by("position", "id")
     )
     sections.sort(

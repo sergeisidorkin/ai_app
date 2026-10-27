@@ -62,6 +62,43 @@ RUN chmod 0755 \
         /usr/local/bin/dsh-apply-brand \
     && chmod -R a+rX /usr/local/share/dsh
 
+# npm installs several copies of the Win32 helper. Importing two of them on
+# Linux registers the koffi type DSH_STARTUPINFOW twice and the web UI exits.
+# Keep the shallowest copy and point the other copies at it.
+RUN python3 - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+modules = Path("/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules")
+name = "dsh-win32-process"
+found = []
+for dirpath, dirnames, filenames in os.walk(modules, followlinks=False):
+    path = Path(dirpath)
+    dirnames[:] = [entry for entry in dirnames if not (path / entry).is_symlink()]
+    if path.name == name and path.parent.name == "@deepseek-ai" and "package.json" in filenames:
+        found.append(path)
+
+found.sort(key=lambda path: len(path.parts))
+if not found:
+    raise SystemExit(f"{name} was not installed")
+canonical = found[0]
+canonical_version = json.loads((canonical / "package.json").read_text()).get("version")
+linked = 0
+for path in found[1:]:
+    if path.is_symlink():
+        continue
+    version = json.loads((path / "package.json").read_text()).get("version")
+    if version != canonical_version:
+        continue
+    relative = Path(os.path.relpath(canonical, path.parent))
+    subprocess.check_call(["rm", "-rf", str(path)])
+    path.symlink_to(relative)
+    linked += 1
+print(f"deduped {linked} copies of {name} {canonical_version}")
+PY
+
 USER ${DSH_UID}:${DSH_GID}
 WORKDIR /workspace
 

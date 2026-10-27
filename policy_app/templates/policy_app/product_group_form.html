@@ -1,0 +1,55 @@
+<div class="modal-header">
+  <h5 class="modal-title">Объединить продукты</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<form method="post"
+      hx-post="{% url 'product_group_merge' %}"
+      hx-target="#policy-modal .modal-content"
+      hx-swap="innerHTML"
+      id="product-group-form">
+  <div class="modal-body modal-body-scroll">
+    {% csrf_token %}
+    {{ form.product_ids }}
+    {% if selection_error %}
+      <div class="alert alert-danger">{{ selection_error }}</div>
+    {% endif %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{{ form.non_field_errors.0 }}</div>
+    {% endif %}
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.short_name.id_for_label }}">Краткое имя</label>
+      {{ form.short_name }}
+      {% if form.short_name.errors %}
+        <div class="text-danger small mt-1">{{ form.short_name.errors.0 }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.name_en.id_for_label }}">Наименование на английском языке</label>
+      {{ form.name_en }}
+      {% if form.name_en.errors %}
+        <div class="text-danger small mt-1">{{ form.name_en.errors.0 }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.name_ru.id_for_label }}">Наименование на русском языке</label>
+      {{ form.name_ru }}
+      {% if form.name_ru.errors %}
+        <div class="text-danger small mt-1">{{ form.name_ru.errors.0 }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.display_name.id_for_label }}">Отображаемое в системе имя</label>
+      {{ form.display_name }}
+      {% if form.display_name.errors %}
+        <div class="text-danger small mt-1">{{ form.display_name.errors.0 }}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+    {% if not selection_error %}
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+    {% endif %}
+  </div>
+</form>

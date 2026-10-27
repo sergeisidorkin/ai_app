@@ -528,7 +528,10 @@ def _section_expertise_map(section_ids) -> dict[int, int | None]:
     if not section_ids:
         return {}
     return dict(
-        TypicalSection.objects.filter(pk__in=section_ids).values_list("id", "expertise_dir_id")
+        TypicalSection.objects.filter(pk__in=section_ids).values_list(
+            "id",
+            "service_block__expertise_dir_id",
+        )
     )
 
 

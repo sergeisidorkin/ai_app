@@ -1146,6 +1146,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "service_category": "",
             "service_subtype": "",
             "product_id": "",
+            "product_group_id": "",
             "product_short_label": "",
             "service_sections_payload": "[]",
             "service_sections_editor_state": "[]",
@@ -1180,6 +1181,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "type_service_category",
             "type_service_subtype",
             "type",
+            "row_group_id",
             "service_sections_payload",
             "service_sections_editor_state",
             "service_customer_tz_editor_state",
@@ -1229,6 +1231,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     rows_map["type_service_subtype"][index] if index < len(rows_map["type_service_subtype"]) else ""
                 ).strip(),
                 "product_id": product_id,
+                "product_group_id": (
+                    rows_map["row_group_id"][index] if index < len(rows_map["row_group_id"]) else ""
+                ).strip(),
                 "product_short_label": (getattr(product, "short_name", "") or "").strip(),
                 "service_sections_payload": (
                     rows_map["service_sections_payload"][index] if index < len(rows_map["service_sections_payload"]) else "[]"
@@ -1526,7 +1531,22 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         if self.is_bound:
             return self._build_stage_rows_from_bound_data()
         rows = self._build_stage_rows_from_instance()
-        return rows or [self._empty_stage_row()]
+        return self._attach_saved_product_groups(rows or [self._empty_stage_row()])
+
+    def _attach_saved_product_groups(self, rows):
+        instance = getattr(self, "instance", None)
+        if not instance or not getattr(instance, "pk", None):
+            for row in rows:
+                row.setdefault("product_group_id", "")
+            return rows
+        links = list(instance._ordered_product_links())
+        for index, row in enumerate(rows):
+            group_id = ""
+            product_id = str(row.get("product_id") or "")
+            if index < len(links) and str(links[index].product_id or "") == product_id:
+                group_id = str(links[index].product_group_id or "")
+            row["product_group_id"] = group_id
+        return rows
 
     def clean_group_member(self):
         member = self.cleaned_data.get("group_member")
@@ -2191,6 +2211,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     def _collect_stage_payloads(self):
         stage_payloads = []
         cleaned_product_ids = []
+        cleaned_group_ids = []
         for row in self.stage_rows:
             rank = int(row.get("rank") or len(stage_payloads) + 1)
             row_has_data = any(
@@ -2224,6 +2245,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 raise forms.ValidationError(f"Этап {rank}: выбранный продукт не найден.")
             ensure_system_dsc_section(product)
             cleaned_product_ids.append(product_id)
+            cleaned_group_ids.append(str(row.get("product_group_id") or "").strip())
 
             service_composition_mode = str(row.get("service_composition_mode") or "sections").strip() or "sections"
             if service_composition_mode not in {"sections", "customer_tz"}:
@@ -2367,6 +2389,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 }
             )
         self.cleaned_type_ids = cleaned_product_ids
+        self.cleaned_row_group_ids = cleaned_group_ids
         self.cleaned_stage_payloads = stage_payloads
         if not cleaned_product_ids:
             self.add_error("type_ids", "Укажите хотя бы один продукт.")
@@ -2569,7 +2592,13 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         return instance
 
     def _save_ranked_products(self, proposal):
+        from policy_app.product_groups import resolve_posted_group_ids
+
         product_ids = list(getattr(self, "cleaned_type_ids", []))
+        group_ids = resolve_posted_group_ids(
+            product_ids,
+            list(getattr(self, "cleaned_row_group_ids", [])),
+        )
         ProposalRegistrationProduct.objects.filter(proposal=proposal).delete()
         if not product_ids:
             return
@@ -2578,9 +2607,10 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 ProposalRegistrationProduct(
                     proposal=proposal,
                     product_id=product_id,
-                    rank=rank,
+                    product_group_id=group_ids[index],
+                    rank=index + 1,
                 )
-                for rank, product_id in enumerate(product_ids, start=1)
+                for index, product_id in enumerate(product_ids)
             ]
         )
 

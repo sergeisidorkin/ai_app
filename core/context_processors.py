@@ -88,8 +88,14 @@ def templates_sections_map(request):
         return {"TEMPLATES_SECTIONS_MAP": {}}
     try:
         sections = (
-            TypicalSection.objects.select_related("product")
-            .only("id", "name_ru", "short_name_ru", "position", "product__short_name")
+            TypicalSection.objects.select_related("product", "service_block")
+            .only(
+                "id",
+                "name_ru",
+                "position",
+                "product__short_name",
+                "service_block__short_name_ru",
+            )
             .order_by("product__short_name", "position", "id")
         )
         mapping = {}

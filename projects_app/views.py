@@ -497,7 +497,9 @@ def _product_option_label(product):
 
 
 def _registration_product_catalog():
-    products = list(Product.objects.order_by("position", "id"))
+    from policy_app.product_groups import catalog_group_payload, product_catalog_queryset
+
+    products = list(product_catalog_queryset())
     typical_terms = {}
     service_goal_reports = {}
     for item in (
@@ -561,6 +563,7 @@ def _registration_product_catalog():
                     "service_subtype": (product.service_subtype_display or "").strip(),
                     "service_goal_report": service_goal_reports.get(str(product.pk), {}),
                     "typical_service_terms": typical_terms.get(str(product.pk), {}),
+                    **catalog_group_payload(product),
                 }
                 for product in products
             ],
@@ -596,6 +599,7 @@ def _registration_selected_type_rows(form, registration=None):
         service_categories = _request_list(form.data, "type_service_category")
         service_subtypes = _request_list(form.data, "type_service_subtype")
         product_ids = _request_list(form.data, "type_id")
+        group_ids = _request_list(form.data, "row_group_id")
         row_count = max(
             len(consulting_types),
             len(service_categories),
@@ -611,6 +615,7 @@ def _registration_selected_type_rows(form, registration=None):
                 "service_category": service_categories[index] if index < len(service_categories) else "",
                 "service_subtype": service_subtypes[index] if index < len(service_subtypes) else "",
                 "product_id": product_ids[index] if index < len(product_ids) else "",
+                "product_group_id": group_ids[index] if index < len(group_ids) else "",
             }
             has_data = any(
                 row[key]
@@ -624,10 +629,28 @@ def _registration_selected_type_rows(form, registration=None):
             "service_category": "",
             "service_subtype": "",
             "product_id": "",
+            "product_group_id": "",
         }]
     if registration is None:
         registration = getattr(form, "instance", None)
     if registration and getattr(registration, "pk", None):
+        links = list(registration._ordered_product_links()) if hasattr(registration, "_ordered_product_links") else []
+        if links:
+            rows = []
+            for index, link in enumerate(links, start=1):
+                product = getattr(link, "product", None)
+                if product is None:
+                    continue
+                rows.append({
+                    "rank": index,
+                    "consulting_type": (product.consulting_type_display or "").strip(),
+                    "service_category": (product.service_category_display or "").strip(),
+                    "service_subtype": (product.service_subtype_display or "").strip(),
+                    "product_id": str(product.pk),
+                    "product_group_id": str(getattr(link, "product_group_id", "") or ""),
+                })
+            if rows:
+                return rows
         return [
             {
                 "rank": index,
@@ -635,6 +658,7 @@ def _registration_selected_type_rows(form, registration=None):
                 "service_category": (product.service_category_display or "").strip(),
                 "service_subtype": (product.service_subtype_display or "").strip(),
                 "product_id": str(product.pk),
+                "product_group_id": "",
             }
             for index, product in enumerate(registration.ordered_products(), start=1)
         ] or [{
@@ -643,6 +667,7 @@ def _registration_selected_type_rows(form, registration=None):
             "service_category": "",
             "service_subtype": "",
             "product_id": "",
+            "product_group_id": "",
         }]
     return [{
         "rank": 1,
@@ -650,6 +675,7 @@ def _registration_selected_type_rows(form, registration=None):
         "service_category": "",
         "service_subtype": "",
         "product_id": "",
+        "product_group_id": "",
     }]
 
 
@@ -1531,8 +1557,11 @@ def _ordered_registration_sections(registration):
         TypicalSection.objects
         .filter(product_id__in=product_ids)
         .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
-        .select_related("product", "expertise_dir")
-        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .select_related("product", "service_block", "service_block__expertise_dir")
+        .prefetch_related(
+            "service_block__ranked_specialties",
+            "service_block__ranked_specialties__specialty",
+        )
         .order_by("position", "id")
     )
     sections.sort(
@@ -2186,7 +2215,7 @@ def _performers_context(user=None, request=None):
             "registration__type",
             "typical_section",
             "typical_section__product",
-            "typical_section__expertise_direction",
+            "typical_section__service_block__expertise_direction",
             "employee",
             "employee__user",
             "currency",
@@ -2210,7 +2239,7 @@ def _performers_context(user=None, request=None):
             "registration__type",
             "typical_section",
             "typical_section__product",
-            "typical_section__expertise_direction",
+            "typical_section__service_block__expertise_direction",
             "employee",
             "employee__user",
             "currency",
@@ -2246,7 +2275,7 @@ def _performers_context(user=None, request=None):
         .filter(
             registration__status__in=active_participation_statuses,
             participation_response=Performer.ParticipationResponse.CONFIRMED,
-            typical_section__accounting_type="Раздел",
+            typical_section__service_block__accounting_type="Разделы",
         )
         .exclude(executor_trim="")
         .order_by("registration_id", "executor", "asset_name", "position", "id")
@@ -2448,7 +2477,7 @@ def _performers_context(user=None, request=None):
             "registration__type",
             "typical_section",
             "typical_section__product",
-            "typical_section__expertise_direction",
+            "typical_section__service_block__expertise_direction",
             "employee",
             "employee__user",
             "employee__expert_profile",
@@ -2892,7 +2921,7 @@ def _participation_batch_queryset():
             "registration",
             "registration__type",
             "typical_section",
-            "typical_section__expertise_direction",
+            "typical_section__service_block__expertise_direction",
             "employee",
             "employee__user",
             "currency",
@@ -3475,7 +3504,7 @@ def performer_form_edit(request, pk: int):
     GET:  отдать форму редактирования в модалку (с картами и привязками).
     POST: если невалидно — вернуть форму (200); если ок — 204 + HX-Trigger.
     """
-    p = get_object_or_404(Performer.objects.select_related("typical_section", "typical_section__expertise_direction", "employee", "employee__user"), pk=pk)
+    p = get_object_or_404(Performer.objects.select_related("typical_section", "typical_section__service_block__expertise_direction", "employee", "employee__user"), pk=pk)
     executor_locked = _is_executor_locked(request.user, p)
 
     if request.method == "GET":
@@ -3756,11 +3785,11 @@ def info_request_approval(request):
     if len(selected_performers) != len(performer_ids):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
     if any(
-        getattr(performer.typical_section, "accounting_type", None) != "Раздел"
+        getattr(performer.typical_section, "accounting_type", None) != "Разделы"
         for performer in selected_performers
     ):
         return JsonResponse(
-            {"ok": False, "error": "Запрос информации доступен только для строк с типом учета «Раздел»."},
+            {"ok": False, "error": "Запрос информации доступен только для строк с типом учета «Разделы»."},
             status=400,
         )
 

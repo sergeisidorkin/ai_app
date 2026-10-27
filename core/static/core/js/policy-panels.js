@@ -1820,43 +1820,27 @@
     row.appendChild(textCell('name_ru'));
 
     const typeTd = document.createElement('td');
-    typeTd.className = 'text-nowrap';
-    typeTd.setAttribute('data-inline-field', 'accounting_type');
-    typeTd.setAttribute('data-inline-type', 'select');
-    typeTd.setAttribute('data-inline-value', 'Раздел');
-    typeTd.textContent = 'Раздел';
+    typeTd.className = 'text-nowrap typical-section-derived-col';
+    typeTd.setAttribute('data-service-block-accounting', '');
     row.appendChild(typeTd);
 
     const specTd = document.createElement('td');
-    specTd.className = 'text-nowrap typical-section-executor-col inline-specialties-cell';
-    specTd.setAttribute('data-inline-field', 'specialty_ids');
-    specTd.setAttribute('data-inline-type', 'specialties');
-    specTd.setAttribute('data-inline-value', '[]');
-    specTd.innerHTML = (
-      '<div class="inline-specialties" data-count="0">'
-      + '<div class="inline-specialty-row" data-index="0" data-id="">'
-      + '<span class="inline-specialty-label">—</span>'
-      + '<span class="inline-specialty-icons">'
-      + '<span class="inline-specialty-actions"></span>'
-      + '<span class="inline-specialty-chevron" aria-hidden="true"></span>'
-      + '<button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>'
-      + '</span></div></div>'
-    );
+    specTd.className = 'text-nowrap typical-section-derived-col typical-section-executor-col';
+    specTd.setAttribute('data-service-block-executor', '');
+    specTd.textContent = '—';
     row.appendChild(specTd);
 
-    function selectCell(field) {
-      const td = document.createElement('td');
-      td.className = 'text-nowrap';
-      td.setAttribute('data-inline-field', field);
-      td.setAttribute('data-inline-type', 'select');
-      td.setAttribute('data-inline-value', '');
-      return td;
-    }
-    row.appendChild(selectCell('expertise_dir'));
-    row.appendChild(selectCell('expertise_direction'));
+    const expertiseTd = document.createElement('td');
+    expertiseTd.className = 'text-nowrap typical-section-derived-col';
+    expertiseTd.setAttribute('data-service-block-expertise', '');
+    row.appendChild(expertiseTd);
+    const departmentTd = document.createElement('td');
+    departmentTd.className = 'text-nowrap typical-section-derived-col';
+    departmentTd.setAttribute('data-service-block-department', '');
+    row.appendChild(departmentTd);
 
     const tkpTd = document.createElement('td');
-    tkpTd.className = 'text-center';
+    tkpTd.className = 'text-center typical-section-tkp-col';
     tkpTd.setAttribute('data-inline-field', 'exclude_from_tkp_autofill');
     tkpTd.setAttribute('data-inline-type', 'checkbox');
     tkpTd.setAttribute('data-inline-value', 'false');
@@ -3140,6 +3124,8 @@
     'sections-csv-download-btn',
     'service-goal-reports-csv-download-btn',
     'products-csv-download-btn',
+    'consulting-directions-csv-download-btn',
+    'service-block-classifiers-csv-download-btn',
   ];
 
   function updatePolicyMasterFilterDownloadLinks() {
@@ -3164,7 +3150,10 @@
   }
   function isVisiblePolicyRowCheckbox(box) {
     const tr = box?.closest('tr');
-    return !!tr && !tr.classList.contains('d-none') && !box.disabled;
+    return !!tr
+      && !tr.classList.contains('d-none')
+      && !tr.classList.contains('product-group-member-collapsed')
+      && !box.disabled;
   }
   function getRowChecksByName(name) {
     const root = pane();
@@ -3230,11 +3219,106 @@
     if (!actionsId) return null;
     return root.querySelector('#' + actionsId);
   }
+  function productGroupSignature(row) {
+    return [
+      row.dataset.consultingTypeRef || '',
+      row.dataset.serviceCategoryRef || '',
+      row.dataset.serviceCode || '',
+      row.dataset.serviceSubtypeRef || '',
+      row.dataset.ownerKey || '',
+    ].join('\u0001');
+  }
+
+  function syncProductGroupButtons() {
+    const merge = document.getElementById('products-merge-btn');
+    const ungroup = document.getElementById('products-ungroup-btn');
+    if (!merge && !ungroup) return;
+    const rows = getCheckedByName('product-select').map(function (box) {
+      return box.closest('tr');
+    }).filter(Boolean);
+    const hasGroup = rows.some(function (row) { return row.dataset.isProductGroup === '1'; });
+    let canMerge = false;
+    if (
+      !hasGroup
+      && rows.length >= 2
+      && rows.every(function (row) {
+        return row.dataset.inProductGroup !== '1' && row.dataset.isProductGroup !== '1';
+      })
+    ) {
+      const signature = productGroupSignature(rows[0]);
+      canMerge = rows.every(function (row) { return productGroupSignature(row) === signature; });
+    }
+    if (merge) {
+      merge.classList.toggle('d-none', !canMerge);
+      merge.classList.toggle('d-flex', canMerge);
+    }
+    if (ungroup) {
+      ungroup.classList.toggle('d-none', !hasGroup);
+      ungroup.classList.toggle('d-flex', hasGroup);
+    }
+  }
+
+  var PRODUCT_GROUP_COLLAPSE_KEY = 'product-groups-collapsed';
+
+  function loadProductGroupCollapsed() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(PRODUCT_GROUP_COLLAPSE_KEY) || '[]');
+      return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    } catch (err) {
+      return new Set();
+    }
+  }
+
+  function saveProductGroupCollapsed(collapsed) {
+    try {
+      window.localStorage.setItem(PRODUCT_GROUP_COLLAPSE_KEY, JSON.stringify(Array.from(collapsed)));
+    } catch (err) {
+      // The table still collapses for this page view.
+    }
+  }
+
+  function applyProductGroupCollapsed(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    const collapsed = loadProductGroupCollapsed();
+    scope.querySelectorAll('[data-product-group-toggle]').forEach(function (button) {
+      const id = String(button.getAttribute('data-product-group-toggle') || '');
+      button.setAttribute('aria-expanded', collapsed.has(id) ? 'false' : 'true');
+    });
+    scope.querySelectorAll('tr[data-product-group-member="1"]').forEach(function (row) {
+      if (row.closest('[data-policy-workspace="1"]')) {
+        row.classList.remove('product-group-member-collapsed');
+        return;
+      }
+      const hidden = collapsed.has(String(row.getAttribute('data-parent-id') || ''));
+      row.classList.toggle('product-group-member-collapsed', hidden);
+      if (hidden) {
+        row.querySelectorAll('input[name="product-select"]').forEach(function (box) {
+          box.checked = false;
+        });
+      }
+    });
+    syncProductGroupButtons();
+  }
+
+  function toggleProductGroupCollapsed(groupId) {
+    const collapsed = loadProductGroupCollapsed();
+    const id = String(groupId || '');
+    if (!id) return;
+    if (collapsed.has(id)) collapsed.delete(id);
+    else collapsed.add(id);
+    saveProductGroupCollapsed(collapsed);
+    applyProductGroupCollapsed(pane() || document);
+    updateMasterStateFor('product-select');
+    updateRowHighlightFor('product-select');
+    ensureActionsVisibility('product-select');
+  }
+
   function ensureActionsVisibility(name) {
     const panel = findActionsByName(name);
     if (!panel) return;
     const anyChecked = getCheckedByName(name).length > 0;
     panel.classList.toggle('d-none', !anyChecked);
+    if (name === 'product-select') syncProductGroupButtons();
   }
 
   function forgetPolicyTableSelection(name) {
@@ -11101,8 +11185,1721 @@
     window.__policyScrollRestoreY = window.scrollY || window.pageYOffset || 0;
   }
 
+  const PRODUCT_MAP_CSS = '/static/policy_app/vendor/jsmind/jsmind.css?v=20261024-1';
+  const PRODUCT_MAP_JS = '/static/policy_app/vendor/jsmind/jsmind.js?v=20261024-1';
+
+  function loadProductMapAssets() {
+    if (window.__productMapAssetsLoading) return window.__productMapAssetsLoading;
+    const cssLoaded = new Promise(function (resolve) {
+      let link = document.querySelector('link[href*="policy_app/vendor/jsmind/jsmind.css"]');
+      if (link?.sheet) {
+        resolve(true);
+        return;
+      }
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = PRODUCT_MAP_CSS;
+        link.addEventListener('load', function () { resolve(true); }, { once: true });
+        link.addEventListener('error', function () { resolve(false); }, { once: true });
+        document.head.appendChild(link);
+      } else {
+        link.addEventListener('load', function () { resolve(true); }, { once: true });
+        link.addEventListener('error', function () { resolve(false); }, { once: true });
+      }
+      window.setTimeout(function () { resolve(!!link.sheet); }, 2500);
+    });
+    window.__productMapAssetsLoading = new Promise(function (resolve) {
+      const finish = function (scriptLoaded) {
+        cssLoaded.then(function (styleLoaded) {
+          resolve(!!scriptLoaded && !!styleLoaded && typeof window.jsMind === 'function');
+        });
+      };
+      if (typeof window.jsMind === 'function') {
+        finish(true);
+        return;
+      }
+      const existingScript = document.querySelector('script[src*="policy_app/vendor/jsmind/jsmind.js"]');
+      if (existingScript) {
+        existingScript.addEventListener('load', function () { finish(true); }, { once: true });
+        existingScript.addEventListener('error', function () { resolve(false); }, { once: true });
+        window.setTimeout(function () { finish(typeof window.jsMind === 'function'); }, 2500);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = PRODUCT_MAP_JS;
+      script.onload = function () { finish(true); };
+      script.onerror = function () { resolve(false); };
+      document.head.appendChild(script);
+    });
+    return window.__productMapAssetsLoading;
+  }
+
+  const PRODUCT_MAP_EXPANDER_SIZE = 16;
+  const PRODUCT_MAP_ZOOM_MIN = 0.25;
+  const PRODUCT_MAP_ZOOM_MAX = 2;
+  const PRODUCT_MAP_ZOOM_STEP = 1.25;
+
+  function layoutProductMapScreen(field) {
+    const board = field && field.querySelector('.product-map-board');
+    if (!board || !field.isConnected || !board.getClientRects().length) return;
+    const canvas = board.querySelector('.product-map-canvas') || board;
+    const gutter = field.closest('.ps-3') || field;
+    if (board.classList.contains('product-map-board--fullscreen')) {
+      board.style.height = window.innerHeight + 'px';
+      return;
+    }
+    const top = Math.max(0, board.getBoundingClientRect().top);
+    // Keep the same inset under the canvas as there is to its left:
+    // gray page background, then the white card edge, then the blue field.
+    const inset = Math.max(0, Math.round(canvas.getBoundingClientRect().left - gutter.getBoundingClientRect().left));
+    const borderBottom = parseFloat(getComputedStyle(board).borderBottomWidth) || 0;
+    let height = Math.max(160, Math.floor(window.innerHeight - top - inset + borderBottom));
+    board.style.height = height + 'px';
+    for (let guard = 0; guard < 4; guard += 1) {
+      const overflow = document.documentElement.scrollHeight - window.innerHeight;
+      if (overflow <= 1) break;
+      const next = Math.floor(board.getBoundingClientRect().height - overflow);
+      if (next >= height) break;
+      height = Math.max(160, next);
+      board.style.height = height + 'px';
+    }
+  }
+
+  // jsMind sizes the drawing to the visible panel. Deeper levels extend past
+  // that box, and a scale transform only magnifies what was already clipped.
+  function ensureProductMapSurface(canvas) {
+    const inner = canvas && canvas.querySelector('.jsmind-inner');
+    const nodes = canvas && canvas.querySelector('jmnodes');
+    const svg = canvas && canvas.querySelector('svg.jsmind');
+    if (!inner || !nodes) return;
+    let maxX = 0;
+    let maxY = 0;
+    canvas.querySelectorAll('jmnode, jmexpander, .product-map-accuracy-header, .product-map-accuracy-band').forEach(function (element) {
+      if (element.style.display === 'none') return;
+      const left = parseFloat(element.style.left);
+      const top = parseFloat(element.style.top);
+      if (!isFinite(left) || !isFinite(top)) return;
+      maxX = Math.max(maxX, left + element.offsetWidth);
+      maxY = Math.max(maxY, top + element.offsetHeight);
+    });
+    const pad = 8;
+    const width = Math.max(canvas.clientWidth, Math.ceil(maxX + pad));
+    const height = Math.max(canvas.clientHeight, Math.ceil(maxY + pad));
+    inner.style.width = width + 'px';
+    inner.style.height = height + 'px';
+    nodes.style.width = width + 'px';
+    nodes.style.height = height + 'px';
+    if (!svg) return;
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    svg.style.overflow = 'visible';
+  }
+
+  function markProductMapZoom(canvas, scale) {
+    const field = canvas && canvas.closest && canvas.closest('#product-map-field');
+    if (!field || !isFinite(scale)) return;
+    const label = field.querySelector('[data-product-map-zoom-value]');
+    if (label) label.textContent = Math.round(scale * 100) + '%';
+    const outBtn = field.querySelector('[data-product-map-zoom="out"]');
+    const inBtn = field.querySelector('[data-product-map-zoom="in"]');
+    if (outBtn) outBtn.disabled = scale <= PRODUCT_MAP_ZOOM_MIN + 0.001;
+    if (inBtn) inBtn.disabled = scale >= PRODUCT_MAP_ZOOM_MAX - 0.001;
+  }
+
+  function setProductMapTransform(canvas, x, y, scale) {
+    const inner = canvas && canvas.querySelector('.jsmind-inner');
+    if (!inner) return;
+    markProductMapZoom(canvas, scale);
+    if (scale === 1 && x === 0 && y === 0) {
+      inner.style.transform = '';
+      inner.style.transformOrigin = '';
+      return;
+    }
+    inner.style.transformOrigin = '0 0';
+    inner.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(' + scale + ')';
+  }
+
+  function productMapContentBounds(canvas) {
+    const inner = canvas.querySelector('.jsmind-inner');
+    if (!inner) return null;
+    const origin = inner.getBoundingClientRect();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    function include(element) {
+      if (!element || element.style.display === 'none') return;
+      if (!element.offsetWidth && !element.offsetHeight) return;
+      const rect = element.getBoundingClientRect();
+      minX = Math.min(minX, rect.left - origin.left);
+      minY = Math.min(minY, rect.top - origin.top);
+      maxX = Math.max(maxX, rect.right - origin.left);
+      maxY = Math.max(maxY, rect.bottom - origin.top);
+    }
+    canvas.querySelectorAll('jmnode, jmexpander, .product-map-accuracy-header, .product-map-accuracy-band').forEach(include);
+    if (!isFinite(minX) || maxX <= minX || maxY <= minY) return null;
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
+  function fitProductMapView(state) {
+    const canvas = state && state.canvas;
+    if (!canvas) return;
+    setProductMapTransform(canvas, 0, 0, 1);
+    const bounds = productMapContentBounds(canvas);
+    const viewW = canvas.clientWidth;
+    const viewH = canvas.clientHeight;
+    if (!bounds || viewW <= 0 || viewH <= 0) return;
+    const pad = 24;
+    let scale = Math.min((viewW - pad) / bounds.w, (viewH - pad) / bounds.h, 1);
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    state.scale = scale;
+    state.x = (viewW - bounds.w * scale) / 2 - bounds.x * scale;
+    state.y = (viewH - bounds.h * scale) / 2 - bounds.y * scale;
+    setProductMapTransform(canvas, state.x, state.y, state.scale);
+  }
+
+  function zoomProductMapAt(state, factor, clientX, clientY) {
+    if (!state || !state.canvas || !isFinite(factor) || factor <= 0) return;
+    const current = state.scale || 1;
+    const floor = Math.min(PRODUCT_MAP_ZOOM_MIN, current);
+    const next = Math.min(PRODUCT_MAP_ZOOM_MAX, Math.max(floor, current * factor));
+    if (Math.abs(next - current) < 0.0001) return;
+    const rect = state.canvas.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const contentX = (px - state.x) / current;
+    const contentY = (py - state.y) / current;
+    state.scale = next;
+    state.x = px - contentX * next;
+    state.y = py - contentY * next;
+    setProductMapTransform(state.canvas, state.x, state.y, state.scale);
+  }
+
+  function bindProductMapPointer(state) {
+    const canvas = state.canvas;
+    if (!canvas || canvas.__productMapPointer) return;
+    canvas.__productMapPointer = true;
+    canvas.addEventListener('wheel', function (event) {
+      if (!canvas.isConnected) return;
+      event.preventDefault();
+      let delta = event.deltaY;
+      if (event.deltaMode === 1) delta *= 16;
+      else if (event.deltaMode === 2) delta *= canvas.clientHeight;
+      if (!delta) return;
+      zoomProductMapAt(state, Math.exp(-delta * 0.0015), event.clientX, event.clientY);
+    }, { passive: false });
+    canvas.addEventListener('pointerdown', function (event) {
+      if (event.button !== 0) return;
+      if (event.target.closest && event.target.closest('jmexpander')) return;
+      const productNode = event.target.closest && event.target.closest('jmnode[data-product-id]');
+      state.drag = {
+        id: event.pointerId,
+        sx: event.clientX,
+        sy: event.clientY,
+        x: state.x,
+        y: state.y,
+        productId: productNode ? productNode.dataset.productId : '',
+      };
+      if (!productNode) canvas.classList.add('is-panning');
+      try {
+        if (canvas.setPointerCapture) canvas.setPointerCapture(event.pointerId);
+      } catch (err) {}
+      event.preventDefault();
+    });
+    canvas.addEventListener('pointermove', function (event) {
+      const drag = state.drag;
+      if (!drag || event.pointerId !== drag.id) return;
+      const dx = event.clientX - drag.sx;
+      const dy = event.clientY - drag.sy;
+      if (drag.productId && !canvas.classList.contains('is-panning')) {
+        if (Math.abs(dx) <= 4 && Math.abs(dy) <= 4) return;
+        canvas.classList.add('is-panning');
+      }
+      state.x = drag.x + dx;
+      state.y = drag.y + dy;
+      setProductMapTransform(canvas, state.x, state.y, state.scale);
+    });
+    function endDrag(event, cancelled) {
+      const drag = state.drag;
+      if (!drag || (event && event.pointerId !== drag.id)) return;
+      const dx = event ? event.clientX - drag.sx : 0;
+      const dy = event ? event.clientY - drag.sy : 0;
+      const moved = Math.abs(dx) > 4 || Math.abs(dy) > 4;
+      state.drag = null;
+      canvas.classList.remove('is-panning');
+      if (!cancelled && drag.productId && !moved) openProductMapProduct(canvas, drag.productId);
+    }
+    canvas.addEventListener('pointerup', function (event) { endDrag(event, false); });
+    canvas.addEventListener('pointercancel', function (event) { endDrag(event, true); });
+  }
+
+  function bindProductMapScreen(field) {
+    if (field.__productMapScreenBound) return;
+    field.__productMapScreenBound = true;
+    let frame = 0;
+    let fittedWidth = 0;
+    let fittedHeight = 0;
+    field.__productMapRefitNow = function (force) {
+      if (!field.isConnected) return;
+      layoutProductMapScreen(field);
+      const board = field.querySelector('.product-map-board');
+      const width = board ? board.clientWidth : 0;
+      const height = board ? board.clientHeight : 0;
+      if (!force && Math.abs(width - fittedWidth) < 1 && Math.abs(height - fittedHeight) < 1) return;
+      fittedWidth = width;
+      fittedHeight = height;
+      (field.__productMapInstances || []).forEach(function (state) {
+        setProductMapTransform(state.canvas, 0, 0, 1);
+        state.jm.resize();
+        syncProductMapAccuracyHeaders(state);
+        unifyProductMapRails(state.canvas);
+        ensureProductMapSurface(state.canvas);
+        fitProductMapView(state);
+      });
+    };
+    const schedule = function () {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(function () {
+        frame = 0;
+        if (!field.isConnected) {
+          document.body.classList.remove('product-map-fullscreen-active');
+          window.removeEventListener('resize', schedule);
+          if (field.__productMapObserver) field.__productMapObserver.disconnect();
+          return;
+        }
+        field.__productMapRefitNow(false);
+      });
+    };
+    window.addEventListener('resize', schedule);
+    if (typeof ResizeObserver === 'function') {
+      const main = document.querySelector('main');
+      field.__productMapObserver = new ResizeObserver(schedule);
+      field.__productMapObserver.observe(main || field);
+    }
+  }
+
+  function renderProductMapLine(line) {
+    const path = line && line.ctx;
+    const start = line && line.start_point;
+    const end = line && line.end_point;
+    if (!path || !start || !end || typeof path.setAttribute !== 'function') return;
+    const x1 = Math.round(start.x);
+    const y1 = Math.round(start.y);
+    const x2 = Math.round(end.x);
+    const y2 = Math.round(end.y);
+    // A single child, and the middle child of an odd group, sit on the
+    // parent's center. A curve there shows up as a kink, so draw a line.
+    if (Math.abs(y1 - y2) <= 2) {
+      const y = Math.round((y1 + y2) / 2);
+      path.setAttribute('d', 'M ' + x1 + ' ' + y + ' L ' + x2 + ' ' + y);
+      return;
+    }
+    const bend = x1 + Math.round((x2 - x1) * 2 / 3);
+    path.setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + bend + ' ' + y1 + ', ' + x1 + ' ' + y2 + ', ' + x2 + ' ' + y2);
+  }
+
+  function syncProductMapExpanders(container) {
+    if (!container) return;
+    container.querySelectorAll('jmexpander').forEach(function (expander) {
+      const open = expander.textContent.trim() === '\u2212' || expander.textContent.trim() === '-';
+      if (open) expander.textContent = '\u2212';
+      expander.classList.toggle('is-open', open);
+      const inner = container.querySelector('.jsmind-inner');
+      const transform = inner && inner.style.transform;
+      if (transform && !/scale\(1(?:\.0+)?\)/.test(transform)) return;
+      const node = container.querySelector('jmnode[nodeid="' + expander.getAttribute('nodeid') + '"]');
+      if (!node) return;
+      const nodeRect = node.getBoundingClientRect();
+      const expanderRect = expander.getBoundingClientRect();
+      const dx = nodeRect.right - (expanderRect.left + expanderRect.width / 2);
+      const dy = ((nodeRect.top + nodeRect.bottom) / 2) - ((expanderRect.top + expanderRect.bottom) / 2);
+      if (Math.abs(dx) < 0.4 && Math.abs(dy) < 0.4) return;
+      const left = parseFloat(expander.style.left) || 0;
+      const top = parseFloat(expander.style.top) || 0;
+      expander.style.left = (left + dx) + 'px';
+      expander.style.top = (top + dy) + 'px';
+    });
+  }
+
+  function productMapVisibleDepth(root) {
+    let maxDepth = 1;
+    (function walk(node, depth) {
+      if (depth > maxDepth) maxDepth = depth;
+      if (!node.expanded) return;
+      (node.children || []).forEach(function (child) { walk(child, depth + 1); });
+    })(root, 1);
+    return maxDepth;
+  }
+
+  function markProductMapLevel(field, level) {
+    field.querySelectorAll('[data-product-map-level]').forEach(function (button) {
+      const active = String(button.dataset.productMapLevel) === String(level);
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  function clearProductMapOffsetCache(node) {
+    const layout = node && node._data && node._data.layout;
+    if (layout) {
+      delete layout._offset_;
+      delete layout._pout_;
+    }
+    (node.children || []).forEach(clearProductMapOffsetCache);
+  }
+
+  // Shorten a column gap when only some filter options are enabled. Every
+  // option keeps the full gap; a single option uses the compact gap.
+  function productMapFilteredColumnGap(jm, field, filterKey, openSteps, fullGap, baseGap) {
+    const group = field && field.querySelector('[data-product-map-filter="' + filterKey + '"]');
+    const boxes = group ? Array.from(group.querySelectorAll('[data-product-map-filter-value]')) : [];
+    const total = boxes.length;
+    const state = field && field.__productMapFilterState && field.__productMapFilterState[filterKey];
+    const selected = !total || !state || state.all
+      ? total
+      : boxes.filter(function (box) { return box.checked; }).length;
+    if (!jm.__productMapFullColumnGap) jm.__productMapFullColumnGap = {};
+    const key = filterKey + ':' + openSteps;
+    if (!total || selected >= total) {
+      if (total) jm.__productMapFullColumnGap[key] = fullGap;
+      return fullGap;
+    }
+    const maxGap = jm.__productMapFullColumnGap[key] || fullGap;
+    if (openSteps <= 0 || total <= 1) return maxGap;
+    const share = Math.max(0, selected - 1) / (total - 1);
+    return Math.round(baseGap + (maxGap - baseGap) * share);
+  }
+
+  function productMapServiceFan(root) {
+    return (root.children || []).reduce(function (max, node) {
+      const children = node.children || [];
+      let minY = Infinity;
+      let maxY = -Infinity;
+      children.forEach(function (child) {
+        const layout = child._data && child._data.layout;
+        if (!layout || layout.offset_y == null) return;
+        minY = Math.min(minY, layout.offset_y);
+        maxY = Math.max(maxY, layout.offset_y);
+      });
+      return Math.max(max, maxY > minY ? maxY - minY : 0);
+    }, 0);
+  }
+
+  // Same-depth nodes share a left edge. The root keeps its center at the
+  // origin, so every line can leave the middle of its right edge.
+  function alignProductMapColumns(jm) {
+    const root = jm.get_root && jm.get_root();
+    const rootWidth = root && root._data && root._data.view ? root._data.view.width : 0;
+    if (!root || !rootWidth) return;
+    const baseGap = (jm.options.layout && jm.options.layout.hspace) || 36;
+    const visibleDepth = productMapVisibleDepth(root);
+    const openSteps = Math.max(0, visibleDepth - 2);
+    const span = Math.max(
+      root._data.layout.outer_height_right || 0,
+      root._data.layout.outer_height_left || 0
+    );
+    // Levels 1–2 stay compact. Each deeper opened level lengthens the run
+    // from the root so those curves do not collapse into vertical strokes.
+    // That full run is the distance with every consulting type enabled. Fewer
+    // links from the root shorten it, down to the compact gap for a single type.
+    const spreadGap = openSteps === 0
+      ? baseGap
+      : Math.round(Math.min(760, Math.max(baseGap + openSteps * 80, span * 0.22)));
+    const linkCount = (root.children || []).length;
+    const field = jm.view && jm.view.container && jm.view.container.closest
+      ? jm.view.container.closest('#product-map-field')
+      : null;
+    const catalog = field && field.__productMapCatalog && field.__productMapCatalog.consulting;
+    const totalLinks = Math.max(linkCount, catalog ? catalog.length : linkCount);
+    const filter = field && field.__productMapFilterState && field.__productMapFilterState.consulting;
+    const selectedLinks = filter && !filter.all ? filter.ids.size : totalLinks;
+    if (!jm.__productMapFullRootGap) jm.__productMapFullRootGap = {};
+    const treeFilters = field && field.__productMapFilterState;
+    const treeComplete = !treeFilters
+      || ((!treeFilters.category || treeFilters.category.all) && (!treeFilters.subtype || treeFilters.subtype.all));
+    if (selectedLinks >= totalLinks && treeComplete) jm.__productMapFullRootGap[openSteps] = spreadGap;
+    const maxGap = jm.__productMapFullRootGap[openSteps] || spreadGap;
+    let rootGap = maxGap;
+    if (openSteps > 0 && totalLinks > 1 && selectedLinks < totalLinks) {
+      const share = Math.max(0, selectedLinks - 1) / (totalLinks - 1);
+      rootGap = Math.round(baseGap + (maxGap - baseGap) * share);
+    }
+    const laterGap = baseGap + openSteps * 18;
+    // Provisional run. The real one is measured from the loose product stack
+    // below, so the compact pass cannot shrink this horizontal gap.
+    let serviceSpan = jm.__productMapLooseServiceFan || 0;
+    const nodesByDepth = [];
+    (function walk(node, depth) {
+      if (!nodesByDepth[depth]) nodesByDepth[depth] = [];
+      nodesByDepth[depth].push(node);
+      (node.children || []).forEach(function (child) { walk(child, depth + 1); });
+    })(root, 0);
+    function serviceFullGapFor(span) {
+      // Five service types under one consulting type fan out much farther than
+      // the compact column gap. Lengthen that run the same way as the root,
+      // from the tallest loose fan, and only while every service type is enabled.
+      if (openSteps === 0) return baseGap;
+      return Math.round(Math.min(760, Math.max(baseGap + openSteps * 80, span * 0.22)));
+    }
+    function placeColumns(serviceGap) {
+      const columnLeft = [-rootWidth / 2];
+      for (let depth = 1; depth < nodesByDepth.length; depth += 1) {
+        const maxWidth = nodesByDepth[depth - 1].reduce(function (max, node) {
+          if (isProductMapProduct(node)) return max;
+          const width = node._data && node._data.view ? node._data.view.width || 0 : 0;
+          return Math.max(max, width);
+        }, 0);
+        const gap = depth === 1 ? rootGap : (depth === 2 ? serviceGap : laterGap);
+        columnLeft[depth] = columnLeft[depth - 1] + maxWidth + gap;
+      }
+      (function place(node, depth, parentOffsetX) {
+        const layout = node._data && node._data.layout;
+        const product = isProductMapProduct(node);
+        if (!node.isroot && layout && !product) {
+          layout.offset_x = columnLeft[depth] - parentOffsetX;
+        }
+        const nextOffsetX = node.isroot || !layout || product ? 0 : parentOffsetX + layout.offset_x;
+        (node.children || []).forEach(function (child) {
+          place(child, depth + 1, node.isroot ? 0 : nextOffsetX);
+        });
+      })(root, 0, 0);
+    }
+    let serviceGap = productMapFilteredColumnGap(
+      jm, field, 'category', openSteps, serviceFullGapFor(serviceSpan), baseGap
+    );
+    placeColumns(serviceGap);
+    let accuracyColumns = buildProductMapAccuracyColumns(jm, root, laterGap);
+    if (openSteps > 0) {
+      clearProductMapOffsetCache(root);
+      reflowProductMapVertical(jm, root, accuracyColumns, false);
+      const measured = productMapServiceFan(root);
+      if (measured > 0) {
+        jm.__productMapLooseServiceFan = measured;
+        const looseGap = productMapFilteredColumnGap(
+          jm, field, 'category', openSteps, serviceFullGapFor(measured), baseGap
+        );
+        if (looseGap !== serviceGap) {
+          serviceGap = looseGap;
+          placeColumns(serviceGap);
+          accuracyColumns = buildProductMapAccuracyColumns(jm, root, laterGap);
+        }
+      }
+    }
+    clearProductMapOffsetCache(root);
+    reflowProductMapVertical(jm, root, accuracyColumns, true);
+    placeProductMapAccuracyHeader(jm, root);
+    clearProductMapOffsetCache(root);
+    jm.layout.cache_valid = false;
+  }
+
+  const PRODUCT_MAP_ACCURACY = ['>50%', '±30\u201350%', '±20\u201330%', '±10\u201320%', '<10%'];
+  const PRODUCT_MAP_ACCURACY_HEADER = 28;
+  const PRODUCT_MAP_ACCURACY_HEADER_GAP = 24;
+  const PRODUCT_MAP_ACCURACY_BAND_GAP = 12;
+  const PRODUCT_MAP_ACCURACY_STEP = 12;
+
+  function isProductMapProduct(node) {
+    return !!(node && node.data && node.data.mapKind === 'product');
+  }
+
+  function productMapAccuracyIndex(node) {
+    const accuracy = node && node.data && node.data.accuracy;
+    if (accuracy == null || String(accuracy).trim() === '') return -1;
+    const index = PRODUCT_MAP_ACCURACY.indexOf(accuracy);
+    return index >= 0 ? index : -1;
+  }
+
+  function collectVisibleProductMapProducts(root) {
+    const products = [];
+    (function walk(node) {
+      if (!node || !node.expanded) return;
+      (node.children || []).forEach(function (child) {
+        if (isProductMapProduct(child)) products.push(child);
+        else walk(child);
+      });
+    })(root);
+    return products;
+  }
+
+  // One accuracy scale for the whole map. Every product of a given accuracy
+  // shares the column's left edge, whichever branch it belongs to.
+  function buildProductMapAccuracyColumns(jm, root, gap) {
+    const products = collectVisibleProductMapProducts(root);
+    if (!products.length) {
+      jm.__productMapAccuracy = null;
+      return null;
+    }
+    let structureRight = 0;
+    (function walk(node) {
+      if (!node || isProductMapProduct(node)) return;
+      const width = node._data && node._data.view ? node._data.view.width || 0 : 0;
+      const offset = jm.layout.get_node_offset(node);
+      const left = node.isroot ? offset.x - width / 2 : offset.x;
+      structureRight = Math.max(structureRight, left + width);
+      if (!node.expanded) return;
+      (node.children || []).forEach(walk);
+    })(root);
+    const hasBlank = products.some(function (product) {
+      return productMapAccuracyIndex(product) < 0;
+    });
+    const slots = [];
+    if (hasBlank) slots.push({ accuracyIndex: -1, label: '', plain: true });
+    PRODUCT_MAP_ACCURACY.forEach(function (label, index) {
+      slots.push({ accuracyIndex: index, label: label, plain: false });
+    });
+    const widths = slots.map(function () { return 84; });
+    products.forEach(function (product) {
+      const accuracyIndex = productMapAccuracyIndex(product);
+      const slot = slots.findIndex(function (item) { return item.accuracyIndex === accuracyIndex; });
+      if (slot < 0) return;
+      const view = product._data && product._data.view;
+      const element = view && view.element;
+      const width = element && element.offsetWidth ? element.offsetWidth : (view ? view.width || 0 : 0);
+      widths[slot] = Math.max(widths[slot], width);
+    });
+    const columnWidth = widths.reduce(function (max, width) { return Math.max(max, width); }, 0);
+    const columns = [];
+    // Pad the shade by the visible gap between two products stacked under one
+    // subtype. The layout gap is partly covered by the node border.
+    const vspace = 12;
+    let borderExtra = 0;
+    products.forEach(function (product) {
+      const view = product._data && product._data.view;
+      const element = view && view.element;
+      if (!view || !element || !element.offsetHeight) return;
+      borderExtra = Math.max(borderExtra, element.offsetHeight - (view.height || 0));
+    });
+    const inset = Math.max(0, Math.round(vspace - borderExtra));
+    let bandLeft = structureRight + gap;
+    slots.forEach(function (slot) {
+      columns.push({
+        left: bandLeft + inset,
+        width: columnWidth,
+        bandLeft: bandLeft,
+        bandWidth: columnWidth + inset * 2,
+        label: slot.label,
+        plain: slot.plain,
+        accuracyIndex: slot.accuracyIndex,
+      });
+      bandLeft += columnWidth + inset * 2 + PRODUCT_MAP_ACCURACY_BAND_GAP;
+    });
+    jm.__productMapAccuracy = { columns: columns, top: 0 };
+    return columns;
+  }
+
+  function placeProductMapAccuracyHeader(jm, root) {
+    const spec = jm.__productMapAccuracy;
+    if (!spec) return;
+    let minTop = Infinity;
+    let maxBottom = -Infinity;
+    (function walk(node) {
+      if (!node) return;
+      const view = node._data && node._data.view;
+      const offset = jm.layout.get_node_offset(node);
+      const height = view ? view.height || 0 : 0;
+      minTop = Math.min(minTop, offset.y - height / 2);
+      maxBottom = Math.max(maxBottom, offset.y + height / 2);
+      if (!node.expanded) return;
+      (node.children || []).forEach(walk);
+    })(root);
+    const contentTop = isFinite(minTop) ? minTop : 0;
+    spec.headerTop = contentTop - PRODUCT_MAP_ACCURACY_HEADER_GAP - PRODUCT_MAP_ACCURACY_HEADER;
+    spec.top = spec.headerTop + PRODUCT_MAP_ACCURACY_HEADER;
+    spec.bottom = (isFinite(maxBottom) ? maxBottom : spec.top) + 16;
+  }
+
+  // Products that share a parent use one accuracy scale. Members of one group
+  // stay on a single row across those columns, so the row can be one straight line.
+  function placeProductMapAccuracyRow(node, products, columns, parentAbsX, compact) {
+    const vspace = 12;
+    const parentView = node._data && node._data.view;
+    const parentH = parentView ? parentView.height || 0 : 0;
+    const annotated = [];
+    products.forEach(function (product) {
+      const accuracyIndex = productMapAccuracyIndex(product);
+      const column = columns.findIndex(function (item) {
+        return item.accuracyIndex === accuracyIndex;
+      });
+      if (column < 0) return;
+      const groupId = product.data && product.data.productGroupId;
+      annotated.push({
+        product: product,
+        column: column,
+        height: product._data && product._data.view ? product._data.view.height || 0 : 0,
+        groupId: groupId == null || groupId === '' ? null : String(groupId),
+      });
+    });
+    const rows = [];
+    const placed = new Set();
+    function addRow(groupId) {
+      const row = { cells: new Map(), groupId: groupId || null };
+      rows.push(row);
+      return row;
+    }
+    // A group row holds only that group's products. Another product, even in a
+    // free accuracy column, stays on its own line.
+    function findOpenRow(column, groupId, start) {
+      for (let index = start; index < rows.length; index += 1) {
+        if (rows[index].groupId !== groupId) continue;
+        if (!rows[index].cells.has(column)) return rows[index];
+      }
+      return addRow(groupId);
+    }
+    annotated.forEach(function (item) {
+      if (placed.has(item)) return;
+      if (!item.groupId) {
+        findOpenRow(item.column, null, 0).cells.set(item.column, item);
+        placed.add(item);
+        return;
+      }
+      const members = annotated.filter(function (other) { return other.groupId === item.groupId; });
+      const primary = [];
+      const overflow = [];
+      const seen = new Set();
+      members.forEach(function (member) {
+        if (seen.has(member.column)) overflow.push(member);
+        else {
+          seen.add(member.column);
+          primary.push(member);
+        }
+      });
+      let row = null;
+      for (let index = 0; index < rows.length; index += 1) {
+        if (rows[index].groupId !== item.groupId) continue;
+        if (primary.every(function (member) { return !rows[index].cells.has(member.column); })) {
+          row = rows[index];
+          break;
+        }
+      }
+      if (!row) row = addRow(item.groupId);
+      primary.forEach(function (member) {
+        row.cells.set(member.column, member);
+        placed.add(member);
+      });
+      const afterGroup = rows.indexOf(row) + 1;
+      overflow.forEach(function (member) {
+        findOpenRow(member.column, item.groupId, afterGroup).cells.set(member.column, member);
+        placed.add(member);
+      });
+    });
+    let below = 0;
+    let aboveLine = 0;
+    let belowLine = 0;
+    rows.forEach(function (row, rowIndex) {
+      let rowHeight = 0;
+      row.cells.forEach(function (item) {
+        rowHeight = Math.max(rowHeight, item.height);
+      });
+      const center = rowIndex === 0 ? 0 : below + vspace + rowHeight / 2;
+      below = rowIndex === 0 ? rowHeight / 2 : center + rowHeight / 2;
+      row.cells.forEach(function (item) {
+        const layout = item.product._data && item.product._data.layout;
+        if (!layout) return;
+        layout.offset_x = columns[item.column].left - parentAbsX;
+        layout.offset_y = center;
+        aboveLine = Math.max(aboveLine, item.height / 2 - center);
+        belowLine = Math.max(belowLine, center + item.height / 2);
+      });
+    });
+    const above = Math.max(parentH / 2, aboveLine);
+    const belowExtent = Math.max(parentH / 2, belowLine);
+    // The first row stays on the subtype line. A symmetric slot would reserve
+    // the same empty space above that row; compact mode keeps only the real extent.
+    return {
+      slot: compact ? above + belowExtent : Math.max(above, belowExtent) * 2,
+      above: above,
+      below: belowExtent,
+      centerShift: 0,
+    };
+  }
+
+  // Pack each child by the box it actually occupies. The anchor stays on the
+  // node's own center, so a product row that starts there is not lifted.
+  function productMapStackPacked(items, vspace) {
+    const count = items.length;
+    if (!count) return { centers: [], total: 0 };
+    const raw = new Array(count);
+    let cursor = 0;
+    for (let index = 0; index < count; index += 1) {
+      const above = items[index].above || 0;
+      const below = items[index].below || 0;
+      raw[index] = cursor + above;
+      cursor += above + below + vspace;
+    }
+    const total = cursor - vspace;
+    const shift = -total / 2;
+    return {
+      centers: raw.map(function (value) { return value + shift; }),
+      total: total,
+    };
+  }
+
+  function productMapStackCenters(heights, vspace) {
+    const count = heights.length;
+    if (!count) return { centers: [], total: 0 };
+    const raw = new Array(count);
+    let cursor = 0;
+    for (let index = count - 1; index >= 0; index -= 1) {
+      const height = heights[index];
+      raw[index] = cursor - height / 2;
+      cursor = cursor - height - vspace;
+    }
+    let total = 0;
+    heights.forEach(function (height) { total += height; });
+    if (count > 1) total += vspace * (count - 1);
+    const shift = total / 2;
+    return {
+      centers: raw.map(function (value) { return value + shift; }),
+      total: total,
+    };
+  }
+
+  function reflowProductMapVertical(jm, node, columns, compact) {
+    const view = node && node._data && node._data.view;
+    const viewH = view ? view.height || 0 : 0;
+    const layout = node && node._data && node._data.layout;
+    if (!layout) return viewH;
+    if (layout.productMapAccuracy) delete layout.productMapAccuracy;
+    if (!node.expanded) {
+      layout.outer_height = viewH;
+      layout.productMapAbove = viewH / 2;
+      layout.productMapBelow = viewH / 2;
+      return viewH;
+    }
+    const products = [];
+    const others = [];
+    (node.children || []).forEach(function (child) {
+      if (child.data && child.data.mapKind === 'product') products.push(child);
+      else others.push(child);
+    });
+    const heights = others.map(function (child) {
+      return reflowProductMapVertical(jm, child, columns, compact);
+    });
+    let metrics = null;
+    if (products.length && columns) {
+      const parentAbsX = jm.layout.get_node_offset(node).x;
+      metrics = placeProductMapAccuracyRow(node, products, columns, parentAbsX, compact);
+      if (!compact) heights.push(metrics.slot);
+    }
+    const vspace = (jm.options.layout && jm.options.layout.vspace) || 12;
+    const placed = compact
+      ? productMapStackPacked(others.map(function (child) {
+        const childLayout = child._data && child._data.layout;
+        return {
+          above: childLayout ? childLayout.productMapAbove || 0 : 0,
+          below: childLayout ? childLayout.productMapBelow || 0 : 0,
+        };
+      }).concat(metrics ? [{ above: metrics.above, below: metrics.below }] : []), vspace)
+      : productMapStackCenters(heights, vspace);
+    others.forEach(function (child, index) {
+      if (child._data && child._data.layout) child._data.layout.offset_y = placed.centers[index];
+    });
+    if (metrics) {
+      // A subtype's first product row is anchored on the subtype itself.
+      // Shifting that row would lift every product off the branch line.
+      const shift = others.length ? (placed.centers[others.length] || 0) : 0;
+      metrics.centerShift = shift;
+      products.forEach(function (product) {
+        if (product._data && product._data.layout) product._data.layout.offset_y += shift;
+      });
+      layout.productMapAccuracy = metrics;
+    }
+    if (compact) {
+      let contentTop = -viewH / 2;
+      let contentBottom = viewH / 2;
+      others.forEach(function (child) {
+        const childLayout = child._data && child._data.layout;
+        if (!childLayout) return;
+        contentTop = Math.min(contentTop, childLayout.offset_y - (childLayout.productMapAbove || 0));
+        contentBottom = Math.max(contentBottom, childLayout.offset_y + (childLayout.productMapBelow || 0));
+      });
+      if (metrics) {
+        contentTop = Math.min(contentTop, metrics.centerShift - metrics.above);
+        contentBottom = Math.max(contentBottom, metrics.centerShift + metrics.below);
+      }
+      layout.productMapAbove = -contentTop;
+      layout.productMapBelow = contentBottom;
+      layout.outer_height = Math.max(viewH, layout.productMapAbove + layout.productMapBelow);
+      return layout.outer_height;
+    }
+    layout.outer_height = Math.max(viewH, placed.total || 0);
+    layout.productMapAbove = layout.outer_height / 2;
+    layout.productMapBelow = layout.outer_height / 2;
+    return layout.outer_height;
+  }
+
+  function syncProductMapAccuracyHeaders(state) {
+    const jm = state && state.jm;
+    const canvas = state && state.canvas;
+    const inner = canvas && canvas.querySelector('.jsmind-inner');
+    if (!jm || !inner || typeof jm.get_root !== 'function') return;
+    let layer = inner.querySelector('.product-map-accuracy-headers');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.className = 'product-map-accuracy-headers';
+      inner.appendChild(layer);
+    }
+    let bands = inner.querySelector('.product-map-accuracy-bands');
+    if (!bands) {
+      bands = document.createElement('div');
+      bands.className = 'product-map-accuracy-bands';
+      inner.insertBefore(bands, inner.firstChild);
+    }
+    const viewOffset = jm.view.get_view_offset();
+    const headers = [];
+    const shades = [];
+    const spec = jm.__productMapAccuracy;
+    const sampleNode = canvas.querySelector('jmnode:not(.root)');
+    const sampleStyle = sampleNode ? getComputedStyle(sampleNode) : null;
+    const productTextInset = sampleStyle
+      ? (parseFloat(sampleStyle.borderLeftWidth) || 0) + (parseFloat(sampleStyle.paddingLeft) || 0)
+      : 12;
+    if (spec && spec.columns) {
+      const headerTop = viewOffset.y + (spec.headerTop != null ? spec.headerTop : spec.top);
+      const bandTop = spec.headerTop != null
+        ? Math.round(headerTop) + PRODUCT_MAP_ACCURACY_HEADER
+        : viewOffset.y + spec.top;
+      spec.columns.forEach(function (column) {
+        const bandLeft = column.bandLeft != null ? column.bandLeft : column.left;
+        const bandWidth = column.bandWidth != null ? column.bandWidth : column.width;
+        shades.push({
+          left: viewOffset.x + bandLeft,
+          top: bandTop,
+          width: bandWidth,
+          height: Math.max(0, spec.bottom - spec.top),
+          plain: !!column.plain,
+        });
+        if (!column.label) return;
+        headers.push({
+          left: viewOffset.x + bandLeft,
+          top: headerTop,
+          width: bandWidth,
+          pad: Math.max(0, column.left - bandLeft) + productTextInset,
+          text: column.label,
+        });
+      });
+    }
+    const rails = [];
+    (function walk(node) {
+      if (!node || !node.expanded) return;
+      const metrics = node._data && node._data.layout && node._data.layout.productMapAccuracy;
+      if (metrics) {
+        const origin = jm.layout.get_node_offset(node);
+        const out = jm.layout.get_node_point_out(node);
+        const rowY = viewOffset.y + origin.y + (metrics.centerShift || 0);
+        const straight = Math.abs(metrics.centerShift || 0) <= 1;
+        const y = straight ? viewOffset.y + out.y : rowY;
+        const placed = [];
+        (node.children || []).forEach(function (child) {
+          if (!child.data || child.data.mapKind !== 'product') return;
+          const abs = jm.layout.get_node_offset(child);
+          const width = child._data && child._data.view ? child._data.view.width || 0 : 0;
+          placed.push({
+            y: viewOffset.y + abs.y,
+            left: viewOffset.x + abs.x,
+            right: viewOffset.x + abs.x + width,
+            groupId: child.data.productGroupId,
+            hasAccuracy: productMapAccuracyIndex(child) >= 0,
+          });
+        });
+        const stops = placed.filter(function (product) {
+          return Math.abs(product.y - y) <= 2;
+        });
+        stops.sort(function (a, b) { return a.left - b.left; });
+        const segments = [];
+        let cursor = straight ? viewOffset.x + out.x : (stops.length ? stops[0].right : y);
+        const rest = straight ? stops : stops.slice(1);
+        if (!straight && stops.length) cursor = stops[0].right;
+        rest.forEach(function (stop) {
+          if (stop.left - cursor > 1) segments.push([cursor, stop.left]);
+          cursor = Math.max(cursor, stop.right);
+        });
+        if (segments.length) {
+          rails.push({
+            y: y,
+            segments: segments,
+            hideParent: straight,
+            startX: viewOffset.x + out.x,
+            hideStarts: straight ? stops.map(function (stop) {
+              return { x: Math.round(stop.left), y: Math.round(stop.y) };
+            }) : [],
+          });
+        }
+        productMapGroupRowRails(placed, y).forEach(function (rail) {
+          rails.push(rail);
+        });
+        productMapOffsetRowSteps(placed, viewOffset.x + out.x, viewOffset.y + out.y).forEach(function (rail) {
+          rails.push(rail);
+        });
+      }
+      (node.children || []).forEach(walk);
+    })(jm.get_root());
+    canvas.__productMapRails = rails;
+    while (bands.firstChild) bands.removeChild(bands.firstChild);
+    shades.forEach(function (item) {
+      const band = document.createElement('div');
+      band.className = 'product-map-accuracy-band' + (item.plain ? ' is-plain' : '');
+      band.style.left = Math.round(item.left) + 'px';
+      band.style.top = Math.round(item.top) + 'px';
+      band.style.width = Math.round(item.width) + 'px';
+      band.style.height = Math.round(item.height) + 'px';
+      bands.appendChild(band);
+    });
+    while (layer.firstChild) layer.removeChild(layer.firstChild);
+    headers.forEach(function (item) {
+      const label = document.createElement('div');
+      label.className = 'product-map-accuracy-header';
+      label.textContent = item.text;
+      if (sampleStyle) {
+        label.style.fontFamily = sampleStyle.fontFamily;
+        label.style.fontSize = sampleStyle.fontSize;
+        label.style.fontWeight = sampleStyle.fontWeight;
+        label.style.color = sampleStyle.color;
+      }
+      label.style.left = Math.round(item.left) + 'px';
+      label.style.top = Math.round(item.top) + 'px';
+      label.style.width = Math.round(item.width) + 'px';
+      if (item.pad) label.style.paddingLeft = Math.round(item.pad) + 'px';
+      layer.appendChild(label);
+    });
+  }
+
+  // Members of one group that already share a horizontal row keep a single
+  // straight stroke across the accuracy bands. The line from the branch
+  // stays on the leftmost node; the separate strokes to the other members go.
+  function productMapGroupRowRails(products, parentRowY) {
+    const sorted = products.slice().sort(function (a, b) {
+      return a.y - b.y || a.left - b.left;
+    });
+    const rows = [];
+    sorted.forEach(function (product) {
+      const row = rows.length ? rows[rows.length - 1] : null;
+      if (!row || Math.abs(product.y - row.y) > 2) rows.push({ y: product.y, products: [product] });
+      else row.products.push(product);
+    });
+    const rails = [];
+    rows.forEach(function (row) {
+      if (Math.abs(row.y - parentRowY) <= 2) return;
+      const byGroup = new Map();
+      row.products.forEach(function (product) {
+        if (product.groupId == null || product.groupId === '') return;
+        const key = String(product.groupId);
+        if (!byGroup.has(key)) byGroup.set(key, []);
+        byGroup.get(key).push(product);
+      });
+      byGroup.forEach(function (members) {
+        if (members.length < 2) return;
+        members.sort(function (a, b) { return a.left - b.left; });
+        const segments = [];
+        for (let index = 0; index < members.length - 1; index += 1) {
+          const from = members[index].right;
+          const to = members[index + 1].left;
+          if (to - from > 1) segments.push([from, to]);
+        }
+        if (!segments.length) return;
+        rails.push({
+          y: row.y,
+          segments: segments,
+          hideStarts: members.slice(1).map(function (product) {
+            return { x: Math.round(product.left), y: Math.round(product.y) };
+          }),
+        });
+      });
+    });
+    return rails;
+  }
+
+  function productMapPathStartsAt(path, x, y) {
+    const match = (path.getAttribute('d') || '').match(/^M (-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/);
+    if (!match) return false;
+    return Math.abs(Number(match[1]) - x) <= 2 && Math.abs(Number(match[2]) - y) <= 2;
+  }
+
+  // A group row that already contains the group product is reached by the curve
+  // to that product and one horizontal line. Stepping every accuracy column of
+  // those rows draws one vertical through the whole column.
+  function productMapNeedsParentStep(product, placed) {
+    if (!product.hasAccuracy) return false;
+    if (!product.groupId) return true;
+    const companions = placed.filter(function (other) {
+      return other !== product && other.groupId === product.groupId && Math.abs(other.y - product.y) <= 2;
+    });
+    if (companions.some(function (other) { return !other.hasAccuracy; })) return false;
+    let leftmost = product;
+    companions.forEach(function (other) {
+      if (other.hasAccuracy && other.left < leftmost.left) leftmost = other;
+    });
+    return leftmost === product;
+  }
+
+  // Off the parent's row, a product that has an accuracy value meets its parent
+  // with a step: horizontal, then a vertical stroke just left of the block.
+  // Products with an empty accuracy stay on the curved link used by the tree.
+  function productMapOffsetRowSteps(placed, parentX, parentY) {
+    const rows = [];
+    placed.filter(function (product) {
+      return productMapNeedsParentStep(product, placed);
+    }).sort(function (a, b) {
+      return a.y - b.y || a.left - b.left;
+    }).forEach(function (product) {
+      const row = rows.length ? rows[rows.length - 1] : null;
+      if (!row || Math.abs(product.y - row.y) > 2) rows.push({ y: product.y, products: [product] });
+      else row.products.push(product);
+    });
+    const centerProducts = placed.filter(function (product) {
+      return Math.abs(product.y - parentY) <= 2;
+    });
+    const groups = [];
+    rows.forEach(function (row) {
+      if (Math.abs(row.y - parentY) <= 2) return;
+      row.products.sort(function (a, b) { return a.left - b.left; });
+      const dropX = Math.round(row.products[0].left - PRODUCT_MAP_ACCURACY_STEP);
+      let group = null;
+      groups.forEach(function (item) {
+        if (!group && Math.abs(item.dropX - dropX) <= 2) group = item;
+      });
+      if (!group) {
+        group = { dropX: dropX, rows: [] };
+        groups.push(group);
+      }
+      group.rows.push(row);
+    });
+    return groups.map(function (group) {
+      const dropX = group.dropX;
+      let anchor = parentX;
+      centerProducts.forEach(function (product) {
+        if (product.right <= dropX + 1) anchor = Math.max(anchor, product.right);
+      });
+      let far = parentY;
+      group.rows.forEach(function (row) {
+        if (Math.abs(row.y - parentY) > Math.abs(far - parentY)) far = row.y;
+      });
+      const polylines = [];
+      const spine = [];
+      if (dropX - anchor > 1) spine.push([anchor, parentY]);
+      spine.push([dropX, parentY], [dropX, far]);
+      polylines.push(spine);
+      const hideStarts = [];
+      group.rows.forEach(function (row) {
+        const first = row.products[0];
+        polylines.push([[dropX, row.y], [first.left, row.y]]);
+        for (let index = 0; index < row.products.length - 1; index += 1) {
+          const from = row.products[index].right;
+          const to = row.products[index + 1].left;
+          if (to - from > 1) polylines.push([[from, row.y], [to, row.y]]);
+        }
+        row.products.forEach(function (product) {
+          hideStarts.push({ x: Math.round(product.left), y: Math.round(product.y) });
+        });
+      });
+      return { polylines: polylines, hideStarts: hideStarts };
+    });
+  }
+
+  function unifyProductMapRails(canvas) {
+    const svg = canvas && canvas.querySelector('svg.jsmind');
+    if (!svg) return;
+    svg.querySelectorAll('.product-map-accuracy-rail').forEach(function (el) { el.remove(); });
+    (canvas.__productMapRails || []).forEach(function (rail) {
+      const y = Math.round(rail.y);
+      if (rail.hideParent) {
+        svg.querySelectorAll('path').forEach(function (path) {
+          if (path.classList.contains('product-map-accuracy-rail')) return;
+          const match = (path.getAttribute('d') || '').match(/^M (-?\d+) (-?\d+) L (-?\d+) \2$/);
+          if (!match || Math.abs(Number(match[2]) - y) > 2) return;
+          const startX = Math.round(rail.startX);
+          if (Math.abs(Number(match[1]) - startX) <= 2 || Math.abs(Number(match[3]) - startX) <= 2) {
+            path.setAttribute('display', 'none');
+          }
+        });
+      }
+      if (rail.hideStarts && rail.hideStarts.length) {
+        svg.querySelectorAll('path').forEach(function (path) {
+          if (path.classList.contains('product-map-accuracy-rail')) return;
+          rail.hideStarts.forEach(function (point) {
+            if (productMapPathStartsAt(path, point.x, point.y)) path.setAttribute('display', 'none');
+          });
+        });
+      }
+      const commands = [];
+      if (rail.polylines) {
+        rail.polylines.forEach(function (points) {
+          points.forEach(function (point, index) {
+            commands.push((index === 0 ? 'M ' : 'L ') + Math.round(point[0]) + ' ' + Math.round(point[1]));
+          });
+        });
+      } else if (rail.segments) {
+        rail.segments.forEach(function (segment) {
+          commands.push('M ' + Math.round(segment[0]) + ' ' + y + ' L ' + Math.round(segment[1]) + ' ' + y);
+        });
+      }
+      if (!commands.length) return;
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'product-map-accuracy-rail');
+      path.setAttribute('d', commands.join(' '));
+      path.setAttribute('stroke', '#075D94');
+      path.setAttribute('stroke-width', '1.5');
+      path.setAttribute('fill', 'transparent');
+      svg.appendChild(path);
+    });
+  }
+
+  function markProductMapProductLinks(jm) {
+    const root = jm && jm.get_root && jm.get_root();
+    if (!root) return;
+    (function walk(node) {
+      const element = node && node._data && node._data.view && node._data.view.element;
+      const data = (node && node.data) || {};
+      const productId = data.mapKind === 'product' ? data.productId : '';
+      if (element) {
+        if (productId) element.dataset.productId = String(productId);
+        else delete element.dataset.productId;
+      }
+      (node.children || []).forEach(walk);
+    })(root);
+  }
+
+  function openProductMapProduct(canvas, productId) {
+    const field = canvas && canvas.closest ? canvas.closest('#product-map-field') : null;
+    const template = field && field.dataset.productWorkspaceTemplate;
+    if (!template || !productId || !window.htmx) return;
+    const url = String(template).replace(/0\/?$/, String(productId) + '/');
+    const request = window.htmx.ajax('GET', url, { target: '#policy-pane', swap: 'outerHTML' });
+    if (request && typeof request.then === 'function') {
+      request.then(function () {
+        scrollPolicyWorkspaceToTop(policyPane());
+      });
+    }
+  }
+
+  function bindProductMapLayout(jm) {
+    if (jm.layout.__productMapBound) return;
+    jm.layout.__productMapBound = true;
+    jm.layout.get_node_point_out = function (node) {
+      const view = node && node._data && node._data.view;
+      const width = view ? view.width || 0 : 0;
+      const height = view ? view.height || 0 : 0;
+      const element = view && view.element;
+      const extraX = element ? Math.max(0, element.offsetWidth - width) : 0;
+      const extraY = element ? Math.max(0, element.offsetHeight - height) : 0;
+      if (node && node.isroot) return { x: width / 2, y: 0 };
+      const offset = this.get_node_offset(node);
+      // Meet the expander on the outer right edge. The stock outlet stops
+      // a full pspace short of that point, so the stroke looks detached.
+      return { x: offset.x + width + extraX, y: offset.y + extraY / 2 };
+    };
+    jm.layout.get_expander_point = function (node) {
+      const out = this.get_node_point_out(node);
+      return {
+        x: out.x - PRODUCT_MAP_EXPANDER_SIZE / 2,
+        y: out.y - PRODUCT_MAP_EXPANDER_SIZE / 2,
+      };
+    };
+    const originalExpanderText = jm.view._get_expander_text.bind(jm.view);
+    jm.view._get_expander_text = function (node) {
+      const text = originalExpanderText(node);
+      return text === '-' ? '\u2212' : text;
+    };
+    const originalLayout = jm.layout.layout.bind(jm.layout);
+    jm.layout.layout = function () {
+      originalLayout();
+      alignProductMapColumns(jm);
+    };
+    // Expand and collapse relayout before the deferred show-event. Finish the
+    // accuracy steps in that same turn, or the browser paints the plain curves.
+    const originalRelayout = jm.view.relayout.bind(jm.view);
+    jm.view.relayout = function () {
+      originalRelayout();
+      alignProductMapColumns(jm);
+      originalRelayout();
+      markProductMapProductLinks(jm);
+      const canvas = jm.view.e_panel && jm.view.e_panel.parentNode;
+      if (!canvas || !canvas.classList || !canvas.classList.contains('product-map-canvas')) return;
+      syncProductMapAccuracyHeaders({ jm: jm, canvas: canvas });
+      unifyProductMapRails(canvas);
+    };
+  }
+
+  function refreshProductMap(state) {
+    const jm = state.jm;
+    const canvas = state.canvas;
+    setProductMapTransform(canvas, 0, 0, 1);
+    alignProductMapColumns(jm);
+    markProductMapProductLinks(jm);
+    jm.resize();
+    syncProductMapAccuracyHeaders(state);
+    unifyProductMapRails(canvas);
+    ensureProductMapSurface(canvas);
+    syncProductMapExpanders(canvas);
+    setProductMapTransform(canvas, state.x || 0, state.y || 0, state.scale || 1);
+  }
+
+  function setProductMapLevel(field, level) {
+    markProductMapLevel(field, level);
+    const maps = field.__productMapInstances || [];
+    maps.forEach(function (item) {
+      const jm = item.jm;
+      const root = jm.get_root();
+      jm.__productMapDepthLock = true;
+      if (level <= 1) {
+        jm.layout.collapse_node(root);
+        jm.view.relayout();
+      } else {
+        if (!root.expanded) jm.layout.expand_node(root);
+        jm.expand_to_depth(level - 1);
+      }
+      refreshProductMap(item);
+      fitProductMapView(item);
+    });
+    window.setTimeout(function () {
+      maps.forEach(function (item) {
+        item.jm.__productMapDepthLock = false;
+        syncProductMapExpanders(item.canvas);
+      });
+    }, 0);
+  }
+
+  function productMapSelectedLevel(field) {
+    const active = field && field.querySelector('[data-product-map-level].is-active');
+    const level = active ? Number(active.dataset.productMapLevel) : 2;
+    return level >= 1 && level <= 5 ? level : 2;
+  }
+
+  function productMapIdSelected(ids, value) {
+    return value != null && ids.has(String(value));
+  }
+
+  function collectProductMapCatalog(maps) {
+    const consulting = [];
+    const services = [];
+    const subtypes = [];
+    const seen = { consulting: new Set(), service: new Set(), subtype: new Set() };
+    function walk(node) {
+      if (!node) return;
+      if (node.mapKind === 'type' && node.consultingId != null && !seen.consulting.has(node.consultingId)) {
+        seen.consulting.add(node.consultingId);
+        consulting.push({ id: node.consultingId, label: node.topic, consultingId: node.consultingId });
+      }
+      if (node.mapKind === 'service' && node.serviceId != null && !seen.service.has(node.serviceId)) {
+        seen.service.add(node.serviceId);
+        services.push({
+          id: node.serviceId,
+          label: node.topic,
+          consultingId: node.consultingId,
+          serviceId: node.serviceId,
+        });
+      }
+      if (node.mapKind === 'subtype' && node.subtypeId != null && !seen.subtype.has(node.subtypeId)) {
+        seen.subtype.add(node.subtypeId);
+        subtypes.push({
+          id: node.subtypeId,
+          label: node.topic,
+          consultingId: node.consultingId,
+          serviceId: node.serviceId,
+          subtypeId: node.subtypeId,
+        });
+      }
+      (node.children || []).forEach(walk);
+    }
+    (maps || []).forEach(function (map) {
+      walk(map && map.mind && map.mind.data);
+    });
+    return { consulting: consulting, services: services, subtypes: subtypes };
+  }
+
+  function productMapFilterLabel(label) {
+    return String(label || '').trim();
+  }
+
+  function groupProductMapFilterItems(rows) {
+    const grouped = [];
+    const seen = new Map();
+    (rows || []).forEach(function (row) {
+      const label = productMapFilterLabel(row.label);
+      if (!label) return;
+      let entry = seen.get(label);
+      if (!entry) {
+        entry = { label: label, ids: [] };
+        seen.set(label, entry);
+        grouped.push(entry);
+      }
+      const id = String(row.id);
+      if (entry.ids.indexOf(id) === -1) entry.ids.push(id);
+    });
+    return grouped;
+  }
+
+  function readProductMapFilterSelection(field, key) {
+    const group = field.querySelector('[data-product-map-filter="' + key + '"]');
+    const all = group && group.querySelector('[data-product-map-filter-all]');
+    if (!group || !all || all.checked) return { all: true, ids: new Set() };
+    const ids = new Set();
+    group.querySelectorAll('[data-product-map-filter-value]').forEach(function (box) {
+      if (!box.checked) return;
+      String(box.dataset.productMapFilterIds || '').split(',').forEach(function (id) {
+        if (id) ids.add(id);
+      });
+    });
+    if (!ids.size) return { all: true, ids: ids };
+    return { all: false, ids: ids };
+  }
+
+  function fillProductMapFilterList(field, key, items) {
+    const group = field.querySelector('[data-product-map-filter="' + key + '"]');
+    const list = group && group.querySelector('[data-product-map-filter-list]');
+    if (!list) return;
+    list.replaceChildren();
+    items.forEach(function (item, index) {
+      const row = document.createElement('div');
+      row.className = 'form-check';
+      const input = document.createElement('input');
+      input.className = 'form-check-input';
+      input.type = 'checkbox';
+      input.value = item.label;
+      input.id = 'product-map-filter-' + key + '-' + index;
+      input.setAttribute('data-product-map-filter-value', '1');
+      input.dataset.productMapFilterIds = item.ids.join(',');
+      input.dataset.summaryLabel = item.label;
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.htmlFor = input.id;
+      label.textContent = item.label;
+      row.append(input, label);
+      list.appendChild(row);
+    });
+  }
+
+  function renderProductMapFilterOptions(field, keys) {
+    const catalog = field.__productMapCatalog;
+    if (!catalog) return;
+    const consulting = readProductMapFilterSelection(field, 'consulting');
+    const category = readProductMapFilterSelection(field, 'category');
+    const targets = keys || ['consulting', 'category', 'subtype'];
+    if (targets.indexOf('consulting') !== -1) {
+      fillProductMapFilterList(field, 'consulting', groupProductMapFilterItems(catalog.consulting));
+    }
+    if (targets.indexOf('category') !== -1) {
+      fillProductMapFilterList(field, 'category', groupProductMapFilterItems(catalog.services.filter(function (item) {
+        return consulting.all || productMapIdSelected(consulting.ids, item.consultingId);
+      })));
+    }
+    if (targets.indexOf('subtype') !== -1) {
+      fillProductMapFilterList(field, 'subtype', groupProductMapFilterItems(catalog.subtypes.filter(function (item) {
+        if (!consulting.all && !productMapIdSelected(consulting.ids, item.consultingId)) return false;
+        if (!category.all && !productMapIdSelected(category.ids, item.serviceId)) return false;
+        return true;
+      })));
+    }
+  }
+
+  function resetProductMapFilterGroup(field, key) {
+    const group = field.querySelector('[data-product-map-filter="' + key + '"]');
+    if (!group) return;
+    const all = group.querySelector('[data-product-map-filter-all]');
+    if (all) all.checked = true;
+    group.querySelectorAll('[data-product-map-filter-value]').forEach(function (box) {
+      box.checked = false;
+    });
+  }
+
+  function updateProductMapFilterLabels(field) {
+    field.querySelectorAll('[data-product-map-filter]').forEach(function (group) {
+      const label = group.querySelector('[data-product-map-filter-label]');
+      const all = group.querySelector('[data-product-map-filter-all]');
+      if (!label) return;
+      if (!all || all.checked) {
+        label.textContent = 'Все';
+        return;
+      }
+      const checked = Array.from(group.querySelectorAll('[data-product-map-filter-value]')).filter(function (box) {
+        return box.checked;
+      });
+      if (checked.length === 1) label.textContent = checked[0].dataset.summaryLabel || '1 выбрано';
+      else label.textContent = checked.length + ' выбрано';
+    });
+  }
+
+  function syncProductMapFilterGroup(group, changed) {
+    const all = group.querySelector('[data-product-map-filter-all]');
+    const values = Array.from(group.querySelectorAll('[data-product-map-filter-value]'));
+    if (changed.hasAttribute('data-product-map-filter-all')) {
+      if (changed.checked) {
+        values.forEach(function (box) { box.checked = false; });
+      } else {
+        const first = values.find(function (box) { return !box.disabled; });
+        if (first) first.checked = true;
+        else changed.checked = true;
+      }
+      return;
+    }
+    if (changed.checked && all) all.checked = false;
+    if (!values.some(function (box) { return box.checked; }) && all) all.checked = true;
+  }
+
+  function keepProductMapNode(node, filters) {
+    const kind = node.mapKind || '';
+    if (kind === 'owner' || !kind) return true;
+    if (kind === 'unclassified') {
+      return filters.consulting.all && filters.category.all && filters.subtype.all;
+    }
+    if (!filters.consulting.all && !productMapIdSelected(filters.consulting.ids, node.consultingId)) {
+      return false;
+    }
+    if (!filters.category.all && kind !== 'type' && !productMapIdSelected(filters.category.ids, node.serviceId)) {
+      return false;
+    }
+    if (
+      !filters.subtype.all
+      && kind !== 'type'
+      && kind !== 'service'
+      && !productMapIdSelected(filters.subtype.ids, node.subtypeId)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  function pruneProductMapNode(node, filters) {
+    if (!node || !keepProductMapNode(node, filters)) return null;
+    const children = [];
+    (node.children || []).forEach(function (child) {
+      const next = pruneProductMapNode(child, filters);
+      if (next) children.push(next);
+    });
+    const copy = Object.assign({}, node);
+    if (children.length) copy.children = children;
+    else delete copy.children;
+    const kind = node.mapKind || '';
+    if (kind === 'owner' || kind === 'product') return copy;
+    // A consulting type, service type, or subtype with no product under it
+    // stays off the diagram at every expansion level.
+    if (!children.length) return null;
+    return copy;
+  }
+
+  function filterProductMapMind(mind, filters) {
+    const copy = JSON.parse(JSON.stringify(mind));
+    copy.data = pruneProductMapNode(copy.data, filters) || {
+      id: copy.data.id,
+      topic: copy.data.topic,
+      mapKind: 'owner',
+    };
+    return copy;
+  }
+
+  function applyProductMapFilters(field) {
+    if (!field) return;
+    const filters = {
+      consulting: readProductMapFilterSelection(field, 'consulting'),
+      category: readProductMapFilterSelection(field, 'category'),
+      subtype: readProductMapFilterSelection(field, 'subtype'),
+    };
+    field.__productMapFilterState = filters;
+    (field.__productMapInstances || []).forEach(function (state) {
+      if (!state.sourceMind || !state.jm) return;
+      state.jm.__productMapDepthLock = true;
+      state.jm.show(filterProductMapMind(state.sourceMind, filters));
+    });
+    setProductMapLevel(field, productMapSelectedLevel(field));
+  }
+
+  function initProductMapFilters(field, maps) {
+    field.__productMapCatalog = collectProductMapCatalog(maps);
+    field.__productMapFilterState = {
+      consulting: { all: true, ids: new Set() },
+      category: { all: true, ids: new Set() },
+      subtype: { all: true, ids: new Set() },
+    };
+    renderProductMapFilterOptions(field);
+    updateProductMapFilterLabels(field);
+    if (window.__productMapFilterChangeBound) return;
+    window.__productMapFilterChangeBound = true;
+    document.addEventListener('change', function (event) {
+      const changed = event.target;
+      if (!changed || !changed.closest) return;
+      const group = changed.closest('[data-product-map-filter]');
+      if (!group || !policyPane()?.contains(group)) return;
+      if (!changed.hasAttribute('data-product-map-filter-all') && !changed.hasAttribute('data-product-map-filter-value')) {
+        return;
+      }
+      const fieldNode = group.closest('#product-map-field');
+      if (!fieldNode) return;
+      syncProductMapFilterGroup(group, changed);
+      const key = group.dataset.productMapFilter;
+      if (key === 'consulting') {
+        resetProductMapFilterGroup(fieldNode, 'category');
+        resetProductMapFilterGroup(fieldNode, 'subtype');
+        renderProductMapFilterOptions(fieldNode, ['category', 'subtype']);
+      } else if (key === 'category') {
+        resetProductMapFilterGroup(fieldNode, 'subtype');
+        renderProductMapFilterOptions(fieldNode, ['subtype']);
+      }
+      updateProductMapFilterLabels(fieldNode);
+      applyProductMapFilters(fieldNode);
+    });
+  }
+
+  function renderProductMap(field, maps) {
+    layoutProductMapScreen(field);
+    const canvases = field.querySelectorAll('.product-map-canvas');
+    const instances = [];
+    maps.forEach(function (item, index) {
+      const canvas = canvases[index];
+      if (!canvas || !item || !item.mind) return;
+      const jm = new window.jsMind({
+        container: canvas.id,
+        editable: false,
+        theme: null,
+        mode: 'side',
+        support_html: false,
+        log_level: 'warn',
+        shortcut: { enable: false },
+        default_event_handle: {
+          enable_mousedown_handle: false,
+          enable_dblclick_handle: false,
+          enable_mousewheel_handle: false,
+        },
+        view: {
+          engine: 'svg',
+          draggable: false,
+          hmargin: 40,
+          vmargin: 24,
+          line_width: 1.5,
+          line_color: '#075D94',
+          line_style: 'curved',
+          custom_line_render: renderProductMapLine,
+          node_overflow: 'wrap',
+          expander_style: 'char',
+        },
+        layout: { hspace: 36, vspace: 12, pspace: PRODUCT_MAP_EXPANDER_SIZE },
+      });
+      const state = {
+        jm: jm,
+        canvas: canvas,
+        scale: 1,
+        x: 0,
+        y: 0,
+        drag: null,
+        sourceMind: item.mind,
+      };
+      bindProductMapLayout(jm);
+      jm.show(item.mind);
+      refreshProductMap(state);
+      bindProductMapPointer(state);
+      jm.add_event_listener(function (_type, data) {
+        if (!data || (data.evt !== 'expand_node' && data.evt !== 'collapse_node')) return;
+        if (jm.__productMapDepthLock) return;
+        refreshProductMap(state);
+        markProductMapLevel(field, productMapVisibleDepth(jm.get_root()));
+      });
+      instances.push(state);
+    });
+    field.__productMapInstances = instances;
+    initProductMapFilters(field, maps);
+    markProductMapLevel(field, 2);
+    field.dataset.productMapState = 'ready';
+    bindProductMapScreen(field);
+    bindProductMapFullscreen();
+    if (typeof field.__productMapRefitNow === 'function') field.__productMapRefitNow(true);
+    window.requestAnimationFrame(function () {
+      if (!field.isConnected || typeof field.__productMapRefitNow !== 'function') return;
+      field.__productMapRefitNow(true);
+    });
+  }
+
+  function setProductMapFullscreen(field, active) {
+    const board = field && field.querySelector('.product-map-board');
+    const button = field && field.querySelector('[data-product-map-fullscreen]');
+    if (!board) return;
+    const nextActive = !!active && !!field.isConnected;
+    board.classList.toggle('product-map-board--fullscreen', nextActive);
+    document.body.classList.toggle('product-map-fullscreen-active', nextActive);
+    if (button) {
+      const icon = button.querySelector('i');
+      const label = nextActive
+        ? 'Вернуть диаграмму в обычный режим'
+        : 'Развернуть диаграмму на весь экран';
+      button.setAttribute('aria-label', label);
+      button.title = label;
+      button.setAttribute('aria-pressed', nextActive ? 'true' : 'false');
+      if (icon) {
+        icon.classList.toggle('bi-arrows-fullscreen', !nextActive);
+        icon.classList.toggle('bi-fullscreen-exit', nextActive);
+      }
+    }
+    if (typeof field.__productMapRefitNow === 'function') {
+      window.requestAnimationFrame(function () {
+        if (!field.isConnected) return;
+        field.__productMapRefitNow(true);
+      });
+    }
+  }
+
+  function bindProductMapFullscreen() {
+    if (window.__productMapFullscreenBound) return;
+    window.__productMapFullscreenBound = true;
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape') return;
+      const field = document.querySelector('#product-map-field');
+      const board = field && field.querySelector('.product-map-board--fullscreen');
+      if (!board) return;
+      setProductMapFullscreen(field, false);
+      event.preventDefault();
+    });
+    document.body.addEventListener('htmx:beforeSwap', function (event) {
+      const board = document.querySelector('.product-map-board--fullscreen');
+      const target = event.detail && event.detail.target;
+      if (!board || !target) return;
+      if (target === board || target.contains(board) || board.contains(target)) {
+        document.body.classList.remove('product-map-fullscreen-active');
+      }
+    });
+  }
+
+  function initProductMap(root) {
+    root = root || policyPane();
+    const field = root?.querySelector?.('#product-map-field');
+    if (!field || field.dataset.productMapState === 'loading' || field.dataset.productMapState === 'ready') {
+      return;
+    }
+    const dataNode = root.querySelector('#product-map-data');
+    if (!dataNode) return;
+    let maps = [];
+    try {
+      maps = JSON.parse(dataNode.textContent || '[]');
+    } catch (err) {
+      maps = [];
+    }
+    if (!Array.isArray(maps) || !maps.length) return;
+    field.dataset.productMapState = 'loading';
+    destroyPolicyWorkspaceSession();
+    loadProductMapAssets().then(function (ready) {
+      if (!field.isConnected) return;
+      if (!ready) {
+        field.dataset.productMapState = 'error';
+        if (!field.querySelector('.product-map-error')) {
+          const alert = document.createElement('div');
+          alert.className = 'alert alert-danger product-map-error mb-3';
+          alert.textContent = 'Не удалось загрузить карту продуктов.';
+          field.prepend(alert);
+        }
+        return;
+      }
+      renderProductMap(field, maps);
+    });
+  }
+
   // Делегирование: клики по кнопкам панелей
   document.addEventListener('click', async (e) => {
+    const groupToggle = e.target.closest('[data-product-group-toggle]');
+    if (groupToggle) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (groupToggle.closest('[data-policy-workspace="1"]')) return;
+      toggleProductGroupCollapsed(groupToggle.getAttribute('data-product-group-toggle'));
+      return;
+    }
     const shellRetry = e.target.closest('[data-policy-shell-retry="1"]');
     if (shellRetry && policyPane()?.contains(shellRetry)) {
       const shell = policyPane();
@@ -11113,6 +12910,46 @@
     const lazyRetry = e.target.closest('[data-policy-lazy-retry="1"]');
     if (lazyRetry && policyPane()?.contains(lazyRetry)) {
       enqueuePolicyLazyPlaceholder(lazyRetry.closest('[data-policy-lazy-placeholder="1"]'));
+      return;
+    }
+    if (e.target.closest('[data-product-map-filter]')) return;
+    const productMapFullscreen = e.target.closest('[data-product-map-fullscreen]');
+    if (productMapFullscreen && policyPane()?.contains(productMapFullscreen)) {
+      e.preventDefault();
+      const field = productMapFullscreen.closest('#product-map-field');
+      const board = field && field.querySelector('.product-map-board');
+      setProductMapFullscreen(field, !(board && board.classList.contains('product-map-board--fullscreen')));
+      return;
+    }
+    const productMapZoom = e.target.closest('[data-product-map-zoom]');
+    if (productMapZoom && policyPane()?.contains(productMapZoom)) {
+      e.preventDefault();
+      const field = productMapZoom.closest('#product-map-field');
+      const factor = productMapZoom.dataset.productMapZoom === 'in'
+        ? PRODUCT_MAP_ZOOM_STEP
+        : 1 / PRODUCT_MAP_ZOOM_STEP;
+      (field?.__productMapInstances || []).forEach(function (state) {
+        const rect = state.canvas.getBoundingClientRect();
+        zoomProductMapAt(state, factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      });
+      return;
+    }
+    const productMapLevel = e.target.closest('[data-product-map-level]');
+    if (productMapLevel && policyPane()?.contains(productMapLevel)) {
+      e.preventDefault();
+      const field = productMapLevel.closest('#product-map-field');
+      const level = Number(productMapLevel.dataset.productMapLevel);
+      if (field && level >= 1 && level <= 5) setProductMapLevel(field, level);
+      return;
+    }
+    const productMapButton = e.target.closest('[data-product-map-url]');
+    if (productMapButton && policyPane()?.contains(productMapButton)) {
+      e.preventDefault();
+      const mapUrl = productMapButton.dataset.productMapUrl;
+      if (!mapUrl || !window.htmx) return;
+      await htmx.ajax('GET', mapUrl, { target: '#policy-pane', swap: 'outerHTML' });
+      window.__policyScrollRestoreY = null;
+      window.scrollTo(0, 0);
       return;
     }
     const productQuickEdit = e.target.closest('.product-quick-edit');
@@ -11132,10 +12969,43 @@
     if (productQuickEdit && policyRoot?.contains(productQuickEdit)) {
       e.preventDefault();
       const tr = productQuickEdit.closest('tr');
+      if (tr?.dataset?.isProductGroup === '1') {
+        const editUrl = tr.dataset.editUrl;
+        if (!editUrl || !window.htmx) return;
+        markPolicyModalClearSelectionOnHide('product-select');
+        await htmx.ajax('GET', editUrl, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
+        return;
+      }
       const url = tr?.dataset?.workspaceUrl;
       if (!url || !window.htmx) return;
       await htmx.ajax('GET', url, { target: '#policy-pane', swap: 'outerHTML' });
       scrollPolicyWorkspaceToTop(policyPane());
+      return;
+    }
+    const mergeProductsBtn = e.target.closest('#products-merge-btn');
+    if (mergeProductsBtn && policyRoot?.contains(mergeProductsBtn)) {
+      e.preventDefault();
+      const ids = getCheckedByName('product-select').map(function (box) { return box.value; });
+      if (!ids.length || !window.htmx) return;
+      const mergeUrl = mergeProductsBtn.dataset.url + '?' + ids.map(function (id) {
+        return 'product_id=' + encodeURIComponent(id);
+      }).join('&');
+      await htmx.ajax('GET', mergeUrl, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
+      return;
+    }
+    const ungroupProductsBtn = e.target.closest('#products-ungroup-btn');
+    if (ungroupProductsBtn && policyRoot?.contains(ungroupProductsBtn)) {
+      e.preventDefault();
+      const groupIds = getCheckedByName('product-select').filter(function (box) {
+        return box.closest('tr')?.dataset?.isProductGroup === '1';
+      }).map(function (box) { return box.value; });
+      if (!groupIds.length || !window.htmx) return;
+      rememberPolicyScrollPosition();
+      await htmx.ajax('POST', ungroupProductsBtn.dataset.url, {
+        target: '#policy-pane',
+        swap: 'outerHTML',
+        values: { product_ids: groupIds.join(',') },
+      });
       return;
     }
     const root = pane();
@@ -11379,6 +13249,7 @@
     if (!name) return;
     forgetPolicyTableSelection(name);
     if (name === TYPICAL_SERVICE_TERM_GANTT_SELECTION_NAME) syncTypicalServiceTermGanttEditButton();
+    if (name === 'product-select') syncProductGroupButtons();
   });
 
   // Делегирование: мастер-чекбокс
@@ -11502,6 +13373,8 @@
       'typical-service-compositions-xlsx-upload-btn': 'typical-service-compositions-xlsx-file-input',
       'typical-service-terms-csv-upload-btn': 'typical-service-terms-csv-file-input',
       'esp-csv-upload-btn': 'esp-csv-file-input',
+      'consulting-directions-csv-upload-btn': 'consulting-directions-csv-file-input',
+      'service-block-classifiers-csv-upload-btn': 'service-block-classifiers-csv-file-input',
     };
     for (var btnId in mapping) {
       var btn = e.target.closest('#' + btnId);
@@ -11526,6 +13399,8 @@
       'typical-service-compositions-xlsx-file-input': '/policy/policy/typical-service-composition/xlsx-upload/',
       'typical-service-terms-csv-file-input': '/policy/policy/typical-service-term/csv-upload/',
       'esp-csv-file-input': '/experts/specialty/csv-upload/',
+      'consulting-directions-csv-file-input': '/policy/policy/consulting-direction/csv-upload/',
+      'service-block-classifiers-csv-file-input': '/policy/policy/service-block-classifier/csv-upload/',
     };
     var url = mapping[e.target.id];
     if (!url) return;
@@ -11806,6 +13681,42 @@
         return { value: value, label: value };
       },
       afterChange: function (ref, value, session) {
+        if (ref.field === 'name_en' || ref.field === 'name_ru') {
+          const row = ref.cell.closest('tr');
+          const url = row && row.dataset.nameSaveUrl;
+          const rowId = row && row.dataset.inlineRowId;
+          if (!url || !rowId || !session) return;
+          const body = new URLSearchParams();
+          body.set('field', ref.field);
+          body.set('value', value == null ? '' : String(value));
+          fetch(url, {
+            method: 'POST',
+            headers: {
+              'X-CSRFToken': csrftoken,
+              'X-Requested-With': 'fetch',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+          }).then(function (response) {
+            if (!response.ok) throw new Error('save failed');
+            return response.json();
+          }).then(function (data) {
+            if (!data || data.ok === false) throw new Error((data && data.error) || 'save failed');
+            session.clearFieldError('service-block-classifiers', rowId, ref.field);
+            session.snapshotRow('service-block-classifiers', rowId, { [ref.field]: value });
+          }).catch(function () {
+            session.setErrors([{
+              table: 'service-block-classifiers',
+              id: rowId,
+              field: ref.field,
+              message: 'Не удалось сохранить наименование.',
+            }]);
+            if (window.WorkspaceInlineEditor) {
+              window.WorkspaceInlineEditor.applyErrorsToDom(session, section);
+            }
+          });
+          return;
+        }
         if (ref.field !== 'specialty_ids') return;
         const row = ref.cell.closest('tr');
         const url = row && row.dataset.specialtiesSaveUrl;
@@ -11890,6 +13801,9 @@
     initPolicyTableHeaderStickyState(fragment);
     bindPolicyWorkspaceInlineTables(policyPane());
     bindServiceBlockClassifierSpecialties(fragment);
+    if (fragment.querySelector('#products-merge-btn, [data-product-group-toggle]')) {
+      applyProductGroupCollapsed(fragment);
+    }
   }
 
   // Восстановление выбора только для таблицы, где было действие
@@ -11899,6 +13813,7 @@
       return;
     }
     if (!(e.target && e.target.id === 'policy-pane')) return;
+    initProductMap(e.target);
     if (e.target.matches('[data-policy-lazy-shell="1"]')) {
       initPolicyLazyShell(e.target);
       updatePolicyHeaderPath();
@@ -11913,6 +13828,7 @@
     }
     initTypicalServiceCompositionWrapToggle();
     collapseSpecialtyTariffsSpecialties();
+    applyProductGroupCollapsed(e.target);
     initPolicyMasterFilters();
     initTypicalServiceTermGanttEditor(e.target);
     initPolicyTableFooterStickyState(e.target);
@@ -11964,7 +13880,15 @@
   document.addEventListener('click', function (event) {
     const navLink = event.target.closest('a.nav-link[href="#policy"][data-bs-toggle="tab"]');
     if (!navLink) return;
-    if (policyPane()?.dataset?.policyWorkspace !== '1') return;
+    const pane = policyPane();
+    if (pane?.querySelector?.('#product-map-field')) {
+      setProductMapFullscreen(pane.querySelector('#product-map-field'), false);
+      window.__policyScrollRestoreY = null;
+      loadPolicyCatalogShell();
+      window.scrollTo(0, 0);
+      return;
+    }
+    if (pane?.dataset?.policyWorkspace !== '1') return;
     if (!confirmPolicyWorkspaceLeave()) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -12069,4 +13993,5 @@
       } catch (_) { /* noop */ }
     },
   };
+  applyProductGroupCollapsed(document);
 })();

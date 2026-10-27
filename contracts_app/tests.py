@@ -5803,3 +5803,93 @@ class ContractsExecutionPartialTests(TestCase):
         self.assertRegex(section, r'id="contracts-payment-request-master"[^>]*\sdisabled')
         self.assertRegex(section, rf'id="contracts-payment-request-sel-{self.performer.pk}"[^>]*\sdisabled')
 
+
+class ContractProductGroupTests(TestCase):
+    def test_contract_saves_group_label_and_drops_it_for_one_member(self):
+        from contracts_app.forms import _ranked_products_from_proposal
+        from contracts_app.views import _save_ranked_contract_project_products
+        from policy_app.product_groups import create_product_group
+        from proposals_app.models import ProposalRegistration, ProposalRegistrationProduct
+
+        group_member = GroupMember.objects.create(
+            short_name="IMC Contract Group",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first = Product.objects.create(
+            short_name="ESIA-A",
+            name_en="ESIA A",
+            name_ru="ЕСИА А",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second = Product.objects.create(
+            short_name="ESIA-B",
+            name_en="ESIA B",
+            name_ru="ЕСИА Б",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        other = Product.objects.create(
+            short_name="OTHER",
+            name_en="Other",
+            name_ru="Другой",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            service_code="ZZ",
+            position=3,
+        )
+        group = create_product_group([first, second], "ESIA", "ESIA bundle", "ЕСИА", "ESIA bundle")
+        registration = ContractProjectRegistration.objects.create(
+            number=4512,
+            group_member=group_member,
+            type=first,
+            name="Договор с группой",
+            year=2026,
+        )
+        _save_ranked_contract_project_products(
+            registration,
+            [first.pk, other.pk, second.pk],
+            [group.pk, "", group.pk],
+        )
+
+        registration = ContractProjectRegistration.objects.get(pk=registration.pk)
+        self.assertEqual(registration.type_short_display, "ESIA\u29c9-OTHER")
+        self.assertEqual(
+            list(registration.product_links.order_by("rank").values_list("product_group_id", flat=True)),
+            [group.pk, None, group.pk],
+        )
+
+        _save_ranked_contract_project_products(registration, [first.pk], [group.pk])
+        registration = ContractProjectRegistration.objects.get(pk=registration.pk)
+        self.assertEqual(registration.type_short_display, "ESIA-A")
+        self.assertIsNone(registration.product_links.get().product_group_id)
+
+        proposal = ProposalRegistration.objects.create(
+            number=4512,
+            group_member=group_member,
+            name="ТКП для договора",
+            year=2026,
+        )
+        ProposalRegistrationProduct.objects.create(
+            proposal=proposal,
+            product=first,
+            product_group=group,
+            rank=1,
+        )
+        ProposalRegistrationProduct.objects.create(
+            proposal=proposal,
+            product=second,
+            product_group=group,
+            rank=2,
+        )
+        prefill = _ranked_products_from_proposal(proposal)
+        self.assertEqual([row["product_group_id"] for row in prefill], [str(group.pk), str(group.pk)])
+

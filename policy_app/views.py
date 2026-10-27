@@ -17,9 +17,10 @@ from openpyxl.utils.exceptions import InvalidFileException
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import IntegerField, Max, Q, Value
+from django.db.models import IntegerField, Max, Prefetch, Q, Value
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse, QueryDict
 from django.shortcuts import render, redirect, get_object_or_404
@@ -35,7 +36,6 @@ from .models import (
     Product,
     SYSTEM_DSC_SECTION_CODE,
     TypicalSection,
-    TypicalSectionSpecialty,
     SectionStructure,
     ReportStructure,
     ServiceBlockClassifier,
@@ -52,12 +52,26 @@ from .models import (
     build_consulting_catalog_meta,
     ensure_system_dsc_section,
     is_system_dsc_code,
+    normalize_product_accuracy,
     normalize_service_block_code,
+    with_product_group_mark,
+)
+from .product_groups import (
+    CLASSIFICATION_LOCK_FIELDS,
+    PRODUCT_GROUP_CSV_HEADER,
+    create_product_group,
+    csv_group_label,
+    dissolve_product_group_if_sparse,
+    load_products_for_grouping,
+    move_product,
+    product_short_name_is_group,
+    validate_group_members,
 )
 from .forms import (
     ConsultingDirectionForm,
     OWNER_GROUP_VALUE,
     ProductForm,
+    ProductGroupForm,
     TypicalSectionForm,
     SectionStructureForm,
     _policy_section_display_label,
@@ -129,7 +143,9 @@ PRODUCT_CSV_HEADERS = [
     "Тип услуг",
     "Код",
     "Подтип услуги",
+    "Точность",
     "Владелец",
+    PRODUCT_GROUP_CSV_HEADER,
 ]
 SERVICE_GOAL_REPORT_CSV_HEADERS = [
     "Продукт",
@@ -208,6 +224,25 @@ SECTION_CSV_HEADERS = [
     "Подразделение",
     "ТКП",
 ]
+CONSULTING_DIRECTION_CSV_HEADERS = [
+    "Вид консалтинга",
+    "Код",
+    "Тип услуг",
+    "Подтип услуги",
+]
+SERVICE_BLOCK_CLASSIFIER_CSV_HEADERS = [
+    "Код",
+    "Краткое имя EN",
+    "Краткое имя RU",
+    "Наименование раздела (услуги) EN",
+    "Наименование раздела (услуги) RU",
+    "Тип учета",
+    "Направление экспертизы",
+    "Исполнитель",
+    "Подразделение",
+    "Организация",
+]
+SERVICE_BLOCK_CLASSIFIER_CSV_REQUIRED_HEADERS = SERVICE_BLOCK_CLASSIFIER_CSV_HEADERS[:8]
 
 
 def _render_form_with_errors(request, template, context):
@@ -470,27 +505,148 @@ def _policy_expertise_directions_context(request):
     return {"expertise_direction_rows": _expertise_direction_display_rows(directions)}
 
 
-def _policy_service_block_classifiers_context(request):
-    from group_app.expertise_management import attach_display_units
-
-    rows = list(
+def _policy_service_block_classifiers_queryset():
+    return (
         ServiceBlockClassifier.objects.select_related("expertise_dir")
         .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
         .order_by("position", "id")
     )
+
+
+def _annotate_service_block_classifiers(rows):
+    from group_app.expertise_management import attach_display_units
+
+    rows = list(rows)
     attach_display_units(rows, direction_attr="expertise_dir")
-    context = {"service_block_classifiers": rows}
-    if getattr(request.user, "is_staff", False):
-        context["policy_inline_edit"] = True
-        context["policy_inline_options_json"] = json.dumps(
+    return rows
+
+
+def _service_block_classifier_inline_context(request):
+    if not getattr(request.user, "is_staff", False):
+        return {}
+    return {
+        "policy_inline_edit": True,
+        "policy_inline_options_json": json.dumps(
             {"specialties": _classifier_specialty_options()},
             ensure_ascii=False,
+        ),
+    }
+
+
+def _policy_service_block_classifiers_context(request):
+    context = {
+        "service_block_classifiers": _annotate_service_block_classifiers(
+            _policy_service_block_classifiers_queryset()
         )
+    }
+    context.update(_service_block_classifier_inline_context(request))
+    return context
+
+
+def _policy_service_block_classifiers_table_context(request):
+    context = _policy_pagination_context(request, _policy_service_block_classifiers_queryset())
+    context["service_block_classifiers"] = _annotate_service_block_classifiers(
+        context["page_obj"].object_list
+    )
+    context.update(_service_block_classifier_inline_context(request))
     return context
 
 
 def _policy_consulting_directions_context(request):
     return {"consulting_directions": policy_consulting_directions_queryset()}
+
+
+def _consulting_direction_display_rows(directions):
+    rows = []
+    for direction in directions:
+        table_rows = direction.table_rows
+        if not table_rows:
+            rows.append(
+                {
+                    "direction": direction,
+                    "consulting_type": "",
+                    "service_type": "",
+                    "code": "",
+                    "service_subtype": "",
+                }
+            )
+            continue
+        for item in table_rows:
+            rows.append(
+                {
+                    "direction": direction,
+                    "consulting_type": item.get("consulting_type") or "",
+                    "service_type": item.get("service_type") or "",
+                    "code": item.get("code") or "",
+                    "service_subtype": item.get("service_subtype") or "",
+                }
+            )
+    return rows
+
+
+def _policy_request_values(request, name):
+    if request is None:
+        return []
+    return [value.strip() for value in request.GET.getlist(name) if value and value.strip()]
+
+
+def _filter_consulting_direction_display_rows(rows, request):
+    consulting = _policy_request_values(request, "consulting")
+    category = _policy_request_values(request, "category")
+    subtype = _policy_request_values(request, "subtype")
+    product_ids = [_positive_int(value) for value in _policy_request_values(request, "product")]
+    product_ids = [value for value in product_ids if value]
+    product_triples = None
+    if product_ids:
+        product_triples = {
+            (
+                product.consulting_type_display,
+                product.service_category_display,
+                product.service_subtype_display,
+            )
+            for product in Product.objects.filter(pk__in=product_ids).select_related(
+                "consulting_type_ref",
+                "service_category_ref",
+                "service_subtype_ref",
+            )
+        }
+    if not consulting and not category and not subtype and product_triples is None:
+        return rows
+
+    filtered = []
+    for row in rows:
+        if consulting and row["consulting_type"] not in consulting:
+            continue
+        if category and row["service_type"] not in category:
+            continue
+        if subtype and row["service_subtype"] not in subtype:
+            continue
+        if product_triples is not None and (
+            row["consulting_type"],
+            row["service_type"],
+            row["service_subtype"],
+        ) not in product_triples:
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def _consulting_direction_rows_for_request(request):
+    directions = list(policy_consulting_directions_queryset())
+    rows = _filter_consulting_direction_display_rows(
+        _consulting_direction_display_rows(directions),
+        request,
+    )
+    return directions, rows
+
+
+def _policy_consulting_directions_table_context(request):
+    directions, rows = _consulting_direction_rows_for_request(request)
+    context = _policy_pagination_context(request, rows)
+    context["consulting_directions"] = directions
+    context["consulting_direction_rows"] = list(context["page_obj"].object_list)
+    context["consulting_rows_paginated"] = True
+    return context
 
 
 def _policy_products_queryset():
@@ -529,10 +685,14 @@ def _policy_typical_sections_queryset():
             "product__consulting_type_ref",
             "product__service_category_ref",
             "product__service_subtype_ref",
-            "expertise_dir",
-            "expertise_direction",
+            "service_block",
+            "service_block__expertise_dir",
+            "service_block__expertise_direction",
         )
-        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .prefetch_related(
+            "service_block__ranked_specialties",
+            "service_block__ranked_specialties__specialty",
+        )
         .order_by("product__short_name", "position", "id")
     )
 
@@ -635,33 +795,38 @@ def _policy_pagination_context(request, queryset):
     }
 
 
-def _typical_section_inline_options():
-    departments = OrgUnit.objects.filter(
-        Q(unit_type="expertise") | Q(unit_type="administrative", level=1)
-    ).order_by("department_name", "id")
+def _service_block_inline_payload(block):
+    specialties = [
+        link.specialty.specialty
+        for link in block.ranked_specialties.all()
+        if getattr(link, "specialty", None) and link.specialty.specialty
+    ]
     return {
-        "accounting_types": [
-            {"value": value, "label": label}
-            for value, label in TypicalSection.ACCOUNTING_TYPE_CHOICES
-        ],
-        "expertise_dirs": [
-            {"id": item.pk, "label": item.short_name}
-            for item in ExpertiseDirection.objects.order_by("position", "id")
-        ],
-        "departments": [
-            {"id": item.pk, "label": item.department_name}
-            for item in departments
-        ],
-        "specialties": _section_specialty_options(),
-        "service_blocks": [
-            {
-                "id": block.pk,
-                "code": block.code,
-                "short_name": block.short_name,
-                "short_name_ru": block.short_name_ru,
-            }
-            for block in ServiceBlockClassifier.objects.exclude(code="DSC").order_by("position", "id")
-        ],
+        "id": block.pk,
+        "code": block.code,
+        "short_name": block.short_name,
+        "short_name_ru": block.short_name_ru,
+        "name_en": block.name_en,
+        "name_ru": block.name_ru,
+        "accounting_type": block.accounting_type,
+        "expertise": block.expertise_dir.short_name if block.expertise_dir_id and block.expertise_dir else "",
+        "department": block.department_display,
+        "executor": specialties,
+    }
+
+
+def _typical_section_inline_options():
+    blocks = (
+        ServiceBlockClassifier.objects.exclude(code="DSC")
+        .select_related("expertise_dir")
+        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .order_by("position", "id")
+    )
+    from group_app.expertise_management import attach_display_units
+
+    attach_display_units(list(blocks), direction_attr="expertise_dir")
+    return {
+        "service_blocks": [_service_block_inline_payload(block) for block in blocks],
     }
 
 
@@ -820,24 +985,88 @@ def _policy_paginated_table_context(
     return context
 
 
-def _policy_products_table_context(request):
-    context = _policy_paginated_table_context(
-        request,
-        _policy_products_queryset(),
-        "products",
-        products=True,
+def _policy_workspace_products_queryset(product_id):
+    product = (
+        Product.objects.filter(pk=product_id)
+        .only("id", "group_id", "is_product_group")
+        .first()
     )
+    if product is None:
+        return _policy_products_queryset().none()
+    if product.group_id and not product.is_product_group:
+        member_qs = _policy_products_queryset().filter(pk=product.pk).order_by("position", "id")
+        return (
+            _policy_products_queryset()
+            .filter(pk=product.group_id, is_product_group=True)
+            .prefetch_related(Prefetch("grouped_products", queryset=member_qs, to_attr="grouped_members"))
+        )
+    return (
+        _policy_products_queryset()
+        .filter(pk=product.pk)
+        .prefetch_related(
+            Prefetch("grouped_products", queryset=_policy_products_queryset().none(), to_attr="grouped_members")
+        )
+    )
+
+
+def _policy_products_table_queryset(request):
+    if _is_policy_workspace_request(request):
+        product_ids = [_positive_int(value) for value in request.GET.getlist("product")]
+        product_ids = [value for value in product_ids if value]
+        if len(product_ids) == 1:
+            return _policy_workspace_products_queryset(product_ids[0])
+    base = _policy_products_queryset()
+    filtered_ids = list(
+        _apply_policy_master_filters_to_products(base, request).values_list("pk", flat=True)
+    )
+    group_ids = set(
+        Product.objects.filter(pk__in=filtered_ids, is_product_group=True).values_list("pk", flat=True)
+    )
+    group_ids.update(
+        Product.objects.filter(pk__in=filtered_ids, group_id__isnull=False).values_list("group_id", flat=True)
+    )
+    top_ids = set(
+        Product.objects.filter(pk__in=filtered_ids, group_id__isnull=True).values_list("pk", flat=True)
+    )
+    top_ids.update(group_ids)
+    member_qs = (
+        _policy_products_queryset()
+        .filter(group_id__in=top_ids or [])
+        .order_by("position", "id")
+    )
+    return (
+        _policy_products_queryset()
+        .filter(pk__in=top_ids or [], group_id__isnull=True)
+        .prefetch_related(Prefetch("grouped_products", queryset=member_qs, to_attr="grouped_members"))
+    )
+
+
+def _policy_products_table_context(request):
+    context = _policy_pagination_context(request, _policy_products_table_queryset(request))
+    context["products"] = list(context["page_obj"].object_list)
     if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
         context["policy_inline_edit"] = True
         context["policy_inline_options_json"] = json.dumps(
             {
                 "catalog": build_consulting_catalog_meta(),
                 "owners": list(GroupMember.objects.order_by("position", "id").values("pk", "short_name")),
+                "accuracy": [
+                    {"value": value, "label": label}
+                    for value, label in Product.ACCURACY_CHOICES
+                ],
             },
             ensure_ascii=False,
         )
+        workspace_product_id = _positive_int(request.GET.get("product"))
         for product in context["products"]:
+            product.workspace_reference = bool(
+                product.is_product_group
+                and workspace_product_id
+                and product.pk != workspace_product_id
+            )
             product.inline_owner_ids_json = json.dumps(_product_inline_owner_ids(product), ensure_ascii=False)
+            for member in getattr(product, "grouped_members", []):
+                member.inline_owner_ids_json = json.dumps(_product_inline_owner_ids(member), ensure_ascii=False)
     return context
 
 
@@ -1139,10 +1368,12 @@ POLICY_MUTATION_URL_ENTITY = {
         "consulting-direction": (
             "consulting_dir_form_create", "consulting_dir_form_edit", "consulting_dir_delete",
             "consulting_dir_move_up", "consulting_dir_move_down",
+            "consulting_direction_csv_upload",
         ),
         "product": (
             "product_form_create", "product_form_edit", "product_delete", "product_csv_upload",
             "product_move_up", "product_move_down", "product_workspace_save",
+            "product_group_merge", "product_group_ungroup",
         ),
         "typical-section": (
             "section_form_create", "section_form_edit", "section_delete", "section_csv_upload",
@@ -1179,7 +1410,7 @@ POLICY_MUTATION_URL_ENTITY = {
         ),
         "service-block-classifier": (
             "service_block_classifier_form_create", "service_block_classifier_form_edit",
-            "service_block_classifier_delete",
+            "service_block_classifier_delete", "service_block_classifier_csv_upload",
             "service_block_classifier_move_up", "service_block_classifier_move_down",
         ),
         "grade": (
@@ -1334,6 +1565,7 @@ def _product_workspace_form_data(product, fields):
         data["service_category_ref"] = str(product.service_category_ref_id)
     if product.service_subtype_ref_id:
         data["service_subtype_ref"] = str(product.service_subtype_ref_id)
+    data["accuracy"] = product.accuracy or ""
     for key in (
         "short_name",
         "name_en",
@@ -1342,6 +1574,7 @@ def _product_workspace_form_data(product, fields):
         "consulting_type_ref",
         "service_category_ref",
         "service_subtype_ref",
+        "accuracy",
     ):
         if key in fields:
             value = fields[key]
@@ -1368,13 +1601,9 @@ SERVICE_GOAL_REPORT_INLINE_FIELDS = (
 )
 
 TYPICAL_SECTION_INLINE_FIELDS = (
-    "code",
-    "short_name",
-    "short_name_ru",
+    "service_block",
     "name_en",
     "name_ru",
-    "accounting_type",
-    "expertise_dir",
     "exclude_from_tkp_autofill",
 )
 TYPICAL_SECTION_INLINE_BOOL_FIELDS = frozenset({"exclude_from_tkp_autofill"})
@@ -1408,24 +1637,18 @@ def _inline_truthy(value):
 def _typical_section_form_data(item, fields):
     data = QueryDict(mutable=True)
     data["product"] = str(item.product_id)
-    fk_fields = {"expertise_dir"}
-    identity_fields = {"code", "short_name", "short_name_ru"}
-    for key in TYPICAL_SECTION_INLINE_FIELDS:
-        if key in TYPICAL_SECTION_INLINE_BOOL_FIELDS:
-            continue
-        if key in fk_fields:
-            current = str(getattr(item, f"{key}_id") or "")
-        else:
-            current = "" if getattr(item, key) is None else str(getattr(item, key))
-        if key not in identity_fields and key in fields:
+    for key in ("name_en", "name_ru"):
+        current = "" if getattr(item, key) is None else str(getattr(item, key))
+        if key in fields:
             value = fields[key]
             current = "" if value is None else str(value)
         data[key] = current
-    if not getattr(item, "pk", None) and "service_block" in fields:
+    if "service_block" in fields:
         value = fields.get("service_block")
         data["service_block"] = "" if value in (None, "") else str(value)
     elif getattr(item, "service_block_id", None):
         data["service_block"] = str(item.service_block_id)
+    data["code"] = item.code or ""
     checked = item.exclude_from_tkp_autofill
     if "exclude_from_tkp_autofill" in fields:
         checked = _inline_truthy(fields["exclude_from_tkp_autofill"])
@@ -1835,7 +2058,7 @@ def policy_service_block_classifiers_table(request):
     return render(
         request,
         POLICY_SERVICE_BLOCK_CLASSIFIERS_TABLE_TEMPLATE,
-        _policy_service_block_classifiers_context(request),
+        _policy_service_block_classifiers_table_context(request),
     )
 
 
@@ -1845,7 +2068,7 @@ def policy_consulting_directions_table(request):
     return render(
         request,
         POLICY_CONSULTING_DIRECTIONS_TABLE_TEMPLATE,
-        _policy_consulting_directions_context(request),
+        _policy_consulting_directions_table_context(request),
     )
 
 
@@ -1947,6 +2170,256 @@ def policy_tariffs_table(request):
     return render(request, POLICY_TARIFFS_TABLE_TEMPLATE, _policy_tariffs_table_context(request))
 
 
+PRODUCT_MAP_UNCLASSIFIED_LABEL = "Без классификации"
+PRODUCT_MAP_NO_OWNER_LABEL = "Без владельца"
+PRODUCT_MAP_GROUP_LABEL = "Группа"
+
+
+def _product_map_node(node_id, topic, children=None, *, collapse=False, **meta):
+    node = {"id": str(node_id), "topic": topic}
+    for key, value in meta.items():
+        if value is not None:
+            node[key] = value
+    if children:
+        node["children"] = children
+        if collapse:
+            node["expanded"] = False
+    return node
+
+
+def _product_map_mind(root):
+    return {
+        "meta": {"name": root["topic"], "author": "ai_app", "version": "1.0"},
+        "format": "node_tree",
+        "data": root,
+    }
+
+
+def _product_map_catalog():
+    types = list(
+        ConsultingDirectionType.objects.order_by("direction__position", "position", "id")
+    )
+    service_types = list(
+        ConsultingServiceType.objects.order_by(
+            "consulting_type__direction__position",
+            "consulting_type__position",
+            "position",
+            "id",
+        )
+    )
+    subtypes = list(
+        ConsultingServiceSubtype.objects.order_by(
+            "service_type__consulting_type__direction__position",
+            "service_type__consulting_type__position",
+            "service_type__position",
+            "position",
+            "id",
+        )
+    )
+    services_by_type = defaultdict(list)
+    for item in service_types:
+        services_by_type[item.consulting_type_id].append(item)
+    subtypes_by_service = defaultdict(list)
+    for item in subtypes:
+        subtypes_by_service[item.service_type_id].append(item)
+    return {
+        "types": types,
+        "type_ids": {item.pk for item in types},
+        "service_ids": {item.pk for item in service_types},
+        "subtype_ids": {item.pk for item in subtypes},
+        "services_by_type": services_by_type,
+        "subtypes_by_service": subtypes_by_service,
+    }
+
+
+def _product_map_anchor(product, catalog):
+    if product.service_subtype_ref_id in catalog["subtype_ids"]:
+        return ("subtype", product.service_subtype_ref_id)
+    if product.service_category_ref_id in catalog["service_ids"]:
+        return ("service", product.service_category_ref_id)
+    if product.consulting_type_ref_id in catalog["type_ids"]:
+        return ("type", product.consulting_type_ref_id)
+    return ("unclassified", None)
+
+
+def _product_map_group_id(product):
+    if product.is_product_group:
+        return product.pk
+    return product.group_id or None
+
+
+def _product_map_product_nodes(owner_key, products, **meta):
+    return [
+        _product_map_node(
+            f"{owner_key}-product-{product.pk}",
+            _product_workspace_label(product),
+            mapKind="product",
+            productId=product.pk,
+            accuracy=None if product.is_product_group else (product.accuracy or None),
+            productGroupId=_product_map_group_id(product),
+            **meta,
+        )
+        for product in products
+    ]
+
+
+def _product_map_tree(owner_key, label, products, catalog):
+    grouped = defaultdict(list)
+    for product in products:
+        grouped[_product_map_anchor(product, catalog)].append(product)
+
+    type_nodes = []
+    for consulting_type in catalog["types"]:
+        service_nodes = []
+        for service_type in catalog["services_by_type"].get(consulting_type.pk, []):
+            subtype_nodes = []
+            for subtype in catalog["subtypes_by_service"].get(service_type.pk, []):
+                children = _product_map_product_nodes(
+                    owner_key,
+                    grouped.get(("subtype", subtype.pk), []),
+                    consultingId=consulting_type.pk,
+                    serviceId=service_type.pk,
+                    subtypeId=subtype.pk,
+                )
+                if not children:
+                    continue
+                subtype_nodes.append(
+                    _product_map_node(
+                        f"{owner_key}-subtype-{subtype.pk}",
+                        subtype.name,
+                        children or None,
+                        collapse=bool(children),
+                        mapKind="subtype",
+                        consultingId=consulting_type.pk,
+                        serviceId=service_type.pk,
+                        subtypeId=subtype.pk,
+                    )
+                )
+            service_children = subtype_nodes + _product_map_product_nodes(
+                owner_key,
+                grouped.get(("service", service_type.pk), []),
+                consultingId=consulting_type.pk,
+                serviceId=service_type.pk,
+            )
+            if not service_children:
+                continue
+            service_nodes.append(
+                _product_map_node(
+                    f"{owner_key}-service-{service_type.pk}",
+                    service_type.name,
+                    service_children or None,
+                    collapse=bool(service_children),
+                    mapKind="service",
+                    consultingId=consulting_type.pk,
+                    serviceId=service_type.pk,
+                )
+            )
+        type_children = service_nodes + _product_map_product_nodes(
+            owner_key,
+            grouped.get(("type", consulting_type.pk), []),
+            consultingId=consulting_type.pk,
+        )
+        if not type_children:
+            continue
+        type_nodes.append(
+            _product_map_node(
+                f"{owner_key}-type-{consulting_type.pk}",
+                consulting_type.name,
+                type_children or None,
+                collapse=bool(type_children),
+                mapKind="type",
+                consultingId=consulting_type.pk,
+            )
+        )
+
+    unclassified = _product_map_product_nodes(
+        owner_key,
+        grouped.get(("unclassified", None), []),
+    )
+    if unclassified:
+        type_nodes.append(
+            _product_map_node(
+                f"{owner_key}-unclassified",
+                PRODUCT_MAP_UNCLASSIFIED_LABEL,
+                unclassified,
+                collapse=True,
+                mapKind="unclassified",
+            )
+        )
+
+    root = _product_map_node(
+        f"{owner_key}-root",
+        label,
+        type_nodes or None,
+        mapKind="owner",
+    )
+    return {"id": owner_key, "mind": _product_map_mind(root)}
+
+
+def _product_map_group_label():
+    management = (
+        GroupMember.objects.filter(is_management_company=True)
+        .order_by("position", "id")
+        .only("short_name")
+        .first()
+    )
+    label = (management.short_name or "").strip() if management else ""
+    return label or PRODUCT_MAP_GROUP_LABEL
+
+
+def _product_map_trees():
+    catalog = _product_map_catalog()
+    group_products = []
+    unowned = []
+    by_member = defaultdict(list)
+    for product in _policy_products_queryset():
+        if product.is_group_owner:
+            group_products.append(product)
+            continue
+        owners = getattr(product, "_policy_owner_display_items", None)
+        if not owners:
+            unowned.append(product)
+            continue
+        for owner in owners:
+            by_member[owner.pk].append(product)
+
+    maps = []
+    if group_products:
+        maps.append(
+            _product_map_tree("group", _product_map_group_label(), group_products, catalog)
+        )
+    if by_member:
+        members = (
+            GroupMember.objects.filter(pk__in=by_member)
+            .order_by("position", "id")
+            .only("id", "short_name")
+        )
+        for member in members:
+            maps.append(
+                _product_map_tree(
+                    f"member-{member.pk}",
+                    member.short_name,
+                    by_member[member.pk],
+                    catalog,
+                )
+            )
+    if unowned:
+        maps.append(
+            _product_map_tree("none", PRODUCT_MAP_NO_OWNER_LABEL, unowned, catalog)
+        )
+    return maps
+
+
+@login_required
+@require_http_methods(["GET"])
+def product_map(request):
+    return render(
+        request,
+        "policy_app/product_map.html",
+        {"product_maps": _product_map_trees()},
+    )
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET"])
@@ -2022,6 +2495,11 @@ def product_workspace_save(request, pk: int):
     product_form = None
     if target_row is not None:
         fields = target_row.get("fields") if isinstance(target_row.get("fields"), dict) else {}
+        if product.classification_locked:
+            for locked_field in CLASSIFICATION_LOCK_FIELDS:
+                fields.pop(locked_field, None)
+            if product.is_product_group and "short_name" in fields:
+                fields["short_name"] = with_product_group_mark(fields.get("short_name"))
         product_form = ProductForm(_product_workspace_form_data(product, fields), instance=product)
         if not product_form.is_valid():
             errors.extend(_product_form_inline_errors(product_form, product.pk))
@@ -2055,6 +2533,7 @@ def product_workspace_save(request, pk: int):
     section_forms = []
     created_ids = {}
     sections_to_delete = []
+    section_rows = []
     for row in _workspace_table_rows(tables, "typical-sections"):
         if not isinstance(row, dict):
             continue
@@ -2083,6 +2562,10 @@ def product_workspace_save(request, pk: int):
                 continue
             sections_to_delete.append(item)
             continue
+        section_rows.append(row)
+
+    pending_delete_ids = {item.pk for item in sections_to_delete}
+    for row in section_rows:
         fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
         if _is_new_workspace_section_row(row):
             temp_id = str(row.get("id") or "new")
@@ -2090,6 +2573,7 @@ def product_workspace_save(request, pk: int):
             form = TypicalSectionForm(
                 _typical_section_form_data(item, fields),
                 instance=item,
+                pending_delete_ids=pending_delete_ids,
             )
             if not form.is_valid():
                 errors.extend(_inline_form_errors(form, "typical-sections", temp_id))
@@ -2097,8 +2581,6 @@ def product_workspace_save(request, pk: int):
             section_forms.append(
                 (
                     form,
-                    fields["specialty_ids"] if "specialty_ids" in fields else None,
-                    "specialty_ids" in fields,
                     {
                         "temp_id": temp_id,
                         "after_id": row.get("after_id"),
@@ -2131,18 +2613,12 @@ def product_workspace_save(request, pk: int):
         form = TypicalSectionForm(
             _typical_section_form_data(item, fields),
             instance=item,
+            pending_delete_ids=pending_delete_ids,
         )
         if not form.is_valid():
             errors.extend(_inline_form_errors(form, "typical-sections", item.pk))
             continue
-        section_forms.append(
-            (
-                form,
-                fields["specialty_ids"] if "specialty_ids" in fields else None,
-                "specialty_ids" in fields,
-                None,
-            )
-        )
+        section_forms.append((form, None))
 
     deleted_section_ids = {item.pk for item in sections_to_delete}
 
@@ -2355,28 +2831,21 @@ def product_workspace_save(request, pk: int):
             saved_tables.append("service-goal-reports")
         created_typical_section = False
         deleted_typical_section = False
-        for form, specialty_ids, update_specialties, extra in section_forms:
+        if sections_to_delete:
+            for item in sections_to_delete:
+                item.delete()
+            deleted_typical_section = True
+        for form, extra in section_forms:
             if extra:
                 after_id = _resolve_section_after_id(extra.get("after_id"), created_ids)
                 instance = _create_typical_section(
                     form,
-                    specialties_callback=(
-                        (lambda section, ids=specialty_ids: _replace_section_specialties(section, ids))
-                        if update_specialties
-                        else None
-                    ),
                     after_id=after_id,
                 )
                 created_ids[extra["temp_id"]] = instance.pk
                 created_typical_section = True
                 continue
             instance = form.save()
-            if update_specialties:
-                _replace_section_specialties(instance, specialty_ids)
-        if sections_to_delete:
-            for item in sections_to_delete:
-                item.delete()
-            deleted_typical_section = True
         if section_forms or deleted_typical_section:
             ensure_system_dsc_section(saved)
             saved_tables.append("typical-sections")
@@ -2486,7 +2955,80 @@ def product_form_edit(request, pk: int):
 @require_POST
 def product_delete(request, pk: int):
     product = get_object_or_404(Product, pk=pk)
+    group_id = None if product.is_product_group else product.group_id
     product.delete()
+    dissolve_product_group_if_sparse(group_id)
+    return _render_policy_updated(request)
+
+
+def _product_group_ids_from_request(request):
+    raw_values = []
+    raw_values.extend(request.POST.getlist("product_ids"))
+    raw_values.extend(request.GET.getlist("product_id"))
+    raw_values.extend(request.GET.getlist("product_ids"))
+    single = request.POST.get("product_ids") or request.GET.get("product_ids")
+    if single:
+        raw_values.append(single)
+    ids = []
+    for value in raw_values:
+        for part in str(value).split(","):
+            part = part.strip()
+            if part.isdigit():
+                parsed = int(part)
+                if parsed > 0 and parsed not in ids:
+                    ids.append(parsed)
+    return ids
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def product_group_merge(request):
+    if request.method == "GET":
+        product_ids = _product_group_ids_from_request(request)
+        form = ProductGroupForm(initial={"product_ids": ",".join(str(pk) for pk in product_ids)})
+        selection_error = ""
+        try:
+            validate_group_members(load_products_for_grouping(product_ids), expected_count=len(product_ids))
+        except ValidationError as exc:
+            selection_error = " ".join(exc.messages)
+        return render(
+            request,
+            "policy_app/product_group_form.html",
+            {"form": form, "selection_error": selection_error},
+        )
+    form = ProductGroupForm(request.POST)
+    if form.is_valid():
+        product_ids = form.cleaned_data["product_ids"]
+        products = load_products_for_grouping(product_ids)
+        try:
+            validate_group_members(products, expected_count=len(product_ids))
+            create_product_group(
+                products,
+                form.cleaned_data["short_name"],
+                form.cleaned_data["name_en"],
+                form.cleaned_data["name_ru"],
+                form.cleaned_data["display_name"],
+            )
+        except ValidationError as exc:
+            form.add_error(None, " ".join(exc.messages))
+        else:
+            return _render_policy_updated(request)
+    return _render_form_with_errors(
+        request,
+        "policy_app/product_group_form.html",
+        {"form": form, "selection_error": ""},
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def product_group_ungroup(request):
+    product_ids = _product_group_ids_from_request(request)
+    labels = list(Product.objects.filter(pk__in=product_ids, is_product_group=True))
+    for label in labels:
+        label.delete()
     return _render_policy_updated(request)
 
 
@@ -2526,6 +3068,18 @@ def product_csv_upload(request):
     if len(rows) < 2:
         return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
 
+    header = [cell.strip() for cell in rows[0]]
+    accuracy_index = header.index("Точность") if "Точность" in header else None
+    owner_index = header.index("Владелец") if "Владелец" in header else None
+    if owner_index is None:
+        owner_index = 9 if accuracy_index is not None else 8
+    group_index = header.index(PRODUCT_GROUP_CSV_HEADER) if PRODUCT_GROUP_CSV_HEADER in header else None
+
+    def csv_cell(row, index):
+        if index is None or index < 0 or index >= len(row):
+            return ""
+        return row[index].strip()
+
     catalog_lookup = _consulting_catalog_lookup()
     valid_consulting_types = set(catalog_lookup["consulting_types_by_name"].keys())
     valid_service_categories = {name for _kind, name in catalog_lookup["service_types_by_pair"].keys()}
@@ -2536,15 +3090,16 @@ def product_csv_upload(request):
 
     created = 0
     warnings = []
+    pending_group_links = []
 
     for i, row in enumerate(rows[1:], start=2):
         if not any(cell.strip() for cell in row):
             continue
         if len(row) < 8:
             warnings.append(
-                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 8-9: "
+                f"Строка {i}: недостаточно столбцов ({len(row)}, ожидается 8-10: "
                 "Краткое имя, Наименование EN, Наименование RU, Отображаемое имя, Вид консалтинга, "
-                "Тип услуг, Код, Подтип услуги, [Владелец])."
+                "Тип услуг, Код, Подтип услуги, [Точность], [Владелец])."
             )
             continue
 
@@ -2556,7 +3111,9 @@ def product_csv_upload(request):
         service_category = row[5].strip() if len(row) > 5 else ""
         csv_code = row[6].strip() if len(row) > 6 else ""
         service_subtype = row[7].strip() if len(row) > 7 else ""
-        owner_raw = row[8].strip() if len(row) > 8 else ""
+        accuracy_raw = csv_cell(row, accuracy_index)
+        accuracy = normalize_product_accuracy(accuracy_raw)
+        owner_raw = csv_cell(row, owner_index)
 
         missing = []
         if not short_name:
@@ -2607,6 +3164,14 @@ def product_csv_upload(request):
             )
             continue
 
+        if accuracy and accuracy not in Product.ACCURACY_VALUES:
+            allowed = ", ".join(label for _value, label in Product.ACCURACY_CHOICES)
+            warnings.append(
+                f"Строка {i}: неизвестное значение точности «{accuracy_raw}». "
+                f"Допустимые: пусто, {allowed}."
+            )
+            continue
+
         derived_code = service_type_obj.code or ""
         if csv_code and csv_code != derived_code:
             warnings.append(
@@ -2624,6 +3189,13 @@ def product_csv_upload(request):
                 continue
             owner_ids = [owners_by_short_name[name.lower()].pk for name in owner_names]
 
+        group_label = csv_cell(row, group_index) if group_index is not None else None
+        existing = Product.objects.filter(short_name=short_name).first()
+        if existing is not None:
+            if group_index is not None:
+                pending_group_links.append((i, existing.pk, short_name, group_label))
+            continue
+
         try:
             product = Product.objects.create(
                 short_name=short_name,
@@ -2633,15 +3205,22 @@ def product_csv_upload(request):
                 consulting_type_ref=service_type_obj.consulting_type,
                 service_category_ref=service_type_obj,
                 service_subtype_ref=service_subtype_obj,
+                accuracy=accuracy,
                 is_group_owner=is_group_owner,
+                is_product_group=product_short_name_is_group(short_name),
                 position=_next_position(Product),
             )
             if owner_ids:
                 product.owners.set(owner_ids)
             ensure_system_dsc_section(product)
             created += 1
+            if group_index is not None:
+                pending_group_links.append((i, product.pk, short_name, group_label))
         except Exception as exc:
             warnings.append(f"Строка {i}: ошибка сохранения — {exc}")
+
+    if group_index is not None:
+        warnings.extend(_apply_product_csv_groups(pending_group_links))
 
     return _policy_import_success_response(
         request, ok=True, created=created, warnings=warnings
@@ -2651,17 +3230,85 @@ def product_csv_upload(request):
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET"])
+def _products_for_csv(request):
+    base = _policy_products_queryset().select_related("group")
+    filtered_ids = set(
+        _apply_policy_master_filters_to_products(base, request).values_list("pk", flat=True)
+    )
+    if not filtered_ids:
+        return []
+    group_ids = set(
+        Product.objects.filter(pk__in=filtered_ids, is_product_group=True).values_list("pk", flat=True)
+    )
+    group_ids.update(
+        Product.objects.filter(pk__in=filtered_ids, group_id__isnull=False).values_list("group_id", flat=True)
+    )
+    member_ids = set(Product.objects.filter(group_id__in=group_ids).values_list("pk", flat=True)) if group_ids else set()
+    include_ids = filtered_ids | group_ids | member_ids
+    products = list(base.order_by("position", "id"))
+    members_by_group = {}
+    for product in products:
+        if product.group_id:
+            members_by_group.setdefault(product.group_id, []).append(product)
+    ordered = []
+    for product in products:
+        if product.group_id or product.pk not in include_ids:
+            continue
+        ordered.append(product)
+        if product.is_product_group:
+            ordered.extend(members_by_group.get(product.pk, []))
+    return ordered
+
+
+def _apply_product_csv_groups(pending_links):
+    warnings = []
+    touched_groups = set()
+    labels_by_name = {
+        product.short_name: product
+        for product in Product.objects.filter(is_product_group=True).only("id", "short_name", "is_product_group")
+    }
+    for row_number, product_id, short_name, group_label in pending_links:
+        product = Product.objects.filter(pk=product_id).only("id", "short_name", "is_product_group", "group_id").first()
+        if product is None:
+            continue
+        if product_short_name_is_group(short_name) and not product.is_product_group:
+            Product.objects.filter(pk=product.pk).update(is_product_group=True)
+            product.is_product_group = True
+            labels_by_name[product.short_name] = product
+        if product.is_product_group or not group_label:
+            if product.group_id:
+                touched_groups.add(product.group_id)
+                Product.objects.filter(pk=product.pk).update(group_id=None)
+            continue
+        label = labels_by_name.get(group_label)
+        if label is None:
+            label = Product.objects.filter(short_name=group_label).only("id", "short_name", "is_product_group").first()
+        if label is None:
+            warnings.append(f"Строка {row_number}: групповой продукт «{group_label}» не найден.")
+            continue
+        if not label.is_product_group:
+            if not product_short_name_is_group(label.short_name):
+                warnings.append(f"Строка {row_number}: «{group_label}» не является групповым продуктом.")
+                continue
+            Product.objects.filter(pk=label.pk).update(is_product_group=True)
+            label.is_product_group = True
+        if product.pk == label.pk:
+            continue
+        Product.objects.filter(pk=product.pk).update(group_id=label.pk)
+        touched_groups.add(label.pk)
+        labels_by_name[label.short_name] = label
+    for group_id in touched_groups:
+        dissolve_product_group_if_sparse(group_id)
+    return warnings
+
+
 def product_csv_download(request):
     output = io.StringIO()
     output.write("\ufeff")
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(PRODUCT_CSV_HEADERS)
 
-    products = _apply_policy_master_filters_to_products(
-        _policy_products_queryset(),
-        request,
-    )
-    for product in products:
+    for product in _products_for_csv(request):
         writer.writerow(
             [
                 product.short_name,
@@ -2672,7 +3319,9 @@ def product_csv_download(request):
                 product.service_category_display,
                 product.service_code,
                 product.service_subtype_display,
+                product.accuracy,
                 product.owner_display,
+                csv_group_label(product),
             ]
         )
 
@@ -2702,65 +3351,14 @@ def _classifier_specialty_options():
 
 
 def _section_form_context(form, action, section=None):
-    spec_options = _section_specialty_options()
-    ranked = []
-    if section and section.pk:
-        ranked = [
-            {"rank": link.rank, "specialty_id": link.specialty_id}
-            for link in TypicalSectionSpecialty.objects.filter(section=section).order_by("rank")
-        ]
     ctx = {
         "form": form,
         "action": action,
-        "specialty_options": spec_options,
-        "specialty_options_json": json.dumps(spec_options, ensure_ascii=False),
-        "ranked_specialties": ranked,
         "is_system_section": bool(section and section.is_system_dsc),
     }
     if section:
         ctx["section"] = section
     return ctx
-
-
-def _replace_section_specialties(section, raw_ids):
-    if not isinstance(raw_ids, list):
-        raw_ids = [raw_ids] if raw_ids not in (None, "") else []
-    ids = []
-    seen = set()
-    for raw in raw_ids:
-        pk = _positive_int(raw)
-        if not pk or pk in seen:
-            continue
-        seen.add(pk)
-        ids.append(pk)
-    valid = set(
-        ExpertSpecialty.objects.filter(pk__in=ids).values_list("pk", flat=True)
-    )
-    TypicalSectionSpecialty.objects.filter(section=section).delete()
-    TypicalSectionSpecialty.objects.bulk_create(
-        [
-            TypicalSectionSpecialty(section=section, specialty_id=pk, rank=rank)
-            for rank, pk in enumerate(ids, start=1)
-            if pk in valid
-        ]
-    )
-
-
-def _save_section_specialties(section, post_data):
-    specialty_ids = post_data.getlist("specialty_id")
-    TypicalSectionSpecialty.objects.filter(section=section).delete()
-    to_create = []
-    for rank, raw_id in enumerate(specialty_ids, start=1):
-        if raw_id:
-            try:
-                sid = int(raw_id)
-            except (ValueError, TypeError):
-                continue
-            to_create.append(TypicalSectionSpecialty(
-                section=section, specialty_id=sid, rank=rank,
-            ))
-    if to_create:
-        TypicalSectionSpecialty.objects.bulk_create(to_create)
 
 
 def _typical_sections_by_product_json():
@@ -2889,10 +3487,7 @@ def section_form_create(request):
             SECTION_FORM_TEMPLATE,
             _with_workspace_product_lock(request, _section_form_context(form, "create"), form),
         )
-    _create_typical_section(
-        form,
-        specialties_callback=lambda section: _save_section_specialties(section, request.POST),
-    )
+    _create_typical_section(form)
     return _render_policy_updated(request)
 
 @login_required
@@ -2926,7 +3521,6 @@ def section_form_edit(request, pk: int):
         ensure_system_dsc_section(section.product)
     else:
         form.save()
-        _save_section_specialties(section, request.POST)
         ensure_system_dsc_section(section.product)
     return _render_policy_updated(request)
 
@@ -2941,24 +3535,6 @@ def section_delete(request, pk: int):
     section.delete()
     ensure_system_dsc_section(product)
     return _render_policy_updated(request)
-
-def _normalize_product_positions():
-    """
-    Гарантирует сквозную нумерацию позиций (1..N) в порядке текущей сортировки.
-    """
-    products = list(
-        Product.objects.select_for_update()
-        .order_by("position", "id")
-        .only("id", "position")
-    )
-    changed = []
-    for idx, p in enumerate(products, start=1):
-        if p.position != idx:
-            p.position = idx
-            changed.append(p)
-    if changed:
-        Product.objects.bulk_update(changed, ["position"])
-    return products
 
 def _normalize_section_positions(product_id: int | None = None):
     """
@@ -2997,27 +3573,13 @@ def _normalize_section_positions(product_id: int | None = None):
 @require_http_methods(["POST", "GET"])
 @login_required
 def product_move_up(request, pk: int):
-    with transaction.atomic():
-        items = _normalize_product_positions()
-        idx = next((i for i, it in enumerate(items) if it.id == pk), None)
-        if idx is not None and idx > 0:
-            cur = items[idx]
-            prev = items[idx - 1]
-            cur.position, prev.position = prev.position, cur.position
-            Product.objects.bulk_update([cur, prev], ["position"])
+    move_product(pk, "up")
     return _render_policy_updated(request)
 
 @require_http_methods(["POST", "GET"])
 @login_required
 def product_move_down(request, pk: int):
-    with transaction.atomic():
-        items = _normalize_product_positions()
-        idx = next((i for i, it in enumerate(items) if it.id == pk), None)
-        if idx is not None and idx < len(items) - 1:
-            cur = items[idx]
-            nxt = items[idx + 1]
-            cur.position, nxt.position = nxt.position, cur.position
-            Product.objects.bulk_update([cur, nxt], ["position"])
+    move_product(pk, "down")
     return _render_policy_updated(request)
 
 @require_http_methods(["POST", "GET"])
@@ -3153,81 +3715,41 @@ def section_csv_upload(request):
             )
             continue
 
-        missing = []
-        if block is None and not short_name and not TypicalSection.objects.filter(product=product, code=code).exists():
-            missing.append("Краткое имя EN")
-        if not name_en:
-            missing.append("Наименование EN")
-        if not name_ru:
-            missing.append("Наименование RU")
-        if missing:
-            warnings.append(f"Строка {i}: не заполнены обязательные поля: {', '.join(missing)}.")
-            continue
-
-        if accounting_type not in dict(TypicalSection.ACCOUNTING_TYPE_CHOICES):
-            warnings.append(f"Строка {i}: неизвестный тип учета «{accounting_type}». Допустимые: {', '.join(dict(TypicalSection.ACCOUNTING_TYPE_CHOICES).keys())}. Установлено «Раздел».")
-            accounting_type = "Раздел"
-
-        expertise_dir = None
-        if expertise_dir_name:
-            expertise_dir = expertise_dirs.get(_csv_lookup_key(expertise_dir_name))
-            if not expertise_dir:
-                warnings.append(f"Строка {i}: экспертиза «{expertise_dir_name}» не найдена. Поле оставлено пустым.")
-
-        lookup_code = block.code if block is not None else code
-        section = TypicalSection.objects.filter(product=product, code=lookup_code).first()
-        if section is None and lookup_code != code:
-            section = TypicalSection.objects.filter(product=product, code=code).first()
-        was_created = section is None
-        if was_created and block is None:
+        if block is None:
             warnings.append(
                 f"Строка {i}: код «{code}» не найден в классификаторе типовых блоков услуг."
             )
             continue
+        if not name_en:
+            name_en = block.name_en
+        if not name_ru:
+            name_ru = block.name_ru
+        if not name_en or not name_ru:
+            warnings.append(f"Строка {i}: не заполнены наименование EN и наименование RU.")
+            continue
+
+        section = TypicalSection.objects.filter(product=product, service_block=block).first()
+        was_created = section is None
 
         try:
             with transaction.atomic():
                 ensure_system_dsc_section(product)
-                if block is not None:
-                    code = block.code
-                    short_name = block.short_name
-                    short_name_ru = block.short_name_ru
                 if was_created:
                     section = TypicalSection.objects.create(
                         product=product,
                         service_block=block,
-                        code=code,
-                        short_name=short_name,
-                        short_name_ru=short_name_ru,
+                        code=block.code,
                         name_en=name_en,
                         name_ru=name_ru,
-                        accounting_type=accounting_type,
-                        expertise_dir=expertise_dir,
                         exclude_from_tkp_autofill=_csv_truthy(tkp_raw),
                         position=_next_position(TypicalSection, {"product": product}),
                     )
                 else:
-                    if block is not None:
-                        section.service_block = block
-                        section.code = block.code
-                        section.short_name = block.short_name
-                        section.short_name_ru = block.short_name_ru
+                    section.service_block = block
                     section.name_en = name_en
                     section.name_ru = name_ru
-                    section.accounting_type = accounting_type
-                    section.expertise_dir = expertise_dir
                     section.exclude_from_tkp_autofill = _csv_truthy(tkp_raw)
                     section.save()
-                    TypicalSectionSpecialty.objects.filter(section=section).delete()
-                missing_specialties = []
-                for rank, specialty_name in enumerate(_split_csv_list_value(executor_raw, specialties_by_name), start=1):
-                    specialty = specialties_by_name.get(_csv_lookup_key(specialty_name))
-                    if not specialty:
-                        missing_specialties.append(specialty_name)
-                        continue
-                    TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=rank)
-            if missing_specialties:
-                warnings.append(f"Строка {i}: исполнители не найдены: {', '.join(missing_specialties)}.")
             if was_created:
                 created += 1
             else:
@@ -5445,7 +5967,11 @@ def _typical_service_term_section_options(product_id):
     sections = (
         TypicalSection.objects.filter(product_id=product_id)
         .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
-        .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
+        .select_related("service_block")
+        .prefetch_related(
+            "service_block__ranked_specialties",
+            "service_block__ranked_specialties__specialty",
+        )
         .order_by("position", "id")
     )
     options = []
@@ -5911,6 +6437,278 @@ def typical_service_term_move_down(request, pk: int):
 
 # --- Направления консалтинга ---
 
+def _load_uploaded_csv_rows(csv_file):
+    if not csv_file:
+        return None, JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return None, JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return None, JsonResponse(
+                {
+                    "ok": False,
+                    "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251).",
+                },
+                status=400,
+            )
+
+    try:
+        rows = list(csv.reader(io.StringIO(raw), delimiter=";"))
+        if not rows:
+            return None, JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            rows = list(csv.reader(io.StringIO(raw), delimiter=","))
+    except csv.Error as exc:
+        return None, JsonResponse(
+            {"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."},
+            status=400,
+        )
+
+    if len(rows) < 2:
+        return None, JsonResponse(
+            {"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."},
+            status=400,
+        )
+    return rows, None
+
+
+def _consulting_csv_cell(row, index):
+    if index is None or index >= len(row):
+        return ""
+    return row[index].strip()
+
+
+def _allocate_catalog_position(positions, bucket, model, filters=None):
+    if bucket not in positions:
+        positions[bucket] = _next_position(model, filters)
+        return positions[bucket]
+    positions[bucket] += 1
+    return positions[bucket]
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def consulting_direction_csv_download(request):
+    _directions, rows = _consulting_direction_rows_for_request(request)
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(CONSULTING_DIRECTION_CSV_HEADERS)
+    for row in rows:
+        if not any((row["consulting_type"], row["code"], row["service_type"], row["service_subtype"])):
+            continue
+        writer.writerow(
+            [
+                row["consulting_type"],
+                row["code"],
+                row["service_type"],
+                row["service_subtype"],
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="consulting_directions.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def consulting_direction_csv_upload(request):
+    rows, error = _load_uploaded_csv_rows(request.FILES.get("csv_file"))
+    if error:
+        return error
+
+    header = [cell.strip() for cell in rows[0]]
+    indexes = {
+        name: _csv_header_index(header, name) for name in CONSULTING_DIRECTION_CSV_HEADERS
+    }
+    if any(index is None for index in indexes.values()):
+        expected = ", ".join(CONSULTING_DIRECTION_CSV_HEADERS)
+        return JsonResponse(
+            {"ok": False, "error": f"Файл должен содержать столбцы: {expected}."},
+            status=400,
+        )
+
+    types_by_name = {
+        item.name: item
+        for item in ConsultingDirectionType.objects.select_related("direction")
+    }
+    services_by_pair = {
+        (item.consulting_type.name, item.name): item
+        for item in ConsultingServiceType.objects.select_related("consulting_type", "direction")
+    }
+    subtypes_by_triple = {
+        (item.service_type.consulting_type.name, item.service_type.name, item.name): item
+        for item in ConsultingServiceSubtype.objects.select_related(
+            "service_type",
+            "service_type__consulting_type",
+        )
+    }
+    positions = {}
+    seen_rows = set()
+    codes_in_file = {}
+    catalog_direction = {"value": None}
+
+    def direction_for_new_type():
+        if catalog_direction["value"] is None:
+            catalog_direction["value"] = ConsultingDirection.objects.order_by("position", "id").first()
+            if catalog_direction["value"] is None:
+                catalog_direction["value"] = ConsultingDirection.objects.create(
+                    position=_next_position(ConsultingDirection)
+                )
+        return catalog_direction["value"]
+
+    created = 0
+    updated = 0
+    warnings = []
+    type_index = indexes["Вид консалтинга"]
+    code_index = indexes["Код"]
+    service_index = indexes["Тип услуг"]
+    subtype_index = indexes["Подтип услуги"]
+
+    for row_number, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        consulting_type = _consulting_csv_cell(row, type_index)
+        code = _consulting_csv_cell(row, code_index)
+        service_type_name = _consulting_csv_cell(row, service_index)
+        subtype_name = _consulting_csv_cell(row, subtype_index)
+        if not consulting_type and not code and not service_type_name and not subtype_name:
+            continue
+        if not consulting_type:
+            warnings.append(f"Строка {row_number}: не заполнен вид консалтинга.")
+            continue
+        if len(consulting_type) > 128:
+            warnings.append(f"Строка {row_number}: вид консалтинга длиннее 128 символов.")
+            continue
+        if code or service_type_name or subtype_name:
+            missing = []
+            if not service_type_name:
+                missing.append("Тип услуг")
+            if not code:
+                missing.append("Код")
+            if missing:
+                warnings.append(
+                    f"Строка {row_number}: не заполнены обязательные поля: {', '.join(missing)}."
+                )
+                continue
+            if len(service_type_name) > 128:
+                warnings.append(f"Строка {row_number}: тип услуг длиннее 128 символов.")
+                continue
+            if len(code) > 32:
+                warnings.append(f"Строка {row_number}: код длиннее 32 символов.")
+                continue
+            if subtype_name and len(subtype_name) > 255:
+                warnings.append(f"Строка {row_number}: подтип услуги длиннее 255 символов.")
+                continue
+
+        row_key = (consulting_type, service_type_name, subtype_name)
+        if row_key in seen_rows:
+            warnings.append(f"Строка {row_number}: повторяет уже загруженную строку.")
+            continue
+        if service_type_name:
+            service_key = (consulting_type, service_type_name)
+            previous_code = codes_in_file.get(service_key)
+            if previous_code is not None and previous_code != code:
+                warnings.append(
+                    f"Строка {row_number}: код «{code}» не совпадает с кодом «{previous_code}» "
+                    f"для типа услуг «{service_type_name}»."
+                )
+                continue
+            codes_in_file[service_key] = code
+        seen_rows.add(row_key)
+
+        try:
+            type_obj = types_by_name.get(consulting_type)
+            type_created = False
+            if type_obj is None:
+                direction = direction_for_new_type()
+                type_obj = ConsultingDirectionType.objects.create(
+                    direction=direction,
+                    name=consulting_type,
+                    position=_allocate_catalog_position(
+                        positions,
+                        ("type", direction.pk),
+                        ConsultingDirectionType,
+                        {"direction": direction},
+                    ),
+                )
+                types_by_name[consulting_type] = type_obj
+                type_created = True
+
+            if not service_type_name:
+                if type_created:
+                    created += 1
+                continue
+
+            service_obj = services_by_pair.get((consulting_type, service_type_name))
+            service_created = False
+            code_updated = False
+            if service_obj is None:
+                service_obj = ConsultingServiceType.objects.create(
+                    direction=type_obj.direction,
+                    consulting_type=type_obj,
+                    name=service_type_name,
+                    code=code,
+                    position=_allocate_catalog_position(
+                        positions,
+                        ("service", type_obj.pk),
+                        ConsultingServiceType,
+                        {"consulting_type": type_obj},
+                    ),
+                )
+                services_by_pair[(consulting_type, service_type_name)] = service_obj
+                service_created = True
+            elif service_obj.code != code:
+                service_obj.code = code
+                service_obj.save(update_fields=["code", "updated_at"])
+                Product.objects.filter(service_category_ref=service_obj).update(service_code=code)
+                code_updated = True
+
+            if not subtype_name:
+                if service_created:
+                    created += 1
+                elif code_updated:
+                    updated += 1
+                continue
+
+            subtype_key = (consulting_type, service_type_name, subtype_name)
+            if subtypes_by_triple.get(subtype_key) is None:
+                subtype_obj = ConsultingServiceSubtype.objects.create(
+                    direction=service_obj.direction,
+                    service_type=service_obj,
+                    name=subtype_name,
+                    position=_allocate_catalog_position(
+                        positions,
+                        ("subtype", service_obj.pk),
+                        ConsultingServiceSubtype,
+                        {"service_type": service_obj},
+                    ),
+                )
+                subtypes_by_triple[subtype_key] = subtype_obj
+                created += 1
+            elif code_updated:
+                updated += 1
+        except Exception as exc:
+            warnings.append(f"Строка {row_number}: ошибка сохранения — {exc}")
+
+    return _policy_import_success_response(
+        request,
+        ok=True,
+        created=created,
+        updated=updated,
+        warnings=warnings,
+    )
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
@@ -6089,6 +6887,217 @@ def expertise_dir_move_down(request, pk: int):
 
 # --- Классификатор типовых блоков услуг ---
 
+def _service_block_classifier_executor_cell(classifier):
+    return "\n".join(
+        link.specialty.specialty
+        for link in classifier.ranked_specialties.all()
+        if getattr(link, "specialty", None) and link.specialty.specialty
+    )
+
+
+def _service_block_classifier_code_is_valid(code):
+    return len(code) == 3 and code.isalpha() and code.isascii()
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def service_block_classifier_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(SERVICE_BLOCK_CLASSIFIER_CSV_HEADERS)
+    for block in _annotate_service_block_classifiers(_policy_service_block_classifiers_queryset()):
+        writer.writerow(
+            [
+                block.code,
+                block.short_name,
+                block.short_name_ru,
+                block.name_en,
+                block.name_ru,
+                block.accounting_type,
+                block.expertise_dir.short_name if block.expertise_dir_id else "",
+                _service_block_classifier_executor_cell(block),
+                block.department_display,
+                block.organization_display,
+            ]
+        )
+
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="service_block_classifiers.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def service_block_classifier_csv_upload(request):
+    from policy_app.service_block_link import replace_service_block_classifier_specialties
+
+    rows, error = _load_uploaded_csv_rows(request.FILES.get("csv_file"))
+    if error:
+        return error
+
+    header = [cell.strip() for cell in rows[0]]
+    indexes = {
+        name: _csv_header_index(header, name)
+        for name in SERVICE_BLOCK_CLASSIFIER_CSV_REQUIRED_HEADERS
+    }
+    if any(index is None for index in indexes.values()):
+        expected = ", ".join(SERVICE_BLOCK_CLASSIFIER_CSV_HEADERS)
+        return JsonResponse(
+            {"ok": False, "error": f"Файл должен содержать столбцы: {expected}."},
+            status=400,
+        )
+
+    accounting_types = dict(ServiceBlockClassifier.ACCOUNTING_TYPE_CHOICES)
+    expertise_by_label = {}
+    for direction in ExpertiseDirection.objects.all():
+        for label in (direction.short_name, direction.name):
+            key = _csv_lookup_key(label)
+            if key and key not in expertise_by_label:
+                expertise_by_label[key] = direction
+    specialties_by_name = {
+        _csv_lookup_key(specialty.specialty): specialty
+        for specialty in ExpertSpecialty.objects.exclude(specialty="")
+    }
+    blocks_by_code = {
+        normalize_service_block_code(block.code): block
+        for block in ServiceBlockClassifier.objects.all()
+    }
+    next_position = _next_position(ServiceBlockClassifier)
+    seen_codes = set()
+    created = 0
+    updated = 0
+    warnings = []
+    code_index = indexes["Код"]
+    short_name_index = indexes["Краткое имя EN"]
+    short_name_ru_index = indexes["Краткое имя RU"]
+    name_en_index = indexes["Наименование раздела (услуги) EN"]
+    name_ru_index = indexes["Наименование раздела (услуги) RU"]
+    accounting_index = indexes["Тип учета"]
+    expertise_index = indexes["Направление экспертизы"]
+    executor_index = indexes["Исполнитель"]
+
+    for row_number, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        code = normalize_service_block_code(_csv_row_value(row, code_index))
+        short_name = _csv_row_value(row, short_name_index)
+        short_name_ru = _csv_row_value(row, short_name_ru_index)
+        name_en = _csv_row_value(row, name_en_index)
+        name_ru = _csv_row_value(row, name_ru_index)
+        accounting_type = _csv_row_value(row, accounting_index)
+        expertise_name = _csv_row_value(row, expertise_index)
+        executor_raw = _csv_row_value(row, executor_index)
+        if not code and not short_name and not short_name_ru and not accounting_type and not expertise_name and not executor_raw:
+            continue
+        if not code:
+            warnings.append(f"Строка {row_number}: не заполнен код.")
+            continue
+        if not _service_block_classifier_code_is_valid(code):
+            warnings.append(
+                f"Строка {row_number}: код «{code}» должен состоять ровно из трёх латинских букв."
+            )
+            continue
+        if code in seen_codes:
+            warnings.append(f"Строка {row_number}: код «{code}» повторяет уже загруженную строку.")
+            continue
+        seen_codes.add(code)
+        if not short_name:
+            warnings.append(f"Строка {row_number}: не заполнено краткое имя EN.")
+            continue
+        if len(short_name) > 64:
+            warnings.append(f"Строка {row_number}: краткое имя EN длиннее 64 символов.")
+            continue
+        if len(short_name_ru) > 128:
+            warnings.append(f"Строка {row_number}: краткое имя RU длиннее 128 символов.")
+            continue
+        if not accounting_type:
+            accounting_type = "Разделы"
+        elif accounting_type not in accounting_types:
+            warnings.append(
+                f"Строка {row_number}: неизвестный тип учета «{accounting_type}». "
+                f"Допустимые: {', '.join(accounting_types)}."
+            )
+            continue
+
+        expertise_dir = None
+        if expertise_name:
+            expertise_dir = expertise_by_label.get(_csv_lookup_key(expertise_name))
+            if expertise_dir is None:
+                warnings.append(
+                    f"Строка {row_number}: направление экспертизы «{expertise_name}» не найдено. "
+                    "Поле оставлено пустым."
+                )
+
+        specialty_ids = []
+        missing_specialties = []
+        foreign_specialties = []
+        for specialty_name in _split_csv_list_value(executor_raw, specialties_by_name):
+            specialty = specialties_by_name.get(_csv_lookup_key(specialty_name))
+            if specialty is None:
+                missing_specialties.append(specialty_name)
+                continue
+            if expertise_dir is None or specialty.expertise_dir_id != expertise_dir.pk:
+                foreign_specialties.append(specialty_name)
+                continue
+            specialty_ids.append(specialty.pk)
+
+        block = blocks_by_code.get(code)
+        was_created = block is None
+        try:
+            with transaction.atomic():
+                if was_created:
+                    block = ServiceBlockClassifier.objects.create(
+                        code=code,
+                        short_name=short_name,
+                        short_name_ru=short_name_ru,
+                        name_en=name_en,
+                        name_ru=name_ru,
+                        accounting_type=accounting_type,
+                        expertise_dir=expertise_dir,
+                        position=next_position,
+                    )
+                else:
+                    block.short_name = short_name
+                    block.short_name_ru = short_name_ru
+                    block.name_en = name_en
+                    block.name_ru = name_ru
+                    block.accounting_type = accounting_type
+                    block.expertise_dir = expertise_dir
+                    block.save()
+                replace_service_block_classifier_specialties(block, specialty_ids)
+        except Exception as exc:
+            warnings.append(f"Строка {row_number}: ошибка сохранения — {exc}")
+            continue
+        if was_created:
+            next_position += 1
+            blocks_by_code[code] = block
+
+        if missing_specialties:
+            warnings.append(
+                f"Строка {row_number}: исполнители не найдены: {', '.join(missing_specialties)}."
+            )
+        if foreign_specialties:
+            warnings.append(
+                f"Строка {row_number}: исполнители не относятся к направлению экспертизы: "
+                f"{', '.join(foreign_specialties)}."
+            )
+        if was_created:
+            created += 1
+        else:
+            updated += 1
+
+    return _policy_import_success_response(
+        request,
+        ok=True,
+        created=created,
+        updated=updated,
+        warnings=warnings,
+    )
+
+
 def _classifier_ranked_specialties(classifier, post_data=None):
     if post_data is not None:
         ranked = []
@@ -6188,6 +7197,22 @@ def service_block_classifier_form_edit(request, pk: int):
 def service_block_classifier_specialties_save(request, pk: int):
     classifier = get_object_or_404(ServiceBlockClassifier, pk=pk)
     _save_classifier_specialties(classifier, request.POST)
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def service_block_classifier_name_save(request, pk: int):
+    classifier = get_object_or_404(ServiceBlockClassifier, pk=pk)
+    field = str(request.POST.get("field") or "")
+    if field not in {"name_en", "name_ru"}:
+        return JsonResponse({"ok": False, "error": "Неизвестное поле."}, status=400)
+    value = str(request.POST.get("value") or "")
+    if len(value) > 255:
+        return JsonResponse({"ok": False, "error": "Слишком длинное значение."}, status=400)
+    setattr(classifier, field, value)
+    classifier.save(update_fields=[field, "updated_at"])
     return JsonResponse({"ok": True})
 
 

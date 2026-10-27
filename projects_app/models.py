@@ -683,7 +683,7 @@ def _ordered_project_sections(project):
         TypicalSection.objects
         .filter(product_id__in=product_ids)
         .exclude(models.Q(is_system=True) | models.Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
-        .select_related("product", "expertise_dir")
+        .select_related("product", "service_block", "service_block__expertise_dir")
         .order_by("position", "id")
     )
     sections.sort(

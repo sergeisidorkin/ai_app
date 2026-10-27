@@ -70,11 +70,19 @@
       {% endif %}
     </div>
     <div class="mb-3">
+      <label class="form-label">Точность</label>
+      {{ form.accuracy }}
+      {% if form.accuracy.errors %}
+        <div class="text-danger small mt-1">{{ form.accuracy.errors.0 }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
       <label class="form-label">Владелец</label>
       <div class="dropdown" id="product-owner-dropdown">
         <button class="form-select text-start" type="button"
                 id="product-owner-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-                style="cursor:pointer; background-color:#fff;">
+                style="cursor:pointer; background-color:#fff;"
+                {% if form.classification_locked %}disabled aria-disabled="true"{% endif %}>
           <span class="js-product-owner-label">Группа</span>
         </button>
         <div class="dropdown-menu p-3" aria-labelledby="product-owner-toggle"
@@ -82,6 +90,7 @@
           <div class="form-check mb-2">
             <input class="form-check-input js-product-owner" type="checkbox"
                    name="owner_ids" value="__group__" id="product-owner-group"
+                   {% if form.classification_locked %}disabled{% endif %}
                    {% if form.is_group_selected or not form.selected_owner_ids and not form.instance.pk %}checked{% endif %}>
             <label class="form-check-label" for="product-owner-group">Группа</label>
           </div>
@@ -90,6 +99,7 @@
             <div class="form-check">
               <input class="form-check-input js-product-owner" type="checkbox"
                      name="owner_ids" value="{{ opt.pk }}" id="product-owner-{{ opt.pk }}"
+                     {% if form.classification_locked %}disabled{% endif %}
                      {% if opt.pk in form.selected_owner_ids %}checked{% endif %}>
               <label class="form-check-label" for="product-owner-{{ opt.pk }}">
                 {{ opt.short_name }}
