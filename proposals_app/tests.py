@@ -5791,7 +5791,7 @@ class ProposalRegistrationFormTests(TestCase):
         payload.setlist("preliminary_report_date", ["15.01.2026", "15.04.2026"])
         payload.setlist("final_report_term_weeks", ["2.0", "3.0"])
         payload.setlist("final_report_date", ["29.01.2026", "06.05.2026"])
-        payload.setlist("next_stage_delay_days", ["-3"])
+        payload.setlist("next_stage_delay_days", ["3"])
 
         form = ProposalRegistrationForm(data=payload)
 
@@ -5819,7 +5819,11 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(str(proposal.final_report_term_weeks), "3.0")
         self.assertEqual(proposal.stage_payloads_json[-1]["product_id"], second_product.pk)
         self.assertEqual(proposal.stage_payloads_json[-1]["service_composition"], "ТЗ этапа 2")
-        self.assertEqual(proposal.stage_payloads_json[0]["next_stage_delay_days"], -3)
+        self.assertEqual(proposal.stage_payloads_json[0]["next_stage_delay_days"], 3)
+        self.assertEqual(proposal.stage_payloads_json[0]["next_stage_delay_unit"], "days")
+        self.assertFalse(proposal.stage_payloads_json[0]["source_data_term_enabled"])
+        self.assertTrue(proposal.stage_payloads_json[0]["preliminary_report_date_enabled"])
+        self.assertTrue(proposal.stage_payloads_json[0]["final_report_date_enabled"])
         self.assertEqual(proposal.stage_payloads_json[1]["next_stage_delay_days"], 0)
         self.assertEqual(proposal.commercial_offers.count(), 1)
         self.assertEqual(proposal.commercial_offers.first().specialist, "Эксперт")
@@ -5980,6 +5984,12 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(form.stage_rows[1]["service_composition"], "ТЗ 2")
         self.assertEqual(form.stage_rows[1]["final_report_date"], "06.05.2026")
         self.assertEqual(form.stage_rows[0]["next_stage_delay_days"], "4")
+        self.assertEqual(form.stage_rows[0]["next_stage_delay_unit"], "days")
+        self.assertFalse(form.stage_rows[0]["source_data_term_enabled"])
+        self.assertFalse(form.stage_rows[0]["source_data_date_enabled"])
+        self.assertTrue(form.stage_rows[0]["preliminary_report_date_enabled"])
+        self.assertTrue(form.stage_rows[0]["final_report_date_enabled"])
+        self.assertTrue(form.stage_rows[0]["service_term_months_enabled"])
 
     def test_resolve_variables_uses_summary_payload_after_multistage_save(self):
         group_member = GroupMember.objects.create(
@@ -6865,6 +6875,67 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(rows[1]["preliminary_report_date"], date(2026, 4, 6))
         self.assertEqual(rows[1]["final_report_date"], date(2026, 4, 20))
 
+    def test_payment_schedule_includes_source_data_and_delay_unit(self):
+        from datetime import timedelta
+
+        from proposals_app.views import _add_proposal_schedule_term, _proposal_schedule_base_start_date
+
+        product = Product.objects.create(
+            short_name="SRC",
+            name_en="Source",
+            name_ru="Исходные",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3334,
+            group_member=self.group_member,
+            type=product,
+            name="ТКП с исходными данными",
+            year=2026,
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": product.pk,
+                    "source_data_term_enabled": True,
+                    "source_data_term": "1.0",
+                    "source_data_term_unit": "weeks",
+                    "service_term_months": "1.0",
+                    "preliminary_report_term_unit": "months",
+                    "next_stage_delay_days": "1",
+                    "next_stage_delay_unit": "weeks",
+                },
+                {
+                    "rank": 2,
+                    "product_id": product.pk,
+                    "service_term_months": "1.0",
+                    "preliminary_report_term_unit": "months",
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=product, rank=2),
+            ]
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        rows = response.context["proposal_payment_schedule_rows"]
+        start = _proposal_schedule_base_start_date()
+        preliminary = _add_proposal_schedule_term(
+            _add_proposal_schedule_term(start, Decimal("1.0"), "weeks"),
+            Decimal("1.0"),
+            "months",
+        )
+        self.assertEqual(rows[0]["start_date"], start)
+        self.assertEqual(rows[0]["preliminary_report_date"], preliminary)
+        self.assertEqual(rows[0]["next_stage_delay_days"], 7)
+        self.assertEqual(rows[1]["start_date"], preliminary + timedelta(days=7))
+
     def test_typical_sections_json_prefers_highest_grade_within_best_rank(self):
         product = Product.objects.create(
             short_name="DD",
@@ -7404,6 +7475,8 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(
             payload["typical_service_term"],
             {
+                "source_data_term": "0.0",
+                "source_data_term_unit": "weeks",
                 "preliminary_report_months": "1.0",
                 "preliminary_report_term_unit": "months",
                 "final_report_weeks": "2.0",
@@ -7500,6 +7573,8 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(
             payload["typical_service_term"],
             {
+                "source_data_term": "0.0",
+                "source_data_term_unit": "weeks",
                 "preliminary_report_months": "2.5",
                 "preliminary_report_term_unit": "months",
                 "final_report_weeks": "6.0",
@@ -7694,6 +7769,8 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(
             response.context["typical_service_terms_json"][str(product.pk)],
             {
+                "source_data_term": "0.0",
+                "source_data_term_unit": "weeks",
                 "preliminary_report_months": "1.5",
                 "preliminary_report_term_unit": "months",
                 "final_report_weeks": "2.0",
@@ -7732,7 +7809,16 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'name="final_report_term_weeks"', html=False)
         self.assertContains(response, 'name="final_report_date"', html=False)
         self.assertContains(response, 'id="proposal-typical-service-terms-data"', html=False)
-        self.assertContains(response, 'js-proposal-report-terms-lock', count=2, html=False)
+        self.assertContains(response, 'name="proposal_project_start_date"', html=False)
+        self.assertContains(response, "Дата начала проекта", html=False)
+        self.assertContains(response, "Исходные данные", html=False)
+        self.assertContains(response, "Общая для всех этапов", html=False)
+        self.assertContains(response, 'data-project-start-locked="1"', html=False)
+        self.assertNotContains(response, "Дата договора", html=False)
+        self.assertNotContains(response, "Оконч. договора", html=False)
+        self.assertContains(response, 'data-stage-field-enabled-selector=".proposal-stage-source-data-term-enabled"', html=False)
+        self.assertContains(response, 'data-stage-field-enabled-selector=".proposal-stage-service-term-months-enabled"', html=False)
+        self.assertContains(response, 'data-stage-field-enabled-selector=".proposal-stage-final-report-date-enabled"', html=False)
         self.assertContains(response, 'id="proposal-number-display"', html=False)
         self.assertContains(response, 'placeholder="0001"', html=False)
 
@@ -7802,6 +7888,9 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, "proposal-stage-delay-add", html=False)
         self.assertContains(response, "proposal-stage-delay-remove", html=False)
         self.assertContains(response, 'name="next_stage_delay_days"', html=False)
+        self.assertContains(response, 'name="next_stage_delay_unit"', html=False)
+        self.assertContains(response, "Общая для всех этапов", html=False)
+        self.assertNotContains(response, "Дата договора", html=False)
         self.assertContains(response, f'data-product-id="{first_product.pk}"', html=False)
         self.assertContains(response, f'data-product-id="{second_product.pk}"', html=False)
         self.assertContains(response, "Лаг", html=False)

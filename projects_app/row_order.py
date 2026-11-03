@@ -8,6 +8,7 @@ from core.row_order import RowOrderSpec, register_row_orders, staff_only
 from .models import LegalEntity, ProjectRegistration, ReportCheckRule, ReportMacro, WorkVolume
 from .report_access import can_manage_report_checks
 from .report_submission import report_folder_locked_asset_keys, workspace_project_ids
+from .service_scope import mirror_scoped_row_order
 
 HX_PROJECTS_UPDATED_EVENT = "projects-updated"
 WORK_LOCKED_MESSAGE = "Нельзя переместить строку: папка отчета по активу уже заблокирована."
@@ -65,13 +66,16 @@ register_row_orders([
         key="work-volume",
         model=WorkVolume,
         scope_fields=("project_id",),
-        extra_fields=("asset_name",),
+        extra_fields=("asset_name", "scope_key"),
         validate=_validate_work_volume_locks,
+        after_save=lambda request, result: mirror_scoped_row_order(WorkVolume, result),
     ),
     RowOrderSpec(
         key="legal-entity",
         model=LegalEntity,
         scope_fields=("project_id",),
+        extra_fields=("scope_key",),
+        after_save=lambda request, result: mirror_scoped_row_order(LegalEntity, result),
     ),
     RowOrderSpec(
         key="report-check",

@@ -1,6 +1,6 @@
 import json
 from datetime import date as date_type, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
 
 from django import forms
@@ -693,6 +693,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         }
 
         self.stage_rows = self._build_contract_stage_rows()
+        self._refresh_contract_terms_display()
 
     def _payment_field_initial_value(self, field_name, *, fallback=None):
         if not self.is_bound:
@@ -736,6 +737,81 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             value = default
         return "" if value is None else str(value)
 
+    def _refresh_contract_terms_display(self):
+        from projects_app.stage_terms import display_date, evaluation_dates_are_common, group_term_weeks
+
+        rows = list(self.stage_rows or [])
+
+        def column_disabled(key):
+            return bool(rows) and all(not row.get(key, True) for row in rows)
+
+        self.terms_source_data_term_disabled = column_disabled("source_data_term_enabled")
+        self.terms_source_data_date_disabled = column_disabled("source_data_date_enabled")
+        self.terms_preliminary_term_disabled = column_disabled("service_term_months_enabled")
+        self.terms_preliminary_date_disabled = column_disabled("preliminary_report_date_enabled")
+        self.terms_final_date_disabled = column_disabled("final_report_date_enabled")
+        self.terms_evaluation_dates_disabled = column_disabled("evaluation_date_enabled")
+        posted_common = self._posted_contract_terms_flag("evaluation_date_common", False)
+        if posted_common is None:
+            self.terms_evaluation_date_common = evaluation_dates_are_common(rows)
+        else:
+            self.terms_evaluation_date_common = posted_common
+        self.terms_short_uid = getattr(self.instance, "short_uid", "") or ""
+        self.terms_agreement_number = getattr(self.instance, "agreement_number", "") or ""
+        self.terms_project_key = self.terms_short_uid or "new-contract"
+        self.terms_contract_date_iso = self._iso_date_input(
+            self.data.get("contract_date") if self.is_bound else (
+                self.initial.get("contract_date") or getattr(self.instance, "contract_date", None)
+            )
+        )
+        if self.is_bound and (
+            "contract_group_end" in self.data or "contract_group_end_enabled" in self.data
+        ):
+            ends = _contract_request_list(self.data, "contract_group_end")
+            self.terms_contract_end_iso = self._iso_date_input(ends[0] if ends else "")
+            posted_end = self._posted_contract_terms_flag("contract_group_end_enabled", True)
+            self.terms_contract_end_enabled = True if posted_end is None else posted_end
+        else:
+            self.terms_contract_end_iso = self._iso_date_input(getattr(self.instance, "contract_end", None))
+            self.terms_contract_end_enabled = bool(getattr(self.instance, "contract_end_enabled", True))
+        completion = ""
+        for row in reversed(rows):
+            raw_date = row.get("final_report_date")
+            if raw_date:
+                completion = display_date(raw_date) or str(raw_date)
+                break
+        self.terms_completion_display = completion
+        self.terms_term_weeks = format(group_term_weeks(rows), "f")
+
+    @staticmethod
+    def _iso_date_input(value):
+        if value in (None, ""):
+            return ""
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        parsed = _parse_contract_form_date(value)
+        if parsed:
+            return parsed.isoformat()
+        raw = str(value).strip()
+        return raw if len(raw) == 10 and raw[4] == "-" else ""
+
+    def _clean_contract_end_fields(self):
+        has_posted_end = self.is_bound and (
+            "contract_group_end" in self.data or "contract_group_end_enabled" in self.data
+        )
+        if not has_posted_end:
+            self.cleaned_contract_end = getattr(self.instance, "contract_end", None)
+            self.cleaned_contract_end_enabled = bool(getattr(self.instance, "contract_end_enabled", True))
+            return
+        values = _contract_request_list(self.data, "contract_group_end")
+        raw = str(values[0] if values else "").strip()
+        parsed = _parse_contract_form_date(raw) if raw else None
+        if raw and parsed is None:
+            self.add_error(None, "Поле «Оконч. договора» заполнено некорректно.")
+        self.cleaned_contract_end = parsed
+        posted_end = self._posted_contract_terms_flag("contract_group_end_enabled", True)
+        self.cleaned_contract_end_enabled = True if posted_end is None else posted_end
+
     def _empty_contract_stage_row(self, rank=1, product_id="", product_short_label=""):
         return {
             "rank": rank,
@@ -751,21 +827,22 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 self.initial.get("evaluation_date") or _default_contract_evaluation_date()
             ),
             "evaluation_date_enabled": True,
-            "source_data_term_enabled": True,
+            "source_data_term_enabled": int(rank) == 1,
             "source_data_term": "",
-            "source_data_date_enabled": True,
+            "source_data_date_enabled": False,
             "source_data_term_unit": ContractProjectRegistration.SourceDataTermUnit.WEEKS.value,
             "source_data_date": "",
             "service_term_months_enabled": True,
             "service_term_months": "",
             "preliminary_report_term_unit": ContractProjectRegistration.PreliminaryReportTermUnit.MONTHS.value,
-            "preliminary_report_date_enabled": True,
+            "preliminary_report_date_enabled": False,
             "preliminary_report_date": "",
             "final_report_term_weeks": "",
             "final_report_term_unit": ContractProjectRegistration.FinalReportTermUnit.WEEKS.value,
-            "final_report_date_enabled": True,
+            "final_report_date_enabled": False,
             "final_report_date": "",
             "next_stage_delay_days": "",
+            "next_stage_delay_unit": "days",
             "advance_percent": str(self.fields["advance_percent"].initial or ""),
             "advance_term_days": str(self.fields["advance_term_days"].initial or ""),
             "preliminary_report_percent": str(self.fields["preliminary_report_percent"].initial or ""),
@@ -912,6 +989,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 payload.get("final_report_date") or fallback.get("final_report_date") or ""
             ) if final_report_date_enabled else "",
             "next_stage_delay_days": str(payload.get("next_stage_delay_days") or ""),
+            "next_stage_delay_unit": str(payload.get("next_stage_delay_unit") or "days"),
             "advance_percent": self._contract_stage_display_value(
                 payload.get("advance_percent"),
                 payment_fallback.get("advance_percent"),
@@ -963,6 +1041,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             "final_report_date_enabled",
             "final_report_date",
             "next_stage_delay_days",
+            "next_stage_delay_unit",
             "advance_percent",
             "advance_term_days",
             "preliminary_report_percent",
@@ -1096,6 +1175,11 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                     if index < len(rows_map["next_stage_delay_days"])
                     else ""
                 ).strip(),
+                "next_stage_delay_unit": (
+                    rows_map["next_stage_delay_unit"][index]
+                    if index < len(rows_map["next_stage_delay_unit"])
+                    else "days"
+                ).strip() or "days",
                 "advance_percent": (
                     rows_map["advance_percent"][index] if index < len(rows_map["advance_percent"]) else ""
                 ).strip(),
@@ -1136,6 +1220,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "preliminary_report_date_enabled",
                     "final_report_term_unit",
                     "final_report_date_enabled",
+                    "next_stage_delay_unit",
                 }
             )
             if product_id or has_data or row_count == 1:
@@ -1262,6 +1347,36 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         if parsed < 0:
             raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» должно быть не меньше 0.")
         return parsed
+
+    def _parse_contract_stage_delay_unit(self, value, *, row_index):
+        raw = str(value or "").strip()
+        if not raw:
+            return "days"
+        if raw not in {"days", "weeks", "months"}:
+            raise forms.ValidationError(f"Этап {row_index}: поле «Единица лага» заполнено некорректно.")
+        return raw
+
+    def _parse_contract_stage_delay(self, value, *, unit, row_index):
+        parsed = self._parse_contract_stage_decimal(
+            value,
+            row_index=row_index,
+            field_label="Лаг",
+        )
+        if parsed is None:
+            return 0
+        if unit == "days":
+            return int(parsed.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        quantized = parsed.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        if quantized == quantized.to_integral_value():
+            return int(quantized)
+        return format(quantized, "f")
+
+    def _posted_contract_terms_flag(self, key, default=True):
+        if not self.is_bound or key not in getattr(self.data, "keys", lambda: [])():
+            return None
+        values = _contract_request_list(self.data, key)
+        raw = values[-1] if values else ("true" if default else "false")
+        return _contract_stage_enabled_value(raw, default)
 
     def _parse_contract_stage_signed_integer(self, value, *, row_index, field_label, default=0):
         raw = str(value or "").strip()
@@ -1508,8 +1623,17 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             for product in Product.objects.filter(pk__in=set(type_ids))
         }
         rows = self.stage_rows or []
+        posted_common = self._posted_contract_terms_flag("evaluation_date_common", False)
+        common_enabled = bool(posted_common) if posted_common is not None else False
+        shared_evaluation_date = rows[0].get("evaluation_date") if rows else ""
+        shared_evaluation_enabled = _contract_stage_enabled_value(
+            rows[0].get("evaluation_date_enabled") if rows else True
+        )
         for index, product_id in enumerate(type_ids, start=1):
-            row = rows[index - 1] if index - 1 < len(rows) else {}
+            row = dict(rows[index - 1] if index - 1 < len(rows) else {})
+            if common_enabled and len(type_ids) > 1:
+                row["evaluation_date"] = shared_evaluation_date
+                row["evaluation_date_enabled"] = shared_evaluation_enabled
             product = product_map.get(product_id)
             if product is not None:
                 ensure_system_dsc_section(product)
@@ -1606,6 +1730,15 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 field_label=self.fields["final_report_term_weeks"].label,
                 unit=final_report_term_unit,
             )
+            delay_unit = self._parse_contract_stage_delay_unit(
+                row.get("next_stage_delay_unit"),
+                row_index=index,
+            )
+            delay_days = self._parse_contract_stage_delay(
+                row.get("next_stage_delay_days"),
+                unit=delay_unit,
+                row_index=index,
+            )
             service_sections_json = self._normalize_contract_stage_service_sections(
                 row.get("service_sections_payload"),
                 row_index=index,
@@ -1682,12 +1815,9 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                         if final_report_date_enabled
                         else None
                     ),
-                    "next_stage_delay_days": self._parse_contract_stage_signed_integer(
-                        row.get("next_stage_delay_days"),
-                        row_index=index,
-                        field_label="Задержка между этапами",
-                        default=0,
-                    ),
+                    "evaluation_date_common": common_enabled,
+                    "next_stage_delay_unit": delay_unit,
+                    "next_stage_delay_days": delay_days,
                     "advance_percent": advance_percent,
                     "advance_term_days": advance_term_days,
                     "preliminary_report_percent": preliminary_report_percent,
@@ -1734,6 +1864,12 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
     def save(self, commit=True):
         instance = super().save(commit=False)
         instance.project_manager_prs_id = getattr(self, "_cleaned_project_manager_prs_id", "") or ""
+        instance.contract_end = getattr(self, "cleaned_contract_end", getattr(instance, "contract_end", None))
+        instance.contract_end_enabled = getattr(
+            self,
+            "cleaned_contract_end_enabled",
+            getattr(instance, "contract_end_enabled", True),
+        )
         stage_payloads = list(getattr(self, "cleaned_stage_payloads", []) or [])
         if stage_payloads:
             instance.stage_payloads_json = [
@@ -1775,7 +1911,9 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "final_report_term_unit": item["final_report_term_unit"],
                     "final_report_date_enabled": item["final_report_date_enabled"],
                     "final_report_date": _format_contract_stage_date(item["final_report_date"]),
+                    "evaluation_date_common": bool(item.get("evaluation_date_common")),
                     "next_stage_delay_days": item["next_stage_delay_days"] or 0,
+                    "next_stage_delay_unit": item.get("next_stage_delay_unit") or "days",
                     "payment_schedule_common": self.payment_schedule_common_enabled,
                     "advance_percent": self._serialize_contract_payload_decimal(item["advance_percent"]),
                     "advance_term_days": item["advance_term_days"],
@@ -1839,6 +1977,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def clean(self):
         cleaned_data = super().clean()
+        self._clean_contract_end_fields()
         if self.payment_schedule_common_enabled:
             if not self.errors.get("advance_percent") and not self.errors.get("preliminary_report_percent"):
                 final_percent = self._calculate_final_report_percent(
@@ -2184,6 +2323,7 @@ def build_contract_project_form_from_proposal(proposal, *, registration=None):
         form.initial["final_report_percent"] = proposal.final_report_percent
 
     form.stage_rows = form._build_contract_stage_rows_from_proposal(proposal)
+    form._refresh_contract_terms_display()
     form.prefill_ranked_products = _ranked_products_from_proposal(proposal)
     return form
 

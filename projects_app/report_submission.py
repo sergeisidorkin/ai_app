@@ -302,10 +302,11 @@ def build_report_asset_folder_name(asset_code: str, asset_name="") -> str:
 
 
 def work_volume_asset_code(work_item) -> str:
-    if work_item is None or not getattr(work_item, "project_id", None):
+    project_id = getattr(work_item, "service_target_id", None) or getattr(work_item, "project_id", None)
+    if work_item is None or not project_id:
         return ""
     items = list(
-        WorkVolume.objects.filter(project_id=work_item.project_id).order_by("position", "id")
+        WorkVolume.objects.filter(project_id=project_id).order_by("position", "id")
     )
     if len(items) <= 1:
         return "A0"
@@ -318,7 +319,11 @@ def work_volume_asset_code(work_item) -> str:
 def next_work_volume_asset_code(project) -> str:
     if project is None:
         return ""
-    count = WorkVolume.objects.filter(project=project).count()
+    from .service_scope import service_targets
+
+    targets = service_targets(project)
+    target = targets[0] if targets else project
+    count = WorkVolume.objects.filter(project=target).count()
     if count == 0:
         return "A0"
     return f"A{count + 1}"

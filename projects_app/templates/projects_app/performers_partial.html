@@ -27,9 +27,9 @@
                 <input class="form-check-input js-perf-filter" type="checkbox"
                        value="{{ proj.id }}" id="perf-filter-{{ proj.id }}"
                        data-summary-label="{{ proj.short_uid }}"
-                       data-full-label="{{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}">
+                       data-full-label="{{ proj.short_uid }}{% if proj.filter_type_label %} {{ proj.filter_type_label }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}">
                 <label class="form-check-label" for="perf-filter-{{ proj.id }}">
-                  {{ proj.short_uid }}{% if proj.type_short_display %} {{ proj.type_short_display }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
+                  {{ proj.short_uid }}{% if proj.filter_type_label %} {{ proj.filter_type_label }}{% endif %}{% if proj.name %} {{ proj.name }}{% endif %}
                 </label>
               </div>
             {% empty %}
@@ -100,7 +100,7 @@
         {% endif %}
       </th>
       <th class="text-nowrap">Номер</th>
-      <th class="text-nowrap">Этап</th>
+      <th class="text-nowrap">Этап ID</th>
       <th class="text-nowrap">Продукт</th>
       <th class="text-nowrap">Название</th>
       <th>Наименование актива</th>
@@ -124,6 +124,7 @@
       <tr
         data-row-order-id="{{ p.pk }}"
         data-project-id="{{ p.registration_id }}"
+        data-owning-project-id="{{ p.registration.owning_project_id }}"
         data-project-number="{{ p.registration.number|default:0 }}"
         data-stage-uid="{{ p.registration.short_uid }}"
         data-asset-name="{{ p.asset_name }}"
@@ -250,9 +251,9 @@
               <input class="form-check-input js-participation-filter" type="checkbox"
                      value="{{ project.id }}" id="participation-filter-{{ project.id }}"
                      data-summary-label="{{ project.short_uid }}"
-                     data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+                     data-full-label="{{ project.short_uid }}{% if project.filter_type_label %} {{ project.filter_type_label }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="participation-filter-{{ project.id }}">
-                {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+                {{ project.short_uid }}{% if project.filter_type_label %} {{ project.filter_type_label }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
               </label>
             </div>
           {% empty %}
@@ -309,7 +310,7 @@
           {% endif %}
         </th>
         <th class="text-nowrap">Номер</th>
-        <th class="text-nowrap">Этап</th>
+        <th class="text-nowrap">Этап ID</th>
         <th class="text-nowrap">Продукт</th>
         <th class="text-nowrap">Название</th>
         <th>Исполнитель</th>
@@ -338,6 +339,7 @@
         {% if row.is_snapshot %}
         <tr class="snapshot-row"
             data-project-id="{{ row.registration_id }}"
+            data-owning-project-id="{{ row.registration.owning_project_id }}"
             data-project-number="{% if row.registration %}{{ row.registration.formatted_number }}{% endif %}"
             data-project-type="{% if row.registration %}{{ row.registration.type_short_display }}{% endif %}"
             data-project-stage="{% if row.registration %}{{ row.registration.agreement_sequence|default:0 }}{% endif %}"
@@ -372,6 +374,7 @@
         </tr>
         {% else %}
         <tr data-project-id="{{ row.registration_id }}"
+            data-owning-project-id="{{ row.registration.owning_project_id }}"
             data-project-number="{% if row.registration %}{{ row.registration.formatted_number }}{% endif %}"
             data-project-type="{% if row.registration %}{{ row.registration.type_short_display }}{% endif %}"
             data-project-stage="{% if row.registration %}{{ row.registration.agreement_sequence|default:0 }}{% endif %}"
@@ -600,7 +603,7 @@
             </div>
           {% endif %}
         </th>
-        <th class="text-nowrap">Проект</th>
+        <th class="text-nowrap">Этап ID</th>
         <th class="text-nowrap">Тип</th>
         <th class="text-nowrap">Название</th>
         <th>Исполнитель</th>
@@ -627,6 +630,7 @@
       <tbody>
       {% for p in info_request_performers %}
         <tr data-project-id="{{ p.registration_id }}"
+            data-owning-project-id="{{ p.registration.owning_project_id }}"
             data-performer-id="{{ p.id }}"
             data-section-id="{{ p.typical_section_id|default:'' }}"
             data-employee-user-id="{% if p.employee and p.employee.user_id %}{{ p.employee.user_id }}{% endif %}"
@@ -884,7 +888,7 @@
       rows.forEach(function(r) {
         var a = r.dataset.assetName || '';
         if (!a) return;
-        if (!showAllProj && !projSet.has(r.dataset.projectId || '')) return;
+        if (!showAllProj && !projSet.has(r.dataset.owningProjectId || r.dataset.projectId || '')) return;
         if (assetNames.indexOf(a) === -1) assetNames.push(a);
       });
 
@@ -981,7 +985,7 @@
       var projSet = new Set(pv);
       var assetSet = new Set(av);
       rows.forEach(function(row) {
-        var matchProj = showAllProj || projSet.has(row.dataset.projectId || '');
+        var matchProj = showAllProj || projSet.has(row.dataset.owningProjectId || row.dataset.projectId || '');
         var matchAsset = showAllAsset || assetSet.has(row.dataset.assetName || '');
         row.classList.toggle('d-none', !(matchProj && matchAsset));
       });

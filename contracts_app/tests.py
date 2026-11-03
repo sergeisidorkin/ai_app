@@ -3116,7 +3116,11 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "proposal-stage-total-source-data-term-unit")
         self.assertContains(response, "proposal-stage-total-preliminary-term-unit")
         self.assertContains(response, "proposal-stage-total-final-term-unit")
-        self.assertContains(response, "Дата предоставления данных", html=False)
+        self.assertContains(response, "Исходные данные (дата)", html=False)
+        self.assertContains(response, "Общая для всех этапов", html=False)
+        self.assertContains(response, "Оконч. договора", html=False)
+        self.assertContains(response, 'name="contract_group_end"', html=False)
+        self.assertContains(response, "registration-terms-column-toggle", html=False)
         self.assertContains(response, 'name="preliminary_report_term_unit"', html=False)
         self.assertContains(response, '<option value="months" selected>мес.</option>', html=False)
         self.assertContains(response, '<option value="days">дн.</option>', html=False)
@@ -3128,12 +3132,12 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, "proposal-stage-terms-row")
         self.assertContains(response, "proposal-stage-evaluation-row")
         content = response.content.decode()
-        self.assertIn("contract-date-terms-field", content)
+        self.assertIn("registration-contract-terms-header", content)
         self.assertNotIn("contract-date-terms-row", content)
         self.assertIn("js-proposal-report-date-lock", content)
-        self.assertLess(content.index("proposal-assets-editor proposal-terms-editor"), content.index('name="contract_date"'))
+        self.assertLess(content.index("registration-contract-terms-header"), content.index('name="contract_date"'))
         self.assertLess(content.index('name="contract_date"'), content.index("proposal-stage-terms-row"))
-        self.assertLess(content.index('name="contract_date"'), content.index("proposal-terms-table"))
+        self.assertNotContains(response, "Дата начала проекта")
         self.assertLess(content.index("contract-stage-terms-tbody"), content.index("contract-stage-evaluation-tbody"))
         self.assertLess(content.index("proposal-evaluation-terms-table"), content.index('name="evaluation_date"'))
         self.assertLess(
@@ -3329,6 +3333,8 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'value="3.0"', html=False)
         self.assertContains(response, 'value="Этап 1"', html=False)
         self.assertContains(response, 'value="Этап 2"', html=False)
+        self.assertContains(response, 'name="next_stage_delay_unit"', html=False)
+        self.assertContains(response, "Общая для всех этапов", html=False)
 
     def test_contracts_project_registration_create_persists_stage_payloads_json(self):
         second_product = Product.objects.create(
@@ -3366,7 +3372,11 @@ class ContractsCloudLabelTests(TestCase):
                 "final_report_term_unit": ["days", "months"],
                 "final_report_date_enabled": ["true", "true"],
                 "final_report_date": ["15.02.2026", "30.09.2026"],
-                "next_stage_delay_days": ["0", "0"],
+                "next_stage_delay_days": ["2.5", "0"],
+                "next_stage_delay_unit": ["weeks", "days"],
+                "evaluation_date_common": "false",
+                "contract_group_end": "2026-12-31",
+                "contract_group_end_enabled": "false",
             },
         )
 
@@ -3400,6 +3410,13 @@ class ContractsCloudLabelTests(TestCase):
         self.assertEqual(created.stage_payloads_json[1]["final_report_term_unit"], "months")
         self.assertTrue(created.stage_payloads_json[1]["final_report_date_enabled"])
         self.assertEqual(created.final_report_term_unit, "months")
+        self.assertEqual(created.stage_payloads_json[0]["next_stage_delay_unit"], "weeks")
+        self.assertEqual(created.stage_payloads_json[0]["next_stage_delay_days"], "2.5")
+        self.assertEqual(created.stage_payloads_json[1]["next_stage_delay_unit"], "days")
+        self.assertFalse(created.stage_payloads_json[0]["evaluation_date_common"])
+        self.assertFalse(created.stage_payloads_json[1]["evaluation_date_common"])
+        self.assertEqual(created.contract_end, date(2026, 12, 31))
+        self.assertFalse(created.contract_end_enabled)
 
     def test_contracts_project_registration_create_persists_independent_service_payloads_per_stage(self):
         second_product = Product.objects.create(

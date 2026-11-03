@@ -54,6 +54,8 @@
       });
       const groupInput = row.querySelector('input[name="row_group_id"]');
       if (groupInput) groupInput.remove();
+      const rowIdInput = row.querySelector('input[name="registration_row_id"]');
+      if (rowIdInput) rowIdInput.remove();
       const badge = row.querySelector(options.badgeSelector);
       if (badge) badge.textContent = "0";
       const display = row.querySelector(options.displaySelector);
@@ -98,11 +100,18 @@
       const template = row.cloneNode(true);
       this.becomeLabel(row, groupProduct, options);
       let anchor = row;
-      groupProduct.member_ids.forEach(function (memberId) {
+      groupProduct.member_ids.forEach(function (memberId, memberIndex) {
         const member = template.cloneNode(true);
         ProductGroupPicker.prepareMember(member, groupProduct, options);
         const memberProduct = options.productById.get(String(memberId));
         member.dataset.selectedProductId = String(memberId);
+        if (memberIndex > 0) {
+          const rowIdInput = member.querySelector('input[name="registration_row_id"]');
+          if (rowIdInput) rowIdInput.value = "";
+          member.removeAttribute("data-stage1-weeks");
+          member.removeAttribute("data-stage2-weeks");
+          delete member.dataset.stageTermsSeeded;
+        }
         member.dataset.selectedConsultingType = memberProduct?.consulting_type || "";
         member.dataset.selectedServiceCategory = memberProduct?.service_category || "";
         member.dataset.selectedServiceSubtype = memberProduct?.service_subtype || "";

@@ -5,7 +5,7 @@ from django.utils import timezone
 from datetime import datetime
 
 from classifiers_app.models import OKSMCountry, OKVCurrency, LegalEntityIdentifier, TerritorialDivision
-from core.forms import locked_attrs
+from core.forms import lock_field, locked_attrs
 from group_app.models import GroupMember
 from policy_app.models import (
     DIRECTION_DIRECTOR_GROUP,
@@ -62,6 +62,15 @@ DATE_WIDGET_FORMAT = "%Y-%m-%d"
 
 def _date_input_widget():
     return forms.DateInput(format=DATE_WIDGET_FORMAT, attrs=DATE_INPUT_ATTRS)
+
+
+class DayFirstDateInput(forms.TextInput):
+    def format_value(self, value):
+        if isinstance(value, datetime):
+            value = value.date()
+        if hasattr(value, "strftime"):
+            return value.strftime("%d.%m.%Y")
+        return super().format_value(value)
 
 
 def _parse_project_form_date(raw_value):
@@ -299,6 +308,12 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=_date_input_widget(),
         input_formats=DATE_INPUT_FORMATS,
     )
+    project_start_date = forms.DateField(
+        label="Дата начала проекта",
+        required=False,
+        widget=_date_input_widget(),
+        input_formats=DATE_INPUT_FORMATS,
+    )
     contract_project_registration = ContractProjectRegistrationChoiceField(
         label="Договор ID",
         queryset=ContractProjectRegistration.objects.none(),
@@ -417,7 +432,8 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         label="Оконч., расчет",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs=locked_attrs("js-completion-calc")),
+        input_formats=DATE_INPUT_FORMATS,
+        widget=DayFirstDateInput(attrs=locked_attrs("js-completion-calc")),
     )
     stage2_weeks = forms.DecimalField(
         label="Срок подготовки Итогового отчёта, нед.",
@@ -460,7 +476,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         widget=forms.TextInput(attrs=locked_attrs("js-stage3-end")),
     )
     term_weeks = forms.DecimalField(
-        label="Срок, недель",
+        label="Срок",
         required=False,
         decimal_places=1,
         max_digits=5,
@@ -473,7 +489,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         model = ProjectRegistration
         fields = [
             "number", "contract_project_registration", "group_member", "agreement_type", "agreement_number", "name",
-            "status", "deadline", "year", "evaluation_date",
+            "status", "deadline", "year", "evaluation_date", "project_start_date",
             "country", "customer", "identifier", "registration_number",
             "registration_region", "registration_date", "project_manager", "project_coordinator",
             "asset_owner", "asset_owner_matches_customer", "asset_owner_country", "asset_owner_identifier",
@@ -490,15 +506,28 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         self.allow_multiple_products = kwargs.pop("allow_multiple_products", True)
+        self.lock_project_roles = kwargs.pop("lock_project_roles", False)
+        project_role_source = kwargs.pop("project_role_source", None)
+        summary_status_choices = kwargs.pop("summary_status_choices", None)
+        summary_status_mode = kwargs.pop("summary_status_mode", None)
         super().__init__(*args, **kwargs)
+        self.summary_status_only = summary_status_choices is not None
+        self.fields["agreement_type"].required = False
+        self._preserved_project_manager = self.instance.project_manager or ""
+        self._preserved_project_manager_prs_id = self.instance.project_manager_prs_id or ""
+        self._preserved_project_coordinator = self.instance.project_coordinator or ""
+        self._preserved_project_coordinator_prs_id = self.instance.project_coordinator_prs_id or ""
+        use_role_source = project_role_source is not None and (not self.data or self.lock_project_roles)
+        role_source = project_role_source if use_role_source else None
         current_group_member = self.data.get("group_member") or (self.instance.group_member_id if self.instance else "")
-        if self.data:
+        if self.data and not self.lock_project_roles:
             current_manager = self.data.get("project_manager") or ""
         else:
-            instance_manager = self.instance.project_manager if self.instance else ""
+            manager_obj = role_source if role_source is not None else self.instance
+            instance_manager = manager_obj.project_manager if manager_obj else ""
             _manager_name, resolved_manager_prs_id = _resolve_project_manager_choice(instance_manager)
             current_manager = (
-                (self.instance.project_manager_prs_id if self.instance else "")
+                (manager_obj.project_manager_prs_id if manager_obj else "")
                 or resolved_manager_prs_id
                 or instance_manager
             )
@@ -512,15 +541,16 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
         self.fields["project_manager"].choices = _project_manager_choices(current_manager, show_prs_label=False)
-        if self.data:
+        if self.data and not self.lock_project_roles:
             current_coordinator = self.data.get("project_coordinator") or ""
         else:
-            instance_coordinator = self.instance.project_coordinator if self.instance else ""
+            coordinator_obj = role_source if role_source is not None else self.instance
+            instance_coordinator = coordinator_obj.project_coordinator if coordinator_obj else ""
             _coordinator_name, resolved_coordinator_prs_id, _matched = _resolve_project_coordinator_choice(
                 instance_coordinator
             )
             current_coordinator = (
-                (self.instance.project_coordinator_prs_id if self.instance else "")
+                (coordinator_obj.project_coordinator_prs_id if coordinator_obj else "")
                 or resolved_coordinator_prs_id
                 or instance_coordinator
             )
@@ -528,11 +558,19 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             current_coordinator,
             show_prs_label=False,
         )
-        if not self.data:
+        if not self.data or self.lock_project_roles:
             self.initial["project_manager"] = current_manager
             self.fields["project_manager"].initial = current_manager
             self.initial["project_coordinator"] = current_coordinator
             self.fields["project_coordinator"].initial = current_coordinator
+        if summary_status_choices is not None:
+            self.fields["summary_status_mode"] = forms.ChoiceField(
+                label="Статус",
+                required=False,
+                choices=summary_status_choices,
+                initial=summary_status_mode or "auto",
+            )
+            self.fields["status"].required = False
 
         today = timezone.now().date()
         country_qs = OKSMCountry.objects.filter(
@@ -624,18 +662,50 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             )
         )
         self.fields["asset_owner_region"].choices = asset_owner_region_choices
+        if (
+            self.instance
+            and self.instance.pk
+            and not self.instance.project_start_date
+            and self.instance.contract_start
+            and "project_start_date" not in self.data
+        ):
+            self.fields["project_start_date"].initial = self.instance.contract_start
         if not self.instance.pk and "year" not in self.data:
             self.fields["year"].initial = timezone.now().year
         if not self.instance.pk and "number" not in self.data:
             self.fields["number"].initial = _next_project_number()
         if not self.instance.pk and "asset_owner_matches_customer" not in self.data:
             self.fields["asset_owner_matches_customer"].initial = True
+        if self.lock_project_roles:
+            lock_field(self.fields["project_manager"], disabled=True, use_disabled_attr=True)
+            lock_field(self.fields["project_coordinator"], disabled=True, use_disabled_attr=True)
+            lock_field(
+                self.fields["project_start_date"],
+                **{"data-project-start-locked": "1"},
+            )
+            source = project_role_source if project_role_source is not None else self.instance
+            self._preserved_project_start_date = getattr(source, "project_start_date", None)
+
+    def clean_agreement_type(self):
+        value = (self.cleaned_data.get("agreement_type") or "").strip()
+        if value:
+            return value
+        stored = (getattr(self.instance, "agreement_type", "") or "").strip()
+        if stored:
+            return stored
+        return ProjectRegistration.AgreementType.MAIN
 
     def clean_group_member(self):
         member = self.cleaned_data.get("group_member")
         if member and not (member.country_alpha2 or "").strip():
             raise forms.ValidationError("Для выбранной строки состава группы не заполнен код Альфа-2.")
         return member
+
+    def clean_status(self):
+        status = self.cleaned_data.get("status")
+        if self.summary_status_only:
+            return self.instance.status or "Не начат"
+        return status
 
     def clean_project_manager(self):
         manager_name, manager_prs_id = _resolve_project_manager_choice(self.cleaned_data.get("project_manager"))
@@ -675,9 +745,23 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         return (self.cleaned_data.get("asset_owner_region") or "").strip()
 
     def save(self, commit=True):
+        from .stage_terms import apply_stages_to_registration, sync_registration_json_from_scalars
+
         instance = super().save(commit=False)
-        instance.project_manager_prs_id = getattr(self, "_cleaned_project_manager_prs_id", "") or ""
-        instance.project_coordinator_prs_id = getattr(self, "_cleaned_project_coordinator_prs_id", "") or ""
+        if self.lock_project_roles:
+            instance.project_manager = self._preserved_project_manager
+            instance.project_manager_prs_id = self._preserved_project_manager_prs_id
+            instance.project_coordinator = self._preserved_project_coordinator
+            instance.project_coordinator_prs_id = self._preserved_project_coordinator_prs_id
+            instance.project_start_date = self._preserved_project_start_date
+        else:
+            instance.project_manager_prs_id = getattr(self, "_cleaned_project_manager_prs_id", "") or ""
+            instance.project_coordinator_prs_id = getattr(self, "_cleaned_project_coordinator_prs_id", "") or ""
+        stages = getattr(self, "cleaned_stage_payloads", None)
+        if stages:
+            apply_stages_to_registration(instance, stages, instance.project_start_date)
+        elif instance.stage_terms_json:
+            sync_registration_json_from_scalars(instance)
         if commit:
             instance.save()
             self.save_m2m()
@@ -711,6 +795,15 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         elif not self.allow_multiple_products and len(ordered_valid_ids) > 1:
             self.add_error("type_ids", "Для строки проекта можно выбрать только один продукт.")
         self.cleaned_type_ids = ordered_valid_ids
+        from .stage_terms import has_posted_stage_terms, parse_posted_stages
+
+        # Старые списки stage1_weeks оставляем скалярам и групповому сохранению.
+        # Иначе CSV и форма без новой таблицы перезапишут цепочку этапов.
+        self.cleaned_stage_payloads = (
+            parse_posted_stages(self.data, ordered_valid_ids)
+            if has_posted_stage_terms(self.data)
+            else None
+        )
         if cleaned_data.get("asset_owner_matches_customer"):
             cleaned_data["asset_owner"] = cleaned_data.get("customer") or ""
             cleaned_data["asset_owner_country"] = cleaned_data.get("country")
@@ -762,7 +855,8 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
         label="Оконч., расчет",
         required=False,
         disabled=True,
-        widget=forms.TextInput(attrs=locked_attrs("js-completion-calc")),
+        input_formats=DATE_INPUT_FORMATS,
+        widget=DayFirstDateInput(attrs=locked_attrs("js-completion-calc")),
     )
     stage2_weeks = forms.DecimalField(
         label="Срок подготовки Итогового отчёта, нед.",
@@ -805,7 +899,7 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
         widget=forms.TextInput(attrs=locked_attrs("js-stage3-end")),
     )
     term_weeks = forms.DecimalField(
-        label="Срок, недель",
+        label="Срок",
         required=False,
         decimal_places=1,
         max_digits=5,
@@ -846,9 +940,22 @@ class ContractConditionsForm(BootstrapMixin, forms.ModelForm):
     def clean_stage3_weeks(self):
         return self.cleaned_data.get("stage3_weeks") or 0
 
+    def save(self, commit=True):
+        from .stage_terms import sync_registration_json_from_scalars
+
+        instance = super().save(commit=False)
+        if instance.stage_terms_json:
+            sync_registration_json_from_scalars(instance)
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
+
 class ProjectChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
         type_label = getattr(obj, "type_short_display", "") or ""
+        if not type_label:
+            type_label = getattr(obj, "filter_type_label", "") or ""
         name_label = obj.name or ""
         parts = [obj.short_uid]
         if type_label:
@@ -1102,7 +1209,7 @@ class ProjectScheduleTaskForm(BootstrapMixin, forms.Form):
 
 class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
     project = ProjectChoiceField(
-        queryset=ProjectRegistration.objects.order_by("-id"),
+        queryset=ProjectRegistration.objects.project_records().order_by("-id"),
         label="Проект",
     )
     country = forms.ModelChoiceField(
@@ -1142,7 +1249,14 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
+        self.service_target_id = getattr(kwargs.get("instance"), "project_id", None)
+        self.owning_project_id = None
         super().__init__(*args, **kwargs)
+        owner = None
+        if self.instance.pk and self.instance.project_id:
+            owner = self.instance.project.stage_project or self.instance.project
+            self.initial["project"] = owner.pk
+            self.owning_project_id = owner.pk
         if self.data:
             current_manager = self.data.get("manager") or ""
         else:
@@ -1159,16 +1273,21 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
             country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.country_id)).distinct().order_by("short_name")
         self.fields["country"].queryset = country_qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
-        if not self.data and not current_manager and getattr(self.instance, "project_id", None):
+        display_project = owner or (self.instance.project if getattr(self.instance, "project_id", None) else None)
+        if not self.data and not current_manager and display_project is not None:
             _project_manager_name, project_manager_prs_id = _resolve_project_manager_choice(
-                self.instance.project.project_manager or ""
+                display_project.project_manager or ""
             )
-            self.fields["manager"].initial = project_manager_prs_id or self.instance.project.project_manager or ""
+            self.fields["manager"].initial = project_manager_prs_id or display_project.project_manager or ""
         elif not self.data and current_manager:
             self.fields["manager"].initial = current_manager
-        if not self.data and getattr(self.instance, "project_id", None):
-            self.fields["type"].initial = getattr(self.instance.project, "type_short_display", "") or ""
-            self.fields["name"].initial = self.instance.project.name or ""
+        if not self.data and display_project is not None:
+            self.fields["type"].initial = (
+                getattr(display_project, "filter_type_label", "")
+                or getattr(display_project, "type_short_display", "")
+                or ""
+            )
+            self.fields["name"].initial = display_project.name or ""
         self._bootstrapify()
 
     def clean_manager(self):
@@ -1176,17 +1295,15 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
         return manager_name
 
     def save(self, commit=True):
-        instance = super().save(commit=False)
-        if instance.project_id:
-            instance.type = getattr(instance.project, "type_short_display", "") or ""
-            instance.name = instance.project.name or ""
-        if commit:
-            instance.save()
-        return instance
+        from .service_scope import save_work_volume_form
+
+        if not commit:
+            raise RuntimeError("WorkVolumeForm.save требует commit=True")
+        return save_work_volume_form(self)
 
 class PerformerForm(forms.ModelForm):
     registration = ProjectChoiceField(
-        queryset=ProjectRegistration.objects.order_by("-id"),
+        queryset=ProjectRegistration.objects.registry_rows().order_by("-id"),
         label="Проект",
         widget=forms.Select(attrs={"class": "form-select"}),
     )
@@ -1286,11 +1403,14 @@ class PerformerForm(forms.ModelForm):
 
 class WorkItemChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
-        project = getattr(obj.project, "short_uid", "")
-        type_label = obj.type or ""
-        name_label = obj.name or ""
+        project = getattr(obj, "project", None)
+        if project is not None and project.stage_project_id:
+            project = project.stage_project or project
+        project_uid = getattr(project, "short_uid", "") or ""
+        type_label = getattr(project, "filter_type_label", "") or obj.type or ""
+        name_label = getattr(project, "name", "") or obj.name or ""
         asset_label = obj.asset_name or name_label or ""
-        header_parts = [part for part in (project, type_label, name_label) if part]
+        header_parts = [part for part in (project_uid, type_label, name_label) if part]
         header = " ".join(header_parts)
         if header and asset_label:
             return f"{header} — {asset_label}"
@@ -1335,6 +1455,18 @@ class LegalEntityForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        from .service_scope import representative_work_volumes
+
+        representatives = representative_work_volumes()
+        representative_ids = [item.pk for item in representatives]
+        if self.instance and self.instance.pk and self.instance.work_item_id:
+            if self.instance.work_item_id not in representative_ids:
+                representative_ids.append(self.instance.work_item_id)
+        self.fields["work_item"].queryset = (
+            WorkVolume.objects.filter(pk__in=representative_ids)
+            .select_related("project", "project__stage_project")
+            .order_by("project__position", "position", "id")
+        )
         today = timezone.now().date()
         country_qs = OKSMCountry.objects.filter(
             models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
@@ -1344,21 +1476,23 @@ class LegalEntityForm(BootstrapMixin, forms.ModelForm):
         self.fields["country"].queryset = country_qs
         self.fields["country"].label_from_instance = lambda obj: obj.short_name
         if not self.data and getattr(self.instance, "work_item_id", None):
+            work_project = self.instance.work_item.project
+            if work_project is not None and work_project.stage_project_id:
+                work_project = work_project.stage_project or work_project
             self.fields["work_type"].initial = (
-                getattr(self.instance.work_item.project, "type_short_display", "") or ""
+                getattr(work_project, "filter_type_label", "")
+                or getattr(work_project, "type_short_display", "")
+                or ""
             )
-            self.fields["work_name"].initial = self.instance.work_item.name or ""
+            self.fields["work_name"].initial = getattr(work_project, "name", "") or self.instance.work_item.name or ""
         self._bootstrapify()
 
     def save(self, commit=True):
-        instance = super().save(commit=False)
-        if instance.work_item_id:
-            instance.project = instance.work_item.project
-            instance.work_type = getattr(instance.work_item.project, "type_short_display", "") or ""
-            instance.work_name = instance.work_item.name or ""
-        if commit:
-            instance.save()
-        return instance
+        from .service_scope import save_legal_entity_form
+
+        if not commit:
+            raise RuntimeError("LegalEntityForm.save требует commit=True")
+        return save_legal_entity_form(self)
 
 
 class ReportCheckSectionSelect(forms.Select):

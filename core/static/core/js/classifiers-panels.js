@@ -263,7 +263,7 @@
   }
 
   function syncCollapsedSectionHeaderSpacing() {
-    const toggles = Array.from(document.querySelectorAll('.classifiers-section-toggle'));
+    const toggles = Array.from(document.querySelectorAll('#classifiers-pane .classifiers-section-toggle'));
     const items = toggles.map(toggle => {
       const header = toggle.closest('.table-section-header');
       const bodyId = toggle.dataset.sectionBodyId;

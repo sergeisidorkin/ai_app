@@ -456,14 +456,25 @@
                     </div>
                   </div>
                 </div>
-                <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
-                   href="#notifications"
-                   data-bs-toggle="tab"
-                   aria-label="Открыть уведомления">
-                  <i class="bi bi-bell fs-5"></i>
-                  <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
-                        data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
-                </a>
+                <div class="d-flex align-items-center gap-2">
+                  <div id="registration-form-actions" class="d-none align-items-center gap-2">
+                    <button type="button"
+                            class="btn btn-outline-secondary btn-sm"
+                            data-registration-form-cancel-btn="1">Отмена</button>
+                    <button type="button"
+                            class="btn btn-primary btn-sm"
+                            data-registration-form-save-btn="1"
+                            disabled>Сохранить</button>
+                  </div>
+                  <a class="btn btn-link text-decoration-none position-relative notifications-bell-btn"
+                     href="#notifications"
+                     data-bs-toggle="tab"
+                     aria-label="Открыть уведомления">
+                    <i class="bi bi-bell fs-5"></i>
+                    <span class="badge rounded-pill text-bg-danger notification-floating-badge {% if NOTIFICATION_TOTAL_COUNT <= 0 %}d-none{% endif %}"
+                          data-notification-counter-total>{{ NOTIFICATION_TOTAL_COUNT }}</span>
+                  </a>
+                </div>
               </div>
             </div>
             <div class="ps-3">

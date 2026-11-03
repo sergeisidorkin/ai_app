@@ -147,7 +147,10 @@
   }
 
   function isHiddenRow(row) {
-    return !row || row.classList.contains('d-none') || row.hidden;
+    return !row
+      || row.classList.contains('d-none')
+      || row.classList.contains('registration-group-member-collapsed')
+      || row.hidden;
   }
 
   function isLockedRow(row) {

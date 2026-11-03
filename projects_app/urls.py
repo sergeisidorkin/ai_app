@@ -5,10 +5,37 @@ urlpatterns = [
     path("projects/partial/", views.projects_partial, name="projects_partial"),
 
     path("projects/registration/create/", views.registration_form_create, name="registration_form_create"),
+    path("projects/registration/csv-download/", views.registration_csv_download, name="registration_csv_download"),
+    path("projects/registration/csv-upload/", views.registration_csv_upload, name="registration_csv_upload"),
     path("projects/registration/<int:pk>/edit/", views.registration_form_edit, name="registration_form_edit"),
     path("projects/registration/<int:pk>/delete/", views.registration_delete, name="registration_delete"),
     path("projects/registration/<int:pk>/launch/", views.registration_launch, name="registration_launch"),
     path("projects/registration/<int:pk>/status/", views.registration_status_update, name="registration_status_update"),
+    path(
+        "projects/registration-group/status/",
+        views.registration_group_summary_status,
+        name="registration_group_summary_status",
+    ),
+    path(
+        "projects/registration-group/manager/",
+        views.registration_group_summary_manager,
+        name="registration_group_summary_manager",
+    ),
+    path(
+        "projects/registration-group/coordinator/",
+        views.registration_group_summary_coordinator,
+        name="registration_group_summary_coordinator",
+    ),
+    path(
+        "projects/registration-group/launch/",
+        views.registration_group_summary_launch,
+        name="registration_group_summary_launch",
+    ),
+    path(
+        "projects/registration-group/edit/",
+        views.registration_group_summary_edit,
+        name="registration_group_summary_edit",
+    ),
     path("projects/registration/<int:pk>/manager/", views.registration_manager_update, name="registration_manager_update"),
     path("projects/registration/<int:pk>/coordinator/", views.registration_coordinator_update, name="registration_coordinator_update"),
     path("projects/registration/<int:pk>/deadline/", views.registration_deadline_update, name="registration_deadline_update"),

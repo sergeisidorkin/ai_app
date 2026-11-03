@@ -69,6 +69,8 @@ class ContractProjectRegistration(models.Model):
     )
     contract_number = models.CharField("Номер договора", max_length=100, blank=True, default="")
     contract_date = models.DateField("Дата договора", null=True, blank=True)
+    contract_end = models.DateField("Окончание договора", null=True, blank=True)
+    contract_end_enabled = models.BooleanField("Окончание договора включено", default=True)
     stage_payloads_json = models.JSONField("Данные этапов договора", default=list, blank=True)
     proposal_registration = models.ForeignKey(
         "proposals_app.ProposalRegistration",

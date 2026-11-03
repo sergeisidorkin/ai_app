@@ -17,6 +17,20 @@ from django.utils import timezone
 
 DATE_INPUT_ATTRS = {"class": "form-control js-date", "autocomplete": "off"}  # ← хук для JS-пикера
 DATE_INPUT_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y"]  # принимаем ISO и ДД.ММ.ГГ
+MAX_PROJECT_STAGES = 9
+
+
+class ProjectRegistrationQuerySet(models.QuerySet):
+    def project_records(self):
+        return self.filter(stage_project__isnull=True)
+
+    def stage_rows(self):
+        return self.filter(stage_project__isnull=False)
+
+    def registry_rows(self):
+        parent_ids = self.stage_rows().values("stage_project_id")
+        return self.exclude(pk__in=parent_ids)
+
 
 class ProjectRegistration(models.Model):
     class AgreementType(models.TextChoices):
@@ -24,6 +38,15 @@ class ProjectRegistration(models.Model):
         ADDENDUM = "ADDENDUM", "Допсоглашение"
 
     position = models.PositiveIntegerField(default=0, db_index=True, verbose_name="Позиция")
+    stage_project = models.ForeignKey(
+        "self",
+        verbose_name="Проект этапа",
+        on_delete=models.CASCADE,
+        related_name="stages",
+        null=True,
+        blank=True,
+    )
+    summary_deferred = models.BooleanField("Отложен", default=False)
     number = models.PositiveIntegerField(
         verbose_name="Номер",
         validators=[MinValueValidator(0), MaxValueValidator(9999)],
@@ -102,11 +125,24 @@ class ProjectRegistration(models.Model):
         ("Отложен", "Отложен"),
     ]
     status = models.CharField("Статус", max_length=20, choices=STATUS_CHOICES, default="Не начат")
+    status_date = models.DateField(
+        "Дата статуса",
+        null=True,
+        blank=True,
+        help_text="Заполняется автоматически при смене статуса. В админке можно изменить вручную.",
+    )
+    summary_status_date = models.DateField(
+        "Дата статуса сводной строки",
+        null=True,
+        blank=True,
+        help_text="Заполняется автоматически, когда меняется статус сводной строки реестра.",
+    )
     launched_at = models.DateField("Дата запуска", null=True, blank=True)
     gantt_data = models.JSONField("Диаграмма Ганта", default=dict, blank=True)
 
     contract_start = models.DateField("Начало контракта", null=True, blank=True)
-    contract_end = models.DateField("Окончание контракта", null=True, blank=True)
+    contract_end = models.DateField("Окончание договора", null=True, blank=True)
+    contract_end_enabled = models.BooleanField("Окончание договора включено", default=True)
     completion_calc = models.DateField("Окончание, расчет", null=True, blank=True)
 
     input_data = models.PositiveIntegerField("Исх. данные, дней", null=True, blank=True, default=0)
@@ -140,6 +176,9 @@ class ProjectRegistration(models.Model):
     deadline = models.DateField("Дедлайн", null=True, blank=True)
     year = models.PositiveIntegerField("Год", null=True, blank=True)
     evaluation_date = models.DateField("Дата оценки", null=True, blank=True)
+    project_start_date = models.DateField("Дата начала проекта", null=True, blank=True)
+    stage_terms_json = models.JSONField("Сроки этапов", default=list, blank=True)
+    terms_columns_json = models.JSONField("Столбцы сроков", default=dict, blank=True)
 
     country = models.ForeignKey(
         OKSMCountry,
@@ -183,6 +222,8 @@ class ProjectRegistration(models.Model):
         default="",
     )
     contract_subject = models.TextField("Предмет договора", blank=True)
+
+    objects = ProjectRegistrationQuerySet.as_manager()
 
     class Meta:
         ordering = ["position", "id"]
@@ -249,23 +290,77 @@ class ProjectRegistration(models.Model):
         cls._bulk_refresh_short_uids(registrations)
 
     @classmethod
+    def stage_code(cls, project_uid, digit):
+        uid = str(project_uid or "")
+        if len(uid) < 8:
+            return uid
+        return f"{uid[:7]}{digit}{uid[7:]}"
+
+    @classmethod
     def _bulk_refresh_short_uids(cls, registrations):
+        projects = [item for item in registrations if not item.stage_project_id]
         to_refresh = []
-        for registration in registrations:
+        for registration in projects:
             new_uid = registration._build_short_uid()
             if registration.short_uid == new_uid:
                 continue
             registration.short_uid = f"tmp{registration.pk}{uuid.uuid4().hex[:8]}"
             to_refresh.append((registration, new_uid))
 
-        if not to_refresh:
-            return
+        if to_refresh:
+            with transaction.atomic():
+                cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
+                for registration, new_uid in to_refresh:
+                    registration.short_uid = new_uid
+                cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
+        parent_ids = [item.pk for item in projects]
+        parent_ids.extend(item.stage_project_id for item in registrations if item.stage_project_id)
+        cls._refresh_stage_codes(parent_ids)
 
+    @classmethod
+    def _refresh_stage_codes(cls, project_ids):
+        ids = []
+        for project_id in project_ids:
+            if project_id and project_id not in ids:
+                ids.append(project_id)
+        if not ids:
+            return
+        parents = {
+            row.pk: row.short_uid
+            for row in cls.objects.filter(pk__in=ids, stage_project__isnull=True).only("id", "short_uid")
+        }
+        if not parents:
+            return
+        stages = list(
+            cls.objects.filter(stage_project_id__in=parents.keys())
+            .order_by("stage_project_id", "position", "id")
+            .only("id", "short_uid", "stage_project_id")
+        )
+        grouped = {}
+        for stage in stages:
+            grouped.setdefault(stage.stage_project_id, []).append(stage)
+        pending = []
+        for project_id, rows in grouped.items():
+            uid = parents.get(project_id) or ""
+            if len(uid) < 10:
+                continue
+            single = len(rows) == 1
+            for index, stage in enumerate(rows, start=1):
+                if not single and index > MAX_PROJECT_STAGES:
+                    continue
+                digit = "0" if single else str(index)
+                new_uid = cls.stage_code(uid, digit)
+                if stage.short_uid == new_uid:
+                    continue
+                stage.short_uid = f"tmp{stage.pk}{uuid.uuid4().hex[:8]}"
+                pending.append((stage, new_uid))
+        if not pending:
+            return
         with transaction.atomic():
-            cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
-            for registration, new_uid in to_refresh:
-                registration.short_uid = new_uid
-            cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
+            cls.objects.bulk_update([item[0] for item in pending], ["short_uid"])
+            for stage, new_uid in pending:
+                stage.short_uid = new_uid
+            cls.objects.bulk_update([item[0] for item in pending], ["short_uid"])
 
     @classmethod
     def refresh_number_sequences(cls, numbers):
@@ -283,7 +378,7 @@ class ProjectRegistration(models.Model):
         registrations = list(
             cls.objects
             .select_related("group_member", "contract_project_registration")
-            .filter(number__in=set(normalized_numbers))
+            .filter(number__in=set(normalized_numbers), stage_project__isnull=True)
             .order_by("number", "position", "id")
         )
         if not registrations:
@@ -310,63 +405,128 @@ class ProjectRegistration(models.Model):
                     registration.short_uid = f"tmp{registration.pk}{uuid.uuid4().hex[:8]}"
                     to_refresh.append((registration, sequence, new_uid))
 
-        if not to_refresh:
-            return
-
-        with transaction.atomic():
-            cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
-            for registration, sequence, new_uid in to_refresh:
-                registration.agreement_sequence = sequence
-                registration.short_uid = new_uid
-            cls.objects.bulk_update(
-                [item[0] for item in to_refresh],
-                ["agreement_sequence", "short_uid"],
-            )
+        if to_refresh:
+            with transaction.atomic():
+                cls.objects.bulk_update([item[0] for item in to_refresh], ["short_uid"])
+                for registration, sequence, new_uid in to_refresh:
+                    registration.agreement_sequence = sequence
+                    registration.short_uid = new_uid
+                cls.objects.bulk_update(
+                    [item[0] for item in to_refresh],
+                    ["agreement_sequence", "short_uid"],
+                )
+        cls._refresh_stage_codes([item.pk for item in registrations])
 
     def save(self, *args, **kwargs):
         old_number = None
         old_position = None
         old_contract_project_registration_id = None
+        old_status = None
+        old_status_date = None
+        old_summary_deferred = None
+        old_summary_status_date = None
         if self.pk:
             original = (
                 ProjectRegistration.objects
                 .filter(pk=self.pk)
-                .values("number", "position", "contract_project_registration_id")
+                .values(
+                    "number",
+                    "position",
+                    "contract_project_registration_id",
+                    "status",
+                    "status_date",
+                    "summary_deferred",
+                    "summary_status_date",
+                )
                 .first()
             )
             if original:
                 old_number = original["number"]
                 old_position = original["position"]
                 old_contract_project_registration_id = original["contract_project_registration_id"]
+                old_status = original["status"]
+                old_status_date = original["status_date"]
+                old_summary_deferred = original["summary_deferred"]
+                old_summary_status_date = original["summary_status_date"]
         member = self._resolved_group_member()
         if member:
             self.group = member.country_alpha2 or self.group
-        sequence_needs_refresh = self.agreement_sequence is None or not self.pk
-        if not sequence_needs_refresh:
-            sequence_needs_refresh = self._needs_agreement_sequence_refresh()
-        if sequence_needs_refresh:
-            new_sequence = self._build_agreement_sequence()
-            if self.agreement_sequence != new_sequence:
-                self.agreement_sequence = new_sequence
+        if self.stage_project_id:
+            if not self.short_uid:
+                self.short_uid = f"tmp{uuid.uuid4().hex[:16]}"
                 update_fields = kwargs.get("update_fields")
-                if update_fields is not None and "agreement_sequence" not in update_fields:
-                    kwargs["update_fields"] = set(update_fields) | {"agreement_sequence"}
+                if update_fields is not None and "short_uid" not in update_fields:
+                    kwargs["update_fields"] = set(update_fields) | {"short_uid"}
+        else:
+            sequence_needs_refresh = self.agreement_sequence is None or not self.pk
+            if not sequence_needs_refresh:
+                sequence_needs_refresh = self._needs_agreement_sequence_refresh()
+            if sequence_needs_refresh:
+                new_sequence = self._build_agreement_sequence()
+                if self.agreement_sequence != new_sequence:
+                    self.agreement_sequence = new_sequence
+                    update_fields = kwargs.get("update_fields")
+                    if update_fields is not None and "agreement_sequence" not in update_fields:
+                        kwargs["update_fields"] = set(update_fields) | {"agreement_sequence"}
         if (
             not self.agreement_number
             and self.group_alpha2 == "RU"
             and self.agreement_type == self.AgreementType.MAIN
         ):
             self.agreement_number = f"IMCM/{self.number}"
-        self.stage1_end = self._calculate_stage1_end()
-        self.stage2_end = self._calculate_stage2_end()
-        self.term_weeks = self._calculate_term_weeks()
-        self.completion_calc = self._calculate_completion_calc()
-        if not self.short_uid or self._needs_uid_refresh():
+        if self.stage_terms_json:
+            self.term_weeks = self._calculate_term_weeks()
+            self.completion_calc = self.stage2_end
+        else:
+            self.stage1_end = self._calculate_stage1_end()
+            self.stage2_end = self._calculate_stage2_end()
+            self.term_weeks = self._calculate_term_weeks()
+            self.completion_calc = self._calculate_completion_calc()
+        if not self.stage_project_id and (not self.short_uid or self._needs_uid_refresh()):
             self.short_uid = self._build_short_uid()
             update_fields = kwargs.get("update_fields")
             if update_fields is not None and "short_uid" not in update_fields:
                 kwargs["update_fields"] = set(update_fields) | {"short_uid"}
+        update_fields = kwargs.get("update_fields")
+        persisted_fields = None if update_fields is None else set(update_fields)
+        status_persisted = persisted_fields is None or "status" in persisted_fields
+        should_sync_summary = (
+            old_status is not None and old_status != self.status and status_persisted
+        )
+        if should_sync_summary:
+            explicit_status_date = persisted_fields is not None and "status_date" in persisted_fields
+            if persisted_fields is None and self.status_date != old_status_date:
+                explicit_status_date = True
+            if not explicit_status_date:
+                self.status_date = None if self.status == "Не начат" else timezone.localdate()
+                if update_fields is not None:
+                    update_fields = set(update_fields) | {"status_date"}
+                    kwargs["update_fields"] = update_fields
+        deferred_persisted = persisted_fields is None or "summary_deferred" in persisted_fields
+        if (
+            "summary_deferred" in self.__dict__
+            and old_summary_deferred is not None
+            and old_summary_deferred != self.summary_deferred
+            and deferred_persisted
+        ):
+            explicit_summary_date = (
+                persisted_fields is not None and "summary_status_date" in persisted_fields
+            )
+            if (
+                persisted_fields is None
+                and "summary_status_date" in self.__dict__
+                and self.summary_status_date != old_summary_status_date
+            ):
+                explicit_summary_date = True
+            if not explicit_summary_date:
+                self.summary_status_date = timezone.localdate()
+                if update_fields is not None:
+                    kwargs["update_fields"] = set(update_fields) | {"summary_status_date"}
         super().save(*args, **kwargs)
+        if should_sync_summary:
+            from .registration_summary import sync_summary_status_date_for_status_change
+
+            sync_summary_status_date_for_status_change(self, old_status)
         update_fields = kwargs.get("update_fields")
         should_refresh_sequences = update_fields is None or bool(
             {
@@ -476,7 +636,7 @@ class ProjectRegistration(models.Model):
     def _build_agreement_sequence(self):
         siblings = list(
             ProjectRegistration.objects
-            .filter(number=self.number)
+            .filter(number=self.number, stage_project__isnull=True)
             .exclude(pk=self.pk)
             .order_by("position", "id")
             .values_list("position", "id", "contract_project_registration_id")
@@ -506,6 +666,65 @@ class ProjectRegistration(models.Model):
             f"{self.group_order_number}"
             f"{self.group_alpha2}"
         )
+
+    @property
+    def owning_project_id(self):
+        return self.stage_project_id or self.pk
+
+    @property
+    def filter_type_label(self):
+        own = self.type_short_display
+        if own or self.stage_project_id:
+            return own
+        labels = []
+        prefetched = getattr(self, "_prefetched_objects_cache", {})
+        if "stages" in prefetched:
+            stages = list(prefetched["stages"])
+        elif self.pk:
+            stages = list(
+                self.stages.select_related("type").prefetch_related("product_links__product").order_by("position", "id")
+            )
+        else:
+            stages = []
+        for stage in stages:
+            label = stage.type_short_display
+            if label and label not in labels:
+                labels.append(label)
+        return "-".join(labels)
+
+    @property
+    def gantt_registration_id(self):
+        if self.stage_project_id:
+            return self.pk
+        prefetched = getattr(self, "_prefetched_objects_cache", {})
+        if "stages" in prefetched:
+            stages = list(prefetched["stages"])
+        elif self.pk:
+            stages = list(self.stages.order_by("position", "id")[:2])
+        else:
+            stages = []
+        if len(stages) == 1:
+            return stages[0].pk
+        return self.pk
+
+    @classmethod
+    def get_for_code(cls, short_uid):
+        code = str(short_uid or "").strip()
+        if not code:
+            return None
+        row = (
+            cls.objects.select_related("type", "stage_project", "group_member")
+            .filter(short_uid=code)
+            .first()
+        )
+        if row is None or row.stage_project_id is not None:
+            return row
+        stages = list(
+            row.stages.select_related("type", "group_member").order_by("position", "id")[:2]
+        )
+        if len(stages) == 1:
+            return stages[0]
+        return row
 
     @property
     def contract_project_sequence(self):
@@ -603,6 +822,31 @@ class ProjectRegistration(models.Model):
         return products[0] if products else None
 
 
+class RegistrationGroupSummaryState(models.Model):
+    number = models.PositiveIntegerField(
+        "Номер",
+        validators=[MinValueValidator(0), MaxValueValidator(9999)],
+    )
+    group_label = models.CharField("Группа", max_length=64, blank=True, default="")
+    deferred = models.BooleanField("Отложен", default=False)
+    status_date = models.DateField("Дата статуса", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Статус сводной строки реестра"
+        verbose_name_plural = "Статусы сводных строк реестра"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["number", "group_label"],
+                name="uniq_registration_group_summary_state",
+            )
+        ]
+
+    def __str__(self):
+        label = self.group_label or "—"
+        state = "Отложен" if self.deferred else "по этапам"
+        return f"{int(self.number or 0):04d}:{label} — {state}"
+
+
 class ProjectRegistrationProduct(models.Model):
     registration = models.ForeignKey(
         ProjectRegistration,
@@ -651,6 +895,7 @@ class WorkVolume(models.Model):
     registration_number = models.CharField(max_length=100, blank=True, verbose_name="Регистрационный номер")
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
     manager = models.CharField(max_length=255, blank=True, verbose_name="Менеджер проекта")
+    scope_key = models.UUIDField("Ключ набора", null=True, blank=True, db_index=True)
 
     class Meta:
         ordering = ["project__position", "position", "id"]
@@ -804,6 +1049,7 @@ class LegalEntity(models.Model):
     identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    scope_key = models.UUIDField("Ключ набора", null=True, blank=True, db_index=True)
 
     class Meta:
         ordering = ["project__position", "position", "id"]
@@ -878,11 +1124,40 @@ def refresh_project_registration_sequences_after_delete(sender, instance, **kwar
     ProjectRegistration.refresh_number_sequences([instance.number])
 
 
+def _primary_legal_sibling(instance):
+    if not instance.scope_key:
+        return None
+    return (
+        LegalEntity.objects
+        .filter(work_item__scope_key=instance.scope_key)
+        .exclude(work_item_id=instance.pk)
+        .exclude(scope_key__isnull=True)
+        .order_by("position", "id")
+        .first()
+    )
+
+
 @receiver(post_save, sender=WorkVolume)
 def ensure_primary_legal_entity(sender, instance, created, **kwargs):
-    if not created or not instance.project_id:
+    if not created or not instance.project_id or getattr(instance, "_skip_primary_legal", False):
         return
     if instance.legal_entities.exists():
+        return
+    sibling = _primary_legal_sibling(instance)
+    if sibling is not None:
+        LegalEntity.objects.create(
+            project=instance.project,
+            work_item=instance,
+            work_type=instance.type or "",
+            work_name=instance.name or "",
+            legal_name=sibling.legal_name,
+            country=sibling.country,
+            identifier=sibling.identifier,
+            registration_number=sibling.registration_number,
+            registration_date=sibling.registration_date,
+            scope_key=sibling.scope_key,
+            position=sibling.position,
+        )
         return
     max_pos = (
         LegalEntity.objects
@@ -900,6 +1175,7 @@ def ensure_primary_legal_entity(sender, instance, created, **kwargs):
         identifier=instance.identifier,
         registration_number=instance.registration_number,
         registration_date=instance.registration_date,
+        scope_key=uuid.uuid4(),
         position=max_pos + 1,
     )
 
