@@ -2361,7 +2361,8 @@
     btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
   }
 
-  var REPORT_FIXED_COLUMN_WIDTHS = { checkbox: 30, stage: 105 };
+  // 11-character stage id (333600010RU): 106px of Droid Sans Mono plus 8px table-sm padding.
+  var REPORT_FIXED_COLUMN_WIDTHS = { checkbox: 30, stage: 116 };
   // Columns whose file names may be truncated with an ellipsis when the
   // table does not fit. They shrink from their natural (full file name)
   // width down to REPORT_SHRINK_COLUMN_FLOOR_PX, but never below the width
