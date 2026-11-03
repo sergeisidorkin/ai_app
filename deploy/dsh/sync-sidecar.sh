@@ -33,6 +33,7 @@ FILES=(
   docker-compose.yml
   docker-compose.ollama.yml
   docker-entrypoint.sh
+  merge-sglang-provider.py
   apply-brand.sh
   sync-sidecar.sh
   container-healthcheck.sh

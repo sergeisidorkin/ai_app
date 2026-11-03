@@ -446,6 +446,29 @@ llm-pi-ai:
         name: qwen-plus
       - id: qwen-turbo
         name: qwen-turbo
+    sglang:
+      displayName: SGLang
+      apiKeyEnv: SGLANG_API_KEY
+      api: openai-completions
+      baseURL: http://sglang:30000/v1
+      compat:
+        supportsDeveloperRole: false
+        maxTokensField: max_tokens
+        thinkingFormat: qwen
+      models:
+      - id: qwen3.8-27b-local
+        name: Qwen3.8-27B (локально)
+        input:
+        - text
+        # Placeholder until the checkpoint and context length are chosen.
+        contextWindow: 32768
+        maxTokens: 8192
+        reasoningEfforts:
+          'off': null
+          low: low
+          medium: medium
+          high: high
+          xhigh: xhigh
 agent-default-model:
   provider: siliconflow
   model: Qwen/Qwen3.5-27B

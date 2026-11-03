@@ -15,11 +15,11 @@ their own images, volumes, and session state.
   `llama-server` by pointing DSH at another OpenAI-compatible URL.
 - `deploy/dsh`: Web UI, sessions, skills, provider settings.
 
-On the current production VM, deploy **DSH only**. Point it at the official
-model API from the Web UI (DeepSeek card in Settings → Models). Do not install
-Ollama there.
+On the current production VM, deploy **DSH** and the SGLang file stack. Point
+DSH at the hosted APIs as before, and add the local menu entry described
+below. Do not install Ollama there.
 
-`deploy/ollama` stays for a later GPU host. Then DSH can keep using the
+`deploy/ollama` stays for a different GPU host. Then DSH can keep using the
 official API, or you attach it to Ollama with `docker-compose.ollama.yml`.
 
 Nothing is published on `0.0.0.0`. Host `nginx` terminates HTTPS for the admin UI.
@@ -62,17 +62,24 @@ copy these `deploy/` files the first time.
 
 ## Hardware
 
-The current production VM does not run a local model. DSH only needs RAM for
-Node and outbound HTTPS to the official API.
+This production host has an RTX 5090. The local Qwen3.8-27B route is SGLang,
+prepared under `/opt/sglang`. DSH reaches it on the internal Docker network
+`dsh-sglang` at `http://sglang:30000/v1`. The host port `127.0.0.1:30000` is
+only for the host healthcheck; it is not published on a public interface, and
+`host.docker.internal` does not reach that loopback bind. The checkpoint,
+quantization, KV cache, and context length are chosen later, together with
+the weight download. Until that step the server stays stopped.
 
-Qwen3.5-9B Q4 wants roughly 16 GB VRAM. That belongs on a later GPU host, or
-on a laptop with native Ollama.
+DSH itself still only needs RAM for Node and outbound HTTPS to the hosted
+APIs. Qwen3.5-9B Q4 on Ollama belongs on another GPU host, or on a laptop
+with native Ollama.
 
 ## Current Production: DSH Plus Official API
 
-Skip `deploy/ollama` and `docker network create imc-ai`. The DSH container uses
-the default Docker network so it can reach `api.deepseek.com` (or another
-provider).
+Skip `deploy/ollama` and `docker network create imc-ai`. The DSH container
+keeps the default Docker network so it can reach `api.deepseek.com` (or
+another provider). Compose also creates the internal network `dsh-sglang`
+for the local SGLang container.
 
 ```bash
 REPO=~/ai_appdir/ai_app
@@ -103,6 +110,33 @@ are required.
 
 The container must be allowed outbound HTTPS. If a host firewall or proxy
 blocks it, the UI will start and model calls will fail.
+
+## Local Qwen3.8-27B Through SGLang
+
+`deploy/sglang` is the local model path on this host. Its compose file joins
+the internal network `dsh-sglang` created by the DSH stack, and DSH calls
+`http://sglang:30000/v1`. Compose also publishes `127.0.0.1:30000` for the
+host healthcheck. That bind is not reachable through `host.docker.internal`,
+and it is not placed on `0.0.0.0`. The menu provider is `sglang`, model id
+`qwen3.8-27b-local`, label `Qwen3.8-27B (локально)`. That id is separate
+from the hosted Alibaba `qwen3.8-27b`. `agent-default-model` is left
+unchanged.
+
+`deploy.yml` copies the compose file, `start-server.sh`, the healthcheck,
+and `sglang-compose.service` into place. It does not run `docker compose up`,
+pull the image, download weights, or `systemctl enable` the unit. Enabling
+the unit is the weight step: set `SGLANG_MODEL_PATH` (and, when known,
+`SGLANG_CONTEXT_LENGTH` and `SGLANG_EXTRA_ARGS`) in `/opt/sglang/sglang.env`,
+then start the unit. An empty model path makes `start-server.sh` exit before
+loading anything.
+
+The container entrypoint merges the provider into the existing
+`/opt/dsh/home/settings.yaml` when `SGLANG_BASE_URL` is set. The bundled
+catalog in `settings.yaml.example` carries the same entry so Django and
+report checks can see `qwen3.8-27b-local`. `contextWindow` stays at 32768
+until the checkpoint is chosen. NVIDIA Container Toolkit is a one-time host
+install; it is not part of the Django deploy, and installing it does not
+start SGLang.
 
 ## Later: Ollama On Another Host
 
@@ -306,8 +340,10 @@ and `DSH_HOME=/home/node/.dsh`. Local inbox paths stay off
 
 Django deploy does **not** start DSH on every gunicorn restart. It only
 rsyncs `deploy/dsh` sidecar files (including `branding/`) into `/opt/dsh`
-and rebuilds the container when that checksum changes. Sessions, `dsh.env`,
-and `$DSH_HOME` stay untouched on ordinary app deploys.
+and rebuilds the container when that checksum changes. The same deploy
+copies `deploy/sglang` to `/opt/sglang` and installs the systemd unit
+without enabling it. Sessions, `dsh.env`, and `$DSH_HOME` stay untouched
+on ordinary app deploys, and no SGLang image or checkpoint is pulled.
 
 To change the Web UI name or mark: edit `deploy/dsh/branding/brand.yaml`
 and/or `core/static/core/icons/favicon.svg` (the header/favicon globe),

@@ -1094,6 +1094,146 @@ class DshBrandingTests(SimpleTestCase):
             {"provider": "siliconflow", "model": "Qwen/Qwen3.5-27B"},
         )
 
+    def test_local_catalog_registers_sglang_without_a_checkpoint(self):
+        import yaml
+
+        example_text = (
+            self.repo_root / "deploy" / "dsh" / "settings.yaml.example"
+        ).read_text(encoding="utf-8")
+        example = yaml.safe_load(example_text)
+        sglang = example["llm-pi-ai"]["providers"]["sglang"]
+        model = sglang["models"][0]
+        compose = (self.repo_root / "deploy" / "sglang" / "docker-compose.yml").read_text(
+            encoding="utf-8"
+        )
+        env_example = (self.repo_root / "deploy" / "sglang" / "sglang.env.example").read_text(
+            encoding="utf-8"
+        )
+        starter = (self.repo_root / "deploy" / "sglang" / "start-server.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(sglang["displayName"], "SGLang")
+        self.assertEqual(sglang["api"], "openai-completions")
+        dsh_compose = (self.repo_root / "deploy" / "dsh" / "docker-compose.yml").read_text(
+            encoding="utf-8"
+        )
+        ollama_overlay = (
+            self.repo_root / "deploy" / "dsh" / "docker-compose.ollama.yml"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(sglang["baseURL"], "http://sglang:30000/v1")
+        self.assertEqual(sglang["compat"]["thinkingFormat"], "qwen")
+        self.assertEqual(model["id"], "qwen3.8-27b-local")
+        self.assertEqual(model["name"], "Qwen3.8-27B (локально)")
+        self.assertEqual(model["contextWindow"], 32768)
+        self.assertEqual(
+            list(model["reasoningEfforts"]),
+            ["off", "low", "medium", "high", "xhigh"],
+        )
+        self.assertNotIn(False, model["reasoningEfforts"])
+        self.assertEqual(
+            example["agent-default-model"],
+            {"provider": "siliconflow", "model": "Qwen/Qwen3.5-27B"},
+        )
+        self.assertNotIn("UD-Q5", example_text)
+        self.assertNotIn("NVFP4", example_text)
+        self.assertIn("SGLANG_MODEL_PATH: ${SGLANG_MODEL_PATH:-}", compose)
+        self.assertIn("name: dsh-sglang", compose)
+        self.assertIn("external: true", compose)
+        self.assertIn("127.0.0.1:${SGLANG_PORT:-30000}:30000", compose)
+        self.assertNotIn("0.0.0.0:", compose)
+        self.assertIn("name: dsh-sglang", dsh_compose)
+        self.assertIn("internal: true", dsh_compose)
+        self.assertIn("http://sglang:30000/v1", dsh_compose)
+        self.assertIn("- sglang", ollama_overlay)
+        self.assertIn('SGLANG_MODEL_PATH=\n', env_example)
+        self.assertIn("SGLANG_MODEL_PATH is empty", starter)
+        self.assertNotIn("llama-server", starter)
+        for rel in (
+            "deploy/sglang/start-server.sh",
+            "deploy/sglang/sglang-healthcheck.sh",
+            "deploy/dsh/docker-entrypoint.sh",
+        ):
+            result = subprocess.run(
+                ["bash", "-n", str(self.repo_root / rel)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_merge_sglang_provider_keeps_the_cloud_default(self):
+        import importlib.util
+
+        script = self.repo_root / "deploy" / "dsh" / "merge-sglang-provider.py"
+        spec = importlib.util.spec_from_file_location("merge_sglang_provider", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original = (
+            "llm-pi-ai:\n"
+            "  providers:\n"
+            "    siliconflow:\n"
+            "      models:\n"
+            "      - id: Qwen/Qwen3.5-27B\n"
+            "        reasoningEfforts:\n"
+            "          'off': null\n"
+            "agent-default-model:\n"
+            "  provider: alibaba\n"
+            "  model: qwen3.8-27b\n"
+        )
+        once = module.upsert_sglang_provider(original, "http://sglang:30000/v1")
+        twice = module.upsert_sglang_provider(once, "http://sglang:30000/v1")
+        self.assertEqual(once, twice)
+        self.assertIn("    sglang:\n", once)
+        self.assertIn("id: qwen3.8-27b-local\n", once)
+        self.assertIn("          'off': null\n", once)
+        self.assertIn("  provider: alibaba\n", once)
+        self.assertIn("  model: qwen3.8-27b\n", once)
+        self.assertEqual(once.count("\n    sglang:\n"), 1)
+        replaced = module.upsert_sglang_provider(once, "http://sglang:30001/v1")
+        self.assertIn("baseURL: http://sglang:30001/v1\n", replaced)
+        self.assertEqual(replaced.count("\n    sglang:\n"), 1)
+        self.assertIn("  provider: alibaba\n", replaced)
+
+    def test_merge_sglang_provider_stays_inside_providers(self):
+        import importlib.util
+
+        import yaml
+
+        script = self.repo_root / "deploy" / "dsh" / "merge-sglang-provider.py"
+        spec = importlib.util.spec_from_file_location("merge_sglang_provider", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original = (
+            "agent-default-model:\n"
+            "  provider: alibaba\n"
+            "  model: qwen3.8-27b\n"
+            "llm-pi-ai:\n"
+            "  providers:\n"
+            "    siliconflow:\n"
+            "      models:\n"
+            "      - id: Qwen/Qwen3.5-27B\n"
+            "        reasoningEfforts:\n"
+            "          'off': null\n"
+            "  maxRetries: 1\n"
+            "ui:\n"
+            "  theme: dark\n"
+        )
+        updated = module.upsert_sglang_provider(original, "http://sglang:30000/v1")
+        again = module.upsert_sglang_provider(updated, "http://sglang:30000/v1")
+        self.assertEqual(updated, again)
+        loaded = yaml.safe_load(updated)
+        self.assertEqual(
+            loaded["agent-default-model"],
+            {"provider": "alibaba", "model": "qwen3.8-27b"},
+        )
+        self.assertEqual(loaded["llm-pi-ai"]["maxRetries"], 1)
+        self.assertEqual(loaded["ui"], {"theme": "dark"})
+        self.assertIn("sglang", loaded["llm-pi-ai"]["providers"])
+        self.assertNotIn("sglang", loaded)
+        self.assertIn("          'off': null\n", updated)
+        self.assertLess(updated.find("llm-pi-ai:"), updated.find("    sglang:"))
+        self.assertLess(updated.find("    sglang:"), updated.find("  maxRetries:"))
+
     def test_django_deploy_syncs_dsh_sidecar_when_it_changes(self):
         workflow = (self.repo_root / ".github" / "workflows" / "deploy.yml").read_text(
             encoding="utf-8"
@@ -1101,6 +1241,11 @@ class DshBrandingTests(SimpleTestCase):
         self.assertIn("sync-sidecar.sh", workflow)
         self.assertIn("SIDECAR_CHANGED=1", workflow)
         self.assertIn("dsh-healthcheck.sh", workflow)
+        self.assertIn('SGLANG_ROOT="/opt/sglang"', workflow)
+        self.assertIn("sglang-compose.service", workflow)
+        self.assertIn("image and weights are not pulled", workflow)
+        self.assertNotIn("systemctl enable sglang-compose", workflow)
+        self.assertNotIn("docker compose --env-file /opt/sglang/sglang.env up", workflow)
 
     def test_sync_sidecar_copies_branding_into_an_existing_root(self):
         with tempfile.TemporaryDirectory() as raw:
