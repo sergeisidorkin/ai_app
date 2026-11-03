@@ -372,12 +372,37 @@ def workspace_project_ids(project_ids) -> set[int]:
     )
 
 
+def work_scope_order_lock_reason(work_items):
+    """Why these asset rows cannot change order, including their stage copies.
+
+    Returns ``"workspace"`` when any affected stage already has a workspace,
+    ``"folder"`` when a report folder has frozen that asset's code, or ``None``.
+    """
+    items = [item for item in work_items if item is not None and getattr(item, "project_id", None)]
+    if not items:
+        return None
+    keys = [item.scope_key for item in items if getattr(item, "scope_key", None)]
+    if keys:
+        copies = list(
+            WorkVolume.objects.filter(scope_key__in=keys).only("project_id", "asset_name")
+        )
+    else:
+        copies = items
+    project_ids = [copy.project_id for copy in copies if getattr(copy, "project_id", None)]
+    if workspace_project_ids(project_ids):
+        return "workspace"
+    locked_keys = report_folder_locked_asset_keys(project_ids)
+    if not locked_keys:
+        return None
+    for copy in copies:
+        asset = (getattr(copy, "asset_name", "") or "").strip()
+        if (copy.project_id, asset) in locked_keys:
+            return "folder"
+    return None
+
+
 def work_item_order_locked(work_item) -> bool:
-    if work_item is None or not getattr(work_item, "project_id", None):
-        return False
-    if work_item.project_id in workspace_project_ids([work_item.project_id]):
-        return True
-    return work_item_report_folder_locked(work_item)
+    return work_scope_order_lock_reason([work_item]) is not None
 
 
 def report_upload_locked_asset_keys(project_ids) -> set[tuple[int, str]]:
@@ -562,6 +587,15 @@ def annotate_work_volumes_for_projects_table(work_items):
             # once the workspace exists.
             item.order_locked = item.report_folder_locked or item.project_id in workspace_ids
             item.report_upload_locked = item.pk in upload_locked_ids
+    scoped = {}
+    for item in items:
+        key = getattr(item, "scope_key", None)
+        if key:
+            scoped.setdefault(key, []).append(item)
+    for group in scoped.values():
+        if any(item.order_locked for item in group):
+            for item in group:
+                item.order_locked = True
     return items
 
 

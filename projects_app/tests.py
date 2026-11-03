@@ -23326,7 +23326,7 @@ class ProjectRowOrderTests(TestCase):
         a2 = WorkVolume.objects.create(project=project_a, name="Фабрика", asset_name="Фабрика", manager="M", position=2)
         b1 = WorkVolume.objects.create(project=project_b, name="Склад", asset_name="Склад", manager="M", position=1)
 
-        with patch("projects_app.row_order.report_folder_locked_asset_keys", return_value=set()):
+        with patch("projects_app.report_submission.report_folder_locked_asset_keys", return_value=set()):
             response = self._post("work-volume", [a2.pk, a1.pk, b1.pk], [a1.pk, a2.pk, b1.pk])
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(
@@ -23337,7 +23337,7 @@ class ProjectRowOrderTests(TestCase):
         self.assertEqual(b1.position, 1)
 
         with patch(
-            "projects_app.row_order.report_folder_locked_asset_keys",
+            "projects_app.report_submission.report_folder_locked_asset_keys",
             return_value={(project_a.pk, "Карьер")},
         ):
             response = self._post("work-volume", [a1.pk, a2.pk], [a2.pk, a1.pk])
@@ -24170,3 +24170,66 @@ class ProjectServiceScopeTests(TestCase):
         self.assertFalse(ProjectRegistration.objects.filter(pk=self.stage_two.pk).exists())
         kept = WorkVolume.objects.get(asset_name="Только второй")
         self.assertEqual(kept.project_id, self.stage_one.pk)
+
+    def test_asset_reorder_is_blocked_when_a_later_stage_folder_is_locked(self):
+        quarry_key = uuid.uuid4()
+        factory_key = uuid.uuid4()
+        first_quarry = WorkVolume.objects.create(
+            project=self.stage_one, name="Проект объёма", asset_name="Карьер",
+            scope_key=quarry_key, position=1,
+        )
+        first_factory = WorkVolume.objects.create(
+            project=self.stage_one, name="Проект объёма", asset_name="Фабрика",
+            scope_key=factory_key, position=2,
+        )
+        second_quarry = WorkVolume.objects.create(
+            project=self.stage_two, name="Проект объёма", asset_name="Карьер",
+            scope_key=quarry_key, position=1,
+        )
+        second_factory = WorkVolume.objects.create(
+            project=self.stage_two, name="Проект объёма", asset_name="Фабрика",
+            scope_key=factory_key, position=2,
+        )
+        PerformerReportUpload.objects.create(
+            registration=self.stage_two,
+            executor="Исполнитель",
+            asset_name="Карьер",
+            file_name="7101_A1_отчет.docx",
+            cloud_path="/Corporate Root/06 Отчеты/A1 Карьер/7101_A1_отчет.docx",
+            is_full_report=True,
+        )
+
+        page = self.client.get(reverse("projects_partial")).content.decode()
+        self.assertIn('data-row-order-locked="1"', page)
+
+        response = self.client.post(
+            reverse("row_order_save", args=["work-volume"]),
+            data=json.dumps({
+                "ordered_ids": [first_factory.pk, first_quarry.pk],
+                "base_order_ids": [first_quarry.pk, first_factory.pk],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertIn("заблокирована", response.json()["error"])
+        self.assertEqual(
+            list(WorkVolume.objects.filter(project=self.stage_one).order_by("position").values_list("asset_name", flat=True)),
+            ["Карьер", "Фабрика"],
+        )
+        self.assertEqual(
+            list(WorkVolume.objects.filter(project=self.stage_two).order_by("position").values_list("asset_name", flat=True)),
+            ["Карьер", "Фабрика"],
+        )
+
+        moved = self.client.post(reverse("work_move_down", args=[first_quarry.pk]))
+        self.assertEqual(moved.status_code, 200)
+        positions = {
+            item.pk: item.position
+            for item in WorkVolume.objects.filter(
+                pk__in=[first_quarry.pk, first_factory.pk, second_quarry.pk, second_factory.pk]
+            )
+        }
+        self.assertEqual(positions[first_quarry.pk], 1)
+        self.assertEqual(positions[first_factory.pk], 2)
+        self.assertEqual(positions[second_quarry.pk], 1)
+        self.assertEqual(positions[second_factory.pk], 2)

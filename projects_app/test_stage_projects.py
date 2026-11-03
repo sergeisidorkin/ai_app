@@ -1,13 +1,15 @@
 import importlib
 
 from django.contrib.auth import get_user_model
+from django.db import connection
+from django.db.migrations.loader import MigrationLoader
 from django.test import TestCase
 from django.urls import reverse
 
 from group_app.models import GroupMember
 from policy_app.models import Product
 
-from projects_app.models import ProjectRegistration
+from projects_app.models import ProjectRegistration, WorkVolume
 
 convert_existing_registrations = importlib.import_module(
     "projects_app.migrations.0122_convert_project_stages"
@@ -64,6 +66,50 @@ class StageProjectTests(TestCase):
         self.assertEqual(ProjectRegistration.stage_code("00550000RU", "1"), "005500010RU")
         self.assertEqual(ProjectRegistration.stage_code("00550000RU", "0"), "005500000RU")
         self.assertEqual(ProjectRegistration.stage_code("00550010RU", "2"), "005500120RU")
+
+    def test_stage_conversion_migration_ignores_columns_added_later(self):
+        loader = MigrationLoader(connection)
+        state = loader.project_state(("projects_app", "0121_project_stage_link"))
+        historical = state.apps.get_model("projects_app", "ProjectRegistration")
+        field_names = {field.name for field in historical._meta.local_fields}
+        self.assertIn("stage_project", field_names)
+        self.assertIn("summary_deferred", field_names)
+        self.assertNotIn("status_date", field_names)
+        self.assertNotIn("summary_status_date", field_names)
+        self.assertNotIn("terms_columns_json", field_names)
+        self.assertNotIn("contract_end_enabled", field_names)
+        query = str(historical.objects.order_by("position", "id").query)
+        self.assertNotIn("status_date", query)
+        self.assertNotIn("terms_columns_json", query)
+        self.assertNotIn("contract_end_enabled", query)
+
+    def test_service_scope_backfill_uses_historical_models(self):
+        loader = MigrationLoader(connection)
+        state = loader.project_state(("projects_app", "0124_service_scope_key"))
+        historical = state.apps.get_model("projects_app", "ProjectRegistration")
+        field_names = {field.name for field in historical._meta.local_fields}
+        self.assertIn("status_date", field_names)
+        self.assertNotIn("terms_columns_json", field_names)
+        self.assertNotIn("contract_end_enabled", field_names)
+        work_fields = {field.name for field in state.apps.get_model("projects_app", "WorkVolume")._meta.local_fields}
+        self.assertIn("scope_key", work_fields)
+        query = str(historical.objects.values_list("pk", "stage_project_id").query)
+        self.assertNotIn("terms_columns_json", query)
+        self.assertNotIn("contract_end_enabled", query)
+
+        row = self._create_row()
+        volume = WorkVolume.objects.create(
+            project=row,
+            name="Карьер",
+            asset_name="Карьер",
+            position=1,
+        )
+        backfill = importlib.import_module(
+            "projects_app.migrations.0124_service_scope_key"
+        ).backfill_service_scopes
+        backfill(state.apps, None)
+        volume.refresh_from_db()
+        self.assertIsNotNone(volume.scope_key)
 
     def test_convert_keeps_single_project_id_and_writes_stage_code(self):
         row = self._create_row()

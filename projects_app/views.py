@@ -129,7 +129,7 @@ from .report_submission import (
     withdraw_pending_report_remarks,
     upload_report_file,
     validate_workspace_folder_roles,
-    work_item_order_locked,
+    work_scope_order_lock_reason,
     work_item_report_folder_locked,
     work_volume_asset_code,
 )
@@ -5009,7 +5009,7 @@ def _normalize_legal_positions(project_id: int | None = None):
             LegalEntity.objects.filter(pk=b.pk).update(position=idx)
 
 def _swap_work_volumes_if_unlocked(first: WorkVolume, second: WorkVolume) -> bool:
-    if work_item_order_locked(first) or work_item_order_locked(second):
+    if work_scope_order_lock_reason([first, second]):
         return False
     WorkVolume.objects.filter(pk=first.pk).update(position=second.position)
     WorkVolume.objects.filter(pk=second.pk).update(position=first.position)
