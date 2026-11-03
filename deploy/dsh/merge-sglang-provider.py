@@ -35,6 +35,7 @@ def provider_block(indent: str, base_url: str) -> str:
         f"{p4}name: Qwen3.8-27B (локально)",
         f"{p4}input:",
         f"{p4}- text",
+        f"{p4}- image",
         f"{p4}contextWindow: 32768",
         f"{p4}maxTokens: 8192",
         f"{p4}reasoningEfforts:",

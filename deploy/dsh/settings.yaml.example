@@ -460,6 +460,7 @@ llm-pi-ai:
         name: Qwen3.8-27B (локально)
         input:
         - text
+        - image
         # Placeholder until the checkpoint and context length are chosen.
         contextWindow: 32768
         maxTokens: 8192
