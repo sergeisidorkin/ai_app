@@ -118,7 +118,8 @@ the internal network `dsh-sglang` created by the DSH stack, and DSH calls
 `http://sglang:30000/v1`. Compose also publishes `127.0.0.1:30000` for the
 host healthcheck. That bind is not reachable through `host.docker.internal`,
 and it is not placed on `0.0.0.0`. The menu provider is `sglang`, model id
-`qwen3.8-27b-local`, label `Qwen3.8-27B (локально)`. That id is separate
+`qwen3.8-27b-local`, label `Qwen3.8-27B (локально)`. Its catalog input is
+text and image, so the harness can attach pictures. That id is separate
 from the hosted Alibaba `qwen3.8-27b`. `agent-default-model` is left
 unchanged.
 
