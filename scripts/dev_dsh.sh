@@ -152,7 +152,7 @@ def fetch_openai_models(base_url, api_key):
 
 example = restore_yaml_off_keys(yaml.safe_load(example_path.read_text(encoding="utf-8")) or {})
 example_providers = (example.get("llm-pi-ai") or {}).get("providers") or {}
-for name in ("siliconflow", "alibaba"):
+for name in ("siliconflow", "alibaba", "sglang"):
     if name not in example_providers:
         raise SystemExit(f"{name} provider missing from {example_path}")
 try:
@@ -160,7 +160,7 @@ try:
 except FileNotFoundError:
     payload = {}
 providers = payload.setdefault("llm-pi-ai", {}).setdefault("providers", {})
-for name in ("siliconflow", "alibaba"):
+for name in ("siliconflow", "alibaba", "sglang"):
     providers[name] = example_providers[name]
 api_key = credential_value("DASHSCOPE_WS_API_KEY")
 base_url = str(providers["alibaba"].get("baseURL") or "").strip()
@@ -201,6 +201,7 @@ load_dsh_api_key DEEPSEEK_API_KEY
 load_dsh_api_key DASHSCOPE_API_KEY
 load_dsh_api_key DASHSCOPE_WS_API_KEY
 load_dsh_api_key OLLAMA_API_KEY
+load_dsh_api_key SGLANG_API_KEY
 configure_example_providers
 
 if [[ "$(dsh_http_code)" =~ ^(200|401|302|403)$ ]]; then

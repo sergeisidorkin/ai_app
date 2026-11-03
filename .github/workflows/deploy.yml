@@ -155,6 +155,23 @@ jobs:
               echo "DSH sidecar is not installed at $DSH_ROOT — skip"
             fi
 
+            echo "== SGLang files (do not start) =="
+            SGLANG_ROOT="/opt/sglang"
+            sudo mkdir -p "$SGLANG_ROOT/cache"
+            sudo cp "$REPO_DIR/deploy/sglang/docker-compose.yml" \
+                    "$REPO_DIR/deploy/sglang/start-server.sh" \
+                    "$REPO_DIR/deploy/sglang/sglang-healthcheck.sh" \
+                    "$SGLANG_ROOT/"
+            sudo chmod 0755 "$SGLANG_ROOT/start-server.sh" "$SGLANG_ROOT/sglang-healthcheck.sh"
+            if [ ! -f "$SGLANG_ROOT/sglang.env" ]; then
+              sudo cp "$REPO_DIR/deploy/sglang/sglang.env.example" "$SGLANG_ROOT/sglang.env"
+            fi
+            sudo install -m 0644 \
+              "$REPO_DIR/deploy/sglang/sglang-compose.service.example" \
+              /etc/systemd/system/sglang-compose.service
+            sudo systemctl daemon-reload
+            echo "SGLang unit installed and not enabled; image and weights are not pulled"
+
             echo "== Install checklist sort worker =="
             # The worker's ExecStartPre calls /opt/dsh/dsh-healthcheck.sh.
             # Skip it until the DSH sidecar is installed.

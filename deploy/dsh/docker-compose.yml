@@ -31,6 +31,8 @@ services:
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
       DASHSCOPE_WS_API_KEY: ${DASHSCOPE_WS_API_KEY:-}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      SGLANG_BASE_URL: ${SGLANG_BASE_URL:-http://host.docker.internal:30000/v1}
+      SGLANG_API_KEY: ${SGLANG_API_KEY:-}
     volumes:
       # Persistent harness state. Copy this directory when moving servers.
       - "${ROOT:-./data}/home:/home/node/.dsh"

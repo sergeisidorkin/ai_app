@@ -44,6 +44,10 @@ if [[ ! -f "$DSH_HOME/settings.yaml" ]]; then
   fi
 fi
 
+if [[ -n "${SGLANG_BASE_URL:-}" && -f "$DSH_HOME/settings.yaml" && -x /usr/local/bin/dsh-merge-sglang ]]; then
+  /usr/local/bin/dsh-merge-sglang "$DSH_HOME/settings.yaml"
+fi
+
 if (( $# == 0 )); then
   set -- web
 elif [[ "$1" == dsh ]]; then

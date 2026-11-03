@@ -50,6 +50,7 @@ RUN set -eux; \
     chown -R "${DSH_UID}:${DSH_GID}" /home/node /workspace
 
 COPY docker-entrypoint.sh /usr/local/bin/dsh-entrypoint
+COPY merge-sglang-provider.py /usr/local/bin/dsh-merge-sglang
 COPY container-healthcheck.sh /usr/local/bin/dsh-container-healthcheck
 COPY apply-brand.sh /usr/local/bin/dsh-apply-brand
 COPY settings.yaml.example /usr/local/share/dsh/settings.yaml.example
@@ -58,6 +59,7 @@ COPY branding /usr/local/share/dsh/branding
 COPY plugins/imc-brand /usr/local/share/dsh/plugins/imc-brand
 RUN chmod 0755 \
         /usr/local/bin/dsh-entrypoint \
+        /usr/local/bin/dsh-merge-sglang \
         /usr/local/bin/dsh-container-healthcheck \
         /usr/local/bin/dsh-apply-brand \
     && chmod -R a+rX /usr/local/share/dsh

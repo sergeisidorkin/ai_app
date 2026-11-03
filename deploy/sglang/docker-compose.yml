@@ -1,0 +1,27 @@
+services:
+  sglang:
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.19}
+    container_name: sglang
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    shm_size: 16gb
+    gpus: all
+    ports:
+      - "127.0.0.1:${SGLANG_PORT:-30000}:30000"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      HF_HOME: /cache/huggingface
+      SGLANG_MODEL_PATH: ${SGLANG_MODEL_PATH:-}
+      SGLANG_CONTEXT_LENGTH: ${SGLANG_CONTEXT_LENGTH:-}
+      SGLANG_EXTRA_ARGS: ${SGLANG_EXTRA_ARGS:-}
+      SGLANG_API_KEY: ${SGLANG_API_KEY:-}
+      SGLANG_SERVED_MODEL_NAME: ${SGLANG_SERVED_MODEL_NAME:-qwen3.8-27b-local}
+    volumes:
+      - ${SGLANG_CACHE:-/opt/sglang/cache}:/cache
+      - ${SGLANG_ROOT:-/opt/sglang}/start-server.sh:/opt/start-server.sh:ro
+    entrypoint: ["/opt/start-server.sh"]
