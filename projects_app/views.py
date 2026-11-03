@@ -2,12 +2,12 @@ import copy
 import csv
 import io
 import logging
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core import signing
 from django.core.paginator import Paginator
-from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse, QueryDict, StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -18,7 +18,9 @@ from django.db.models.functions import Trim
 from django import forms
 from django.utils import timezone
 from urllib.parse import urlencode
-from classifiers_app.models import LegalEntityIdentifier, LegalEntityRecord
+from classifiers_app.models import LegalEntityIdentifier, LegalEntityRecord, OKSMCountry
+from contracts_app.models import ContractProjectRegistration
+from group_app.models import GroupMember
 from .models import (
     LegalEntity,
     Performer,
@@ -26,6 +28,7 @@ from .models import (
     PerformerReportUpload,
     ProjectRegistration,
     ProjectRegistrationProduct,
+    RegistrationGroupSummaryState,
     RegistrationWorkspaceFolder,
     ReportCheckRule,
     ReportReviewEntry,
@@ -34,6 +37,22 @@ from .models import (
     WorkVolumeItem,
     _ensure_performer_rows_for_work_item,
     _sync_project_registration_primary_product,
+)
+from .registration_summary import (
+    DEFERRED_STATUS,
+    deferred_pairs_for_numbers,
+    is_group_deferred,
+    legacy_summary_status_dates,
+    registration_summary_state,
+    block_is_deferred,
+    summary_block_for_group,
+    summary_block_for_project,
+    summary_block_for_pk,
+    summary_indicator_class,
+    sync_summary_status_date_for_label_change,
+    sync_summary_status_date_for_status_change,
+    summary_payload,
+    summary_payload_for_registration,
 )
 from .report_access import (
     annotate_report_submission_rows,
@@ -110,8 +129,7 @@ from .report_submission import (
     withdraw_pending_report_remarks,
     upload_report_file,
     validate_workspace_folder_roles,
-    work_item_has_report_uploads,
-    work_item_order_locked,
+    work_scope_order_lock_reason,
     work_item_report_folder_locked,
     work_volume_asset_code,
 )
@@ -125,10 +143,19 @@ from .forms import (
     LegalEntityForm,
     ReportCheckRuleForm,
     ReportMacroForm,
+    _parse_project_form_date,
     _project_coordinator_choices,
     _project_manager_choices,
     _resolve_project_coordinator_choice,
     _resolve_project_manager_choice,
+)
+from .service_scope import (
+    align_project_service_scope,
+    collapse_service_rows,
+    delete_work_scope,
+    legal_scope_copies,
+    mirror_legal_positions,
+    mirror_work_positions,
 )
 from .services.schedule_copy import copy_typical_gantt_to_project
 from .services import gantt_tasks
@@ -335,8 +362,154 @@ def _confirmed_project_ids_for_expert(user):
     )
 
 
+def _uniform_summary_text(block, getter):
+    values = [" ".join(str(getter(item) or "").split()) for item in block]
+    if all(value == values[0] for value in values):
+        return values[0]
+    return None
+
+
+def _uniform_summary_date(block, getter, date_format="%d.%m.%y"):
+    values = [getter(item) for item in block]
+    if not all(value == values[0] for value in values):
+        return None
+    value = values[0]
+    return value.strftime(date_format) if value else ""
+
+
+def _uniform_summary_country(block, id_attr, relation_attr):
+    ids = [getattr(item, id_attr) for item in block]
+    if not all(value == ids[0] for value in ids):
+        return None
+    related = getattr(block[0], relation_attr, None)
+    return getattr(related, "short_name", "") if related else ""
+
+
+def _summary_status_date_label(first, legacy_status_dates):
+    if getattr(first, "registration_summary_label", "") == "Не начат":
+        return ""
+    if first.stage_project_id:
+        parent = first.stage_project
+        value = parent.summary_status_date if parent is not None else None
+    else:
+        value = (legacy_status_dates or {}).get((first.number, first.group_display))
+    return value.strftime("%d.%m.%Y") if value else ""
+
+
+def _annotate_registration_summary_columns(first, block, legacy_status_dates=None):
+    source = first.stage_project if first.stage_project_id else first
+    last = block[-1]
+    last_deadline = last.deadline
+    first.registration_summary_year = source.year or ""
+    first.registration_summary_manager = source.project_manager or ""
+    first.registration_summary_manager_value = source.project_manager_prs_id or source.project_manager or ""
+    first.registration_summary_coordinator = source.project_coordinator or ""
+    first.registration_summary_coordinator_value = (
+        source.project_coordinator_prs_id or source.project_coordinator or ""
+    )
+    first.registration_summary_evaluation_date = _uniform_summary_date(
+        block, lambda item: item.evaluation_date, "%d.%m.%Y"
+    )
+    first.registration_summary_status_date = _summary_status_date_label(first, legacy_status_dates)
+    first.registration_summary_deadline = last_deadline.strftime("%d.%m.%Y") if last_deadline else ""
+    first.registration_summary_deadline_iso = last_deadline.isoformat() if last_deadline else ""
+    first.registration_summary_last_id = last.pk
+    first.registration_summary_customer = _uniform_summary_text(block, lambda item: item.customer)
+    first.registration_summary_country = _uniform_summary_country(block, "country_id", "country")
+    first.registration_summary_identifier = _uniform_summary_text(block, lambda item: item.identifier)
+    first.registration_summary_registration_number = _uniform_summary_text(
+        block, lambda item: item.registration_number
+    )
+    first.registration_summary_region = _uniform_summary_text(block, lambda item: item.registration_region)
+    first.registration_summary_registration_date = _uniform_summary_date(
+        block, lambda item: item.registration_date
+    )
+    first.registration_summary_asset_owner = _uniform_summary_text(block, lambda item: item.asset_owner)
+    first.registration_summary_asset_owner_country = _uniform_summary_country(
+        block, "asset_owner_country_id", "asset_owner_country"
+    )
+    first.registration_summary_asset_owner_identifier = _uniform_summary_text(
+        block, lambda item: item.asset_owner_identifier
+    )
+    first.registration_summary_asset_owner_registration_number = _uniform_summary_text(
+        block, lambda item: item.asset_owner_registration_number
+    )
+    first.registration_summary_asset_owner_region = _uniform_summary_text(
+        block, lambda item: item.asset_owner_region
+    )
+    first.registration_summary_asset_owner_date = _uniform_summary_date(
+        block, lambda item: item.asset_owner_registration_date
+    )
+    party_hides = {
+        "registration_hide_customer": first.registration_summary_customer is not None,
+        "registration_hide_country": first.registration_summary_country is not None,
+        "registration_hide_identifier": first.registration_summary_identifier is not None,
+        "registration_hide_registration_number": first.registration_summary_registration_number is not None,
+        "registration_hide_region": first.registration_summary_region is not None,
+        "registration_hide_registration_date": first.registration_summary_registration_date is not None,
+        "registration_hide_asset_owner": first.registration_summary_asset_owner is not None,
+        "registration_hide_asset_owner_country": first.registration_summary_asset_owner_country is not None,
+        "registration_hide_asset_owner_identifier": first.registration_summary_asset_owner_identifier is not None,
+        "registration_hide_asset_owner_registration_number": (
+            first.registration_summary_asset_owner_registration_number is not None
+        ),
+        "registration_hide_asset_owner_region": first.registration_summary_asset_owner_region is not None,
+        "registration_hide_asset_owner_date": first.registration_summary_asset_owner_date is not None,
+    }
+    for item in block:
+        for name, hidden in party_hides.items():
+            setattr(item, name, hidden)
+
+
+def _apply_registration_summary(block, summary_key, group_label, deferred, legacy_status_dates=None):
+    first = block[0]
+    contract_ids = {item.contract_project_registration_id for item in block}
+    agreements = {item.agreement_type for item in block}
+    uniform_contract = len(contract_ids) == 1 and len(agreements) == 1
+    summary_type = "-".join(item.type_short_display for item in block if item.type_short_display)
+    contract = first.contract_project_registration if uniform_contract else None
+    summary_state = registration_summary_state([item.status for item in block], deferred)
+    first.opens_registration_summary = True
+    first.registration_summary_type = summary_type
+    first.registration_summary_hide_contract = uniform_contract
+    first.registration_summary_contract_label = contract.short_uid if contract else ""
+    first.registration_summary_agreement = first.get_agreement_type_display() if uniform_contract else ""
+    first.registration_summary_label = summary_state["label"]
+    first.registration_summary_auto_label = summary_state["auto_label"]
+    first.registration_summary_deferred = summary_state["deferred"]
+    first.registration_summary_can_launch = summary_state["can_launch"]
+    first.registration_summary_group = group_label
+    first.registration_summary_indicator_class = (
+        "" if summary_state["can_launch"] else summary_indicator_class(summary_state["label"])
+    )
+    for item in block:
+        item.in_registration_summary = True
+        item.registration_summary_key = summary_key
+        item.registration_summary_hide_contract = uniform_contract
+        item.registry_uid = item.short_uid
+    _annotate_registration_summary_columns(first, block, legacy_status_dates)
+
+
 def _annotate_registration_number_groups(registrations):
     items = list(registrations)
+    for registration in items:
+        registration.opens_registration_summary = False
+        registration.in_registration_summary = False
+        registration.registration_summary_key = ""
+        registration.registration_summary_type = ""
+        registration.registration_summary_hide_contract = False
+        registration.registration_summary_contract_label = ""
+        registration.registration_summary_agreement = ""
+        registration.registration_summary_label = ""
+        registration.registration_summary_auto_label = ""
+        registration.registration_summary_deferred = False
+        registration.registration_summary_can_launch = False
+        registration.registration_summary_group = ""
+        registration.registration_summary_indicator_class = ""
+        registration.registration_summary_status_date = ""
+        registration.registry_uid = registration.short_uid
+    deferred_pairs = deferred_pairs_for_numbers({item.number for item in items})
+    legacy_status_dates = legacy_summary_status_dates({item.number for item in items})
     start = 0
     while start < len(items):
         current_number = items[start].number
@@ -366,7 +539,89 @@ def _annotate_registration_number_groups(registrations):
             or previous.number != registration.number
             or previous.contract_project_registration_id != registration.contract_project_registration_id
         )
+    parent_blocks = {}
+    for registration in items:
+        if registration.stage_project_id:
+            parent_blocks.setdefault(registration.stage_project_id, []).append(registration)
+    for block in parent_blocks.values():
+        if len(block) >= 2:
+            parent = block[0].stage_project
+            group_label = parent.group_display if parent is not None else block[0].group_display
+            deferred = bool(parent.summary_deferred) if parent is not None else False
+            _apply_registration_summary(
+                block,
+                f"project:{block[0].stage_project_id}",
+                group_label,
+                deferred,
+                legacy_status_dates,
+            )
+    start = 0
+    while start < len(items):
+        current_group = items[start].group_display
+        end = start + 1
+        while (
+            end < len(items)
+            and items[end].number == items[start].number
+            and items[end].group_display == current_group
+        ):
+            end += 1
+        block = [item for item in items[start:end] if not item.in_registration_summary and not item.stage_project_id]
+        if len(block) >= 2 and block == items[start:end]:
+            first = block[0]
+            contract_ids = {item.contract_project_registration_id for item in block}
+            agreements = {item.agreement_type for item in block}
+            uniform_contract = len(contract_ids) == 1 and len(agreements) == 1
+            summary_key = f"{first.formatted_number}:{current_group}"
+            summary_type = "-".join(
+                item.type_short_display for item in block if item.type_short_display
+            )
+            contract = first.contract_project_registration if uniform_contract else None
+            first.opens_registration_summary = True
+            first.registration_summary_type = summary_type
+            first.registration_summary_hide_contract = uniform_contract
+            first.registration_summary_contract_label = (
+                contract.short_uid if contract else ""
+            )
+            first.registration_summary_agreement = (
+                first.get_agreement_type_display() if uniform_contract else ""
+            )
+            summary_state = registration_summary_state(
+                [item.status for item in block],
+                (first.number, current_group) in deferred_pairs,
+            )
+            first.registration_summary_label = summary_state["label"]
+            first.registration_summary_auto_label = summary_state["auto_label"]
+            first.registration_summary_deferred = summary_state["deferred"]
+            first.registration_summary_can_launch = summary_state["can_launch"]
+            first.registration_summary_group = current_group
+            first.registration_summary_indicator_class = (
+                "" if summary_state["can_launch"] else summary_indicator_class(summary_state["label"])
+            )
+            for item in block:
+                item.in_registration_summary = True
+                item.registration_summary_key = summary_key
+                item.registration_summary_hide_contract = uniform_contract
+                item.registry_uid = item.short_uid
+            _annotate_registration_summary_columns(first, block, legacy_status_dates)
+        start = end
+    for registration in items:
+        parent = registration.stage_project if registration.stage_project_id else None
+        if parent is not None and not registration.in_registration_summary:
+            registration.registry_uid = parent.short_uid or registration.short_uid
     return items
+
+
+def _owning_project_ids(registration_ids):
+    ids = []
+    seen = set()
+    rows = ProjectRegistration.objects.filter(pk__in=list(registration_ids)).values_list("pk", "stage_project_id")
+    for pk, parent_id in rows:
+        owning_id = parent_id or pk
+        if owning_id in seen:
+            continue
+        seen.add(owning_id)
+        ids.append(owning_id)
+    return ids
 
 
 def _projects_context(user=None):
@@ -376,11 +631,28 @@ def _projects_context(user=None):
         "product_links",
         queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
     )
+    stage_prefetch = models.Prefetch(
+        "stages",
+        queryset=(
+            ProjectRegistration.objects
+            .select_related("type")
+            .prefetch_related(product_prefetch)
+            .order_by("position", "id")
+        ),
+    )
     registrations = (
         ProjectRegistration.objects
-        .select_related("country", "asset_owner_country", "group_member", "type", "contract_project_registration")
+        .registry_rows()
+        .select_related(
+            "country",
+            "asset_owner_country",
+            "group_member",
+            "type",
+            "contract_project_registration",
+            "stage_project",
+            "stage_project__group_member",
+        )
         .prefetch_related(product_prefetch)
-        .all()
     )
     if expert_project_ids is not None:
         registrations = registrations.filter(id__in=expert_project_ids)
@@ -397,7 +669,11 @@ def _projects_context(user=None):
     )
     if expert_project_ids is not None:
         work_items = work_items.filter(project_id__in=expert_project_ids)
-    work_items = annotate_work_volumes_for_projects_table(work_items)
+    work_items = work_items.select_related("project__stage_project").prefetch_related(
+        models.Prefetch("project__stages", queryset=stage_prefetch.queryset),
+        models.Prefetch("project__stage_project__stages", queryset=stage_prefetch.queryset),
+    )
+    work_items = collapse_service_rows(annotate_work_volumes_for_projects_table(work_items))
     legal_entities = (
         LegalEntity.objects
         .select_related(
@@ -423,46 +699,32 @@ def _projects_context(user=None):
     )
     if expert_project_ids is not None:
         legal_entities = legal_entities.filter(project_id__in=expert_project_ids)
-    legal_projects = (
+    legal_entities = legal_entities.select_related("project__stage_project").prefetch_related(
+        models.Prefetch("project__stages", queryset=stage_prefetch.queryset),
+        models.Prefetch("project__stage_project__stages", queryset=stage_prefetch.queryset),
+    )
+    legal_entities = collapse_service_rows(list(legal_entities))
+    legal_stage_ids = [entity.project_id for entity in legal_entities]
+    work_stage_ids = [item.project_id for item in work_items]
+    filter_projects = (
         ProjectRegistration.objects
+        .project_records()
         .select_related("type")
-        .prefetch_related(product_prefetch)
-        .filter(legal_entities__isnull=False)
-        .distinct()
+        .prefetch_related(product_prefetch, stage_prefetch)
         .order_by("-number", "-id")
     )
     if expert_project_ids is not None:
-        legal_projects = legal_projects.filter(id__in=expert_project_ids)
-    schedule_projects_qs = (
-        ProjectRegistration.objects
-        .select_related("type")
-        .prefetch_related(product_prefetch)
-        .order_by("-number", "-id")
-    )
-    if expert_project_ids is not None:
-        schedule_projects_qs = schedule_projects_qs.filter(id__in=expert_project_ids)
-    schedule_projects = list(schedule_projects_qs)
-    schedule_items = gantt_tasks.iter_schedule_rows(schedule_projects)
-    work_projects = (
-        ProjectRegistration.objects
-        .select_related("type")
-        .prefetch_related(product_prefetch)
-        .filter(work_items__isnull=False)
-        .distinct()
-        .order_by("-number", "-id")
-    )
-    if expert_project_ids is not None:
-        work_projects = work_projects.filter(id__in=expert_project_ids)
-    reg_filter_projects = (
-        ProjectRegistration.objects
-        .select_related("type")
-        .prefetch_related(product_prefetch)
-        .order_by("-number", "-id")
-    )
-    if expert_project_ids is not None:
-        reg_filter_projects = reg_filter_projects.filter(id__in=expert_project_ids)
+        filter_projects = filter_projects.filter(
+            Q(pk__in=expert_project_ids) | Q(stages__pk__in=expert_project_ids)
+        ).distinct()
+    registration_rows = list(registrations)
+    schedule_items = gantt_tasks.iter_schedule_rows(registration_rows)
+    reg_filter_projects = filter_projects
+    schedule_projects = filter_projects
+    work_projects = filter_projects.filter(pk__in=_owning_project_ids(work_stage_ids))
+    legal_projects = filter_projects.filter(pk__in=_owning_project_ids(legal_stage_ids))
     return {
-        "registrations": _annotate_registration_number_groups(registrations),
+        "registrations": _annotate_registration_number_groups(registration_rows),
         "reg_filter_projects": reg_filter_projects,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "schedule_items": schedule_items,
@@ -475,6 +737,7 @@ def _projects_context(user=None):
         "registration_manager_choices": _project_manager_choices("", show_prs_label=False),
         "registration_coordinator_choices": _project_coordinator_choices("", show_prs_label=False),
         "is_expert": is_expert,
+        "is_admin": _is_admin_user(user),
     }
 
 
@@ -488,6 +751,16 @@ def _short_fio_label(value):
 
 def _short_date_label(value):
     return value.strftime("%d.%m.%Y") if value else ""
+
+
+def _status_date_fields(registration):
+    if registration is None or registration.status == "Не начат":
+        return {"statusDate": "", "statusDateLabel": ""}
+    value = registration.status_date
+    return {
+        "statusDate": value.isoformat() if value else "",
+        "statusDateLabel": _short_date_label(value),
+    }
 
 
 def _product_option_label(product):
@@ -679,10 +952,45 @@ def _registration_selected_type_rows(form, registration=None):
     }]
 
 
-def _registration_form_context(form, action, registration=None):
+def _registration_form_page_label(action, registration):
+    if action == "create" or registration is None:
+        return "Новый проект"
+    parent_uid = ""
+    if getattr(registration, "stage_project_id", None):
+        parent = getattr(registration, "stage_project", None)
+        parent_uid = getattr(parent, "short_uid", "") or ""
+    return parent_uid or getattr(registration, "short_uid", "") or "Проект"
+
+
+def _terms_project_storage_key(registration):
+    """Ключ localStorage для свёрнутых столбцов сроков одного проекта."""
+    if registration is None or not getattr(registration, "pk", None):
+        return ""
+    if getattr(registration, "stage_project_id", None):
+        parent = getattr(registration, "stage_project", None)
+        uid = (getattr(parent, "short_uid", "") or "").strip()
+        return uid or str(registration.stage_project_id)
+    return (getattr(registration, "short_uid", "") or "").strip() or str(registration.pk)
+
+
+def _registration_form_page_url(action, registration, group_number, group_label):
+    if action == "create" or registration is None or not getattr(registration, "pk", None):
+        return reverse("registration_form_create")
+    if action == "group_edit":
+        number = registration.number if group_number in ("", None) else group_number
+        params = {"number": number, "group": group_label or ""}
+        project_id = getattr(registration, "stage_project_id", None)
+        if project_id:
+            params["project"] = project_id
+        return f"{reverse('registration_group_summary_edit')}?{urlencode(params)}"
+    return reverse("registration_form_edit", args=[registration.pk])
+
+
+def _registration_form_context(form, action, registration=None, ranked_products=None, **extra):
     catalog = _registration_product_catalog()
-    ranked_products = _registration_selected_type_rows(form, registration)
-    return {
+    if ranked_products is None:
+        ranked_products = _registration_selected_type_rows(form, registration)
+    context = {
         "form": form,
         "action": action,
         "registration": registration,
@@ -690,7 +998,653 @@ def _registration_form_context(form, action, registration=None):
         "product_options": catalog["options"],
         "registration_type_meta_json": json.dumps(catalog["meta"], ensure_ascii=False),
         "ranked_products": ranked_products,
+        "group_number": "",
+        "group_label": "",
+        "group_source_ids": [],
+        "single_contract_id": "",
     }
+    # Поле «Договор ID» есть у проектов. Форма самого договора его не содержит.
+    if action in {"create", "edit"} and "contract_project_registration" in form.fields:
+        context["single_contract_id"] = _apply_single_registration_contract_fields(form, registration)
+    context.update(extra)
+    context["terms_project_key"] = _terms_project_storage_key(registration)
+    if action in {"create", "edit"} and "contract_project_registration" in form.fields:
+        context["registration_contract_meta_json"] = _registration_contract_meta_json(form)
+    if "registration_stage_rows" not in context:
+        context["registration_stage_rows"] = _display_registration_stage_rows(form, registration)
+    customer_rows = _customer_rows_for_form(
+        form,
+        action,
+        registration,
+        context.get("customer_source_block"),
+    )
+    _include_customer_row_countries(form, customer_rows)
+    context["customer_rows"] = customer_rows
+    context["lock_customer_product"] = action == "edit" and bool(getattr(form, "lock_project_roles", False))
+    owner_rows = _owner_rows_for_form(
+        form,
+        action,
+        registration,
+        context.get("customer_source_block"),
+        customer_rows,
+    )
+    _include_owner_row_countries(form, owner_rows)
+    context["owner_rows"] = owner_rows
+    context["owner_matches_customer"] = _owner_matches_customer(form, registration)
+    stage_rows = context.get("registration_stage_rows") or []
+    from .stage_terms import evaluation_dates_are_common
+
+    context["evaluation_date_common"] = evaluation_dates_are_common(stage_rows)
+    context["evaluation_dates_disabled"] = bool(stage_rows) and all(
+        not row.get("evaluation_date_enabled", True) for row in stage_rows
+    )
+    context["registration_stage_groups"] = _registration_stage_groups(
+        form,
+        stage_rows,
+        registration,
+    )
+    context["header_current_label"] = _registration_form_page_label(action, registration)
+    context["header_current_url"] = _registration_form_page_url(
+        action,
+        registration,
+        context.get("group_number"),
+        context.get("group_label") or "",
+    )
+    return context
+
+
+def _display_registration_stage_rows(form, registration=None):
+    from .stage_terms import _blank_stage, parse_posted_stages, stages_from_registration
+
+    if getattr(form, "is_bound", False):
+        posted = parse_posted_stages(form.data, getattr(form, "cleaned_type_ids", None))
+        if posted:
+            return posted
+    if registration is not None and getattr(registration, "pk", None):
+        return stages_from_registration(registration)
+    return [_blank_stage()]
+
+
+def _posted_contract_group_ends(data):
+    from .stage_terms import parse_date
+
+    contract_ids = _request_list(data, "contract_group_id")
+    ends = _request_list(data, "contract_group_end")
+    result = {}
+    for index, contract_id in enumerate(contract_ids):
+        raw_end = ends[index] if index < len(ends) else ""
+        result[str(contract_id or "")] = parse_date(raw_end)
+    return result
+
+
+def _posted_contract_group_end_flags(data):
+    if data is None or "contract_group_end_enabled" not in getattr(data, "keys", lambda: [])():
+        return None
+    contract_ids = _request_list(data, "contract_group_id")
+    flags = _request_list(data, "contract_group_end_enabled")
+    result = {}
+    for index, contract_id in enumerate(contract_ids):
+        raw = flags[index] if index < len(flags) else "true"
+        result[str(contract_id or "")] = str(raw).strip().lower() not in {"0", "false", "off", "no", "нет"}
+    return result
+
+
+def _apply_posted_contract_end(target, contract_id, ends, flags):
+    key = str(contract_id or "")
+    if ends is not None:
+        target.contract_end = ends.get(key)
+    if flags is not None:
+        target.contract_end_enabled = flags.get(key, True)
+
+
+def _stamp_stage_contract_ids(form, rows, registration):
+    stamped = [dict(row) for row in rows]
+    posted_ids = None
+    if getattr(form, "is_bound", False) and "stage_contract_id" in form.data:
+        posted_ids = _request_list(form.data, "stage_contract_id")
+    ends = {}
+    flags = None
+    if getattr(form, "is_bound", False) and "contract_group_id" in form.data:
+        ends = _posted_contract_group_ends(form.data)
+        flags = _posted_contract_group_end_flags(form.data)
+    for index, row in enumerate(stamped):
+        if posted_ids is not None:
+            contract_id = posted_ids[index] if index < len(posted_ids) else ""
+            row["contract_id"] = str(contract_id or "")
+        elif not row.get("contract_id") and registration is not None:
+            row["contract_id"] = str(getattr(registration, "contract_project_registration_id", "") or "")
+            if not row.get("contract_end"):
+                row["contract_end"] = getattr(registration, "contract_end", None)
+            if "contract_end_enabled" not in row:
+                row["contract_end_enabled"] = bool(getattr(registration, "contract_end_enabled", True))
+        else:
+            row["contract_id"] = str(row.get("contract_id") or "")
+        if ends:
+            row["contract_end"] = ends.get(row["contract_id"])
+        if flags is not None:
+            row["contract_end_enabled"] = flags.get(str(row.get("contract_id") or ""), True)
+        elif "contract_end_enabled" not in row and registration is not None:
+            row["contract_end_enabled"] = bool(getattr(registration, "contract_end_enabled", True))
+    return stamped
+
+
+def _registration_stage_groups(form, rows, registration):
+    from .stage_terms import decorate_contract_term_groups, parse_date
+
+    stamped = _stamp_stage_contract_ids(form, rows, registration)
+    if getattr(form, "is_bound", False):
+        project_start = parse_date(form.data.get("project_start_date"))
+    else:
+        project_start = parse_date((form.initial or {}).get("project_start_date"))
+        if project_start is None and registration is not None:
+            project_start = getattr(registration, "project_start_date", None)
+    return decorate_contract_term_groups(stamped, _registration_contract_meta(form), project_start)
+
+
+def _group_member_stage_rows(block):
+    from .stage_terms import stages_from_registration
+
+    rows = []
+    for index, registration in enumerate(block, start=1):
+        stages = stages_from_registration(registration)
+        stage = dict(stages[0] if stages else {})
+        stage["rank"] = index
+        products = registration.ordered_products()
+        if products:
+            stage["product_id"] = str(products[0].pk)
+        stage["contract_id"] = str(registration.contract_project_registration_id or "")
+        stage["contract_end"] = registration.contract_end
+        stage["contract_end_enabled"] = bool(getattr(registration, "contract_end_enabled", True))
+        rows.append(stage)
+    return rows
+
+
+def _registration_weeks_text(value):
+    if value is None or value == "":
+        return ""
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return str(value)
+    return format(number.quantize(Decimal("0.1")), "f")
+
+
+def _group_product_row(index, product, registration_id, stage1_weeks, stage2_weeks, contract_id=""):
+    return {
+        "rank": index,
+        "consulting_type": (getattr(product, "consulting_type_display", "") or "").strip() if product else "",
+        "service_category": (getattr(product, "service_category_display", "") or "").strip() if product else "",
+        "service_subtype": (getattr(product, "service_subtype_display", "") or "").strip() if product else "",
+        "product_id": str(product.pk) if product is not None else "",
+        "product_group_id": "",
+        "registration_row_id": registration_id or "",
+        "contract_id": str(contract_id or ""),
+        "stage1_weeks": _registration_weeks_text(stage1_weeks),
+        "stage2_weeks": _registration_weeks_text(stage2_weeks),
+    }
+
+
+def _group_edit_ranked_products(block):
+    rows = []
+    for index, registration in enumerate(block, start=1):
+        products = registration.ordered_products()
+        product = products[0] if products else None
+        rows.append(_group_product_row(
+            index,
+            product,
+            registration.pk,
+            registration.stage1_weeks,
+            registration.stage2_weeks,
+            registration.contract_project_registration_id,
+        ))
+    return rows
+
+
+def _group_edit_ranked_products_from_data(data):
+    consulting_types = _request_list(data, "type_consulting")
+    service_categories = _request_list(data, "type_service_category")
+    service_subtypes = _request_list(data, "type_service_subtype")
+    product_ids = _request_list(data, "type_id")
+    group_ids = _request_list(data, "row_group_id")
+    row_ids = _request_list(data, "registration_row_id")
+    stage1_values = _request_list(data, "stage1_weeks")
+    stage2_values = _request_list(data, "stage2_weeks")
+    row_count = max(len(product_ids), len(row_ids), len(consulting_types), 1)
+    rows = []
+    for index in range(row_count):
+        product_id = product_ids[index] if index < len(product_ids) else ""
+        row_id = row_ids[index] if index < len(row_ids) else ""
+        consulting_type = consulting_types[index] if index < len(consulting_types) else ""
+        service_category = service_categories[index] if index < len(service_categories) else ""
+        service_subtype = service_subtypes[index] if index < len(service_subtypes) else ""
+        has_data = any((consulting_type, service_category, service_subtype, product_id, row_id))
+        if not has_data and row_count != 1:
+            continue
+        product = None
+        if product_id:
+            product = Product.objects.filter(pk=product_id).first()
+        rows.append({
+            "rank": len(rows) + 1,
+            "consulting_type": consulting_type or ((product.consulting_type_display or "").strip() if product else ""),
+            "service_category": service_category or ((product.service_category_display or "").strip() if product else ""),
+            "service_subtype": service_subtype or ((product.service_subtype_display or "").strip() if product else ""),
+            "product_id": product_id,
+            "product_group_id": group_ids[index] if index < len(group_ids) else "",
+            "registration_row_id": row_id,
+            "stage1_weeks": stage1_values[index] if index < len(stage1_values) else "",
+            "stage2_weeks": stage2_values[index] if index < len(stage2_values) else "",
+        })
+    return rows or [_group_product_row(1, None, "", "", "")]
+
+
+def _group_source_ids(data):
+    source_ids = []
+    for raw in _request_list(data, "group_source_id"):
+        if not raw:
+            continue
+        try:
+            source_ids.append(int(raw))
+        except ValueError:
+            continue
+    return source_ids
+
+
+def _registration_group_edit_target(request):
+    raw_project = (request.GET.get("project") or request.POST.get("project") or "").strip()
+    if raw_project:
+        try:
+            project_id = int(raw_project)
+        except ValueError:
+            return None, "", None
+        block, group_label = summary_block_for_project(project_id)
+        if not block:
+            return None, group_label, None
+        return block, group_label, block[0].number
+    raw_number = (request.GET.get("number") or "").strip()
+    group_label = (request.GET.get("group") or "").strip()
+    try:
+        number = int(raw_number)
+    except ValueError:
+        return None, group_label, None
+    return summary_block_for_group(number, group_label), group_label, number
+
+
+def _registration_group_edit_specs(data, valid_product_ids):
+    raw_products = _request_list(data, "type_id")
+    raw_row_ids = _request_list(data, "registration_row_id")
+    count = max(len(raw_products), len(raw_row_ids))
+    specs = []
+    seen_ids = set()
+    valid_ids = set(valid_product_ids)
+    for index in range(count):
+        raw_product = raw_products[index] if index < len(raw_products) else ""
+        raw_row_id = raw_row_ids[index] if index < len(raw_row_ids) else ""
+        if not raw_product and not raw_row_id:
+            continue
+        if not raw_product:
+            return None, "Укажите продукт для каждой строки группы."
+        try:
+            product_id = int(raw_product)
+        except ValueError:
+            return None, "Укажите продукт для каждой строки группы."
+        if product_id not in valid_ids:
+            return None, "Укажите продукт для каждой строки группы."
+        registration_id = None
+        if raw_row_id:
+            try:
+                registration_id = int(raw_row_id)
+            except ValueError:
+                return None, "Некорректная строка группы."
+            if registration_id in seen_ids:
+                return None, "Строка группы повторяется."
+            seen_ids.add(registration_id)
+        specs.append({
+            "product_id": product_id,
+            "registration_id": registration_id,
+            "stage_index": index,
+            "stage1_weeks": _request_decimal_at(data, "stage1_weeks", index),
+            "stage2_weeks": _request_decimal_at(data, "stage2_weeks", index),
+        })
+    if not specs:
+        return None, "Укажите хотя бы один продукт."
+    return specs, None
+
+
+REGISTRATION_GROUP_SHARED_FIELDS = [
+    "number",
+    "group_member",
+    "name",
+    "status",
+    "deadline",
+    "year",
+    "country",
+    "customer",
+    "identifier",
+    "registration_number",
+    "registration_region",
+    "registration_date",
+    "project_manager",
+    "project_manager_prs_id",
+    "project_coordinator",
+    "project_coordinator_prs_id",
+    "asset_owner",
+    "asset_owner_matches_customer",
+    "asset_owner_country",
+    "asset_owner_identifier",
+    "asset_owner_registration_number",
+    "asset_owner_region",
+    "asset_owner_registration_date",
+    "project_start_date",
+    "stage3_weeks",
+]
+
+
+REGISTRATION_GROUP_STAGE_EXCLUDE = frozenset({"status", "deadline"})
+STAGE_TO_PARENT_ROLE_EXCLUDE = frozenset({
+    "project_manager",
+    "project_manager_prs_id",
+    "project_coordinator",
+    "project_coordinator_prs_id",
+})
+
+
+def _apply_shared_registration_fields(target, source, *, include_contract_subject=False, exclude=()):
+    skipped = set(exclude)
+    for field_name in REGISTRATION_GROUP_SHARED_FIELDS:
+        if field_name in skipped:
+            continue
+        setattr(target, field_name, getattr(source, field_name))
+    if include_contract_subject:
+        target.contract_subject = source.contract_subject
+
+
+REGISTRATION_GROUP_UPDATE_FIELDS = REGISTRATION_GROUP_SHARED_FIELDS + [
+    "group",
+    "contract_project_registration",
+    "agreement_type",
+    "agreement_number",
+    "contract_start",
+    "contract_end",
+    "contract_end_enabled",
+    "evaluation_date",
+    "input_data",
+    "stage1_weeks",
+    "stage2_weeks",
+    "stage1_end",
+    "stage2_end",
+    "term_weeks",
+    "completion_calc",
+    "stage_terms_json",
+    "position",
+]
+
+
+def _prepare_registration_group_row(target):
+    member = target._resolved_group_member()
+    if member:
+        target.group = member.country_alpha2 or target.group
+    if (
+        not target.agreement_number
+        and target.group_alpha2 == "RU"
+        and target.agreement_type == ProjectRegistration.AgreementType.MAIN
+    ):
+        target.agreement_number = f"IMCM/{target.number}"
+    if target.stage_terms_json:
+        target.term_weeks = target._calculate_term_weeks()
+        target.completion_calc = target.stage2_end
+    else:
+        target.stage1_end = target._calculate_stage1_end()
+        target.stage2_end = target._calculate_stage2_end()
+        target.term_weeks = target._calculate_term_weeks()
+        target.completion_calc = target._calculate_completion_calc()
+
+
+def _persist_registration_group_row(target, *, is_new):
+    _prepare_registration_group_row(target)
+    if is_new:
+        target.save()
+        return
+    # Позиция и номер меняют Проект ID. save() записывает новый код сразу и
+    # сталкивается с кодом соседней строки. Поля пишем напрямую, коды
+    # пересчитывает один общий refresh_number_sequences.
+    values = {
+        field_name: getattr(target, field_name)
+        for field_name in REGISTRATION_GROUP_UPDATE_FIELDS
+    }
+    ProjectRegistration.objects.filter(pk=target.pk).update(**values)
+
+
+def _shift_registrations_after_group(block, extra_slots):
+    if extra_slots <= 0 or not block:
+        return
+    last = block[-1]
+    block_ids = [item.pk for item in block]
+    later = list(
+        ProjectRegistration.objects.exclude(pk__in=block_ids)
+        .filter(Q(position__gt=last.position) | Q(position=last.position, pk__gt=last.pk))
+        .order_by("position", "id")
+    )
+    cursor = block[0].position + len(block) + extra_slots
+    changed = []
+    for row in later:
+        if row.position < cursor:
+            row.position = cursor
+            changed.append(row)
+            cursor += 1
+        else:
+            cursor = row.position + 1
+    if changed:
+        ProjectRegistration.objects.bulk_update(changed, ["position"])
+
+
+def _contracts_by_pk(contract_ids):
+    parsed = []
+    for raw in contract_ids:
+        try:
+            parsed.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if not parsed:
+        return {}
+    return {
+        str(item.pk): item
+        for item in ContractProjectRegistration.objects.filter(pk__in=set(parsed))
+    }
+
+
+def _assign_stage_contract(target, contract_id, contracts_by_pk):
+    contract = contracts_by_pk.get(str(contract_id or ""))
+    if contract is None:
+        target.contract_project_registration = None
+        target.agreement_type = ProjectRegistration.AgreementType.MAIN
+        target.agreement_number = ""
+        target.contract_start = None
+        return
+    target.contract_project_registration = contract
+    target.agreement_type = contract.agreement_type or ProjectRegistration.AgreementType.MAIN
+    target.agreement_number = contract.agreement_number or ""
+    target.contract_start = contract.contract_date
+
+
+def _stage_contract_id_for_spec(spec, posted_contract_ids, existing_by_pk):
+    if posted_contract_ids is not None:
+        index = spec["stage_index"]
+        return str(posted_contract_ids[index] if index < len(posted_contract_ids) else "")
+    registration_id = spec.get("registration_id")
+    if registration_id:
+        return str(existing_by_pk.get(registration_id) or "")
+    return ""
+
+
+def _save_registration_group_edit(request, form, block, specs, source_ids):
+    from .stage_terms import (
+        compute_grouped_stage_chains,
+        parse_posted_stages,
+        store_stage_snapshot,
+    )
+
+    if len(specs) > 9:
+        return "В одном проекте не больше девяти этапов."
+    base = form.save(commit=False)
+    customer_rows = _customer_rows_from_post(request.POST)
+    customer_countries = _customer_country_map(customer_rows)
+    owner_rows = _owner_rows_from_post(request.POST)
+    owner_countries = _customer_country_map(owner_rows)
+    parent = block[0].stage_project if block and block[0].stage_project_id else None
+    posted_stages = parse_posted_stages(request.POST) or []
+    posted_contract_ids = (
+        _request_list(request.POST, "stage_contract_id")
+        if "stage_contract_id" in request.POST
+        else None
+    )
+    contract_ends = (
+        _posted_contract_group_ends(request.POST)
+        if "contract_group_id" in request.POST
+        else None
+    )
+    contract_end_flags = (
+        _posted_contract_group_end_flags(request.POST)
+        if contract_ends is not None
+        else None
+    )
+    existing_contract_ids = {
+        item.pk: item.contract_project_registration_id
+        for item in block
+    }
+    chain_contract_ids = [
+        _stage_contract_id_for_spec(spec, posted_contract_ids, existing_contract_ids)
+        for spec in specs
+    ]
+    chain_input = []
+    for spec in specs:
+        index = spec["stage_index"]
+        if index < len(posted_stages):
+            stage = dict(posted_stages[index])
+            stage["product_id"] = spec["product_id"]
+            chain_input.append(stage)
+        else:
+            chain_input.append(
+                {
+                    "product_id": spec["product_id"],
+                    "source_data_term": "0",
+                    "source_data_term_unit": "days",
+                    "service_term_months": spec["stage1_weeks"] if spec["stage1_weeks"] is not None else 0,
+                    "preliminary_report_term_unit": "months",
+                    "final_report_term_weeks": spec["stage2_weeks"] if spec["stage2_weeks"] is not None else 0,
+                    "final_report_term_unit": "weeks",
+                }
+            )
+    chain = compute_grouped_stage_chains(base.project_start_date, chain_input, chain_contract_ids)
+    contracts_by_pk = _contracts_by_pk(chain_contract_ids)
+    block_ids = [item.pk for item in block]
+    posted_ids = {spec["registration_id"] for spec in specs if spec["registration_id"]}
+    delete_ids = [pk for pk in source_ids if pk in set(block_ids) and pk not in posted_ids]
+    with transaction.atomic():
+        locked_rows = list(
+            ProjectRegistration.objects.select_for_update()
+            .filter(pk__in=block_ids)
+            .order_by("position", "id")
+        )
+        if len(locked_rows) != len(set(block_ids)):
+            transaction.set_rollback(True)
+            return "Состав группы изменился. Обновите страницу и откройте группу снова."
+        anchor_position = locked_rows[0].position
+        _shift_registrations_after_group(locked_rows, len(specs) - len(locked_rows))
+        locked = {item.pk: item for item in locked_rows}
+        first_saved = None
+        for index, spec in enumerate(specs):
+            is_last = index == len(specs) - 1
+            if spec["registration_id"]:
+                target = locked.get(spec["registration_id"])
+                if target is None:
+                    transaction.set_rollback(True)
+                    return "Строка не входит в эту группу."
+                _apply_shared_registration_fields(
+                    target,
+                    base,
+                    exclude=REGISTRATION_GROUP_STAGE_EXCLUDE,
+                )
+            else:
+                target = ProjectRegistration()
+                _apply_shared_registration_fields(
+                    target,
+                    base,
+                    include_contract_subject=True,
+                    exclude=REGISTRATION_GROUP_STAGE_EXCLUDE,
+                )
+                if parent is not None:
+                    target.stage_project = parent
+            if is_last:
+                target.deadline = base.deadline
+            if customer_rows:
+                _write_customer_party(
+                    target,
+                    _customer_party_for_product(customer_rows, spec["product_id"]) or _blank_customer_party(),
+                    customer_countries,
+                )
+            _apply_posted_owner_party(target, owner_rows, owner_countries, spec["product_id"])
+            contract_id = chain_contract_ids[index] if index < len(chain_contract_ids) else ""
+            if posted_contract_ids is not None or not spec["registration_id"]:
+                _assign_stage_contract(target, contract_id, contracts_by_pk)
+            if contract_ends is not None:
+                _apply_posted_contract_end(target, contract_id, contract_ends, contract_end_flags)
+            stage = chain[index] if index < len(chain) else None
+            if stage is not None:
+                store_stage_snapshot(target, stage, base.project_start_date)
+            else:
+                target.stage1_weeks = spec["stage1_weeks"] if spec["stage1_weeks"] is not None else 0
+                target.stage2_weeks = spec["stage2_weeks"] if spec["stage2_weeks"] is not None else 0
+            target.position = anchor_position + index
+            if first_saved is None:
+                first_saved = target
+            _persist_registration_group_row(target, is_new=not spec["registration_id"])
+            _save_ranked_registration_products(target, [spec["product_id"]])
+            if spec["registration_id"]:
+                for work_item in target.work_items.select_related("project").all():
+                    _ensure_performer_rows_for_work_item(work_item)
+        owner = parent
+        if owner is None and locked_rows:
+            owner = locked_rows[0].stage_project or locked_rows[0]
+        if owner is not None and owner.pk:
+            align_project_service_scope(owner)
+        for pk in delete_ids:
+            row = locked.get(pk)
+            if row is not None:
+                row.delete()
+        if parent is not None:
+            _apply_shared_registration_fields(
+                parent,
+                base,
+                include_contract_subject=True,
+                exclude=REGISTRATION_GROUP_STAGE_EXCLUDE,
+            )
+            if posted_contract_ids is not None and first_saved is not None:
+                parent.contract_project_registration_id = first_saved.contract_project_registration_id
+                parent.agreement_type = first_saved.agreement_type
+                parent.agreement_number = first_saved.agreement_number
+                parent.contract_start = first_saved.contract_start
+                parent.contract_end = first_saved.contract_end
+                parent.contract_end_enabled = first_saved.contract_end_enabled
+            parent.deadline = base.deadline
+            if customer_rows and specs:
+                _write_customer_party(
+                    parent,
+                    _customer_party_for_product(customer_rows, specs[0]["product_id"]) or _blank_customer_party(),
+                    customer_countries,
+                )
+            if specs:
+                _apply_posted_owner_party(parent, owner_rows, owner_countries, specs[0]["product_id"])
+            if not ProjectRegistration.objects.filter(stage_project=parent).exclude(pk__in=delete_ids).exists():
+                parent.delete()
+                parent = None
+            else:
+                parent.save()
+        numbers = {item.number for item in locked_rows}
+        numbers.add(base.number)
+        ProjectRegistration.refresh_number_sequences(numbers)
+    _sync_posted_customer_parties(request, customer_rows, base)
+    _sync_posted_owner_parties(request, owner_rows, base)
+    return None
 
 
 def _save_ranked_registration_products(registration, product_ids):
@@ -748,6 +1702,7 @@ REGISTRATION_CLONE_FIELDS = [
     "project_manager_prs_id",
     "contract_start",
     "contract_end",
+    "project_start_date",
     "input_data",
     "stage1_weeks",
     "stage2_weeks",
@@ -818,6 +1773,1052 @@ def projects_partial(request):
 
 # --- Регистрация проекта ---
 
+REGISTRATION_CSV_ADMIN_ERROR = (
+    "Загрузка и скачивание CSV доступны только пользователям с ролью Администратор."
+)
+REGISTRATION_CSV_HEADERS = [
+    "Номер",
+    "Договор ID",
+    "Вид соглашения",
+    "Группа",
+    "Проект ID",
+    "Тип",
+    "Название",
+    "Год",
+    "Дата оценки",
+    "Дедлайн",
+    "Руководитель проекта",
+    "Координатор проекта",
+    "Статус",
+    "Дата статуса",
+    "Заказчик: наименование",
+    "Заказчик: страна",
+    "Заказчик: идент.",
+    "Заказчик: регистр. номер",
+    "Заказчик: регион",
+    "Заказчик: дата регистр.",
+    "Владелец: наименование",
+    "Владелец: страна",
+    "Владелец: идент.",
+    "Владелец: регистр. номер",
+    "Владелец: регион",
+    "Владелец: дата регистр.",
+]
+REGISTRATION_CSV_TOGGLE_COLUMNS = (
+    ("Оконч. договора вкл.", "contract_end_enabled"),
+    ("Исходные данные вкл.", "source_data_term_enabled"),
+    ("Исходные данные (дата) вкл.", "source_data_date_enabled"),
+    ("Предварительный отчёт вкл.", "service_term_months_enabled"),
+    ("Предварительный отчёт (дата) вкл.", "preliminary_report_date_enabled"),
+    ("Итоговый отчёт (дата) вкл.", "final_report_date_enabled"),
+    ("Дата оценки вкл.", "evaluation_date_enabled"),
+    ("Общая для всех этапов", "evaluation_date_common"),
+)
+REGISTRATION_CSV_HEADERS.extend(label for label, _field in REGISTRATION_CSV_TOGGLE_COLUMNS)
+REGISTRATION_CSV_STAGE_TOGGLE_FIELDS = tuple(
+    field for _label, field in REGISTRATION_CSV_TOGGLE_COLUMNS
+    if field not in {"contract_end_enabled", "evaluation_date_common"}
+)
+REGISTRATION_CSV_OPTIONAL_HEADERS = {label for label, _field in REGISTRATION_CSV_TOGGLE_COLUMNS}
+REGISTRATION_CSV_REQUIRED_HEADERS = {
+    "Номер",
+    "Вид соглашения",
+    "Группа",
+    "Тип",
+    "Название",
+    "Статус",
+}
+
+
+def _registration_csv_header_label(name):
+    if name in REGISTRATION_CSV_REQUIRED_HEADERS:
+        return f"{name}*"
+    return name
+
+
+def _registration_csv_header_key(name):
+    text = str(name or "").strip()
+    if text.endswith("*"):
+        text = text[:-1].strip()
+    return text
+
+
+def _registration_csv_forbidden():
+    return JsonResponse({"ok": False, "error": REGISTRATION_CSV_ADMIN_ERROR}, status=403)
+
+
+def _registration_csv_queryset(request):
+    product_prefetch = models.Prefetch(
+        "product_links",
+        queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+    )
+    queryset = (
+        ProjectRegistration.objects
+        .select_related(
+            "country",
+            "asset_owner_country",
+            "group_member",
+            "type",
+            "contract_project_registration",
+        )
+        .prefetch_related(
+            product_prefetch,
+            models.Prefetch(
+                "stages",
+                queryset=ProjectRegistration.objects.only(
+                    "id", "stage_project_id", "status", "stage_terms_json", "evaluation_date",
+                ).order_by("position", "id"),
+            ),
+        )
+        .order_by("position", "id")
+    )
+    raw = request.GET.get("project")
+    if raw is None:
+        return queryset
+    raw = raw.strip()
+    if raw in {"", "__all__"}:
+        return queryset
+    ids = [int(part) for part in raw.split(",") if part.strip().isdigit()]
+    return queryset.filter(pk__in=ids)
+
+
+def _registration_csv_date(value):
+    return value.strftime("%d.%m.%Y") if value else ""
+
+
+def _registration_csv_bool(value):
+    return "да" if value else "нет"
+
+
+def _registration_csv_stage_rows(registration):
+    if registration is None or not getattr(registration, "pk", None):
+        return []
+    prefetched = getattr(registration, "_prefetched_objects_cache", {}).get("stages")
+    if prefetched is not None:
+        return list(prefetched)
+    return list(
+        registration.stages.only("id", "stage_project_id", "status").order_by("position", "id")
+    )
+
+
+def _registration_csv_is_project_shell(registration):
+    if registration is None or not getattr(registration, "pk", None) or registration.stage_project_id:
+        return False
+    return bool(_registration_csv_stage_rows(registration))
+
+
+def _registration_csv_summary_status_label(registration):
+    from .registration_summary import registration_summary_state
+
+    stages = _registration_csv_stage_rows(registration)
+    return registration_summary_state(
+        [stage.status for stage in stages],
+        getattr(registration, "summary_deferred", False),
+    )["label"]
+
+
+def _registration_csv_status_date_cell(registration):
+    if _registration_csv_is_project_shell(registration):
+        if _registration_csv_summary_status_label(registration) == "Не начат":
+            return ""
+        return _registration_csv_date(registration.summary_status_date)
+    if registration.status == "Не начат":
+        return ""
+    return _registration_csv_date(registration.status_date)
+
+
+def _registration_csv_toggle_stage(registration):
+    from .stage_terms import stages_from_registration
+
+    stages = stages_from_registration(registration)
+    return stages[0] if stages else {}
+
+
+def _registration_csv_project_members(registration):
+    if registration is None or not getattr(registration, "pk", None):
+        return []
+    if getattr(registration, "stage_project_id", None):
+        return list(
+            ProjectRegistration.objects.filter(stage_project_id=registration.stage_project_id)
+            .order_by("position", "id")
+        )
+    if _registration_csv_is_project_shell(registration):
+        return _registration_csv_stage_rows(registration)
+    return [registration]
+
+
+def _registration_csv_common_evaluation_enabled(registration):
+    from .stage_terms import enabled_flag, evaluation_dates_are_common, stages_from_registration
+
+    snapshots = []
+    for member in _registration_csv_project_members(registration):
+        stages = stages_from_registration(member)
+        if stages:
+            snapshots.append(stages[0])
+    if len(snapshots) <= 1:
+        stage = snapshots[0] if snapshots else {}
+        if "evaluation_date_common" in stage:
+            return enabled_flag(stage.get("evaluation_date_common"), True)
+        return True
+    return evaluation_dates_are_common(snapshots)
+
+
+def _registration_csv_toggle_cells(registration):
+    shell = _registration_csv_is_project_shell(registration)
+    stage = {} if shell else _registration_csv_toggle_stage(registration)
+    cells = []
+    for _label, field in REGISTRATION_CSV_TOGGLE_COLUMNS:
+        if field == "contract_end_enabled":
+            cells.append(_registration_csv_bool(registration.contract_end_enabled))
+        elif field == "evaluation_date_common":
+            cells.append(_registration_csv_bool(_registration_csv_common_evaluation_enabled(registration)))
+        elif shell:
+            cells.append("")
+        else:
+            cells.append(_registration_csv_bool(stage.get(field)))
+    return cells
+
+
+def _registration_csv_toggle_value(raw):
+    text = " ".join(str(raw or "").split()).strip().lower()
+    if not text:
+        return None
+    if text in {"1", "true", "yes", "y", "да", "вкл", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "нет", "выкл", "off"}:
+        return False
+    return "invalid"
+
+
+def _registration_csv_toggles(row, indexes):
+    toggles = {}
+    for label, field in REGISTRATION_CSV_TOGGLE_COLUMNS:
+        if label not in indexes:
+            continue
+        raw = _registration_csv_cell(row, indexes, label)
+        value = _registration_csv_toggle_value(raw)
+        if value == "invalid":
+            return None, f"некорректное значение «{raw}» в столбце «{label}»."
+        if value is not None:
+            toggles[field] = value
+    return toggles, None
+
+
+def _registration_csv_row(registration):
+    return [
+        f"{int(registration.number or 0):04d}",
+        (
+            registration.contract_project_registration.short_uid
+            if registration.contract_project_registration_id
+            else ""
+        ),
+        registration.get_agreement_type_display(),
+        registration.group_display,
+        registration.short_uid,
+        registration.type_short_display,
+        registration.name,
+        "" if registration.year is None else str(registration.year),
+        _registration_csv_date(registration.evaluation_date),
+        _registration_csv_date(registration.deadline),
+        registration.project_manager,
+        registration.project_coordinator,
+        registration.status,
+        _registration_csv_status_date_cell(registration),
+        registration.customer,
+        registration.country.short_name if registration.country_id else "",
+        registration.identifier,
+        registration.registration_number,
+        registration.registration_region,
+        _registration_csv_date(registration.registration_date),
+        registration.asset_owner,
+        registration.asset_owner_country.short_name if registration.asset_owner_country_id else "",
+        registration.asset_owner_identifier,
+        registration.asset_owner_registration_number,
+        registration.asset_owner_region,
+        _registration_csv_date(registration.asset_owner_registration_date),
+        *_registration_csv_toggle_cells(registration),
+    ]
+
+
+def _registration_csv_form_error_text(form) -> str:
+    parts = []
+    for field, errors in form.errors.items():
+        if field == "__all__":
+            prefix = ""
+        elif field == "type_ids":
+            prefix = "Тип: "
+        else:
+            bound = form.fields.get(field)
+            prefix = f"{bound.label}: " if bound and bound.label else f"{field}: "
+        for err in errors:
+            parts.append(f"{prefix}{err}")
+    return "; ".join(parts)
+
+
+def _registration_csv_label_index(items, label_getter):
+    found = {}
+    ambiguous = set()
+    for item in items:
+        label = " ".join(str(label_getter(item) or "").split()).strip()
+        if not label:
+            continue
+        key = label.casefold()
+        if key in ambiguous:
+            continue
+        if key in found:
+            ambiguous.add(key)
+            found.pop(key, None)
+            continue
+        found[key] = item
+    return found, ambiguous
+
+
+def _registration_csv_active_countries():
+    today = timezone.now().date()
+    return OKSMCountry.objects.filter(
+        models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
+    )
+
+
+def _read_registration_csv_upload(csv_file):
+    if not csv_file:
+        return None, JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return None, JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return None, JsonResponse(
+                {
+                    "ok": False,
+                    "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251).",
+                },
+                status=400,
+            )
+    try:
+        rows = list(csv.reader(io.StringIO(raw), delimiter=";"))
+        if not rows:
+            return None, JsonResponse({"ok": False, "error": "Файл пуст."}, status=400)
+        if len(rows[0]) <= 1:
+            rows = list(csv.reader(io.StringIO(raw), delimiter=","))
+    except csv.Error as exc:
+        return None, JsonResponse(
+            {"ok": False, "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла."},
+            status=400,
+        )
+    if len(rows) < 2:
+        return None, JsonResponse(
+            {"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."},
+            status=400,
+        )
+    return rows, None
+
+
+def _registration_csv_cell(row, indexes, name):
+    index = indexes[name]
+    if index >= len(row):
+        return ""
+    return str(row[index] or "").strip()
+
+
+def _registration_csv_number(raw):
+    text = "".join(str(raw or "").split())
+    if not text:
+        return None, "не заполнено обязательное поле «Номер»."
+    if not text.isdigit() or int(text) > 9999:
+        return None, "некорректный номер."
+    return int(text), None
+
+
+def _registration_csv_year(raw):
+    text = "".join(str(raw or "").split())
+    if not text:
+        return "", None
+    if not text.isdigit() or len(text) > 9:
+        return None, "некорректный год."
+    return text, None
+
+
+def _registration_csv_optional_date(raw, label):
+    text = str(raw or "").strip()
+    if not text:
+        return "", None, None
+    parsed = _parse_project_form_date(text)
+    if parsed is None:
+        return None, None, f"некорректная дата в столбце «{label}»."
+    return parsed.strftime("%d.%m.%Y"), parsed, None
+
+
+def _registration_csv_agreement_type(raw):
+    key = " ".join(str(raw or "").split()).strip().casefold()
+    if not key:
+        return None
+    for value, label in ProjectRegistration.AgreementType.choices:
+        if key in {value.casefold(), label.casefold()}:
+            return value
+    return None
+
+
+def _registration_csv_status(raw):
+    key = " ".join(str(raw or "").split()).strip().casefold()
+    if not key:
+        return None
+    for value, label in ProjectRegistration.STATUS_CHOICES:
+        if key in {value.casefold(), str(label).casefold()}:
+            return value
+    return None
+
+
+def _registration_csv_products(raw, products_by_key, ambiguous_products):
+    text = " ".join(str(raw or "").split()).strip()
+    if not text:
+        return None, "не заполнено обязательное поле «Тип»."
+    key = text.casefold()
+    if key in ambiguous_products:
+        return None, f"неоднозначный тип «{text}»."
+    product = products_by_key.get(key)
+    if product is not None:
+        return [product], None
+    parts = [part.strip() for part in text.split("-") if part.strip()]
+    if len(parts) <= 1:
+        return None, f"неизвестный тип «{text}»."
+    resolved = []
+    seen = set()
+    for part in parts:
+        part_key = part.casefold()
+        if part_key in ambiguous_products or part_key not in products_by_key:
+            return None, f"неизвестный тип «{text}»."
+        product = products_by_key[part_key]
+        if product.pk in seen:
+            continue
+        seen.add(product.pk)
+        resolved.append(product)
+    if not resolved:
+        return None, f"неизвестный тип «{text}»."
+    return resolved, None
+
+
+def _registration_csv_named_choice(raw, choices, ambiguous, *, empty_message, ambiguous_message, unknown_message):
+    text = " ".join(str(raw or "").split()).strip()
+    if not text:
+        if empty_message:
+            return None, empty_message
+        return None, None
+    key = text.casefold()
+    if key in ambiguous:
+        return None, ambiguous_message.format(value=text)
+    choice = choices.get(key)
+    if choice is None:
+        return None, unknown_message.format(value=text)
+    return choice, None
+
+
+def _registration_csv_country(raw, countries, ambiguous, current=None):
+    text = " ".join(str(raw or "").split()).strip()
+    if not text:
+        return None, None
+    key = text.casefold()
+    if current is not None:
+        current_name = " ".join(str(getattr(current, "short_name", "") or "").split()).strip().casefold()
+        if current_name and current_name == key:
+            return current, None
+    if key in ambiguous:
+        return None, f"неоднозначная страна «{text}»."
+    country = countries.get(key)
+    if country is None:
+        return None, f"неизвестная страна «{text}»."
+    return country, None
+
+
+def _registration_csv_person_value(raw, *, stored_name="", stored_prs="", resolver):
+    text = " ".join(str(raw or "").split()).strip()
+    resolved = resolver(text)
+    prs_id = resolved[1]
+    if prs_id:
+        return prs_id
+    stored_name = " ".join(str(stored_name or "").split()).strip()
+    stored_prs = " ".join(str(stored_prs or "").split()).strip()
+    if text and stored_prs and text.casefold() in {stored_name.casefold(), stored_prs.casefold()}:
+        return stored_prs
+    return resolved[0]
+
+
+def _registration_csv_preserved_fields(instance):
+    if instance is None:
+        return {
+            "agreement_number": "",
+            "contract_start": "",
+            "contract_end": "",
+            "input_data": "0",
+            "stage1_weeks": "0",
+            "stage2_weeks": "0",
+            "stage2_end": "",
+            "stage3_weeks": "0",
+        }
+    return {
+        "agreement_number": instance.agreement_number or "",
+        "contract_start": _registration_csv_date(instance.contract_start),
+        "contract_end": _registration_csv_date(instance.contract_end),
+        "input_data": "" if instance.input_data is None else str(instance.input_data),
+        "stage1_weeks": "" if instance.stage1_weeks is None else str(instance.stage1_weeks),
+        "stage2_weeks": "" if instance.stage2_weeks is None else str(instance.stage2_weeks),
+        "stage2_end": _registration_csv_date(instance.stage2_end),
+        "stage3_weeks": "" if instance.stage3_weeks is None else str(instance.stage3_weeks),
+    }
+
+
+def _registration_parties_match(
+    customer, country, identifier, registration_number, region, registration_date,
+    asset_owner, asset_owner_country, asset_owner_identifier, asset_owner_number, asset_owner_region, asset_owner_date,
+):
+    def norm(value):
+        return " ".join(str(value or "").split()).casefold()
+
+    return (
+        norm(customer) == norm(asset_owner)
+        and getattr(country, "pk", None) == getattr(asset_owner_country, "pk", None)
+        and norm(identifier) == norm(asset_owner_identifier)
+        and norm(registration_number) == norm(asset_owner_number)
+        and norm(region) == norm(asset_owner_region)
+        and registration_date == asset_owner_date
+    )
+
+
+def _registration_csv_form_data(instance, values):
+    preserved = _registration_csv_preserved_fields(instance)
+    data = QueryDict(mutable=True)
+    data["number"] = str(values["number"])
+    data["contract_project_registration"] = str(values["contract"].pk) if values["contract"] else ""
+    data["group_member"] = str(values["group_member"].pk)
+    data["agreement_type"] = values["agreement_type"]
+    data["agreement_number"] = preserved["agreement_number"]
+    data["name"] = values["name"]
+    data["status"] = values["status"]
+    data["deadline"] = values["deadline"]
+    data["year"] = values["year"]
+    data["evaluation_date"] = values["evaluation_date"]
+    data["country"] = str(values["country"].pk) if values["country"] else ""
+    data["customer"] = values["customer"]
+    data["identifier"] = values["identifier"]
+    data["registration_number"] = values["registration_number"]
+    data["registration_region"] = values["registration_region"]
+    data["registration_date"] = values["registration_date"]
+    data["project_manager"] = values["project_manager"]
+    data["project_coordinator"] = values["project_coordinator"]
+    data["asset_owner"] = values["asset_owner"]
+    data["asset_owner_country"] = str(values["asset_owner_country"].pk) if values["asset_owner_country"] else ""
+    data["asset_owner_identifier"] = values["asset_owner_identifier"]
+    data["asset_owner_registration_number"] = values["asset_owner_registration_number"]
+    data["asset_owner_region"] = values["asset_owner_region"]
+    data["asset_owner_registration_date"] = values["asset_owner_registration_date"]
+    data["contract_start"] = preserved["contract_start"]
+    data["contract_end"] = preserved["contract_end"]
+    data["input_data"] = preserved["input_data"]
+    data["stage1_weeks"] = preserved["stage1_weeks"]
+    data["stage2_weeks"] = preserved["stage2_weeks"]
+    data["stage2_end"] = preserved["stage2_end"]
+    data["stage3_weeks"] = preserved["stage3_weeks"]
+    if values["matches_customer"]:
+        data["asset_owner_matches_customer"] = "on"
+    data.setlist("type_id", [str(product.pk) for product in values["products"]])
+    return data
+
+
+def _apply_registration_csv_status_date(obj, previous_status, status_date_value):
+    if _registration_csv_is_project_shell(obj):
+        # Пустая ячейка у группы «Не начат» не стирает сохранённую дату: в файле её нет,
+        # потому что реестр такую дату не показывает.
+        if status_date_value is None and _registration_csv_summary_status_label(obj) == "Не начат":
+            return
+        if obj.summary_status_date != status_date_value:
+            obj.summary_status_date = status_date_value
+            obj.save(update_fields=["summary_status_date"])
+        return
+    if obj.status == "Не начат":
+        target = None
+    elif status_date_value is not None:
+        target = status_date_value
+    elif previous_status != obj.status:
+        target = obj.status_date
+    else:
+        target = None
+    if obj.status_date != target:
+        obj.status_date = target
+        obj.save(update_fields=["status_date"])
+
+
+def _registration_csv_store_common_evaluation(registration, enabled):
+    from .stage_terms import apply_stages_to_registration, legacy_stage_from_registration
+
+    enabled = bool(enabled)
+    stored = [dict(item) for item in (registration.stage_terms_json or []) if isinstance(item, dict)]
+    if stored:
+        stages = stored
+        changed = False
+    else:
+        stages = [legacy_stage_from_registration(registration)]
+        changed = True
+    for stage in stages:
+        if "evaluation_date_common" not in stage or bool(stage.get("evaluation_date_common")) != enabled:
+            changed = True
+        stage["evaluation_date_common"] = enabled
+    if not changed:
+        return
+    if stored:
+        registration.stage_terms_json = stages
+        registration.save(update_fields=["stage_terms_json"])
+        return
+    apply_stages_to_registration(registration, stages, registration.project_start_date)
+    registration.save(update_fields=[
+        "stage_terms_json",
+        "project_start_date",
+        "input_data",
+        "stage1_weeks",
+        "stage2_weeks",
+        "stage1_end",
+        "stage2_end",
+        "evaluation_date",
+        "completion_calc",
+    ])
+
+
+def _registration_csv_share_common_evaluation_dates(registrations):
+    """Включённый общий чекбокс копирует дату оценки первого этапа на остальные."""
+    from .stage_terms import (
+        apply_stages_to_registration,
+        evaluation_dates_are_common,
+        stages_from_registration,
+    )
+
+    seen = set()
+    for registration in registrations:
+        if getattr(registration, "stage_project_id", None):
+            parent_id = registration.stage_project_id
+        elif _registration_csv_is_project_shell(registration):
+            parent_id = registration.pk
+        else:
+            continue
+        if parent_id in seen:
+            continue
+        seen.add(parent_id)
+        members = list(
+            ProjectRegistration.objects.filter(stage_project_id=parent_id).order_by("position", "id")
+        )
+        if len(members) < 2:
+            continue
+        snapshots = []
+        for member in members:
+            stages = stages_from_registration(member)
+            snapshots.append(dict(stages[0]) if stages else {})
+        if not evaluation_dates_are_common(snapshots):
+            continue
+        shared_date = snapshots[0].get("evaluation_date") or ""
+        shared_enabled = bool(snapshots[0].get("evaluation_date_enabled", True))
+        for member, snapshot in zip(members[1:], snapshots[1:]):
+            if (
+                (snapshot.get("evaluation_date") or "") == shared_date
+                and bool(snapshot.get("evaluation_date_enabled", True)) == shared_enabled
+            ):
+                continue
+            stored = [dict(item) for item in (member.stage_terms_json or []) if isinstance(item, dict)]
+            stages = stored or [snapshot]
+            for stage in stages:
+                stage["evaluation_date"] = shared_date
+                stage["evaluation_date_enabled"] = shared_enabled
+                stage["evaluation_date_common"] = True
+            apply_stages_to_registration(member, stages, member.project_start_date)
+            member.save(update_fields=[
+                "stage_terms_json",
+                "project_start_date",
+                "input_data",
+                "stage1_weeks",
+                "stage2_weeks",
+                "stage1_end",
+                "stage2_end",
+                "evaluation_date",
+                "completion_calc",
+            ])
+
+
+def _apply_registration_csv_toggles(obj, toggles, evaluation_date):
+    """Записывает переключатели сроков из CSV, не трогая свёрнутые столбцы."""
+    from .stage_terms import (
+        _blank_stage,
+        apply_stages_to_registration,
+        format_date,
+        legacy_stage_from_registration,
+        parse_date,
+    )
+
+    if "contract_end_enabled" in toggles:
+        obj.contract_end_enabled = bool(toggles["contract_end_enabled"])
+    stage_updates = {
+        field: toggles[field]
+        for field in REGISTRATION_CSV_STAGE_TOGGLE_FIELDS
+        if field in toggles
+    }
+    if "evaluation_date_common" in toggles:
+        stage_updates["evaluation_date_common"] = bool(toggles["evaluation_date_common"])
+    if _registration_csv_is_project_shell(obj):
+        if "evaluation_date_common" in toggles:
+            for child in ProjectRegistration.objects.filter(stage_project_id=obj.pk).order_by("position", "id"):
+                _registration_csv_store_common_evaluation(child, toggles["evaluation_date_common"])
+        return
+    stored = [dict(item) for item in (obj.stage_terms_json or []) if isinstance(item, dict)]
+    if not stored and not stage_updates:
+        return
+    if stored:
+        stages = stored
+        other_changed = False
+    else:
+        stage = legacy_stage_from_registration(obj)
+        blank = _blank_stage()
+        for field in REGISTRATION_CSV_STAGE_TOGGLE_FIELDS:
+            if field not in stage_updates:
+                stage[field] = blank[field]
+        stages = [stage]
+        other_changed = True
+    common_changed = False
+    for stage in stages:
+        for field, value in stage_updates.items():
+            missing_common = field == "evaluation_date_common" and field not in stage
+            field_changed = missing_common or bool(stage.get(field)) != bool(value)
+            if field == "evaluation_date_common" and field_changed:
+                common_changed = True
+            elif field_changed:
+                other_changed = True
+            stage[field] = value
+    target = stages[-1]
+    parsed_evaluation = parse_date(evaluation_date)
+    if target.get("evaluation_date_enabled", True):
+        formatted_evaluation = format_date(parsed_evaluation)
+    else:
+        formatted_evaluation = ""
+        parsed_evaluation = None
+    if (target.get("evaluation_date") or "") != formatted_evaluation:
+        target["evaluation_date"] = formatted_evaluation
+        other_changed = True
+    obj.evaluation_date = parsed_evaluation
+    if other_changed:
+        apply_stages_to_registration(obj, stages, obj.project_start_date)
+    elif common_changed:
+        obj.stage_terms_json = stages
+
+
+def _save_registration_csv_row(request, instance, values):
+    previous_status = instance.status if instance is not None else None
+    preserved_terms = None
+    if instance is not None:
+        preserved_terms = {
+            "project_start_date": instance.project_start_date,
+            "input_data": instance.input_data,
+            "stage1_weeks": instance.stage1_weeks,
+            "stage2_weeks": instance.stage2_weeks,
+            "stage1_end": instance.stage1_end,
+            "stage2_end": instance.stage2_end,
+            "completion_calc": instance.completion_calc,
+            "stage_terms_json": copy.deepcopy(instance.stage_terms_json),
+            "contract_end_enabled": instance.contract_end_enabled,
+        }
+    form = ProjectRegistrationForm(
+        _registration_csv_form_data(instance, values),
+        instance=instance,
+        allow_multiple_products=True,
+    )
+    if not form.is_valid():
+        raise forms.ValidationError(_registration_csv_form_error_text(form))
+    with transaction.atomic():
+        obj = form.save(commit=False)
+        if preserved_terms is not None:
+            for field_name, field_value in preserved_terms.items():
+                setattr(obj, field_name, field_value)
+        if instance is None:
+            obj.position = _next_position(ProjectRegistration)
+        _apply_registration_csv_toggles(obj, values.get("toggles") or {}, values.get("evaluation_date"))
+        obj.save()
+        _apply_registration_csv_status_date(obj, previous_status, values.get("status_date"))
+        _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
+        _sync_to_legal_entity_record(
+            obj.customer, obj.country, obj.identifier,
+            obj.registration_number, obj.registration_date, request.user,
+            business_entity_source="[Проекты / Заказчик]",
+            registration_region=obj.registration_region,
+        )
+        _sync_to_legal_entity_record(
+            obj.asset_owner, obj.asset_owner_country, obj.asset_owner_identifier,
+            obj.asset_owner_registration_number, obj.asset_owner_registration_date, request.user,
+            business_entity_source="[Проекты / Владелец активов]",
+            registration_region=obj.asset_owner_region,
+        )
+    return obj
+
+
+@login_required
+@require_http_methods(["GET"])
+def registration_csv_download(request):
+    if not _is_admin_user(request.user):
+        return _registration_csv_forbidden()
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow([_registration_csv_header_label(name) for name in REGISTRATION_CSV_HEADERS])
+    for registration in _registration_csv_queryset(request):
+        writer.writerow(_registration_csv_row(registration))
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="project_registrations.csv"'
+    return response
+
+
+@login_required
+@require_POST
+def registration_csv_upload(request):
+    if not _is_admin_user(request.user):
+        return _registration_csv_forbidden()
+    rows, error_response = _read_registration_csv_upload(request.FILES.get("csv_file"))
+    if error_response:
+        return error_response
+    header = [_registration_csv_header_key(cell) for cell in rows[0]]
+    missing = [
+        name for name in REGISTRATION_CSV_HEADERS
+        if name not in header and name not in REGISTRATION_CSV_OPTIONAL_HEADERS
+    ]
+    if missing:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "В файле нет столбцов: "
+                + ", ".join(_registration_csv_header_label(name) for name in missing)
+                + ".",
+            },
+            status=400,
+        )
+    indexes = {
+        name: header.index(name)
+        for name in REGISTRATION_CSV_HEADERS
+        if name in header
+    }
+    products_by_key, ambiguous_products = _registration_csv_label_index(
+        Product.objects.exclude(short_name=""),
+        lambda product: product.short_name,
+    )
+    groups_by_key, ambiguous_groups = _registration_csv_label_index(
+        GroupMember.objects.exclude(country_alpha2=""),
+        lambda member: member.group_code_label,
+    )
+    contracts_by_key, ambiguous_contracts = _registration_csv_label_index(
+        ContractProjectRegistration.objects.exclude(short_uid=""),
+        lambda contract: contract.short_uid,
+    )
+    countries_by_key, ambiguous_countries = _registration_csv_label_index(
+        _registration_csv_active_countries(),
+        lambda country: country.short_name,
+    )
+    existing_by_uid = {}
+    for registration in ProjectRegistration.objects.select_related("country", "asset_owner_country"):
+        uid = (registration.short_uid or "").strip()
+        if uid:
+            existing_by_uid[uid.casefold()] = registration
+
+    created = 0
+    updated = 0
+    warnings = []
+    seen_ids = set()
+    common_evaluation_rows = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        if not any(str(cell or "").strip() for cell in row):
+            continue
+        project_id = _registration_csv_cell(row, indexes, "Проект ID")
+        instance = None
+        if project_id:
+            uid_key = project_id.casefold()
+            if uid_key in seen_ids:
+                warnings.append(f"Строка {row_number}: Проект ID «{project_id}» повторяется в файле.")
+                continue
+            seen_ids.add(uid_key)
+            instance = existing_by_uid.get(uid_key)
+            if instance is None:
+                warnings.append(f"Строка {row_number}: проект «{project_id}» не найден.")
+                continue
+            instance.refresh_from_db()
+
+        problems = []
+        number, number_error = _registration_csv_number(_registration_csv_cell(row, indexes, "Номер"))
+        if number_error:
+            problems.append(number_error)
+        contract, contract_error = _registration_csv_named_choice(
+            _registration_csv_cell(row, indexes, "Договор ID"),
+            contracts_by_key,
+            ambiguous_contracts,
+            empty_message="",
+            ambiguous_message="неоднозначный договор «{value}».",
+            unknown_message="неизвестный договор «{value}».",
+        )
+        if contract_error:
+            problems.append(contract_error)
+        agreement_type = _registration_csv_agreement_type(_registration_csv_cell(row, indexes, "Вид соглашения"))
+        if agreement_type is None:
+            agreement_raw = _registration_csv_cell(row, indexes, "Вид соглашения")
+            if agreement_raw:
+                problems.append(f"неизвестный вид соглашения «{agreement_raw}».")
+            else:
+                problems.append("не заполнено обязательное поле «Вид соглашения».")
+        group_member, group_error = _registration_csv_named_choice(
+            _registration_csv_cell(row, indexes, "Группа"),
+            groups_by_key,
+            ambiguous_groups,
+            empty_message="не заполнено обязательное поле «Группа».",
+            ambiguous_message="неоднозначная группа «{value}».",
+            unknown_message="неизвестная группа «{value}».",
+        )
+        if group_error:
+            problems.append(group_error)
+        products, product_error = _registration_csv_products(
+            _registration_csv_cell(row, indexes, "Тип"),
+            products_by_key,
+            ambiguous_products,
+        )
+        if product_error:
+            problems.append(product_error)
+        name = _registration_csv_cell(row, indexes, "Название")
+        if not name:
+            problems.append("не заполнено обязательное поле «Название».")
+        year, year_error = _registration_csv_year(_registration_csv_cell(row, indexes, "Год"))
+        if year_error:
+            problems.append(year_error)
+        evaluation_date, _evaluation_date_value, evaluation_error = _registration_csv_optional_date(
+            _registration_csv_cell(row, indexes, "Дата оценки"),
+            "Дата оценки",
+        )
+        if evaluation_error:
+            problems.append(evaluation_error)
+        deadline, _deadline_value, deadline_error = _registration_csv_optional_date(
+            _registration_csv_cell(row, indexes, "Дедлайн"),
+            "Дедлайн",
+        )
+        if deadline_error:
+            problems.append(deadline_error)
+        status = _registration_csv_status(_registration_csv_cell(row, indexes, "Статус"))
+        if status is None:
+            status_raw = _registration_csv_cell(row, indexes, "Статус")
+            if status_raw:
+                problems.append(f"неизвестный статус «{status_raw}».")
+            else:
+                problems.append("не заполнено обязательное поле «Статус».")
+        _status_date_text, status_date_value, status_date_error = _registration_csv_optional_date(
+            _registration_csv_cell(row, indexes, "Дата статуса"),
+            "Дата статуса",
+        )
+        if status_date_error:
+            problems.append(status_date_error)
+        country, country_error = _registration_csv_country(
+            _registration_csv_cell(row, indexes, "Заказчик: страна"),
+            countries_by_key,
+            ambiguous_countries,
+            current=instance.country if instance else None,
+        )
+        if country_error:
+            problems.append(country_error)
+        registration_date, registration_date_value, registration_date_error = _registration_csv_optional_date(
+            _registration_csv_cell(row, indexes, "Заказчик: дата регистр."),
+            "Заказчик: дата регистр.",
+        )
+        if registration_date_error:
+            problems.append(registration_date_error)
+        asset_owner_country, asset_owner_country_error = _registration_csv_country(
+            _registration_csv_cell(row, indexes, "Владелец: страна"),
+            countries_by_key,
+            ambiguous_countries,
+            current=instance.asset_owner_country if instance else None,
+        )
+        if asset_owner_country_error:
+            problems.append(asset_owner_country_error)
+        asset_owner_date, asset_owner_date_value, asset_owner_date_error = _registration_csv_optional_date(
+            _registration_csv_cell(row, indexes, "Владелец: дата регистр."),
+            "Владелец: дата регистр.",
+        )
+        if asset_owner_date_error:
+            problems.append(asset_owner_date_error)
+        toggles, toggle_error = _registration_csv_toggles(row, indexes)
+        if toggle_error:
+            problems.append(toggle_error)
+        if problems:
+            warnings.append(f"Строка {row_number}: " + " ".join(problems))
+            continue
+
+        customer = _registration_csv_cell(row, indexes, "Заказчик: наименование")
+        identifier = _registration_csv_cell(row, indexes, "Заказчик: идент.")
+        registration_number = _registration_csv_cell(row, indexes, "Заказчик: регистр. номер")
+        registration_region = _registration_csv_cell(row, indexes, "Заказчик: регион")
+        asset_owner = _registration_csv_cell(row, indexes, "Владелец: наименование")
+        asset_owner_identifier = _registration_csv_cell(row, indexes, "Владелец: идент.")
+        asset_owner_registration_number = _registration_csv_cell(row, indexes, "Владелец: регистр. номер")
+        asset_owner_region = _registration_csv_cell(row, indexes, "Владелец: регион")
+        values = {
+            "number": number,
+            "contract": contract,
+            "group_member": group_member,
+            "agreement_type": agreement_type,
+            "products": products,
+            "name": name,
+            "year": year,
+            "evaluation_date": evaluation_date,
+            "deadline": deadline,
+            "status": status,
+            "status_date": status_date_value,
+            "country": country,
+            "customer": customer,
+            "identifier": identifier,
+            "registration_number": registration_number,
+            "registration_region": registration_region,
+            "registration_date": registration_date,
+            "asset_owner": asset_owner,
+            "asset_owner_country": asset_owner_country,
+            "asset_owner_identifier": asset_owner_identifier,
+            "asset_owner_registration_number": asset_owner_registration_number,
+            "asset_owner_region": asset_owner_region,
+            "asset_owner_registration_date": asset_owner_date,
+            "project_manager": _registration_csv_person_value(
+                _registration_csv_cell(row, indexes, "Руководитель проекта"),
+                stored_name=instance.project_manager if instance else "",
+                stored_prs=instance.project_manager_prs_id if instance else "",
+                resolver=_resolve_project_manager_choice,
+            ),
+            "project_coordinator": _registration_csv_person_value(
+                _registration_csv_cell(row, indexes, "Координатор проекта"),
+                stored_name=instance.project_coordinator if instance else "",
+                stored_prs=instance.project_coordinator_prs_id if instance else "",
+                resolver=_resolve_project_coordinator_choice,
+            ),
+            "toggles": toggles or {},
+            "matches_customer": _registration_parties_match(
+                customer, country, identifier, registration_number, registration_region, registration_date_value,
+                asset_owner, asset_owner_country, asset_owner_identifier, asset_owner_registration_number,
+                asset_owner_region, asset_owner_date_value,
+            ),
+        }
+        try:
+            saved = _save_registration_csv_row(request, instance, values)
+        except forms.ValidationError as exc:
+            warnings.append(f"Строка {row_number}: {exc.messages[0] if exc.messages else exc}")
+            continue
+        except Exception as exc:
+            warnings.append(f"Строка {row_number}: ошибка сохранения — {exc}")
+            continue
+        if (values.get("toggles") or {}).get("evaluation_date_common") is True:
+            common_evaluation_rows.append(saved)
+        if instance is None:
+            created += 1
+        else:
+            updated += 1
+
+    _registration_csv_share_common_evaluation_dates(common_evaluation_rows)
+    return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
@@ -827,39 +2828,115 @@ def registration_form_create(request):
         return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
     form = ProjectRegistrationForm(request.POST)
     if not form.is_valid():
-        return _render_projects_modal_form_error(
-            request, REG_FORM_TEMPLATE, _registration_form_context(form, "create")
-        )
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
     base_obj = form.save(commit=False)
+    customer_rows = _customer_rows_from_post(request.POST)
+    customer_countries = _customer_country_map(customer_rows)
+    owner_rows = _owner_rows_from_post(request.POST)
+    owner_countries = _customer_country_map(owner_rows)
     product_ids = list(getattr(form, "cleaned_type_ids", []))
+    if not product_ids:
+        form.add_error("type_ids", "Укажите хотя бы один продукт.")
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
+    if len(product_ids) > 9:
+        form.add_error("type_ids", "В одном проекте не больше девяти этапов.")
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "create"))
+    from .stage_terms import (
+        compute_grouped_stage_chains,
+        parse_posted_stages,
+        store_stage_snapshot,
+    )
+
+    posted_stages = parse_posted_stages(request.POST, product_ids) or []
+    posted_contract_ids = (
+        _request_list(request.POST, "stage_contract_id")
+        if "stage_contract_id" in request.POST
+        else None
+    )
+    contract_ends = (
+        _posted_contract_group_ends(request.POST)
+        if "contract_group_id" in request.POST
+        else None
+    )
+    contract_end_flags = (
+        _posted_contract_group_end_flags(request.POST)
+        if contract_ends is not None
+        else None
+    )
+    if posted_contract_ids is not None:
+        create_contract_ids = [
+            str(posted_contract_ids[offset] if offset < len(posted_contract_ids) else "")
+            for offset in range(len(product_ids))
+        ]
+    else:
+        fallback_contract_id = str(base_obj.contract_project_registration_id or "")
+        create_contract_ids = [fallback_contract_id for _product_id in product_ids]
+    chain = compute_grouped_stage_chains(
+        base_obj.project_start_date,
+        posted_stages,
+        create_contract_ids,
+    ) if posted_stages else []
+    contracts_by_pk = _contracts_by_pk(create_contract_ids) if posted_contract_ids is not None else {}
     with transaction.atomic():
         start_position = _next_position(ProjectRegistration)
+        parent = _copy_registration_form_values(base_obj)
+        parent.position = start_position
+        parent.status = "Не начат"
+        parent.type = None
+        if customer_rows and product_ids:
+            _write_customer_party(
+                parent,
+                _customer_party_for_product(customer_rows, product_ids[0]) or _blank_customer_party(),
+                customer_countries,
+            )
+        if product_ids:
+            _apply_posted_owner_party(parent, owner_rows, owner_countries, product_ids[0])
+        if posted_contract_ids is not None and product_ids:
+            _assign_stage_contract(parent, create_contract_ids[0], contracts_by_pk)
+            if contract_ends is not None:
+                _apply_posted_contract_end(
+                    parent,
+                    create_contract_ids[0],
+                    contract_ends,
+                    contract_end_flags,
+                )
+        parent.save()
         for offset, product_id in enumerate(product_ids):
             obj = base_obj if offset == 0 else _copy_registration_form_values(base_obj)
-            stage1_value = _request_decimal_at(request.POST, "stage1_weeks", offset)
-            stage2_value = _request_decimal_at(request.POST, "stage2_weeks", offset)
-            if stage1_value is not None:
-                obj.stage1_weeks = stage1_value
-            if stage2_value is not None:
-                obj.stage2_weeks = stage2_value
-            obj.position = start_position + offset
+            if customer_rows:
+                _write_customer_party(
+                    obj,
+                    _customer_party_for_product(customer_rows, product_id) or _blank_customer_party(),
+                    customer_countries,
+                )
+            _apply_posted_owner_party(obj, owner_rows, owner_countries, product_id)
+            obj.stage_project = parent
+            if posted_contract_ids is not None:
+                _assign_stage_contract(obj, create_contract_ids[offset], contracts_by_pk)
+                if contract_ends is not None:
+                    _apply_posted_contract_end(
+                        obj,
+                        create_contract_ids[offset],
+                        contract_ends,
+                        contract_end_flags,
+                    )
+            if offset < len(chain):
+                stage = dict(chain[offset])
+                stage["product_id"] = product_id
+                store_stage_snapshot(obj, stage, base_obj.project_start_date)
+            else:
+                stage1_value = _request_decimal_at(request.POST, "stage1_weeks", offset)
+                stage2_value = _request_decimal_at(request.POST, "stage2_weeks", offset)
+                if stage1_value is not None:
+                    obj.stage1_weeks = stage1_value
+                if stage2_value is not None:
+                    obj.stage2_weeks = stage2_value
+            obj.position = start_position + offset + 1
             obj.save()
             _save_ranked_registration_products(obj, [product_id])
-        ProjectRegistration.refresh_number_sequences([base_obj.number])
-    _sync_to_legal_entity_record(
-        base_obj.customer, base_obj.country, base_obj.identifier,
-        base_obj.registration_number, base_obj.registration_date, request.user,
-        business_entity_source="[Проекты / Заказчик]",
-        registration_region=base_obj.registration_region,
-        **_sync_selection_kwargs(request, "customer_autocomplete"),
-    )
-    _sync_to_legal_entity_record(
-        base_obj.asset_owner, base_obj.asset_owner_country, base_obj.asset_owner_identifier,
-        base_obj.asset_owner_registration_number, base_obj.asset_owner_registration_date, request.user,
-        business_entity_source="[Проекты / Владелец активов]",
-        registration_region=base_obj.asset_owner_region,
-        **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
-    )
+        ProjectRegistration.refresh_number_sequences([parent.number])
+    _sync_posted_customer_parties(request, customer_rows, base_obj)
+    _sync_posted_owner_parties(request, owner_rows, base_obj)
     return _render_projects_updated(request)
 
 @login_required
@@ -868,38 +2945,292 @@ def registration_form_create(request):
 def registration_delete(request, pk: int):
     reg = get_object_or_404(ProjectRegistration, pk=pk)
     number = reg.number
+    parent_id = reg.stage_project_id
+    if parent_id:
+        align_project_service_scope(reg.stage_project or reg)
     reg.delete()
+    if parent_id and not ProjectRegistration.objects.filter(stage_project_id=parent_id).exists():
+        ProjectRegistration.objects.filter(pk=parent_id).delete()
     ProjectRegistration.refresh_number_sequences([number])
     return _render_projects_updated(request)
+
+def _registration_json(payload, registration):
+    summary = summary_payload_for_registration(registration) if registration is not None else None
+    if summary:
+        payload["summary"] = summary
+    return payload
+
+
+def _apply_project_start_date_from_status(registration):
+    """Дата статуса при запуске становится общей датой начала проекта.
+
+    Поле в карточке проекта не блокируется: дату можно изменить вручную.
+    """
+    if registration is None or not registration.status_date:
+        return
+    start_date = registration.status_date
+    ids = {registration.pk}
+    block, _group_label = summary_block_for_pk(registration.pk)
+    if block:
+        ids.update(item.pk for item in block if item.pk)
+        parent_id = block[0].stage_project_id
+        if parent_id:
+            ids.add(parent_id)
+    elif registration.stage_project_id:
+        ids.add(registration.stage_project_id)
+    ProjectRegistration.objects.filter(pk__in=ids).update(project_start_date=start_date)
+    registration.project_start_date = start_date
+
+
+def _launch_not_started_registration(pk):
+    updated = (
+        ProjectRegistration.objects
+        .filter(pk=pk, status="Не начат")
+        .update(status="В работе", status_date=timezone.localdate())
+    )
+    if not updated:
+        return False, ProjectRegistration.objects.filter(pk=pk).only("id", "status", "status_date").first()
+
+    reg = ProjectRegistration.objects.filter(pk=pk).first()
+    if reg is not None:
+        sync_summary_status_date_for_status_change(reg, "Не начат")
+        _apply_project_start_date_from_status(reg)
+        try:
+            copy_typical_gantt_to_project(reg, launch_date=date.today())
+        except Exception:
+            pass
+    return True, reg
+
+
+def _store_summary_deferred(block, group_label, deferred):
+    previous_deferred = block_is_deferred(block)
+    previous_label = registration_summary_state(
+        [item.status for item in block],
+        previous_deferred,
+    )["label"]
+    parent_id = block[0].stage_project_id if block else None
+    if parent_id:
+        ProjectRegistration.objects.filter(pk=parent_id).update(summary_deferred=deferred)
+        parent = block[0].stage_project
+        if parent is not None and parent.pk == parent_id:
+            parent.summary_deferred = deferred
+    else:
+        number = block[0].number
+        if deferred:
+            RegistrationGroupSummaryState.objects.update_or_create(
+                number=number,
+                group_label=group_label,
+                defaults={"deferred": True},
+            )
+        else:
+            RegistrationGroupSummaryState.objects.filter(
+                number=number,
+                group_label=group_label,
+            ).update(deferred=False)
+    new_label = registration_summary_state([item.status for item in block], deferred)["label"]
+    sync_summary_status_date_for_label_change(block, group_label, previous_label, new_label)
+
+
+def _summary_group_from_request(request):
+    raw_project = (request.POST.get("project") or "").strip()
+    if raw_project:
+        try:
+            project_id = int(raw_project)
+        except ValueError:
+            return None, "", JsonResponse({"ok": False, "error": "Некорректная группа проектов."}, status=400)
+        block, group_label = summary_block_for_project(project_id)
+        if not block:
+            return None, group_label, JsonResponse({"ok": False, "error": "Группа проектов не найдена."}, status=400)
+        return block, group_label, None
+    raw_number = (request.POST.get("number") or "").strip()
+    group_label = (request.POST.get("group") or "").strip()
+    try:
+        number = int(raw_number)
+    except ValueError:
+        return None, "", JsonResponse({"ok": False, "error": "Некорректная группа проектов."}, status=400)
+    block = summary_block_for_group(number, group_label)
+    if not block:
+        return None, group_label, JsonResponse({"ok": False, "error": "Группа проектов не найдена."}, status=400)
+    return block, group_label, None
+
 
 @login_required
 @user_passes_test(staff_required)
 @require_POST
 def registration_launch(request, pk: int):
-    updated = (
-        ProjectRegistration.objects
-        .filter(pk=pk, status="Не начат")
-        .update(status="В работе")
+    launched, reg = _launch_not_started_registration(pk)
+    if not launched:
+        status = reg.status if reg is not None else ""
+        return JsonResponse(
+            _registration_json(
+                {
+                    "ok": False,
+                    "error": "Запуск доступен только для проектов со статусом «Не начат».",
+                    "status": status,
+                },
+                reg,
+            ),
+            status=400,
+        )
+
+    return JsonResponse(_registration_json({
+        "ok": True,
+        "status": "В работе",
+        **_status_date_fields(reg),
+    }, reg))
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_group_summary_status(request):
+    block, group_label, error_response = _summary_group_from_request(request)
+    if error_response is not None:
+        return error_response
+
+    mode = (request.POST.get("mode") or "").strip()
+    if mode not in {"deferred", "auto"}:
+        return JsonResponse({"ok": False, "error": "Некорректный статус группы."}, status=400)
+
+    deferred = mode == "deferred"
+    _store_summary_deferred(block, group_label, deferred)
+
+    return JsonResponse({
+        "ok": True,
+        "summary": summary_payload(block, group_label, deferred),
+    })
+
+
+def _save_summary_person(block, field_name, prs_field, name, prs_id):
+    for row in _summary_person_targets(block):
+        if getattr(row, field_name) == name and getattr(row, prs_field) == prs_id:
+            continue
+        setattr(row, field_name, name)
+        setattr(row, prs_field, prs_id)
+        row.save(update_fields=[field_name, prs_field])
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_group_summary_manager(request):
+    block, _group_label, error_response = _summary_group_from_request(request)
+    if error_response is not None:
+        return error_response
+
+    manager_value = (request.POST.get("project_manager") or "").strip()
+    manager_name, manager_prs_id = _resolve_project_manager_choice(manager_value)
+    _save_summary_person(block, "project_manager", "project_manager_prs_id", manager_name, manager_prs_id)
+    return JsonResponse({
+        "ok": True,
+        "manager": manager_name,
+        "managerValue": manager_prs_id or manager_name,
+        "managerLabel": _short_fio_label(manager_name),
+    })
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_group_summary_coordinator(request):
+    block, _group_label, error_response = _summary_group_from_request(request)
+    if error_response is not None:
+        return error_response
+
+    coordinator_value = (request.POST.get("project_coordinator") or "").strip()
+    coordinator_name, coordinator_prs_id, matched = _resolve_project_coordinator_choice(coordinator_value)
+    source = block[0].stage_project if block[0].stage_project_id else block[0]
+    if coordinator_value and not matched:
+        stored_name = (source.project_coordinator or "").strip()
+        stored_prs_id = (source.project_coordinator_prs_id or "").strip()
+        if coordinator_value not in {stored_name, stored_prs_id}:
+            return JsonResponse(
+                {"ok": False, "error": "Выберите координатора проектов."},
+                status=400,
+            )
+        coordinator_name = stored_name
+        coordinator_prs_id = stored_prs_id
+    _save_summary_person(
+        block,
+        "project_coordinator",
+        "project_coordinator_prs_id",
+        coordinator_name,
+        coordinator_prs_id,
     )
-    if not updated:
-        reg = get_object_or_404(ProjectRegistration.objects.only("id", "status"), pk=pk)
+    return JsonResponse({
+        "ok": True,
+        "coordinator": coordinator_name,
+        "coordinatorValue": coordinator_prs_id or coordinator_name,
+        "coordinatorLabel": _short_fio_label(coordinator_name),
+    })
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def registration_group_summary_launch(request):
+    block, group_label, error_response = _summary_group_from_request(request)
+    if error_response is not None:
+        return error_response
+
+    number = block[0].number
+    deferred = block_is_deferred(block)
+    state = registration_summary_state([item.status for item in block], deferred)
+    if not state["can_launch"]:
         return JsonResponse(
             {
                 "ok": False,
-                "error": "Запуск доступен только для проектов со статусом «Не начат».",
-                "status": reg.status,
+                "error": "Запуск группы доступен, когда все этапы «Не начат» и группа не отложена.",
+                "summary": summary_payload(block, group_label, deferred),
             },
             status=400,
         )
 
-    reg = ProjectRegistration.objects.filter(pk=pk).first()
-    if reg is not None:
-        try:
-            copy_typical_gantt_to_project(reg, launch_date=date.today())
-        except Exception:
-            pass
+    with transaction.atomic():
+        locked = {
+            item.pk: item
+            for item in ProjectRegistration.objects.select_for_update().filter(pk__in=[item.pk for item in block])
+        }
+        ordered = [locked[item.pk] for item in block if item.pk in locked]
+        if (
+            len(ordered) != len(block)
+            or any(item.status != "Не начат" for item in ordered)
+            or block_is_deferred(ordered)
+        ):
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "Запуск группы доступен, когда все этапы «Не начат» и группа не отложена.",
+                    "summary": summary_payload(ordered or block, group_label, block_is_deferred(ordered or block)),
+                },
+                status=400,
+            )
+        launched, reg = _launch_not_started_registration(ordered[0].pk)
 
-    return JsonResponse({"ok": True, "status": "В работе"})
+    if not launched or reg is None:
+        status = reg.status if reg is not None else ""
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "Запуск доступен только для проектов со статусом «Не начат».",
+                "status": status,
+                "summary": summary_payload_for_registration(ordered[0]) or summary_payload(block, group_label, deferred),
+            },
+            status=400,
+        )
+
+    launched_block, launched_group = summary_block_for_pk(reg.pk)
+    summary = summary_payload(
+        launched_block or block,
+        launched_group or group_label,
+        block_is_deferred(launched_block or block),
+    )
+    return JsonResponse({
+        "ok": True,
+        "status": "В работе",
+        "projectId": reg.pk,
+        "summary": summary,
+        **_status_date_fields(reg),
+    })
 
 @login_required
 @user_passes_test(staff_required)
@@ -911,21 +3242,33 @@ def registration_status_update(request, pk: int):
         return JsonResponse({"ok": False, "error": "Некорректный статус проекта."}, status=400)
 
     reg = get_object_or_404(
-        ProjectRegistration.objects.only("id", "status", "launched_at", "gantt_data"),
+        ProjectRegistration.objects.only("id", "status", "status_date", "launched_at", "gantt_data"),
         pk=pk,
     )
+    if status_value == DEFERRED_STATUS:
+        block, _group_label = summary_block_for_pk(reg.pk)
+        if block:
+            return JsonResponse(
+                {"ok": False, "error": "В строке этапа нельзя выбрать статус «Отложен»."},
+                status=400,
+            )
     previous_status = reg.status
     if reg.status != status_value:
         reg.status = status_value
         reg.save(update_fields=["status"])
 
     if previous_status == "Не начат" and status_value == "В работе":
+        _apply_project_start_date_from_status(reg)
         try:
             copy_typical_gantt_to_project(reg, launch_date=date.today())
         except Exception:
             pass
 
-    return JsonResponse({"ok": True, "status": reg.status})
+    return JsonResponse(_registration_json({
+        "ok": True,
+        "status": reg.status,
+        **_status_date_fields(reg),
+    }, reg))
 
 @login_required
 @user_passes_test(staff_required)
@@ -1033,10 +3376,24 @@ def registration_evaluation_date_update(request, pk: int):
         except ValueError:
             return JsonResponse({"ok": False, "error": "Некорректная дата оценки."}, status=400)
 
-    reg = get_object_or_404(ProjectRegistration.objects.only("id", "evaluation_date"), pk=pk)
-    if reg.evaluation_date != evaluation_date:
+    reg = get_object_or_404(
+        ProjectRegistration.objects.only("id", "evaluation_date", "stage_terms_json"),
+        pk=pk,
+    )
+    if reg.evaluation_date != evaluation_date or reg.stage_terms_json:
         reg.evaluation_date = evaluation_date
-        reg.save(update_fields=["evaluation_date"])
+        update_fields = ["evaluation_date"]
+        if reg.stage_terms_json:
+            from .stage_terms import format_date
+
+            stages = list(reg.stage_terms_json)
+            last_stage = dict(stages[-1]) if stages else {}
+            last_stage["evaluation_date_enabled"] = True
+            last_stage["evaluation_date"] = format_date(evaluation_date)
+            stages[-1] = last_stage
+            reg.stage_terms_json = stages
+            update_fields.append("stage_terms_json")
+        reg.save(update_fields=update_fields)
 
     return JsonResponse(
         {
@@ -1286,6 +3643,10 @@ def project_schedule_gantt(request, pk: int):
         ProjectRegistration.objects.select_related("type"),
         pk=pk,
     )
+    if reg.stage_project_id is None:
+        only_stage = list(reg.stages.order_by("position", "id")[:2])
+        if len(only_stage) == 1:
+            reg = only_stage[0]
 
     primary_product = reg.primary_product
     primary_product_id = getattr(primary_product, "pk", None) or getattr(reg.type, "pk", None)
@@ -1446,14 +3807,21 @@ def work_deps(request):
     except (TypeError, ValueError):
         return JsonResponse({"ok": False})
 
-    reg = ProjectRegistration.objects.select_related("type", "country").filter(pk=pid).first()
+    reg = (
+        ProjectRegistration.objects
+        .select_related("type", "country", "stage_project")
+        .prefetch_related("product_links__product", "stages__type", "stages__product_links__product")
+        .filter(pk=pid)
+        .first()
+    )
     if not reg:
         return JsonResponse({"ok": False})
+    type_label = reg.filter_type_label or reg.type_short_display
 
     return JsonResponse({
         "ok": True,
-        "type": reg.type_short_display,
-        "type_short": reg.type_short_display,
+        "type": type_label,
+        "type_short": type_label,
         "name": reg.name or "",
         "project_manager": reg.project_manager_prs_id or reg.project_manager or "",
         "country_id": reg.country_id or "",
@@ -1473,10 +3841,7 @@ def work_form_create(request):
         return _render_projects_modal_form_error(
             request, WORK_FORM_TEMPLATE, _work_form_context(form, "create")
         )
-    obj = form.save(commit=False)
-    if not getattr(obj, "position", 0):
-        obj.position = _next_position(WorkVolume, {"project": obj.project})
-    obj.save()
+    obj = form.save()
     _sync_to_legal_entity_record(
         obj.asset_name, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
@@ -1490,22 +3855,943 @@ def work_form_create(request):
     })
     return response
 
+def _selected_group_contract(form):
+    field = form.fields["contract_project_registration"]
+    if form.is_bound:
+        raw = str(form.data.get("contract_project_registration") or "").strip()
+        if not raw:
+            return None
+        return field.queryset.filter(pk=raw).first()
+    instance = getattr(form, "instance", None)
+    if instance is not None and instance.contract_project_registration_id:
+        return instance.contract_project_registration
+    return None
+
+
+def _append_widget_class(widget, class_name):
+    current = widget.attrs.get("class", "")
+    classes = [item for item in current.split() if item]
+    if class_name not in classes:
+        classes.append(class_name)
+    widget.attrs["class"] = " ".join(classes)
+
+
+def _registration_contract_filter_number(form, registration=None):
+    if getattr(form, "is_bound", False):
+        raw = str(form.data.get("number") or "").strip()
+        if raw:
+            return raw
+    if registration is not None and getattr(registration, "number", None) not in (None, ""):
+        return registration.number
+    initial = form.initial.get("number")
+    if initial not in (None, ""):
+        return initial
+    return form.fields["number"].initial
+
+
+def _limit_group_contract_choices(form, number, *, keep_contract_id=None):
+    """В сводной строке «Договор ID» — только проекты договоров с тем же номером."""
+    field = form.fields["contract_project_registration"]
+    base = field.queryset
+    try:
+        contract_number = int(number)
+    except (TypeError, ValueError):
+        limited = base.none()
+    else:
+        limited = base.filter(number=contract_number)
+    if keep_contract_id:
+        limited = base.filter(Q(pk__in=limited.values("pk")) | Q(pk=keep_contract_id))
+    field.queryset = limited
+
+
+def _apply_single_registration_contract_fields(form, registration=None):
+    keep_contract_id = None
+    if registration is not None:
+        keep_contract_id = getattr(registration, "contract_project_registration_id", None)
+    _limit_group_contract_choices(
+        form,
+        _registration_contract_filter_number(form, registration),
+        keep_contract_id=keep_contract_id,
+    )
+    _prepare_group_contract_fields(form)
+    contract = _selected_group_contract(form)
+    return contract.pk if contract is not None else ""
+
+
+def _prepare_group_contract_fields(form):
+    agreement_type = form.fields["agreement_type"]
+    _append_widget_class(agreement_type.widget, "readonly-field")
+    _append_widget_class(agreement_type.widget, "registration-contract-derived")
+    _append_widget_class(agreement_type.widget, "registration-contract-agreement-type")
+    agreement_type.widget.attrs["tabindex"] = "-1"
+    agreement_type.widget.attrs["aria-disabled"] = "true"
+    choices = list(agreement_type.choices)
+    if not choices or choices[0][0] != "":
+        agreement_type.choices = [("", "")] + choices
+
+    agreement_number = form.fields["agreement_number"]
+    _append_widget_class(agreement_number.widget, "readonly-field")
+    _append_widget_class(agreement_number.widget, "registration-contract-derived")
+    _append_widget_class(agreement_number.widget, "registration-contract-agreement-number")
+    agreement_number.widget.attrs["readonly"] = True
+    agreement_number.widget.attrs["tabindex"] = "-1"
+
+    _append_widget_class(
+        form.fields["contract_project_registration"].widget,
+        "registration-contract-select",
+    )
+
+    if form.is_bound:
+        return
+    contract = _selected_group_contract(form)
+    if contract is None:
+        form.initial["agreement_type"] = ""
+        form.initial["agreement_number"] = ""
+        return
+    form.initial["agreement_type"] = contract.agreement_type or ""
+    form.initial["agreement_number"] = contract.agreement_number or ""
+
+
+def _blank_customer_party():
+    return {
+        "scope": "all",
+        "customer": "",
+        "country_id": "",
+        "identifier": "",
+        "registration_number": "",
+        "registration_region": "",
+        "registration_date": "",
+        "product_label": "",
+        "product_code": "",
+        "selected_identifier_record_id": "",
+        "selected_from_autocomplete": False,
+    }
+
+
+def _customer_rows_from_post(data):
+    if data is None or "customer_scope" not in data:
+        return None
+    scopes = _request_list(data, "customer_scope")
+    if not scopes:
+        return None
+    customers = _request_list(data, "customer")
+    countries = _request_list(data, "country")
+    identifiers = _request_list(data, "identifier")
+    numbers = _request_list(data, "registration_number")
+    regions = _request_list(data, "registration_region")
+    dates = _request_list(data, "registration_date")
+    selected_ids = _request_list(data, "customer_autocomplete_identifier_record_id")
+    selected_flags = _request_list(data, "customer_autocomplete_selected_from_autocomplete")
+    rows = []
+    for index, scope in enumerate(scopes):
+        normalized = str(scope or "all").strip() or "all"
+        if normalized != "all":
+            try:
+                normalized = str(int(normalized))
+            except ValueError:
+                continue
+        flag = selected_flags[index] if index < len(selected_flags) else ""
+        rows.append({
+            "scope": normalized,
+            "customer": customers[index] if index < len(customers) else "",
+            "country_id": countries[index] if index < len(countries) else "",
+            "identifier": identifiers[index] if index < len(identifiers) else "",
+            "registration_number": numbers[index] if index < len(numbers) else "",
+            "registration_region": regions[index] if index < len(regions) else "",
+            "registration_date": dates[index] if index < len(dates) else "",
+            "product_label": "",
+            "product_code": "",
+            "selected_identifier_record_id": selected_ids[index] if index < len(selected_ids) else "",
+            "selected_from_autocomplete": str(flag or "").strip().lower() in {"1", "true", "yes", "on"},
+        })
+    if any(row["scope"] == "all" for row in rows):
+        rows = [next(row for row in rows if row["scope"] == "all")]
+    return rows or None
+
+
+def _customer_party_for_product(rows, product_id):
+    if not rows:
+        return None
+    shared = None
+    specific = None
+    product_key = str(product_id or "")
+    for row in rows:
+        if row["scope"] == "all":
+            shared = row
+        elif product_key and row["scope"] == product_key:
+            specific = row
+    return specific or shared
+
+
+def _customer_country_map(rows):
+    ids = []
+    for row in rows or []:
+        raw = str(row.get("country_id") or "").strip()
+        if not raw:
+            continue
+        try:
+            ids.append(int(raw))
+        except ValueError:
+            continue
+    if not ids:
+        return {}
+    return {
+        str(country.pk): country
+        for country in OKSMCountry.objects.filter(pk__in=ids)
+    }
+
+
+def _write_customer_party(target, row, countries):
+    party = row or _blank_customer_party()
+    target.customer = party.get("customer") or ""
+    target.country = countries.get(str(party.get("country_id") or ""))
+    target.identifier = party.get("identifier") or ""
+    target.registration_number = party.get("registration_number") or ""
+    target.registration_region = party.get("registration_region") or ""
+    target.registration_date = _parse_project_form_date(party.get("registration_date"))
+    if target.asset_owner_matches_customer:
+        target.asset_owner = target.customer
+        target.asset_owner_country = target.country
+        target.asset_owner_identifier = target.identifier
+        target.asset_owner_registration_number = target.registration_number
+        target.asset_owner_region = target.registration_region
+        target.asset_owner_registration_date = target.registration_date
+
+
+def _attach_customer_product_labels(rows):
+    ids = []
+    for row in rows:
+        if row.get("scope") in {None, "", "all"}:
+            continue
+        try:
+            ids.append(int(row["scope"]))
+        except (TypeError, ValueError):
+            continue
+    products = list(Product.objects.filter(pk__in=ids)) if ids else []
+    labels = {str(product.pk): _product_option_label(product) for product in products}
+    codes = {str(product.pk): _customer_product_code(product) for product in products}
+    for row in rows:
+        key = str(row.get("scope") or "")
+        if not row.get("product_label"):
+            row["product_label"] = labels.get(key, "")
+        if not row.get("product_code"):
+            row["product_code"] = codes.get(key, "")
+    return rows
+
+
+def _customer_party_from_registration(registration, scope, product_label="", product_code=""):
+    party = _blank_customer_party()
+    party.update({
+        "scope": scope,
+        "customer": registration.customer or "",
+        "country_id": str(registration.country_id or ""),
+        "identifier": registration.identifier or "",
+        "registration_number": registration.registration_number or "",
+        "registration_region": registration.registration_region or "",
+        "registration_date": registration.registration_date.isoformat() if registration.registration_date else "",
+        "product_label": product_label or "",
+        "product_code": product_code or "",
+    })
+    return party
+
+
+def _customer_rows_for_registrations(registrations):
+    def party_key(item):
+        return (
+            " ".join(str(item.customer or "").split()),
+            item.country_id,
+            item.identifier or "",
+            item.registration_number or "",
+            item.registration_region or "",
+            item.registration_date,
+        )
+
+    if not registrations:
+        return [_blank_customer_party()]
+    if len({party_key(item) for item in registrations}) <= 1:
+        return [_customer_party_from_registration(registrations[0], "all")]
+    rows = []
+    seen = set()
+    for item in registrations:
+        products = item.ordered_products()
+        product = products[0] if products else None
+        if product is None or not getattr(product, "pk", None):
+            continue
+        product_id = str(product.pk)
+        if product_id in seen:
+            continue
+        seen.add(product_id)
+        rows.append(_customer_party_from_registration(
+            item,
+            product_id,
+            _product_option_label(product),
+            _customer_product_code(product),
+        ))
+    return rows or [_customer_party_from_registration(registrations[0], "all")]
+
+
+def _customer_product_code(product):
+    return (getattr(product, "short_name", None) or "").strip()
+
+
+def _apply_customer_product_codes(rows):
+    ids = []
+    for row in rows or []:
+        raw = str(row.get("scope") or "").strip()
+        if not raw or raw == "all":
+            continue
+        try:
+            ids.append(int(raw))
+        except ValueError:
+            continue
+    if not ids:
+        return rows
+    codes = {
+        str(product.pk): _customer_product_code(product)
+        for product in Product.objects.filter(pk__in=ids)
+    }
+    for row in rows:
+        code = codes.get(str(row.get("scope") or ""))
+        if code:
+            row["product_label"] = code
+    return rows
+
+
+def _customer_product_for_registration(registration):
+    if registration is None:
+        return None
+    products = registration.ordered_products()
+    product = products[0] if products else None
+    if product is None or not getattr(product, "pk", None):
+        return None
+    return product
+
+
+def _customer_rows_for_form(form, action, registration=None, block=None):
+    lock_stage_product = action == "edit" and getattr(form, "lock_project_roles", False)
+    if getattr(form, "is_bound", False):
+        posted = _customer_rows_from_post(form.data)
+        if posted:
+            rows = _attach_customer_product_labels(posted)
+            if lock_stage_product:
+                _apply_customer_product_codes(rows)
+            return rows
+    if lock_stage_product:
+        product = _customer_product_for_registration(registration)
+        if product is not None:
+            return [_customer_party_from_registration(
+                registration,
+                str(product.pk),
+                _customer_product_code(product),
+            )]
+    if action == "group_edit" and block:
+        return _customer_rows_for_registrations(block)
+    if registration is not None and getattr(registration, "pk", None):
+        return _customer_rows_for_registrations([registration])
+    row = _blank_customer_party()
+    country_initial = form.fields["country"].initial if "country" in form.fields else ""
+    identifier_initial = form.fields["identifier"].initial if "identifier" in form.fields else ""
+    row["country_id"] = str(country_initial or "")
+    row["identifier"] = identifier_initial or ""
+    return [row]
+
+
+def _include_customer_row_countries(form, rows):
+    ids = []
+    for row in rows or []:
+        raw = str(row.get("country_id") or "").strip()
+        if not raw:
+            continue
+        try:
+            ids.append(int(raw))
+        except ValueError:
+            continue
+    if not ids or "country" not in form.fields:
+        return
+    field = form.fields["country"]
+    # Уже суженный список стран бывает с distinct(); повторный | с ним падает.
+    field.queryset = OKSMCountry.objects.filter(
+        Q(pk__in=field.queryset.values("pk")) | Q(pk__in=ids)
+    ).order_by("short_name")
+
+
+def _blank_owner_party():
+    return {
+        "scope": "all",
+        "asset_owner": "",
+        "country_id": "",
+        "identifier": "",
+        "registration_number": "",
+        "registration_region": "",
+        "registration_date": "",
+        "product_label": "",
+        "product_code": "",
+    }
+
+
+def _owner_matches_customer(form, registration):
+    if getattr(form, "is_bound", False):
+        return "asset_owner_matches_customer" in (getattr(form, "data", None) or {})
+    if registration is not None and getattr(registration, "pk", None):
+        return bool(registration.asset_owner_matches_customer)
+    return True
+
+
+def _owner_row_from_customer_row(row):
+    return {
+        "scope": row.get("scope") or "all",
+        "asset_owner": row.get("customer") or "",
+        "country_id": str(row.get("country_id") or ""),
+        "identifier": row.get("identifier") or "",
+        "registration_number": row.get("registration_number") or "",
+        "registration_region": row.get("registration_region") or "",
+        "registration_date": row.get("registration_date") or "",
+        "product_label": row.get("product_label") or "",
+        "product_code": row.get("product_code") or "",
+    }
+
+
+def _owner_rows_from_post(data):
+    if data is None or "asset_owner_scope" not in data:
+        return None
+    scopes = _request_list(data, "asset_owner_scope")
+    if not scopes:
+        return None
+    names = _request_list(data, "asset_owner")
+    countries = _request_list(data, "asset_owner_country")
+    identifiers = _request_list(data, "asset_owner_identifier")
+    numbers = _request_list(data, "asset_owner_registration_number")
+    regions = _request_list(data, "asset_owner_region")
+    dates = _request_list(data, "asset_owner_registration_date")
+    selected_ids = _request_list(data, "asset_owner_autocomplete_identifier_record_id")
+    selected_flags = _request_list(data, "asset_owner_autocomplete_selected_from_autocomplete")
+    rows = []
+    for index, scope in enumerate(scopes):
+        normalized = str(scope or "all").strip() or "all"
+        if normalized != "all":
+            try:
+                normalized = str(int(normalized))
+            except ValueError:
+                continue
+        flag = selected_flags[index] if index < len(selected_flags) else ""
+        rows.append({
+            "scope": normalized,
+            "asset_owner": names[index] if index < len(names) else "",
+            "country_id": countries[index] if index < len(countries) else "",
+            "identifier": identifiers[index] if index < len(identifiers) else "",
+            "registration_number": numbers[index] if index < len(numbers) else "",
+            "registration_region": regions[index] if index < len(regions) else "",
+            "registration_date": dates[index] if index < len(dates) else "",
+            "product_label": "",
+            "product_code": "",
+            "selected_identifier_record_id": selected_ids[index] if index < len(selected_ids) else "",
+            "selected_from_autocomplete": str(flag or "").strip().lower() in {"1", "true", "yes", "on"},
+        })
+    if any(row["scope"] == "all" for row in rows):
+        rows = [next(row for row in rows if row["scope"] == "all")]
+    return rows or None
+
+
+def _owner_party_for_product(rows, product_id):
+    if not rows:
+        return None
+    shared = None
+    specific = None
+    product_key = str(product_id or "")
+    for row in rows:
+        if row["scope"] == "all":
+            shared = row
+        elif product_key and row["scope"] == product_key:
+            specific = row
+    return specific or shared
+
+
+def _write_owner_party(target, row, countries):
+    party = row or _blank_owner_party()
+    target.asset_owner = party.get("asset_owner") or ""
+    target.asset_owner_country = countries.get(str(party.get("country_id") or ""))
+    target.asset_owner_identifier = party.get("identifier") or ""
+    target.asset_owner_registration_number = party.get("registration_number") or ""
+    target.asset_owner_region = party.get("registration_region") or ""
+    target.asset_owner_registration_date = _parse_project_form_date(party.get("registration_date"))
+
+
+def _owner_party_from_registration(registration, scope, product_label="", product_code=""):
+    party = _blank_owner_party()
+    party.update({
+        "scope": scope,
+        "asset_owner": registration.asset_owner or "",
+        "country_id": str(registration.asset_owner_country_id or ""),
+        "identifier": registration.asset_owner_identifier or "",
+        "registration_number": registration.asset_owner_registration_number or "",
+        "registration_region": registration.asset_owner_region or "",
+        "registration_date": (
+            registration.asset_owner_registration_date.isoformat()
+            if registration.asset_owner_registration_date else ""
+        ),
+        "product_label": product_label or "",
+        "product_code": product_code or "",
+    })
+    return party
+
+
+def _owner_rows_for_registrations(registrations):
+    def party_key(item):
+        return (
+            " ".join(str(item.asset_owner or "").split()),
+            item.asset_owner_country_id,
+            item.asset_owner_identifier or "",
+            item.asset_owner_registration_number or "",
+            item.asset_owner_region or "",
+            item.asset_owner_registration_date,
+        )
+
+    if not registrations:
+        return [_blank_owner_party()]
+    if len({party_key(item) for item in registrations}) <= 1:
+        return [_owner_party_from_registration(registrations[0], "all")]
+    rows = []
+    seen = set()
+    for item in registrations:
+        products = item.ordered_products()
+        product = products[0] if products else None
+        if product is None or not getattr(product, "pk", None):
+            continue
+        product_id = str(product.pk)
+        if product_id in seen:
+            continue
+        seen.add(product_id)
+        rows.append(_owner_party_from_registration(
+            item,
+            product_id,
+            _product_option_label(product),
+            _customer_product_code(product),
+        ))
+    return rows or [_owner_party_from_registration(registrations[0], "all")]
+
+
+def _attach_owner_product_labels(rows):
+    ids = []
+    for row in rows:
+        if row.get("scope") in {None, "", "all"}:
+            continue
+        try:
+            ids.append(int(row["scope"]))
+        except (TypeError, ValueError):
+            continue
+    products = list(Product.objects.filter(pk__in=ids)) if ids else []
+    labels = {str(product.pk): _product_option_label(product) for product in products}
+    codes = {str(product.pk): _customer_product_code(product) for product in products}
+    for row in rows:
+        key = str(row.get("scope") or "")
+        if not row.get("product_label"):
+            row["product_label"] = labels.get(key, "")
+        if not row.get("product_code"):
+            row["product_code"] = codes.get(key, "")
+    return rows
+
+
+def _owner_rows_for_form(form, action, registration, block, customer_rows):
+    matches = _owner_matches_customer(form, registration)
+    if matches:
+        return [_owner_row_from_customer_row(row) for row in (customer_rows or [_blank_customer_party()])]
+    lock_stage_product = action == "edit" and getattr(form, "lock_project_roles", False)
+    if getattr(form, "is_bound", False):
+        posted = _owner_rows_from_post(form.data)
+        if posted:
+            rows = _attach_owner_product_labels(posted)
+            if lock_stage_product:
+                _apply_customer_product_codes(rows)
+            return rows
+    if action == "group_edit" and block:
+        return _owner_rows_for_registrations(block)
+    if lock_stage_product and registration is not None:
+        product = _customer_product_for_registration(registration)
+        if product is not None:
+            return [_owner_party_from_registration(
+                registration,
+                str(product.pk),
+                _customer_product_code(product),
+                _customer_product_code(product),
+            )]
+    if registration is not None and getattr(registration, "pk", None):
+        return _owner_rows_for_registrations([registration])
+    return [_blank_owner_party()]
+
+
+def _include_owner_row_countries(form, rows):
+    ids = []
+    for row in rows or []:
+        raw = str(row.get("country_id") or "").strip()
+        if not raw:
+            continue
+        try:
+            ids.append(int(raw))
+        except ValueError:
+            continue
+    if not ids or "asset_owner_country" not in form.fields:
+        return
+    field = form.fields["asset_owner_country"]
+    field.queryset = OKSMCountry.objects.filter(
+        Q(pk__in=field.queryset.values("pk")) | Q(pk__in=ids)
+    ).order_by("short_name")
+
+
+def _apply_posted_owner_party(target, owner_rows, countries, product_id):
+    if getattr(target, "asset_owner_matches_customer", False) or not owner_rows:
+        return
+    _write_owner_party(
+        target,
+        _owner_party_for_product(owner_rows, product_id) or _blank_owner_party(),
+        countries,
+    )
+
+
+def _sync_posted_owner_parties(request, rows, fallback):
+    if getattr(fallback, "asset_owner_matches_customer", False):
+        return
+    if not rows:
+        _sync_to_legal_entity_record(
+            fallback.asset_owner,
+            fallback.asset_owner_country,
+            fallback.asset_owner_identifier,
+            fallback.asset_owner_registration_number,
+            fallback.asset_owner_registration_date,
+            request.user,
+            business_entity_source="[Проекты / Владелец активов]",
+            registration_region=fallback.asset_owner_region,
+            **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
+        )
+        return
+    countries = _customer_country_map(rows)
+    for row in rows:
+        _sync_to_legal_entity_record(
+            row.get("asset_owner") or "",
+            countries.get(str(row.get("country_id") or "")),
+            row.get("identifier") or "",
+            row.get("registration_number") or "",
+            _parse_project_form_date(row.get("registration_date")),
+            request.user,
+            selected_identifier_record_id=row.get("selected_identifier_record_id") or "",
+            selected_from_autocomplete=bool(row.get("selected_from_autocomplete")),
+            business_entity_source="[Проекты / Владелец активов]",
+            registration_region=row.get("registration_region") or "",
+        )
+
+
+_CUSTOMER_PARTY_SAVE_FIELDS = [
+    "customer",
+    "country",
+    "identifier",
+    "registration_number",
+    "registration_region",
+    "registration_date",
+    "asset_owner",
+    "asset_owner_country",
+    "asset_owner_identifier",
+    "asset_owner_registration_number",
+    "asset_owner_region",
+    "asset_owner_registration_date",
+]
+
+
+def _sync_posted_customer_parties(request, rows, fallback):
+    if not rows:
+        _sync_to_legal_entity_record(
+            fallback.customer,
+            fallback.country,
+            fallback.identifier,
+            fallback.registration_number,
+            fallback.registration_date,
+            request.user,
+            business_entity_source="[Проекты / Заказчик]",
+            registration_region=fallback.registration_region,
+            **_sync_selection_kwargs(request, "customer_autocomplete"),
+        )
+    else:
+        countries = _customer_country_map(rows)
+        for row in rows:
+            _sync_to_legal_entity_record(
+                row.get("customer") or "",
+                countries.get(str(row.get("country_id") or "")),
+                row.get("identifier") or "",
+                row.get("registration_number") or "",
+                _parse_project_form_date(row.get("registration_date")),
+                request.user,
+                selected_identifier_record_id=row.get("selected_identifier_record_id") or "",
+                selected_from_autocomplete=bool(row.get("selected_from_autocomplete")),
+                business_entity_source="[Проекты / Заказчик]",
+                registration_region=row.get("registration_region") or "",
+            )
+    if rows and getattr(fallback, "asset_owner_matches_customer", False):
+        countries = _customer_country_map(rows)
+        for row in rows:
+            country = countries.get(str(row.get("country_id") or ""))
+            _sync_to_legal_entity_record(
+                row.get("customer") or "",
+                country,
+                row.get("identifier") or "",
+                row.get("registration_number") or "",
+                _parse_project_form_date(row.get("registration_date")),
+                request.user,
+                business_entity_source="[Проекты / Владелец активов]",
+                registration_region=row.get("registration_region") or "",
+            )
+        return
+    _sync_to_legal_entity_record(
+        fallback.asset_owner,
+        fallback.asset_owner_country,
+        fallback.asset_owner_identifier,
+        fallback.asset_owner_registration_number,
+        fallback.asset_owner_registration_date,
+        request.user,
+        business_entity_source="[Проекты / Владелец активов]",
+        registration_region=fallback.asset_owner_region,
+        **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
+    )
+
+
+def _registration_contract_meta(form):
+    from .stage_terms import contract_is_signed, slim_contract_stage
+
+    payload = {}
+    field = form.fields.get("contract_project_registration")
+    if field is None:
+        return payload
+    for contract in field.queryset:
+        stages = []
+        for item in list(contract.stage_payloads_json or []):
+            if isinstance(item, dict):
+                stages.append(slim_contract_stage(item))
+        payload[str(contract.pk)] = {
+            "agreement_type": contract.agreement_type or "",
+            "agreement_number": contract.agreement_number or "",
+            "contract_date": contract.contract_date.isoformat() if contract.contract_date else "",
+            "contract_end": contract.contract_end.isoformat() if contract.contract_end else "",
+            "contract_end_enabled": bool(contract.contract_end_enabled),
+            "customer": contract.customer or "",
+            "country_id": str(contract.country_id or ""),
+            "identifier": contract.identifier or "",
+            "registration_number": contract.registration_number or "",
+            "registration_region": contract.registration_region or "",
+            "registration_date": contract.registration_date.isoformat() if contract.registration_date else "",
+            "status": contract.status or "",
+            "short_uid": contract.short_uid or "",
+            "signed": contract_is_signed(contract.status),
+            "stages": stages,
+        }
+    return payload
+
+
+def _registration_contract_meta_json(form):
+    return json.dumps(_registration_contract_meta(form), ensure_ascii=False).replace("<", "\\u003c")
+
+
+def _group_summary_form_kwargs(block):
+    parent = block[0].stage_project if block[0].stage_project_id else None
+    deferred = block_is_deferred(block)
+    state = registration_summary_state([item.status for item in block], deferred)
+    return {
+        "allow_multiple_products": True,
+        "project_role_source": parent or block[0],
+        "summary_status_choices": (("auto", state["auto_label"]), ("deferred", DEFERRED_STATUS)),
+        "summary_status_mode": "deferred" if state["deferred"] else "auto",
+    }
+
+
+def _apply_group_summary_deadline(form, block):
+    if form.is_bound or not block:
+        return
+    deadline = block[-1].deadline
+    form.initial["deadline"] = deadline
+    form.fields["deadline"].initial = deadline
+
+
+def _project_start_source(block):
+    if not block:
+        return None
+    parent = block[0].stage_project if block[0].stage_project_id else None
+    return parent if parent is not None else block[0]
+
+
+def _apply_shared_project_start_date(form, block):
+    if form.is_bound or not block:
+        return
+    source = _project_start_source(block)
+    value = source.project_start_date if source is not None else None
+    form.initial["project_start_date"] = value
+    form.fields["project_start_date"].initial = value
+
+
+def _copy_project_start_date(block, project_start_date, *, skip_pk=None):
+    if not block:
+        return
+    ids = [item.pk for item in block if item.pk and item.pk != skip_pk]
+    parent = block[0].stage_project if block[0].stage_project_id else None
+    if parent is not None and parent.pk and parent.pk != skip_pk:
+        ids.append(parent.pk)
+    if ids:
+        ProjectRegistration.objects.filter(pk__in=ids).update(project_start_date=project_start_date)
+
+
+def _stage_member_form_kwargs(registration):
+    block, _group_label = summary_block_for_pk(registration.pk)
+    if not block:
+        return {"allow_multiple_products": False}, None
+    parent = block[0].stage_project if block[0].stage_project_id else None
+    return {
+        "allow_multiple_products": False,
+        "lock_project_roles": True,
+        "project_role_source": parent or block[0],
+    }, block
+
+
+def _summary_person_targets(block):
+    targets = []
+    seen = set()
+    parent = block[0].stage_project if block and block[0].stage_project_id else None
+    rows = list(block)
+    if parent is not None:
+        rows.append(parent)
+    for row in rows:
+        if row.pk in seen:
+            continue
+        seen.add(row.pk)
+        targets.append(row)
+    return targets
+
+
+def _registration_group_edit_context(form, block, number, group_label, ranked_products, source_ids):
+    from .stage_terms import parse_posted_stages
+
+    _limit_group_contract_choices(form, number)
+    _prepare_group_contract_fields(form)
+    if form.is_bound:
+        stage_rows = parse_posted_stages(form.data) or _group_member_stage_rows(block)
+        for index, stage in enumerate(stage_rows):
+            if index >= len(ranked_products):
+                break
+            product_id = ranked_products[index].get("product_id") or ""
+            if product_id:
+                stage["product_id"] = product_id
+    else:
+        stage_rows = _group_member_stage_rows(block)
+    return _registration_form_context(
+        form,
+        "group_edit",
+        block[0],
+        ranked_products=ranked_products,
+        group_number=number,
+        group_label=group_label,
+        group_source_ids=source_ids,
+        registration_contract_meta_json=_registration_contract_meta_json(form),
+        registration_stage_rows=stage_rows,
+        customer_source_block=block,
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET", "POST"])
+def registration_group_summary_edit(request):
+    block, group_label, number = _registration_group_edit_target(request)
+    if not block:
+        return HttpResponse("Группа проектов не найдена.", status=404)
+    form_kwargs = _group_summary_form_kwargs(block)
+    if request.method == "GET":
+        form = ProjectRegistrationForm(instance=block[0], **form_kwargs)
+        _apply_group_summary_deadline(form, block)
+        _apply_shared_project_start_date(form, block)
+        return render(
+            request,
+            REG_FORM_TEMPLATE,
+            _registration_group_edit_context(
+                form,
+                block,
+                number,
+                group_label,
+                _group_edit_ranked_products(block),
+                [item.pk for item in block],
+            ),
+        )
+    form = ProjectRegistrationForm(request.POST, instance=block[0], **form_kwargs)
+    ranked_products = _group_edit_ranked_products_from_data(request.POST)
+    source_ids = _group_source_ids(request.POST)
+    if form.is_valid():
+        specs, spec_error = _registration_group_edit_specs(request.POST, form.cleaned_type_ids)
+        block_ids = {item.pk for item in block}
+        if spec_error:
+            form.add_error("type_ids", spec_error)
+        else:
+            unknown = [
+                spec["registration_id"]
+                for spec in specs
+                if spec["registration_id"] is not None and spec["registration_id"] not in block_ids
+            ]
+            if unknown or any(pk not in block_ids for pk in source_ids):
+                form.add_error("type_ids", "Состав группы изменился. Обновите страницу и откройте группу снова.")
+            else:
+                save_error = _save_registration_group_edit(request, form, block, specs, source_ids)
+                if save_error:
+                    form.add_error("type_ids", save_error)
+                else:
+                    mode = (request.POST.get("summary_status_mode") or "").strip()
+                    if mode in {"auto", "deferred"}:
+                        _store_summary_deferred(block, group_label, mode == "deferred")
+                    return _render_projects_updated(request)
+    return render(
+        request,
+        REG_FORM_TEMPLATE,
+        _registration_group_edit_context(
+            form,
+            block,
+            number,
+            group_label,
+            ranked_products,
+            source_ids,
+        ),
+    )
+
+
 # Редактирование регистрации
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def registration_form_edit(request, pk: int):
     reg = get_object_or_404(ProjectRegistration, pk=pk)
+    form_kwargs, block = _stage_member_form_kwargs(reg)
     if request.method == "GET":
-        form = ProjectRegistrationForm(instance=reg, allow_multiple_products=False)
+        form = ProjectRegistrationForm(instance=reg, **form_kwargs)
+        _apply_shared_project_start_date(form, block)
         return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
-    form = ProjectRegistrationForm(request.POST, instance=reg, allow_multiple_products=False)
+    form = ProjectRegistrationForm(request.POST, instance=reg, **form_kwargs)
     if not form.is_valid():
-        return _render_projects_modal_form_error(
-            request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg)
-        )
+        return render(request, REG_FORM_TEMPLATE, _registration_form_context(form, "edit", reg))
     obj = form.save()
+    if "stage_contract_id" in request.POST:
+        stage_contract_id = _request_list(request.POST, "stage_contract_id")
+        contract_id = stage_contract_id[0] if stage_contract_id else ""
+        _assign_stage_contract(obj, contract_id, _contracts_by_pk([contract_id]))
+        if "contract_group_id" in request.POST:
+            _apply_posted_contract_end(
+                obj,
+                contract_id,
+                _posted_contract_group_ends(request.POST),
+                _posted_contract_group_end_flags(request.POST),
+            )
+        obj.save()
     _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
+    if block is None:
+        block, _group_label = summary_block_for_pk(obj.pk)
+    if obj.stage_project_id:
+        parent = obj.stage_project
+        exclude = set(STAGE_TO_PARENT_ROLE_EXCLUDE)
+        if not block or block[-1].pk != obj.pk:
+            exclude.add("deadline")
+        _apply_shared_registration_fields(parent, obj, include_contract_subject=True, exclude=exclude)
+        parent.save()
+    if block:
+        _copy_project_start_date(block, obj.project_start_date, skip_pk=obj.pk)
     for work_item in obj.work_items.select_related("project").all():
         _ensure_performer_rows_for_work_item(work_item)
     _sync_to_legal_entity_record(
@@ -1609,8 +4895,11 @@ def _typical_section_option_label(section):
 # Редактирование записи "Объем работ"
 def _work_form_context(form, action, work=None):
     asset_code = ""
-    if work is not None and getattr(work, "pk", None) and getattr(work, "project_id", None):
-        asset_code = work_volume_asset_code(work)
+    if work is not None and getattr(work, "pk", None):
+        target_id = getattr(form, "service_target_id", None) or work.project_id
+        if target_id:
+            work.service_target_id = target_id
+            asset_code = work_volume_asset_code(work)
     elif action == "create":
         project = None
         if getattr(form, "is_bound", False):
@@ -1650,35 +4939,17 @@ def work_form_edit(request, pk: int):
     return response
 
 
-def _delete_related_performers_for_work_item(item: WorkVolume):
-    """
-    Удаляет связанные строки исполнителей:
-      - новые строки, уже привязанные через work_item
-      - старые строки без work_item, совпадающие по проекту/активу
-    """
-    asset_name = (item.asset_name or item.name or "").strip()
-    filters = Q(work_item=item)
-    if asset_name:
-        filters |= Q(
-            work_item__isnull=True,
-            registration=item.project,
-            asset_name=asset_name,
-        )
-    Performer.objects.filter(filters).delete()
-
-
 @login_required
 @user_passes_test(staff_required)
 @require_POST
 def work_delete(request, pk: int):
     item = get_object_or_404(WorkVolume, pk=pk)
-    pid = item.project_id
-    if work_item_has_report_uploads(item):
+    project_ids = delete_work_scope(item)
+    if project_ids is None:
         return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
-    _delete_related_performers_for_work_item(item)
-    item.delete()
-    _normalize_work_positions(pid)
-    _normalize_legal_positions(pid)
+    for pid in project_ids:
+        _normalize_work_positions(pid)
+        _normalize_legal_positions(pid)
     _normalize_performer_positions()
     response = _render_projects_updated(request)
     response[HX_TRIGGER_HEADER] = json.dumps({
@@ -1738,7 +5009,7 @@ def _normalize_legal_positions(project_id: int | None = None):
             LegalEntity.objects.filter(pk=b.pk).update(position=idx)
 
 def _swap_work_volumes_if_unlocked(first: WorkVolume, second: WorkVolume) -> bool:
-    if work_item_order_locked(first) or work_item_order_locked(second):
+    if work_scope_order_lock_reason([first, second]):
         return False
     WorkVolume.objects.filter(pk=first.pk).update(position=second.position)
     WorkVolume.objects.filter(pk=second.pk).update(position=first.position)
@@ -1761,6 +5032,7 @@ def work_move_up(request, pk: int):
     if idx is not None and idx > 0:
         if _swap_work_volumes_if_unlocked(items[idx], items[idx - 1]):
             _normalize_work_positions(pid)
+            mirror_work_positions(pid)
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
@@ -1781,6 +5053,7 @@ def work_move_down(request, pk: int):
     if idx is not None and idx < len(items) - 1:
         if _swap_work_volumes_if_unlocked(items[idx], items[idx + 1]):
             _normalize_work_positions(pid)
+            mirror_work_positions(pid)
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
@@ -1797,10 +5070,7 @@ def legal_entity_form_create(request):
         return _render_projects_modal_form_error(
             request, LEGAL_FORM_TEMPLATE, {"form": form, "action": "create"}
         )
-    entity = form.save(commit=False)
-    if not getattr(entity, "position", 0):
-        entity.position = _next_position(LegalEntity, {"project": entity.project})
-    entity.save()
+    entity = form.save()
     _sync_to_legal_entity_record(
         entity.legal_name, entity.country, entity.identifier,
         entity.registration_number, entity.registration_date, request.user,
@@ -1836,9 +5106,12 @@ def legal_entity_form_edit(request, pk: int):
 @require_POST
 def legal_entity_delete(request, pk: int):
     entity = get_object_or_404(LegalEntity, pk=pk)
-    pid = entity.project_id
-    entity.delete()
-    _normalize_legal_positions(pid)
+    copies = legal_scope_copies(entity)
+    project_ids = {copy.project_id for copy in copies if copy.project_id}
+    for copy in copies:
+        copy.delete()
+    for pid in project_ids:
+        _normalize_legal_positions(pid)
     return _render_projects_updated(request)
 
 
@@ -1861,6 +5134,7 @@ def legal_entity_move_up(request, pk: int):
         LegalEntity.objects.filter(pk=cur.id).update(position=prev.position)
         LegalEntity.objects.filter(pk=prev.id).update(position=cur.position)
         _normalize_legal_positions(pid)
+        mirror_legal_positions(pid)
 
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
 
@@ -1883,6 +5157,7 @@ def legal_entity_move_down(request, pk: int):
         LegalEntity.objects.filter(pk=cur.id).update(position=nxt.position)
         LegalEntity.objects.filter(pk=nxt.id).update(position=cur.position)
         _normalize_legal_positions(pid)
+        mirror_legal_positions(pid)
 
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
 
@@ -2257,7 +5532,7 @@ def _performers_context(user=None, request=None):
         ProjectRegistration.objects
         .select_related("type")
         .prefetch_related(project_products_prefetch)
-        .filter(id__in=participation_project_ids)
+        .filter(id__in=_owning_project_ids(participation_project_ids))
         .order_by("-number", "-id")
     )
     info_request_performers = (
@@ -2349,7 +5624,7 @@ def _performers_context(user=None, request=None):
     performer_projects = (
         ProjectRegistration.objects
         .select_related("type")
-        .filter(id__in=performer_project_ids)
+        .filter(id__in=_owning_project_ids(performer_project_ids))
         .order_by("-number", "-id")
     )
     user_is_direction_head = False

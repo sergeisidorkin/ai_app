@@ -8,7 +8,7 @@ from typing import Optional
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Count, Max, Q
-from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import NoReverseMatch, reverse
@@ -361,8 +361,15 @@ def _soft_delete_checklist_items(items, *, actor=None, change_batch_id=None, sou
     return active_items
 
 
+def _project_by_code(short_uid):
+    project = ProjectRegistration.get_for_code(short_uid)
+    if project is None:
+        raise Http404
+    return project
+
+
 def _project_options(user=None):
-    regs = ProjectRegistration.objects.select_related("type", "group_member")
+    regs = ProjectRegistration.objects.registry_rows().select_related("type", "group_member")
     employee = getattr(user, "employee_profile", None)
     if getattr(employee, "role", "") == EXPERT_GROUP:
         regs = regs.filter(
@@ -1581,7 +1588,7 @@ def panel(request):
     project_options = _project_options(request.user)
     selected_project_uid = project_options[0]["short_uid"] if project_options else None
     selected_project = (
-        ProjectRegistration.objects.select_related("type").filter(short_uid=selected_project_uid).first()
+        ProjectRegistration.get_for_code(selected_project_uid)
     )
     meta = _project_meta(selected_project, None) if selected_project else {"assets": [], "asset": "", "sections": []}
 
@@ -1648,10 +1655,7 @@ def source_data_fileshare(request):
     if not project_uid:
         return HttpResponseBadRequest("Не выбран проект.")
 
-    project = get_object_or_404(
-        ProjectRegistration.objects.select_related("type"),
-        short_uid=project_uid,
-    )
+    project = _project_by_code(project_uid)
     target_url = get_project_source_data_folder_url(request.user, project)
     if not target_url:
         return HttpResponse(
@@ -1667,7 +1671,7 @@ def source_data_fileshare(request):
 
 @require_GET
 def project_meta(request, uid: str):
-    project = get_object_or_404(ProjectRegistration.objects.select_related("type"), short_uid=uid)
+    project = _project_by_code(uid)
     asset = (request.GET.get("asset") or "").strip() or None
     return JsonResponse(_project_meta(project, asset))
 
@@ -1752,7 +1756,7 @@ def grid_data(request):
     if not project_uid:
         return JsonResponse({"error": "Выберите проект.", "rows": [], "entities": [], "statusChoices": []})
 
-    project = get_object_or_404(ProjectRegistration.objects.select_related("type"), short_uid=project_uid)
+    project = _project_by_code(project_uid)
     scope = _resolve_grid_scope(project, asset_name, section_id)
     approve_url = ""
     info_request_approved_at = ""
@@ -2041,7 +2045,9 @@ def touch_status_dates(request):
         return JsonResponse({"ok": False, "error": "Недостаточно данных."}, status=400)
 
     try:
-        project = ProjectRegistration.objects.get(short_uid=project_uid)
+        project = ProjectRegistration.get_for_code(project_uid)
+        if project is None:
+            raise ProjectRegistration.DoesNotExist
     except ProjectRegistration.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Проект не найден."}, status=404)
 
@@ -2146,10 +2152,7 @@ def table_partial(request):
     if not project_uid:
         return render(request, "checklists_app/status_table.html", {"project": None})
 
-    project = get_object_or_404(
-        ProjectRegistration.objects.select_related("type"),
-        short_uid=project_uid,
-    )
+    project = _project_by_code(project_uid)
     if not project.has_products:
         return render(
             request,
@@ -3273,9 +3276,7 @@ def export_xlsx(request):
     project_uid = (request.GET.get("project_uid") or "").strip()
     if not project_uid:
         return HttpResponseBadRequest("Не указан проект.")
-    project = get_object_or_404(
-        ProjectRegistration.objects.select_related("type"), short_uid=project_uid,
-    )
+    project = _project_by_code(project_uid)
     return _generate_xlsx(project)
 
 
@@ -3300,7 +3301,7 @@ def shared_link_create_or_get(request):
     if not project_uid:
         return JsonResponse({"ok": False, "error": "Не указан проект."}, status=400)
 
-    project = get_object_or_404(ProjectRegistration, short_uid=project_uid)
+    project = _project_by_code(project_uid)
     link = SharedChecklistLink.objects.filter(
         project=project, expires_at__gt=timezone.now()
     ).order_by("-created_at").first()
@@ -3824,7 +3825,7 @@ def approve_info_request(request):
     if not project_uid:
         return JsonResponse({"ok": False, "error": "Не указан проект."}, status=400)
 
-    project = get_object_or_404(ProjectRegistration.objects.select_related("type"), short_uid=project_uid)
+    project = _project_by_code(project_uid)
 
     now = tz.now()
     now_local = tz.localtime(now)

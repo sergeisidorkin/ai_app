@@ -11187,6 +11187,8 @@
 
   const PRODUCT_MAP_CSS = '/static/policy_app/vendor/jsmind/jsmind.css?v=20261024-1';
   const PRODUCT_MAP_JS = '/static/policy_app/vendor/jsmind/jsmind.js?v=20261024-1';
+  // Opaque match of #075D94 at 0.7 over the map background #f2f7fb.
+  const PRODUCT_MAP_LINE_COLOR = '#4E8BB3';
 
   function loadProductMapAssets() {
     if (window.__productMapAssetsLoading) return window.__productMapAssetsLoading;
@@ -12338,7 +12340,7 @@
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('class', 'product-map-accuracy-rail');
       path.setAttribute('d', commands.join(' '));
-      path.setAttribute('stroke', '#075D94');
+      path.setAttribute('stroke', PRODUCT_MAP_LINE_COLOR);
       path.setAttribute('stroke-width', '1.5');
       path.setAttribute('fill', 'transparent');
       svg.appendChild(path);
@@ -12766,7 +12768,7 @@
           hmargin: 40,
           vmargin: 24,
           line_width: 1.5,
-          line_color: '#075D94',
+          line_color: PRODUCT_MAP_LINE_COLOR,
           line_style: 'curved',
           custom_line_render: renderProductMapLine,
           node_overflow: 'wrap',

@@ -7,7 +7,8 @@ from core.row_order import RowOrderSpec, register_row_orders, staff_only
 
 from .models import LegalEntity, ProjectRegistration, ReportCheckRule, ReportMacro, WorkVolume
 from .report_access import can_manage_report_checks
-from .report_submission import report_folder_locked_asset_keys, workspace_project_ids
+from .report_submission import work_scope_order_lock_reason
+from .service_scope import mirror_scoped_row_order
 
 HX_PROJECTS_UPDATED_EVENT = "projects-updated"
 WORK_LOCKED_MESSAGE = "Нельзя переместить строку: папка отчета по активу уже заблокирована."
@@ -26,26 +27,25 @@ def _refresh_registration_numbers(request, result):
 
 
 def _validate_work_volume_locks(request, scope):
-    project_id = scope.scope_key[0] if scope.scope_key else None
-    if not project_id:
-        return None
-    displaced = any(before.pk != after.pk for before, after in zip(scope.before, scope.after))
-    if not displaced:
-        return None
-    # Asset codes (A1, A2, …) follow the row order and are frozen once the
-    # project workspace exists: report folders and file names already carry them.
-    if project_id in workspace_project_ids([project_id]):
-        return WORKSPACE_LOCKED_MESSAGE
-    locked_keys = report_folder_locked_asset_keys([project_id])
-    if not locked_keys:
-        return None
+    displaced = []
+    seen = set()
     for before_row, after_row in zip(scope.before, scope.after):
         if before_row.pk == after_row.pk:
             continue
         for row in (before_row, after_row):
-            asset = (row.asset_name or "").strip()
-            if (project_id, asset) in locked_keys:
-                return WORK_LOCKED_MESSAGE
+            if row.pk in seen:
+                continue
+            seen.add(row.pk)
+            displaced.append(row)
+    if not displaced:
+        return None
+    # Asset codes follow the shared scope order. A later stage can already have
+    # a workspace or a locked report folder even when the visible stage does not.
+    reason = work_scope_order_lock_reason(displaced)
+    if reason == "workspace":
+        return WORKSPACE_LOCKED_MESSAGE
+    if reason == "folder":
+        return WORK_LOCKED_MESSAGE
     return None
 
 
@@ -65,13 +65,16 @@ register_row_orders([
         key="work-volume",
         model=WorkVolume,
         scope_fields=("project_id",),
-        extra_fields=("asset_name",),
+        extra_fields=("asset_name", "scope_key"),
         validate=_validate_work_volume_locks,
+        after_save=lambda request, result: mirror_scoped_row_order(WorkVolume, result),
     ),
     RowOrderSpec(
         key="legal-entity",
         model=LegalEntity,
         scope_fields=("project_id",),
+        extra_fields=("scope_key",),
+        after_save=lambda request, result: mirror_scoped_row_order(LegalEntity, result),
     ),
     RowOrderSpec(
         key="report-check",

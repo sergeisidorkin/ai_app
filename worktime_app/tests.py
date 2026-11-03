@@ -147,7 +147,7 @@ class WorktimeAppTests(TestCase):
     def _worktime_csv_header(self, month_value):
         year, month = [int(part) for part in str(month_value).split("-", 1)]
         total_days = monthrange(year, month)[1]
-        return ["Сотрудник", "Проект", "Тип", "Название", *[str(day) for day in range(1, total_days + 1)]]
+        return ["Сотрудник", "Этап", "Тип", "Название", *[str(day) for day in range(1, total_days + 1)]]
 
     def _make_worktime_csv_upload(self, header, rows, *, name="worktime.csv"):
         buffer = io.StringIO()
@@ -3273,7 +3273,7 @@ class WorktimeAppTests(TestCase):
 
     def test_worktime_csv_upload_rejects_invalid_header(self):
         upload = self._make_worktime_csv_upload(
-            ["Сотрудник", "Проект", "Тип", "Название", "1", "2"],
+            ["Сотрудник", "Этап", "Тип", "Название", "1", "2"],
             [["Иван Иванов", "4444", "WT", "Проект Альфа", "8", "4"]],
         )
 

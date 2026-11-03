@@ -1647,26 +1647,13 @@
 
   function syncProposalCollapsedSectionHeaderSpacing(root) {
     if (!root) return;
-    const items = qa('.proposal-section-toggle', root).map((toggle) => {
+    qa('.proposal-section-toggle', root).forEach((toggle) => {
       const header = toggle.closest('.table-section-header');
-      const bodyId = toggle.dataset.sectionBodyId;
-      const body = bodyId ? root.querySelector('#' + bodyId) : null;
-      if (!header || !body) return null;
+      if (!header) return;
       if (!header.dataset.baseMarginTop) {
         header.dataset.baseMarginTop = header.style.marginTop || '0px';
       }
-      return {
-        header,
-        collapsed: body.classList.contains('d-none'),
-        baseMarginTop: header.dataset.baseMarginTop,
-      };
-    }).filter(Boolean);
-
-    items.forEach((item, index) => {
-      const prev = items[index - 1];
-      const basePx = parseFloat(item.baseMarginTop) || 0;
-      const nextPx = prev && prev.collapsed && item.collapsed && basePx > 0 ? basePx / 4 : basePx;
-      item.header.style.marginTop = `${nextPx}px`;
+      header.style.marginTop = header.dataset.baseMarginTop;
     });
   }
 
@@ -3549,6 +3536,9 @@
     const entriesMap = getProposalTypicalServiceTermsMap(form);
     const entry = entriesMap[getProposalTypeId(form)] || null;
     if (!entry || typeof entry !== 'object') return null;
+    const sourceUnit = ['days', 'weeks', 'months'].includes(entry.source_data_term_unit)
+      ? entry.source_data_term_unit
+      : 'weeks';
     const preliminaryUnit = ['days', 'weeks', 'months'].includes(entry.preliminary_report_term_unit)
       ? entry.preliminary_report_term_unit
       : 'months';
@@ -3556,6 +3546,8 @@
       ? entry.final_report_term_unit
       : 'weeks';
     return {
+      source_data_term: formatProposalStoredTermValue(entry.source_data_term, sourceUnit),
+      source_data_term_unit: sourceUnit,
       preliminary_report_months: formatProposalStoredTermValue(entry.preliminary_report_months, preliminaryUnit),
       preliminary_report_term_unit: preliminaryUnit,
       final_report_weeks: formatProposalStoredTermValue(entry.final_report_weeks, finalUnit),
@@ -9701,6 +9693,10 @@
       });
     }
 
+    function usesProposalRegistryTerms() {
+      return Boolean(form.querySelector('[data-proposal-registry-terms="1"]'));
+    }
+
     function attachProposalStageProducts(assetsApi) {
       const container = form.querySelector('#proposal-products-container');
       const addBtn = form.querySelector('#proposal-add-product');
@@ -9803,6 +9799,28 @@
         const row = document.createElement('tr');
         row.className = 'proposal-stage-delay-row d-none';
         row.dataset.proposalDelayForStageKey = String(stageKey || '');
+        if (usesProposalRegistryTerms()) {
+          row.innerHTML = [
+            '<td class="proposal-terms-stage-col">',
+            '<input type="text" class="form-control readonly-field proposal-stage-label-input" value="Лаг" readonly tabindex="-1">',
+            '</td>',
+            '<td>',
+            '<div class="proposal-stage-field-toggle-wrap proposal-stage-delay-input-wrap">',
+            '<div class="form-control proposal-stage-delay-number-shell">',
+            '<input type="number" name="next_stage_delay_days" min="0" step="0.1" inputmode="decimal" class="proposal-stage-next-delay-days" value="">',
+            '<select name="next_stage_delay_unit" class="form-select proposal-stage-delay-unit" aria-label="Единица лага">',
+            '<option value="days" selected>дн.</option>',
+            '<option value="weeks">нед.</option>',
+            '<option value="months">мес.</option>',
+            '</select>',
+            '</div>',
+            '<button type="button" class="btn btn-sm proposal-stage-delay-remove" title="Удалить лаг" aria-label="Удалить лаг">&times;</button>',
+            '</div>',
+            '</td>',
+            '<td colspan="5"></td>',
+          ].join('');
+          return row;
+        }
         row.innerHTML = [
           '<td class="proposal-terms-stage-col">',
           '<input type="text" class="form-control readonly-field proposal-stage-label-input" value="Лаг" readonly tabindex="-1">',
@@ -9956,6 +9974,50 @@
         return clone;
       }
 
+      function resetRegistryStageToggles(row) {
+        if (!row) return;
+        row.querySelectorAll('.js-proposal-stage-field-toggle').forEach(function (toggle) {
+          const hiddenSelector = toggle.dataset.hiddenSelector || '';
+          const hidden = hiddenSelector ? row.querySelector(hiddenSelector) : null;
+          const fieldName = hidden?.name || '';
+          const enabled = fieldName === 'service_term_months_enabled' || fieldName === 'evaluation_date_enabled';
+          toggle.checked = enabled;
+          if (hidden) hidden.value = enabled ? 'true' : 'false';
+          toggle.closest('.proposal-stage-field-toggle-wrap')?.classList.toggle('is-stage-field-disabled', !enabled);
+        });
+      }
+
+      function getEvaluationRows() {
+        return Array.from(form.querySelectorAll('#proposal-stage-evaluation-tbody .proposal-stage-evaluation-row'));
+      }
+
+      function cloneEvaluationRow(row) {
+        const clone = row.cloneNode(true);
+        delete clone.dataset.eventsBound;
+        clone.classList.remove('d-none');
+        clone.querySelectorAll('input').forEach(function (input) {
+          delete input.dataset.hasPicker;
+          if (input.classList.contains('proposal-stage-label-input')) return;
+          if (input.type === 'checkbox') {
+            input.checked = input.classList.contains('proposal-stage-evaluation-date-toggle');
+            return;
+          }
+          if (input.type === 'hidden' && input.name === 'evaluation_date_enabled') {
+            input.value = 'true';
+            return;
+          }
+          input.value = '';
+        });
+        const commonCell = clone.querySelector('.registration-evaluation-common-cell');
+        if (commonCell) {
+          const cell = document.createElement('td');
+          cell.colSpan = 5;
+          commonCell.replaceWith(cell);
+        }
+        clone.querySelector('.proposal-stage-field-toggle-wrap')?.classList.remove('is-stage-field-disabled');
+        return clone;
+      }
+
       function cloneTermsRow(row) {
         const clone = row.cloneNode(true);
         delete clone.dataset.eventsBound;
@@ -9967,6 +10029,15 @@
             input.value = '';
           }
         });
+        if (usesProposalRegistryTerms()) {
+          const sourceUnit = clone.querySelector('.proposal-stage-source-data-term-unit');
+          const preliminaryUnit = clone.querySelector('.proposal-stage-preliminary-term-unit');
+          const finalUnit = clone.querySelector('.proposal-stage-final-term-unit');
+          if (sourceUnit) sourceUnit.value = 'weeks';
+          if (preliminaryUnit) preliminaryUnit.value = 'months';
+          if (finalUnit) finalUnit.value = 'weeks';
+          resetRegistryStageToggles(clone);
+        }
         return clone;
       }
 
@@ -10015,8 +10086,23 @@
           termRows = getStageTermRows();
         }
         while (termRows.length > getProductRows().length && termRows.length > 1) {
-          termRows[termRows.length - 1].remove();
+          const removed = termRows[termRows.length - 1];
+          getStageDelayRowForTermRow(removed)?.remove();
+          removed.remove();
           termRows = getStageTermRows();
+        }
+
+        const evaluationTbody = form.querySelector('#proposal-stage-evaluation-tbody');
+        if (evaluationTbody) {
+          let evaluationRows = getEvaluationRows();
+          while (evaluationRows.length < getProductRows().length && evaluationRows.length) {
+            evaluationTbody.appendChild(cloneEvaluationRow(evaluationRows[evaluationRows.length - 1]));
+            evaluationRows = getEvaluationRows();
+          }
+          while (evaluationRows.length > getProductRows().length && evaluationRows.length > 1) {
+            evaluationRows[evaluationRows.length - 1].remove();
+            evaluationRows = getEvaluationRows();
+          }
         }
       }
 
@@ -10042,8 +10128,11 @@
               button.innerHTML = '<i class="bi bi-plus" aria-hidden="true"></i>';
               actionSlot?.appendChild(button);
             }
-            button.title = 'Добавить задержку/наложение';
-            button.setAttribute('aria-label', 'Добавить задержку или наложение после этапа ' + (index + 1));
+            button.title = usesProposalRegistryTerms() ? 'Добавить лаг' : 'Добавить задержку/наложение';
+            button.setAttribute(
+              'aria-label',
+              (usesProposalRegistryTerms() ? 'Добавить лаг после этапа ' : 'Добавить задержку или наложение после этапа ') + (index + 1)
+            );
             button.classList.remove('d-none');
           } else {
             if (actionSlot) actionSlot.innerHTML = '';
@@ -10110,8 +10199,22 @@
             termRow.dataset.proposalStageKey = stageUid;
             const stageInput = termRow.querySelector('.proposal-stage-label-input');
             if (stageInput) stageInput.value = 'Этап ' + rank;
+            const compactLabel = termRow.querySelector('.proposal-stage-label-compact');
+            if (compactLabel) compactLabel.textContent = String(rank);
             const delayRow = getStageDelayRowForTermRow(termRow);
             if (delayRow) delayRow.dataset.proposalDelayForStageKey = stageUid;
+          }
+          const evaluationRow = getEvaluationRows()[index];
+          if (evaluationRow) {
+            evaluationRow.dataset.proposalStageKey = stageUid;
+            evaluationRow.dataset.productId = productId;
+            const common = hasMultipleStages && form.querySelector('.js-registration-evaluation-common')?.checked;
+            if (!(common && index === 0)) {
+              const evaluationLabel = evaluationRow.querySelector('.proposal-stage-label-input');
+              const evaluationCompact = evaluationRow.querySelector('.proposal-stage-label-compact');
+              if (evaluationLabel) evaluationLabel.value = 'Этап ' + rank;
+              if (evaluationCompact) evaluationCompact.textContent = String(rank);
+            }
           }
         });
         commercialBlocks.forEach(function (block, index) {
@@ -10255,6 +10358,7 @@
       }
 
       function bindTermsRows() {
+        if (usesProposalRegistryTerms()) return;
         getStageTermRows().forEach(function (row) {
           if (row.dataset.eventsBound === '1') return;
           row.dataset.eventsBound = '1';
@@ -10308,6 +10412,7 @@
       }
 
       function bindStageTotalsUnits() {
+        if (usesProposalRegistryTerms()) return;
         const totalsRow = getTotalsRow();
         if (!totalsRow || totalsRow.dataset.eventsBound === '1') return;
         totalsRow.dataset.eventsBound = '1';
@@ -10319,6 +10424,7 @@
       }
 
       function bindStageDelayRows() {
+        if (usesProposalRegistryTerms()) return;
         function forceRowsAfterDelayToRecalculate(delayRow) {
           const termRows = getStageTermRows();
           const sourceTermRow = delayRow?.previousElementSibling?.classList?.contains('proposal-stage-terms-row')
@@ -10348,7 +10454,8 @@
       function getSharedEvaluationDateValue(preferredValue) {
         const preferredDate = parseProposalDate(preferredValue);
         if (preferredDate) return formatProposalDateIso(preferredDate);
-        const firstInput = getStageTermRows()[0]?.querySelector('.proposal-stage-evaluation-date');
+        const firstInput = form.querySelector('#proposal-stage-evaluation-tbody .proposal-stage-evaluation-date')
+          || getStageTermRows()[0]?.querySelector('.proposal-stage-evaluation-date');
         const firstDate = parseProposalDate(firstInput?.value) || getProposalDefaultEvaluationDate();
         return formatProposalDateIso(firstDate);
       }
@@ -10356,6 +10463,7 @@
       let isSyncingStageEvaluationDates = false;
 
       function syncStageEvaluationDates(preferredValue) {
+        if (usesProposalRegistryTerms()) return;
         if (isSyncingStageEvaluationDates) return;
         isSyncingStageEvaluationDates = true;
         const sharedValue = getSharedEvaluationDateValue(preferredValue);
@@ -10793,6 +10901,7 @@
       }
 
       function syncStageTerms() {
+        if (usesProposalRegistryTerms()) return;
         const termRows = getStageTermRows();
         const states = termRows.map(function (row) {
           const monthsInput = row.querySelector('.proposal-stage-service-term-months');
@@ -11012,14 +11121,23 @@
           });
           if (termsRow) {
             const termEntry = getProposalTypicalServiceTermEntry(serviceBlock || row);
-            const evaluationInput = termsRow.querySelector('.proposal-stage-evaluation-date');
+            const evaluationInput = getEvaluationRows()[index]?.querySelector('.proposal-stage-evaluation-date')
+              || termsRow.querySelector('.proposal-stage-evaluation-date');
+            const sourceInput = termsRow.querySelector('.proposal-stage-source-data-term');
+            const sourceUnitSelect = termsRow.querySelector('.proposal-stage-source-data-term-unit');
             const monthsInput = termsRow.querySelector('.proposal-stage-service-term-months');
             const weeksInput = termsRow.querySelector('.proposal-stage-final-report-term-weeks');
             const preliminaryUnitSelect = termsRow.querySelector('.proposal-stage-preliminary-term-unit');
             const finalUnitSelect = termsRow.querySelector('.proposal-stage-final-term-unit');
             const previousProductId = String(termsRow.dataset.productId || '');
-            if (evaluationInput && (!String(evaluationInput.value || '').trim() || productId !== String(termsRow.dataset.productId || ''))) {
+            if (evaluationInput && !String(evaluationInput.value || '').trim()) {
               setDateFieldValue(evaluationInput, getSharedEvaluationDateValue());
+            }
+            if (termEntry && sourceInput && !String(sourceInput.value || '').trim() && parseProposalTermDecimal(termEntry.source_data_term)) {
+              if (sourceUnitSelect && termEntry.source_data_term_unit) {
+                sourceUnitSelect.value = termEntry.source_data_term_unit;
+              }
+              sourceInput.value = termEntry.source_data_term;
             }
             if (termEntry && monthsInput && weeksInput) {
               if (!String(monthsInput.value || '').trim() || productId !== previousProductId) {
@@ -11041,9 +11159,13 @@
             termsRow.dataset.productId = productId;
           }
         });
-        syncStageEvaluationDates();
-        syncStageTerms();
-        applyProposalReportTermsLockState();
+        if (usesProposalRegistryTerms()) {
+          form.__contractStageTermsApi?.sync();
+        } else {
+          syncStageEvaluationDates();
+          syncStageTerms();
+          applyProposalReportTermsLockState();
+        }
         syncSummaryCommercialBlock();
         syncPaymentScheduleMode();
         form.dispatchEvent(new CustomEvent('proposal-stage-products-changed'));
@@ -11051,6 +11173,7 @@
       }
 
       termsTbody.addEventListener('click', function (event) {
+        if (usesProposalRegistryTerms()) return;
         const removeButton = event.target.closest('.proposal-stage-delay-remove');
         if (removeButton) {
           const delayRow = removeButton.closest('.proposal-stage-delay-row');
@@ -11294,12 +11417,22 @@
     form.querySelector('input[type="checkbox"][name="payment_schedule_common"]')?.addEventListener('change', syncPaymentScheduleMode);
     form.addEventListener('htmx:beforeRequest', syncPaymentScheduleMode);
     syncPaymentScheduleMode();
-    qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
-      icon.addEventListener('click', function () {
-        proposalReportTermsEditMode = !proposalReportTermsEditMode;
-        stageProductsApi?.sync();
+    if (!usesProposalRegistryTerms()) {
+      qa('.js-proposal-report-terms-lock', form).forEach(function (icon) {
+        icon.addEventListener('click', function () {
+          proposalReportTermsEditMode = !proposalReportTermsEditMode;
+          stageProductsApi?.sync();
+        });
       });
-    });
+    }
+    if (usesProposalRegistryTerms() && typeof window.attachContractStageTerms === 'function' && form.dataset.contractStageTermsBound !== '1') {
+      window.attachContractStageTerms(form, {
+        termsTbodySelector: '#proposal-stage-terms-tbody',
+        evaluationTbodySelector: '#proposal-stage-evaluation-tbody',
+        anchorSelector: '[name="proposal_project_start_date"]',
+        groupByContract: false,
+      });
+    }
     form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', function () {
       syncAssetOwnerFromCustomer('customer-sync');
     });

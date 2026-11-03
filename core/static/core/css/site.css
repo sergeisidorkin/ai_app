@@ -869,7 +869,10 @@ body .second-sidebar + .flex-grow-1 {
   margin-bottom: 2px;
 }
 
-.table-section-header .proposal-section-toggle.classifiers-section-toggle {
+.table-section-header .proposal-section-toggle.classifiers-section-toggle,
+.table-section-header .proposal-section-toggle {
+  line-height: 1;
+  font-size: 1rem;
   align-self: center;
   margin-bottom: 0;
   position: relative;
@@ -1818,8 +1821,8 @@ body .second-sidebar + .flex-grow-1 {
 #policy-products-section .product-group-toggle {
   position: absolute;
   left: var(--product-group-toggle-inset);
-  top: 50%;
-  transform: translateY(-50%);
+  /* First line only: same top offset as the row checkbox, not the cell center. */
+  top: calc(var(--bs-table-cell-padding-y, .25rem) + .25rem);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2313,7 +2316,7 @@ section#templates .alert.alert-info .text-muted {
 
 /* 0) Первые 2 столбца фиксированы, остальные остаются адаптивными */
 #projects-pane table.reg-table col.checkbox       { width: 30px !important; }
-#projects-pane table.reg-table col.project-number { width: 70px !important; }
+#projects-pane table.reg-table col.project-number { width: 100px !important; }
 #projects-pane table.reg-table col.contract-id { width: 6%  !important; }
 #projects-pane table.reg-table col.agreement-type { width: 9%  !important; }
 #projects-pane table.reg-table col.group          { width: 4%  !important; }
@@ -2322,7 +2325,8 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table col.reg-type       { width: 4%  !important; }
 #projects-pane table.reg-table col.reg-name       { width: 13% !important; }
 #projects-pane table.reg-table col.reg-launch     { width: 44px !important; }
-#projects-pane table.reg-table col.reg-status     { width: 140px !important; }
+#projects-pane table.reg-table col.reg-status     { width: 220px !important; }
+#projects-pane table.reg-table col.reg-status-date { width: 150px !important; }
 #projects-pane table.reg-table col.reg-deadline   { width: 150px !important; }
 #projects-pane table.reg-table col.reg-year       { width: 3%  !important; }
 #projects-pane table.reg-table col.reg-evaluation-date { width: 150px !important; }
@@ -2766,14 +2770,73 @@ section#templates .alert.alert-info .text-muted {
   max-width: 30px !important;
 }
 
+#projects-pane {
+  --registration-group-toggle-size: 1rem;
+  --registration-group-toggle-gap: 6px;
+  --registration-group-toggle-inset: 1px;
+}
 #projects-pane table.reg-table thead th:nth-child(2),
 #projects-pane table.reg-table tbody td:nth-child(2) {
-  width: 70px !important;
-  min-width: 70px !important;
-  max-width: 70px !important;
+  width: 100px !important;
+  min-width: 100px !important;
+  max-width: 100px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
+}
+#projects-pane table.reg-table .col-project-number {
+  position: relative;
+  padding-left: calc(
+    var(--registration-group-toggle-inset)
+    + var(--registration-group-toggle-size)
+    + var(--registration-group-toggle-gap)
+  ) !important;
+}
+#projects-pane #registration-groups-toggle {
+  position: absolute;
+  left: var(--registration-group-toggle-inset);
+  top: auto;
+  right: auto;
+  /* Чекбокс шапки — 1rem внутри .form-check высотой 1.5rem, прижатого к низу ячейки. */
+  bottom: calc(var(--bs-table-cell-padding-y) + (1.5rem - 1rem) / 2);
+  width: 1rem;
+  height: 1rem;
+  margin-left: 0;
+  transform: none;
+  box-sizing: border-box;
+}
+#projects-pane .registration-group-toggle {
+  position: absolute;
+  left: var(--registration-group-toggle-inset);
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--registration-group-toggle-size);
+  height: var(--registration-group-toggle-size);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #ced4da;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+}
+#projects-pane .registration-group-toggle:hover,
+#projects-pane .registration-group-toggle:active {
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+}
+#projects-pane .registration-group-toggle .bi {
+  transition: transform .12s ease-out;
+}
+#projects-pane .registration-group-toggle[aria-expanded="false"] .bi {
+  transform: rotate(-90deg);
+}
+#projects-pane tr.registration-group-member-collapsed {
+  display: none !important;
 }
 
 #projects-pane table.reg-table thead th:nth-child(7),
@@ -2833,6 +2896,27 @@ section#templates .alert.alert-info .text-muted {
   white-space: nowrap !important;
   vertical-align: top !important;
   text-align: center !important;
+}
+
+#projects-pane table.reg-table thead th.project-quick-edit-col {
+  position: relative;
+  z-index: 2;
+  overflow: visible !important;
+}
+
+#projects-pane table.reg-table thead .reg-project-id-heading {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--bs-table-cell-padding-y) + 3px);
+  transform: translateX(-0.5em);
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+#projects-pane table.reg-table thead .reg-project-id-heading-sizer {
+  visibility: hidden;
+  white-space: nowrap;
 }
 
 #projects-pane table.reg-table .reg-launch-cell {
@@ -2931,6 +3015,7 @@ section#templates .alert.alert-info .text-muted {
 }
 
 #projects-pane table.reg-table tbody td[data-reg-status-cell],
+#projects-pane table.reg-table tbody td[data-reg-summary-status-cell],
 #projects-pane table.reg-table tbody td[data-reg-manager-cell],
 #projects-pane table.reg-table tbody td[data-reg-coordinator-cell],
 #projects-pane table.reg-table tbody td[data-reg-deadline-cell],
@@ -2946,18 +3031,18 @@ section#templates .alert.alert-info .text-muted {
   width: 150px !important;
 }
 
-#projects-pane table.reg-table tbody td[data-reg-date-field="evaluation_date"] {
+#projects-pane table.reg-table tbody td[data-reg-date-field="evaluation_date"],
+#projects-pane table.reg-table tbody td[data-reg-summary-cell="evaluation-date"] {
   min-width: 150px !important;
   width: 150px !important;
 }
 
-#projects-pane table.reg-table tbody td[data-reg-status-cell] {
-  width: 140px !important;
+#projects-pane table.reg-table tbody td[data-reg-status-cell],
+#projects-pane table.reg-table tbody td[data-reg-summary-status-cell] {
+  width: 220px !important;
+  min-width: 220px !important;
 }
 
-#projects-pane table.reg-table .reg-status-btn,
-#projects-pane table.reg-table .reg-manager-btn,
-#projects-pane table.reg-table .reg-coordinator-btn,
 #projects-pane table.reg-table .reg-deadline-btn {
   border: 1.5px solid transparent;
   border-radius: .25rem;
@@ -2979,20 +3064,46 @@ section#templates .alert.alert-info .text-muted {
   white-space: nowrap;
 }
 
+#projects-pane table.reg-table .reg-status-btn,
+#projects-pane table.reg-table .reg-manager-btn,
+#projects-pane table.reg-table .reg-coordinator-btn {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  line-height: inherit;
+  padding: 0 1.75rem 0 var(--bs-table-cell-padding-x, .25rem) !important;
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
 #projects-pane table.reg-table .reg-status-btn::after,
 #projects-pane table.reg-table .reg-manager-btn::after,
 #projects-pane table.reg-table .reg-coordinator-btn::after {
   content: "";
-  display: inline-block;
-  margin-left: auto;
-  width: .55rem;
-  height: .55rem;
-  flex: 0 0 .55rem;
+  position: absolute;
+  top: 50%;
+  right: .45rem;
+  width: 16px;
+  height: 12px;
+  transform: translateY(-50%);
   background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%236c757d' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
   background-repeat: no-repeat;
   background-position: center;
-  background-size: .55rem .55rem;
-  opacity: 0;
+  background-size: 16px 12px;
+  pointer-events: none;
 }
 
 #projects-pane table.reg-table .reg-status-btn:hover,
@@ -3003,7 +3114,15 @@ section#templates .alert.alert-info .text-muted {
 #projects-pane table.reg-table .reg-manager-btn.is-editing,
 #projects-pane table.reg-table .reg-coordinator-btn:hover,
 #projects-pane table.reg-table .reg-coordinator-btn:focus-visible,
-#projects-pane table.reg-table .reg-coordinator-btn.is-editing,
+#projects-pane table.reg-table .reg-coordinator-btn.is-editing {
+  background-color: #fff;
+  border: 0;
+  box-shadow: none;
+  color: inherit;
+  text-decoration: none;
+  z-index: 2;
+}
+
 #projects-pane table.reg-table .reg-deadline-btn:hover,
 #projects-pane table.reg-table .reg-deadline-btn:focus-visible,
 #projects-pane table.reg-table .reg-deadline-btn.is-editing {
@@ -3015,30 +3134,35 @@ section#templates .alert.alert-info .text-muted {
   z-index: 2;
 }
 
-#projects-pane table.reg-table .reg-status-btn:hover::after,
-#projects-pane table.reg-table .reg-status-btn:focus-visible::after,
-#projects-pane table.reg-table .reg-status-btn.is-editing::after,
-#projects-pane table.reg-table .reg-manager-btn:hover::after,
-#projects-pane table.reg-table .reg-manager-btn:focus-visible::after,
-#projects-pane table.reg-table .reg-manager-btn.is-editing::after,
-#projects-pane table.reg-table .reg-coordinator-btn:hover::after,
-#projects-pane table.reg-table .reg-coordinator-btn:focus-visible::after,
-#projects-pane table.reg-table .reg-coordinator-btn.is-editing::after {
-  opacity: 1;
+#projects-pane table.reg-table .reg-deadline-btn--readonly,
+#projects-pane table.reg-table .reg-deadline-btn--readonly:hover,
+#projects-pane table.reg-table .reg-deadline-btn--readonly:focus,
+#projects-pane table.reg-table .reg-deadline-btn--readonly:focus-visible {
+  pointer-events: none;
+  cursor: default;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-decoration: none;
 }
 
 #projects-pane #registration-status-editor,
+#projects-pane #registration-summary-status-editor,
 #projects-pane #registration-manager-editor,
 #projects-pane #registration-coordinator-editor {
-  border: 1.5px solid #ced4da;
-  border-radius: .25rem;
-  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%236c757d' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
-  background-position: right .625rem center;
-  background-size: .55rem .55rem;
-  box-shadow: 0 -2px 0 #fff, 0 2px 0 #fff;
+  opacity: 0;
+  pointer-events: none;
+  border: 0 !important;
+  border-radius: 0;
+  box-shadow: none !important;
+  outline: none !important;
+  background-color: transparent;
+  background-image: none;
   font-size: inherit;
-  line-height: 1;
-  padding: 0 .625rem 0 var(--bs-table-cell-padding-x, .4rem);
+  line-height: 1.2;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 #projects-pane #registration-deadline-editor-wrap {
@@ -7581,6 +7705,29 @@ html.table-action-progress * {
   color: #c7cdd3;
 }
 
+#projects-section-title .proposal-header-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+#projects-section-title .proposal-header-link:hover,
+#projects-section-title .proposal-header-link:focus {
+  color: inherit;
+  text-decoration: none;
+}
+
+#projects-section-title .proposal-header-separator {
+  color: #c7cdd3;
+}
+
+#registration-form-actions {
+  min-height: 31px;
+}
+#registration-form-actions [data-registration-form-save-btn]:disabled {
+  opacity: .65;
+}
+
 #proposals-pane .group-select-shell {
   position: relative;
 }
@@ -8185,7 +8332,7 @@ html.table-action-progress * {
 
 .contract-table { table-layout: auto; width: 100%; min-width: max-content; }
 .contract-table col.checkbox   { width: 30px !important; }
-.contract-table col.project-id { width: 105px !important; }
+.contract-table col.project-id { width: 120px !important; }
 
 .contract-table th,
 .contract-table td {
@@ -8203,9 +8350,9 @@ html.table-action-progress * {
 
 .contract-table th:nth-child(2),
 .contract-table td:nth-child(2) {
-  width: 105px !important;
-  min-width: 105px !important;
-  max-width: 105px !important;
+  width: 120px !important;
+  min-width: 120px !important;
+  max-width: 120px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -8215,26 +8362,11 @@ html.table-action-progress * {
 .work-table td:nth-child(2) > .clf-id-droid-mono,
 .legal-table td:nth-child(2) > .clf-id-droid-mono {
   display: block !important;
-  width: 100px !important;
-  max-width: 100px !important;
+  width: 100% !important;
+  max-width: 100% !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
-}
-
-.contract-table td:nth-child(2) > .clf-id-droid-mono {
-  width: 105px !important;
-  max-width: 105px !important;
-}
-
-.work-table td:nth-child(2) > .clf-id-droid-mono {
-  width: 105px !important;
-  max-width: 105px !important;
-}
-
-.legal-table td:nth-child(2) > .clf-id-droid-mono {
-  width: 105px !important;
-  max-width: 105px !important;
 }
 
 .contract-table col.col-subject { width: 160px !important; }
@@ -8278,7 +8410,7 @@ html.table-action-progress * {
 
 .work-table { table-layout: auto; width: 100%; min-width: max-content; }
 .work-table col.col-checkbox { width: 30px !important; }
-.work-table col.col-project  { width: 105px !important; }
+.work-table col.col-project  { width: 110px !important; }
 .work-table col.col-asset-code { width: 56px !important; }
 .performers-table col.col-section-code { width: 56px !important; }
 
@@ -8298,9 +8430,9 @@ html.table-action-progress * {
 
 .work-table th:nth-child(2),
 .work-table td:nth-child(2) {
-  width: 105px !important;
-  min-width: 105px !important;
-  max-width: 105px !important;
+  width: 110px !important;
+  min-width: 110px !important;
+  max-width: 110px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -8344,7 +8476,7 @@ html.table-action-progress * {
 
 .legal-table { table-layout: auto; width: 100%; min-width: max-content; }
 .legal-table col.col-checkbox { width: 30px !important; }
-.legal-table col.col-project  { width: 105px !important; }
+.legal-table col.col-project  { width: 110px !important; }
 
 .legal-table th,
 .legal-table td {
@@ -8362,9 +8494,9 @@ html.table-action-progress * {
 
 .legal-table th:nth-child(2),
 .legal-table td:nth-child(2) {
-  width: 105px !important;
-  min-width: 105px !important;
-  max-width: 105px !important;
+  width: 110px !important;
+  min-width: 110px !important;
+  max-width: 110px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -8667,8 +8799,10 @@ body.product-map-fullscreen-active {
 
 #product-map-field svg.jsmind path {
   fill: none;
+  /* Opaque match of #075D94 at 0.7 over the map background #f2f7fb. */
+  stroke: #4e8bb3;
   stroke-width: 1.5;
-  stroke-opacity: 0.7;
+  stroke-opacity: 1;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -9483,7 +9617,7 @@ body.product-map-fullscreen-active {
 }
 
 #performers-main-section .performers-table col.col-number {
-  width: 105px !important;
+  width: 120px !important;
 }
 
 #performers-main-section .performers-table col.col-active,
@@ -9521,9 +9655,9 @@ body.product-map-fullscreen-active {
 
 #performers-main-section .performers-table thead th:nth-child(3),
 #performers-main-section .performers-table tbody td:nth-child(3) {
-  width: 105px !important;
-  min-width: 105px !important;
-  max-width: 105px !important;
+  width: 120px !important;
+  min-width: 120px !important;
+  max-width: 120px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -9604,7 +9738,7 @@ body.product-map-fullscreen-active {
 }
 
 #participation-confirmation-section .performers-table col.col-number {
-  width: 105px !important;
+  width: 120px !important;
 }
 
 #participation-confirmation-section .performers-table col:not(.col-checkbox):not(.col-short-number):not(.col-number) {
@@ -9637,9 +9771,9 @@ body.product-map-fullscreen-active {
 
 #participation-confirmation-section .performers-table thead th:nth-child(3),
 #participation-confirmation-section .performers-table tbody td:nth-child(3) {
-  width: 105px !important;
-  min-width: 105px !important;
-  max-width: 105px !important;
+  width: 120px !important;
+  min-width: 120px !important;
+  max-width: 120px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -10222,7 +10356,7 @@ body.product-map-fullscreen-active {
 }
 
 #info-request-approval-section .performers-table col.col-number {
-  width: 105px !important;
+  width: 120px !important;
 }
 
 .payment-request-section .performers-table col.col-number {
@@ -10246,9 +10380,9 @@ body.product-map-fullscreen-active {
 
 #info-request-approval-section .performers-table thead th:nth-child(2),
 #info-request-approval-section .performers-table tbody td:nth-child(2) {
-  width: 105px !important;
-  min-width: 105px !important;
-  max-width: 105px !important;
+  width: 120px !important;
+  min-width: 120px !important;
+  max-width: 120px !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -10723,6 +10857,7 @@ body.product-map-fullscreen-active {
 }
 #participation-section-toggle,
 #participation-asset-toggle,
+#registration-groups-toggle,
 #contract-section-toggle,
 #contract-asset-toggle,
 #info-request-section-toggle,
@@ -13241,7 +13376,7 @@ body.proposal-service-text-modal-open {
 }
 
 #report-submission-section .performers-table col.col-number {
-  width: 105px !important;
+  width: 148px !important;
 }
 
 #report-submission-section .performers-table col:not(.col-checkbox):not(.col-number) {
@@ -13264,12 +13399,12 @@ body.proposal-service-text-modal-open {
 
 #report-submission-section .performers-table thead th:nth-child(2),
 #report-submission-section .performers-table tbody td:nth-child(2) {
-  width: 105px !important;
-  min-width: 105px !important;
-  max-width: 105px !important;
+  width: 148px !important;
+  min-width: 148px !important;
+  max-width: none !important;
   white-space: nowrap !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
 }
 
 #report-submission-section .performers-table thead th:nth-child(n+3),
@@ -14230,6 +14365,14 @@ body.proposal-service-text-modal-open {
 }
 #proposals-pane[data-proposal-lazy-shell="1"] > .table-section-header {
   margin-top: 0;
+}
+/* Высота как у селекта «Отображаемые поля», чтобы заголовок не опускался после загрузки. */
+#proposals-pane[data-proposal-lazy-shell="1"] > .table-section-header::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 0;
+  height: calc(1.5em + .5rem + 2px);
+  font-size: .875rem;
 }
 #proposals-pane .proposal-table-placeholder-card {
   min-height: 320px;

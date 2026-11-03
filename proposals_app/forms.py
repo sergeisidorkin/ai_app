@@ -1,7 +1,7 @@
 import json
 import sys
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django import forms
 from django.db import models
@@ -362,6 +362,54 @@ def _normalize_proposal_final_term_unit(value):
     if raw in valid_units:
         return raw
     return ProposalRegistration.FinalReportTermUnit.WEEKS
+
+
+def _proposal_stage_enabled_flag(value, default):
+    from projects_app.stage_terms import enabled_flag
+
+    return enabled_flag(value, default)
+
+
+def _proposal_source_data_term_unit(value):
+    raw = str(value or "").strip()
+    if raw in {"days", "weeks", "months"}:
+        return raw
+    return "weeks"
+
+
+def _proposal_delay_unit(value):
+    raw = str(value or "").strip()
+    if raw in {"days", "weeks", "months"}:
+        return raw
+    return "days"
+
+
+def _proposal_stage_terms_from_payload(payload):
+    payload = payload if isinstance(payload, dict) else {}
+
+    def flag(key, default):
+        if key not in payload:
+            return default
+        return _proposal_stage_enabled_flag(payload.get(key), default)
+
+    fields = {
+        "evaluation_date_enabled": flag("evaluation_date_enabled", True),
+        "source_data_term": str(payload.get("source_data_term") or ""),
+        "source_data_term_unit": _proposal_source_data_term_unit(payload.get("source_data_term_unit")),
+        "source_data_term_enabled": flag("source_data_term_enabled", False),
+        "source_data_date": str(payload.get("source_data_date") or ""),
+        "source_data_date_enabled": flag("source_data_date_enabled", False),
+        "service_term_months_enabled": flag("service_term_months_enabled", True),
+        "preliminary_report_date_enabled": flag("preliminary_report_date_enabled", True),
+        "final_report_date_enabled": flag("final_report_date_enabled", True),
+        "next_stage_delay_unit": _proposal_delay_unit(payload.get("next_stage_delay_unit")),
+    }
+    if "evaluation_date_common" in payload:
+        fields["evaluation_date_common"] = _proposal_stage_enabled_flag(
+            payload.get("evaluation_date_common"),
+            True,
+        )
+    return fields
 
 
 class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
@@ -1064,6 +1112,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             )
         self.stage_rows = self._build_stage_rows()
         self.summary_commercial_row = self._build_summary_commercial_row()
+        self._refresh_proposal_terms_display()
 
     def _is_payment_schedule_common_enabled(self):
         if self.is_bound:
@@ -1160,13 +1209,23 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 ensure_ascii=False,
             ),
             "evaluation_date": _format_stage_date(self.fields["evaluation_date"].initial),
+            "evaluation_date_enabled": True,
+            "source_data_term": "",
+            "source_data_term_unit": "weeks",
+            "source_data_term_enabled": rank == 1,
+            "source_data_date": "",
+            "source_data_date_enabled": False,
             "service_term_months": "",
+            "service_term_months_enabled": True,
             "preliminary_report_term_unit": ProposalRegistration.PreliminaryReportTermUnit.MONTHS,
             "preliminary_report_date": "",
+            "preliminary_report_date_enabled": False,
             "final_report_term_weeks": "",
             "final_report_term_unit": ProposalRegistration.FinalReportTermUnit.WEEKS,
             "final_report_date": "",
+            "final_report_date_enabled": False,
             "next_stage_delay_days": "",
+            "next_stage_delay_unit": "days",
             "advance_percent": str(self.fields["advance_percent"].initial or ""),
             "advance_term_days": str(self.fields["advance_term_days"].initial or ""),
             "preliminary_report_percent": str(self.fields["preliminary_report_percent"].initial or ""),
@@ -1174,6 +1233,43 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "final_report_percent": str(self.initial.get("final_report_percent") or ""),
             "final_report_term_days": str(self.fields["final_report_term_days"].initial or ""),
         }
+
+    def _bound_stage_flag(self, key, index, default):
+        if not self.is_bound or key not in self.data:
+            return default
+        values = _proposal_request_list(self.data, key)
+        if index >= len(values):
+            return default
+        return _proposal_stage_enabled_flag(values[index], default)
+
+    def _posted_proposal_common_flag(self):
+        if not self.is_bound or "evaluation_date_common" not in self.data:
+            return None
+        values = _proposal_request_list(self.data, "evaluation_date_common")
+        return _proposal_stage_enabled_flag(values[-1] if values else "false", False)
+
+    def _refresh_proposal_terms_display(self):
+        from projects_app.stage_terms import evaluation_dates_are_common
+        from proposals_app.views import _proposal_schedule_base_start_date
+
+        rows = list(self.stage_rows or [])
+
+        def column_disabled(key, default=True):
+            return bool(rows) and all(not row.get(key, default) for row in rows)
+
+        self.terms_source_data_term_disabled = column_disabled("source_data_term_enabled", False)
+        self.terms_source_data_date_disabled = column_disabled("source_data_date_enabled", False)
+        self.terms_preliminary_term_disabled = column_disabled("service_term_months_enabled", True)
+        self.terms_preliminary_date_disabled = column_disabled("preliminary_report_date_enabled", True)
+        self.terms_final_date_disabled = column_disabled("final_report_date_enabled", True)
+        self.terms_evaluation_dates_disabled = column_disabled("evaluation_date_enabled", True)
+        posted_common = self._posted_proposal_common_flag()
+        if posted_common is None:
+            self.terms_evaluation_date_common = evaluation_dates_are_common(rows)
+        else:
+            self.terms_evaluation_date_common = posted_common
+        self.terms_project_key = (getattr(self.instance, "short_uid", "") or "") or "new-proposal"
+        self.proposal_project_start_iso = _proposal_schedule_base_start_date().isoformat()
 
     def _build_stage_rows_from_bound_data(self):
         field_names = (
@@ -1191,13 +1287,23 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "commercial_offer_payload",
             "commercial_totals_payload",
             "evaluation_date",
+            "evaluation_date_enabled",
+            "source_data_term",
+            "source_data_term_unit",
+            "source_data_term_enabled",
+            "source_data_date",
+            "source_data_date_enabled",
             "service_term_months",
+            "service_term_months_enabled",
             "preliminary_report_term_unit",
             "preliminary_report_date",
+            "preliminary_report_date_enabled",
             "final_report_term_weeks",
             "final_report_term_unit",
             "final_report_date",
+            "final_report_date_enabled",
             "next_stage_delay_days",
+            "next_stage_delay_unit",
             "advance_percent",
             "advance_term_days",
             "preliminary_report_percent",
@@ -1275,9 +1381,24 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "evaluation_date": (
                     rows_map["evaluation_date"][index] if index < len(rows_map["evaluation_date"]) else ""
                 ).strip(),
+                "evaluation_date_enabled": self._bound_stage_flag("evaluation_date_enabled", index, True),
+                "source_data_term": (
+                    rows_map["source_data_term"][index] if index < len(rows_map["source_data_term"]) else ""
+                ).strip(),
+                "source_data_term_unit": _proposal_source_data_term_unit(
+                    rows_map["source_data_term_unit"][index]
+                    if index < len(rows_map["source_data_term_unit"])
+                    else ""
+                ),
+                "source_data_term_enabled": self._bound_stage_flag("source_data_term_enabled", index, False),
+                "source_data_date": (
+                    rows_map["source_data_date"][index] if index < len(rows_map["source_data_date"]) else ""
+                ).strip(),
+                "source_data_date_enabled": self._bound_stage_flag("source_data_date_enabled", index, False),
                 "service_term_months": (
                     rows_map["service_term_months"][index] if index < len(rows_map["service_term_months"]) else ""
                 ).strip(),
+                "service_term_months_enabled": self._bound_stage_flag("service_term_months_enabled", index, True),
                 "preliminary_report_term_unit": _normalize_proposal_preliminary_term_unit(
                     rows_map["preliminary_report_term_unit"][index]
                     if index < len(rows_map["preliminary_report_term_unit"])
@@ -1288,6 +1409,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     if index < len(rows_map["preliminary_report_date"])
                     else ""
                 ).strip(),
+                "preliminary_report_date_enabled": self._bound_stage_flag(
+                    "preliminary_report_date_enabled",
+                    index,
+                    True,
+                ),
                 "final_report_term_weeks": (
                     rows_map["final_report_term_weeks"][index]
                     if index < len(rows_map["final_report_term_weeks"])
@@ -1301,11 +1427,17 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "final_report_date": (
                     rows_map["final_report_date"][index] if index < len(rows_map["final_report_date"]) else ""
                 ).strip(),
+                "final_report_date_enabled": self._bound_stage_flag("final_report_date_enabled", index, True),
                 "next_stage_delay_days": (
                     rows_map["next_stage_delay_days"][index]
                     if index < len(rows_map["next_stage_delay_days"])
                     else ""
                 ).strip(),
+                "next_stage_delay_unit": _proposal_delay_unit(
+                    rows_map["next_stage_delay_unit"][index]
+                    if index < len(rows_map["next_stage_delay_unit"])
+                    else ""
+                ),
                 "advance_percent": (
                     rows_map["advance_percent"][index] if index < len(rows_map["advance_percent"]) else ""
                 ).strip(),
@@ -1339,6 +1471,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "service_composition",
                     "service_composition_customer_tz",
                     "evaluation_date",
+                    "source_data_term",
+                    "source_data_date",
                     "service_term_months",
                     "preliminary_report_date",
                     "final_report_term_weeks",
@@ -1418,6 +1552,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         ),
                         "final_report_date": str(payload.get("final_report_date") or ""),
                         "next_stage_delay_days": str(payload.get("next_stage_delay_days") or ""),
+                        **_proposal_stage_terms_from_payload(payload),
                         "advance_percent": self._stage_display_value(
                             payload.get("advance_percent"),
                             instance.advance_percent,
@@ -1500,6 +1635,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 ),
                 "final_report_date": _format_stage_date(instance.final_report_date),
                 "next_stage_delay_days": "",
+                **_proposal_stage_terms_from_payload({}),
                 "advance_percent": self._stage_display_value(
                     instance.advance_percent,
                     self.fields["advance_percent"].initial,
@@ -1644,6 +1780,27 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             return int(raw)
         except (TypeError, ValueError):
             raise forms.ValidationError(f"Этап {row_index}: поле «{field_label}» заполнено некорректно.")
+
+    def _parse_stage_delay_unit(self, value, *, row_index):
+        raw = str(value or "").strip()
+        if not raw:
+            return "days"
+        if raw not in {"days", "weeks", "months"}:
+            raise forms.ValidationError(f"Этап {row_index}: поле «Единица лага» заполнено некорректно.")
+        return raw
+
+    def _parse_stage_delay(self, value, *, unit, row_index):
+        parsed = self._parse_stage_decimal(value, row_index=row_index, field_label="Лаг")
+        if parsed is None:
+            return 0
+        if parsed < 0:
+            raise forms.ValidationError(f"Этап {row_index}: поле «Лаг» должно быть не меньше 0.")
+        if unit == "days":
+            return int(parsed.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        quantized = parsed.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        if quantized == quantized.to_integral_value():
+            return int(quantized)
+        return format(quantized, "f")
 
     def _load_stage_json(self, raw, *, row_index, field_label, expected_type, default):
         raw = str(raw or "").strip()
@@ -2209,9 +2366,18 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         return summary_rows, travel_mode
 
     def _collect_stage_payloads(self):
+        from projects_app.stage_terms import evaluation_dates_are_common
+
         stage_payloads = []
         cleaned_product_ids = []
         cleaned_group_ids = []
+        posted_common = self._posted_proposal_common_flag()
+        if posted_common and len(self.stage_rows) > 1:
+            first = self.stage_rows[0]
+            for row in self.stage_rows[1:]:
+                row["evaluation_date"] = first.get("evaluation_date") or ""
+                row["evaluation_date_enabled"] = first.get("evaluation_date_enabled", True)
+        common_value = evaluation_dates_are_common(self.stage_rows) if posted_common is None else posted_common
         for row in self.stage_rows:
             rank = int(row.get("rank") or len(stage_payloads) + 1)
             row_has_data = any(
@@ -2224,6 +2390,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "service_composition",
                     "service_composition_customer_tz",
                     "evaluation_date",
+                    "source_data_term",
+                    "source_data_date",
                     "service_term_months",
                     "preliminary_report_date",
                     "final_report_term_weeks",
@@ -2334,28 +2502,65 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row.get("commercial_totals_payload"),
                         row_index=rank,
                     ),
-                    "evaluation_date": self._parse_stage_date(
-                        row.get("evaluation_date"),
-                        row_index=rank,
-                        field_label="Дата оценки",
+                    "evaluation_date_enabled": bool(row.get("evaluation_date_enabled", True)),
+                    "evaluation_date": (
+                        self._parse_stage_date(
+                            row.get("evaluation_date"),
+                            row_index=rank,
+                            field_label="Дата оценки",
+                        )
+                        if row.get("evaluation_date_enabled", True)
+                        else None
                     ),
+                    "source_data_term_enabled": bool(row.get("source_data_term_enabled", False)),
+                    "source_data_term_unit": _proposal_source_data_term_unit(row.get("source_data_term_unit")),
+                    "source_data_term": (
+                        self._parse_stage_term_amount(
+                            row.get("source_data_term"),
+                            unit=_proposal_source_data_term_unit(row.get("source_data_term_unit")),
+                            row_index=rank,
+                            field_label="Исходные данные",
+                        )
+                        if row.get("source_data_term_enabled", False)
+                        else None
+                    ),
+                    "source_data_date_enabled": bool(row.get("source_data_date_enabled", False)),
+                    "source_data_date": (
+                        self._parse_stage_date(
+                            row.get("source_data_date"),
+                            row_index=rank,
+                            field_label="Исходные данные (дата)",
+                        )
+                        if row.get("source_data_date_enabled", False)
+                        else None
+                    ),
+                    "service_term_months_enabled": bool(row.get("service_term_months_enabled", True)),
                     "preliminary_report_term_unit": self._parse_stage_preliminary_term_unit(
                         row.get("preliminary_report_term_unit"),
                         row_index=rank,
                     ),
-                    "service_term_months": self._parse_stage_term_amount(
-                        row.get("service_term_months"),
-                        unit=self._parse_stage_preliminary_term_unit(
-                            row.get("preliminary_report_term_unit"),
+                    "service_term_months": (
+                        self._parse_stage_term_amount(
+                            row.get("service_term_months"),
+                            unit=self._parse_stage_preliminary_term_unit(
+                                row.get("preliminary_report_term_unit"),
+                                row_index=rank,
+                            ),
                             row_index=rank,
-                        ),
-                        row_index=rank,
-                        field_label="Предварительный отчёт",
+                            field_label="Предварительный отчёт",
+                        )
+                        if row.get("service_term_months_enabled", True)
+                        else None
                     ),
-                    "preliminary_report_date": self._parse_stage_date(
-                        row.get("preliminary_report_date"),
-                        row_index=rank,
-                        field_label="Дата Предварительного отчёта",
+                    "preliminary_report_date_enabled": bool(row.get("preliminary_report_date_enabled", True)),
+                    "preliminary_report_date": (
+                        self._parse_stage_date(
+                            row.get("preliminary_report_date"),
+                            row_index=rank,
+                            field_label="Дата Предварительного отчёта",
+                        )
+                        if row.get("preliminary_report_date_enabled", True)
+                        else None
                     ),
                     "final_report_term_unit": self._parse_stage_final_term_unit(
                         row.get("final_report_term_unit"),
@@ -2370,15 +2575,28 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row_index=rank,
                         field_label="Итоговый отчёт",
                     ),
-                    "final_report_date": self._parse_stage_date(
-                        row.get("final_report_date"),
-                        row_index=rank,
-                        field_label="Дата Итогового отчёта",
+                    "final_report_date_enabled": bool(row.get("final_report_date_enabled", True)),
+                    "final_report_date": (
+                        self._parse_stage_date(
+                            row.get("final_report_date"),
+                            row_index=rank,
+                            field_label="Дата Итогового отчёта",
+                        )
+                        if row.get("final_report_date_enabled", True)
+                        else None
                     ),
-                    "next_stage_delay_days": self._parse_stage_signed_integer(
-                        row.get("next_stage_delay_days"),
+                    "evaluation_date_common": common_value,
+                    "next_stage_delay_unit": self._parse_stage_delay_unit(
+                        row.get("next_stage_delay_unit"),
                         row_index=rank,
-                        field_label="Задерж.",
+                    ),
+                    "next_stage_delay_days": self._parse_stage_delay(
+                        row.get("next_stage_delay_days"),
+                        unit=self._parse_stage_delay_unit(
+                            row.get("next_stage_delay_unit"),
+                            row_index=rank,
+                        ),
+                        row_index=rank,
                     ),
                     "advance_percent": advance_percent,
                     "advance_term_days": advance_term_days,
@@ -2568,13 +2786,24 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     for index, offer in enumerate(item["commercial_offer_payload"], start=1)
                 ],
                 "commercial_totals_json": dict(item["commercial_totals_json"]),
+                "evaluation_date_enabled": bool(item["evaluation_date_enabled"]),
                 "evaluation_date": _format_stage_date(item["evaluation_date"]),
+                "source_data_term_enabled": bool(item["source_data_term_enabled"]),
+                "source_data_term": str(item["source_data_term"] or ""),
+                "source_data_term_unit": item["source_data_term_unit"],
+                "source_data_date_enabled": bool(item["source_data_date_enabled"]),
+                "source_data_date": _format_stage_date(item["source_data_date"]),
+                "service_term_months_enabled": bool(item["service_term_months_enabled"]),
                 "service_term_months": str(item["service_term_months"] or ""),
                 "preliminary_report_term_unit": item["preliminary_report_term_unit"],
+                "preliminary_report_date_enabled": bool(item["preliminary_report_date_enabled"]),
                 "preliminary_report_date": _format_stage_date(item["preliminary_report_date"]),
                 "final_report_term_weeks": str(item["final_report_term_weeks"] or ""),
                 "final_report_term_unit": item["final_report_term_unit"],
+                "final_report_date_enabled": bool(item["final_report_date_enabled"]),
                 "final_report_date": _format_stage_date(item["final_report_date"]),
+                "evaluation_date_common": bool(item["evaluation_date_common"]),
+                "next_stage_delay_unit": item["next_stage_delay_unit"] or "days",
                 "next_stage_delay_days": item["next_stage_delay_days"] or 0,
                 "payment_schedule_common": self.payment_schedule_common_enabled,
                 "advance_percent": self._serialize_payload_decimal(item["advance_percent"]),

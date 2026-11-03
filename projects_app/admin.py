@@ -6,6 +6,7 @@ from .models import (
     Performer,
     ProjectRegistration,
     ProjectRegistrationProduct,
+    RegistrationGroupSummaryState,
     ReportCheckLine,
     ReportCheckRule,
     ReportMacro,
@@ -16,13 +17,14 @@ from .models import (
 class ProjectRegistrationAdmin(admin.ModelAdmin):
     list_display = (
         "position", "number", "group_display_value", "agreement_type", "agreement_number",
-        "short_uid", "type_value", "name", "status", "year", "customer",
+        "short_uid", "type_value", "name", "status", "status_date", "summary_status_date", "year", "customer",
     )
-    list_editable = ("position",)
+    list_editable = ("position", "status_date", "summary_status_date")
     list_display_links = ("number", "name")
     search_fields = ("=number", "short_uid", "agreement_number", "name", "customer", "registration_number", "project_manager")
     list_filter = ("group_member", "agreement_type", "status", "type", "year")
     readonly_fields = ("short_uid",)
+    exclude = ("terms_columns_json",)
 
     @admin.display(description="Группа", ordering="group")
     def group_display_value(self, obj):
@@ -31,6 +33,15 @@ class ProjectRegistrationAdmin(admin.ModelAdmin):
     @admin.display(description="Тип")
     def type_value(self, obj):
         return obj.type_short_display
+
+
+@admin.register(RegistrationGroupSummaryState)
+class RegistrationGroupSummaryStateAdmin(admin.ModelAdmin):
+    list_display = ("number", "group_label", "deferred", "status_date")
+    list_display_links = ("number",)
+    list_editable = ("status_date",)
+    search_fields = ("number", "group_label")
+    list_filter = ("deferred",)
 
 
 @admin.register(ProjectRegistrationProduct)

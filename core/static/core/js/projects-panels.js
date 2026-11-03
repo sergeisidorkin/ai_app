@@ -15,6 +15,14 @@
   }
   const csrftoken = getCookie('csrftoken');
   const REGISTRATION_INLINE_EDITOR_FRAME_OFFSET = 0.25;
+  const PROJECT_CONTRACT_TERMS_SECTION = {
+    toggleId: 'project-contract-terms-section-toggle',
+    bodyId: 'project-contract-terms-section-body',
+    prefKey: 'projects:contract-terms-section-collapsed',
+    defaultCollapsed: true,
+    collapsedLabel: 'Развернуть раздел «Сроки проекта по договору»',
+    expandedLabel: 'Свернуть раздел «Сроки проекта по договору»',
+  };
   const PROJECT_REGISTRY_COLPICKER = {
     prefKey: 'projects:registrationHiddenCols',
     wrapId: 'registration-colpicker-wrap',
@@ -41,7 +49,9 @@
   }
   function isVisibleRowCheckbox(box) {
     const row = box?.closest('tr');
-    return !!row && !row.classList.contains('d-none');
+    return !!row
+      && !row.classList.contains('d-none')
+      && !row.classList.contains('registration-group-member-collapsed');
   }
   function getVisibleRowChecksByName(name) {
     return getRowChecksByName(name).filter(isVisibleRowCheckbox);
@@ -74,7 +84,32 @@
     if (!actionsId) return null;
     return root.querySelector('#' + actionsId);
   }
+  function registrationSummaryChecks() {
+    return qa('tbody input.form-check-input[name="registration-summary-select"]', pane());
+  }
+  function checkedRegistrationSummaries() {
+    return registrationSummaryChecks().filter((box) => box.checked && isVisibleRowCheckbox(box));
+  }
+  function updateRegistrationActionButtons() {
+    const panel = findActionsByName('registration-select');
+    if (!panel) return;
+    const rowChecked = getCheckedByName('registration-select').length > 0;
+    const summaryChecked = checkedRegistrationSummaries().length > 0;
+    const anyChecked = rowChecked || summaryChecked;
+    panel.classList.toggle('d-none', !anyChecked);
+    panel.classList.toggle('d-flex', anyChecked);
+    const onlySummary = summaryChecked && !rowChecked;
+    ['up', 'down', 'delete'].forEach((actionName) => {
+      const button = panel.querySelector(`[data-panel-action="${actionName}"]`);
+      if (!button) return;
+      button.disabled = onlySummary;
+    });
+  }
   function ensureActionsVisibility(name) {
+    if (name === 'registration-select') {
+      updateRegistrationActionButtons();
+      return;
+    }
     const panel = findActionsByName(name);
     if (!panel) return;
     const anyChecked = getCheckedByName(name).length > 0;
@@ -163,10 +198,46 @@
   window.__refreshProjectsSelectionState = function() {
     ['registration-select', 'contract-select', 'project-schedule-select', 'work-select', 'legal-select'].forEach(syncSelectionToVisible);
   };
+  function applyProjectContractTermsSectionState(root, collapsed) {
+    const toggle = root?.querySelector('#' + PROJECT_CONTRACT_TERMS_SECTION.toggleId);
+    if (!toggle) return;
+    const body = root.querySelector('#' + PROJECT_CONTRACT_TERMS_SECTION.bodyId);
+    const icon = toggle.querySelector('i');
+    const label = collapsed
+      ? PROJECT_CONTRACT_TERMS_SECTION.collapsedLabel
+      : PROJECT_CONTRACT_TERMS_SECTION.expandedLabel;
+    if (body) body.classList.toggle('d-none', collapsed);
+    toggle.classList.toggle('active', collapsed);
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('title', label);
+    if (icon) icon.className = collapsed ? 'bi bi-plus-square' : 'bi bi-dash-square';
+  }
+
+  function initProjectContractTermsSectionToggle(root) {
+    const scope = root?.id === 'projects-pane' ? root : pane();
+    if (!scope) return;
+    const toggle = scope.querySelector('#' + PROJECT_CONTRACT_TERMS_SECTION.toggleId);
+    if (!toggle) return;
+    const collapsed = window.UIPref
+      ? !!UIPref.get(PROJECT_CONTRACT_TERMS_SECTION.prefKey, PROJECT_CONTRACT_TERMS_SECTION.defaultCollapsed)
+      : PROJECT_CONTRACT_TERMS_SECTION.defaultCollapsed;
+    applyProjectContractTermsSectionState(scope, collapsed);
+    if (toggle.dataset.bound === '1') return;
+    toggle.dataset.bound = '1';
+    toggle.addEventListener('click', () => {
+      const body = scope.querySelector('#' + PROJECT_CONTRACT_TERMS_SECTION.bodyId);
+      const nextCollapsed = !(body && body.classList.contains('d-none'));
+      applyProjectContractTermsSectionState(scope, nextCollapsed);
+      if (window.UIPref) UIPref.set(PROJECT_CONTRACT_TERMS_SECTION.prefKey, nextCollapsed);
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', initProjectRegistryColPicker);
   document.addEventListener('DOMContentLoaded', function() {
     bindProjectScheduleScrollGaps();
     scheduleProjectScheduleScrollGapsUpdate();
+    initProjectContractTermsSectionToggle();
   });
   window.addEventListener('resize', scheduleProjectScheduleScrollGapsUpdate);
   window.addEventListener('load', scheduleProjectScheduleScrollGapsUpdate);
@@ -399,16 +470,117 @@
     const quickEdit = e.target.closest('.project-quick-edit');
     if (quickEdit && root.contains(quickEdit)) {
       const tr = quickEdit.closest('tr');
-      const url = tr?.dataset?.editUrl;
+      const url = tr?.dataset?.groupEditUrl || tr?.dataset?.editUrl;
       if (!url) return;
 
-      await htmx.ajax('GET', url, { target: '#projects-modal .modal-content', swap: 'innerHTML' });
+      await htmx.ajax('GET', url, { target: '#projects-pane', swap: 'outerHTML' });
       return;
     }
   });
 
   function getRegistrationStatusEditor(root) {
     return root?.querySelector('#registration-status-editor') || null;
+  }
+
+  function getRegistrationSummaryStatusEditor(root) {
+    return root?.querySelector('#registration-summary-status-editor') || null;
+  }
+
+  function registrationRowById(root, projectId) {
+    if (!root || projectId === undefined || projectId === null || projectId === '') return null;
+    return root.querySelector(`table.reg-table tbody tr[data-project-id="${CSS.escape(String(projectId))}"]`);
+  }
+
+  function registrationSummaryRow(root, key) {
+    if (!root || !key) return null;
+    return root.querySelector(
+      `table.reg-table tbody tr[data-reg-summary="1"][data-registration-group-key="${CSS.escape(String(key))}"]`
+    );
+  }
+
+  function summaryIndicatorClass(label) {
+    if (label === 'Отложен') return 'reg-launch-status--deferred';
+    if (String(label || '').startsWith('В работе')) return 'reg-launch-status--work';
+    if (String(label || '').startsWith('На проверке')) return 'reg-launch-status--review';
+    if (String(label || '').startsWith('Завершён') || String(label || '').startsWith('Завершен')) {
+      return 'reg-launch-status--done';
+    }
+    return '';
+  }
+
+  function applySummaryLaunchPresentation(node, summary) {
+    if (!node) return;
+    const label = summary.label || '';
+    const canLaunch = !!summary.canLaunch;
+    const icon = node.querySelector('.bi');
+    const indicatorClass = canLaunch ? '' : (summary.indicatorClass || summaryIndicatorClass(label));
+    node.classList.remove(
+      'reg-launch-indicator',
+      'reg-launch-status--work',
+      'reg-launch-status--done',
+      'reg-launch-status--deferred',
+      'reg-launch-status--review'
+    );
+    if (canLaunch) {
+      node.classList.remove('is-pending');
+      if (node.tagName === 'BUTTON') {
+        node.disabled = false;
+        node.setAttribute('data-registration-summary-launch', '');
+        node.title = 'Запустить проект';
+        node.setAttribute('aria-label', 'Запустить проект');
+      }
+      if (icon) icon.className = 'bi bi-play-circle';
+      return;
+    }
+    node.classList.add('reg-launch-indicator');
+    if (indicatorClass) node.classList.add(indicatorClass);
+    if (node.tagName === 'BUTTON') {
+      node.disabled = true;
+      node.removeAttribute('data-registration-summary-launch');
+      node.classList.remove('is-pending');
+      node.title = label;
+      node.setAttribute('aria-label', `Статус группы: ${label}`);
+    } else {
+      node.title = label;
+      node.setAttribute('aria-label', `Статус группы: ${label}`);
+    }
+    if (icon) icon.className = 'bi bi-circle';
+  }
+
+  function updateRegistrationSummaryDom(root, summary) {
+    if (!summary?.key) return;
+    const tr = registrationSummaryRow(root, summary.key);
+    if (!tr) return;
+    tr.dataset.summaryStatus = summary.label || '';
+    tr.dataset.summaryAutoStatus = summary.autoLabel || '';
+    tr.dataset.summaryDeferred = summary.deferred ? '1' : '0';
+    tr.dataset.summaryCanLaunch = summary.canLaunch ? '1' : '0';
+    const statusCell = tr.querySelector('[data-reg-summary-status-cell]');
+    if (statusCell) {
+      statusCell.dataset.statusValue = summary.label || '';
+      const statusBtn = statusCell.querySelector('[data-registration-summary-status]');
+      if (statusBtn) {
+        statusBtn.textContent = summary.label || '';
+        statusBtn.dataset.statusValue = summary.label || '';
+      } else {
+        statusCell.textContent = summary.label || '';
+      }
+    }
+    const launchNode = tr.querySelector('.reg-launch-btn, .reg-launch-icon');
+    applySummaryLaunchPresentation(launchNode, summary);
+    const dateCell = tr.querySelector('[data-reg-summary-status-date]');
+    if (dateCell && (summary.label === 'Не начат' || Object.prototype.hasOwnProperty.call(summary, 'statusDateLabel'))) {
+      dateCell.textContent = summary.label === 'Не начат' ? '' : (summary.statusDateLabel || '');
+    }
+  }
+
+  function applyRegistrationStatusChoices(editor, tr) {
+    const grouped = tr?.dataset?.registrationGroupMember === '1';
+    Array.from(editor.options).forEach((option) => {
+      const hide = grouped && option.value === 'Отложен';
+      option.hidden = hide;
+      option.disabled = hide;
+    });
   }
 
   function getRegistrationManagerEditor(root) {
@@ -457,7 +629,7 @@
     }
   }
 
-  function updateRegistrationStatusDom(tr, status) {
+  function updateRegistrationStatusDom(tr, status, statusDateLabel) {
     const statusCell = tr?.querySelector('[data-reg-status-cell]');
     if (!statusCell) return;
     statusCell.dataset.statusValue = status;
@@ -467,6 +639,10 @@
       statusBtn.dataset.statusValue = status;
     } else {
       statusCell.textContent = status;
+    }
+    const dateCell = tr.querySelector('[data-reg-status-date]');
+    if (dateCell && (status === 'Не начат' || statusDateLabel !== undefined)) {
+      dateCell.textContent = status === 'Не начат' ? '' : (statusDateLabel || '');
     }
     updateRegistrationLaunchButton(tr, status);
   }
@@ -495,6 +671,7 @@
     });
     delete editor.dataset.managerUrl;
     delete editor.dataset.projectId;
+    delete editor.dataset.summaryKey;
   }
 
   function closeRegistrationDeadlineEditor(root) {
@@ -509,6 +686,7 @@
     });
     delete editor.dataset.deadlineUrl;
     delete editor.dataset.projectId;
+    delete editor.dataset.summaryDeadlineKey;
     delete editor.dataset.previousValue;
     delete editor.dataset.segment;
     delete editor.dataset.pendingDigits;
@@ -519,12 +697,39 @@
     delete editor.dataset.dateResponseLabelField;
   }
 
+  function closeRegistrationSummaryStatusEditor(root) {
+    const editor = getRegistrationSummaryStatusEditor(root);
+    if (!editor) return;
+    editor.classList.add('d-none');
+    editor.removeAttribute('style');
+    editor.replaceChildren();
+    root?.querySelectorAll('[data-registration-summary-status].is-editing').forEach((btn) => {
+      btn.classList.remove('is-editing');
+      btn.blur();
+    });
+    delete editor.dataset.statusUrl;
+    delete editor.dataset.summaryKey;
+  }
+
   function closeRegistrationInlineEditors() {
     const root = pane();
     closeRegistrationStatusEditor(root);
+    closeRegistrationSummaryStatusEditor(root);
     closeRegistrationManagerEditor(root);
     closeRegistrationCoordinatorEditor(root);
     closeRegistrationDeadlineEditor(root);
+  }
+
+  function placeRegistrationSelectEditor(editor, td) {
+    const rect = td.getBoundingClientRect();
+    editor.style.position = 'fixed';
+    editor.style.left = rect.left + 'px';
+    editor.style.top = rect.top + 'px';
+    editor.style.width = rect.width + 'px';
+    editor.style.height = rect.height + 'px';
+    editor.style.minHeight = rect.height + 'px';
+    editor.style.zIndex = '1080';
+    editor.classList.remove('d-none');
   }
 
   function openRegistrationStatusEditor(button) {
@@ -536,22 +741,49 @@
     if (!root || !editor || !td || !tr || !url) return;
 
     closeRegistrationStatusEditor(root);
+    closeRegistrationSummaryStatusEditor(root);
     closeRegistrationManagerEditor(root);
     closeRegistrationCoordinatorEditor(root);
     closeRegistrationDeadlineEditor(root);
     button.classList.add('is-editing');
+    applyRegistrationStatusChoices(editor, tr);
     editor.value = button.dataset.statusValue || td.dataset.statusValue || button.textContent.trim();
     editor.dataset.statusUrl = url;
     editor.dataset.projectId = tr.dataset.projectId || '';
 
-    const rect = td.getBoundingClientRect();
-    editor.style.position = 'fixed';
-    editor.style.left = rect.left + 'px';
-    editor.style.top = (rect.top - REGISTRATION_INLINE_EDITOR_FRAME_OFFSET) + 'px';
-    editor.style.width = Math.max(rect.width - 4, 120) + 'px';
-    editor.style.height = (rect.height + REGISTRATION_INLINE_EDITOR_FRAME_OFFSET * 2) + 'px';
-    editor.style.zIndex = '1080';
-    editor.classList.remove('d-none');
+    placeRegistrationSelectEditor(editor, td);
+
+    try { editor.showPicker(); } catch (_) { editor.focus(); }
+  }
+
+  function openRegistrationSummaryStatusEditor(button) {
+    const root = pane();
+    const editor = getRegistrationSummaryStatusEditor(root);
+    const td = button.closest('[data-reg-summary-status-cell]');
+    const tr = button.closest('tr');
+    const url = tr?.dataset?.summaryStatusUrl;
+    if (!root || !editor || !td || !tr || !url) return;
+
+    closeRegistrationStatusEditor(root);
+    closeRegistrationSummaryStatusEditor(root);
+    closeRegistrationManagerEditor(root);
+    closeRegistrationCoordinatorEditor(root);
+    closeRegistrationDeadlineEditor(root);
+    button.classList.add('is-editing');
+
+    const autoLabel = tr.dataset.summaryAutoStatus || 'Не начат';
+    const autoOption = document.createElement('option');
+    autoOption.value = 'auto';
+    autoOption.textContent = autoLabel;
+    const deferredOption = document.createElement('option');
+    deferredOption.value = 'deferred';
+    deferredOption.textContent = 'Отложен';
+    editor.replaceChildren(autoOption, deferredOption);
+    editor.value = tr.dataset.summaryDeferred === '1' ? 'deferred' : 'auto';
+    editor.dataset.statusUrl = url;
+    editor.dataset.summaryKey = tr.dataset.registrationGroupKey || '';
+
+    placeRegistrationSelectEditor(editor, td);
 
     try { editor.showPicker(); } catch (_) { editor.focus(); }
   }
@@ -584,16 +816,10 @@
     button.classList.add('is-editing');
     editor.value = button.dataset.managerValue || td.dataset.managerValue || '';
     editor.dataset.managerUrl = url;
-    editor.dataset.projectId = tr.dataset.projectId || '';
+    editor.dataset.summaryKey = tr.dataset.regSummary === '1' ? (tr.dataset.registrationGroupKey || '') : '';
+    editor.dataset.projectId = editor.dataset.summaryKey ? '' : (tr.dataset.projectId || '');
 
-    const rect = td.getBoundingClientRect();
-    editor.style.position = 'fixed';
-    editor.style.left = rect.left + 'px';
-    editor.style.top = (rect.top - REGISTRATION_INLINE_EDITOR_FRAME_OFFSET) + 'px';
-    editor.style.width = Math.max(rect.width - 4, 170) + 'px';
-    editor.style.height = (rect.height + REGISTRATION_INLINE_EDITOR_FRAME_OFFSET * 2) + 'px';
-    editor.style.zIndex = '1080';
-    editor.classList.remove('d-none');
+    placeRegistrationSelectEditor(editor, td);
 
     try { editor.showPicker(); } catch (_) { editor.focus(); }
   }
@@ -613,6 +839,7 @@
     });
     delete editor.dataset.coordinatorUrl;
     delete editor.dataset.projectId;
+    delete editor.dataset.summaryKey;
   }
 
   function updateRegistrationCoordinatorDom(tr, coordinatorValue, coordinatorLabel, coordinatorName) {
@@ -659,16 +886,10 @@
     syncCoordinatorCurrentOption(editor, value, button.dataset.coordinatorLabel || button.textContent.trim());
     editor.value = value;
     editor.dataset.coordinatorUrl = url;
-    editor.dataset.projectId = tr.dataset.projectId || '';
+    editor.dataset.summaryKey = tr.dataset.regSummary === '1' ? (tr.dataset.registrationGroupKey || '') : '';
+    editor.dataset.projectId = editor.dataset.summaryKey ? '' : (tr.dataset.projectId || '');
 
-    const rect = td.getBoundingClientRect();
-    editor.style.position = 'fixed';
-    editor.style.left = rect.left + 'px';
-    editor.style.top = (rect.top - REGISTRATION_INLINE_EDITOR_FRAME_OFFSET) + 'px';
-    editor.style.width = Math.max(rect.width - 4, 170) + 'px';
-    editor.style.height = (rect.height + REGISTRATION_INLINE_EDITOR_FRAME_OFFSET * 2) + 'px';
-    editor.style.zIndex = '1080';
-    editor.classList.remove('d-none');
+    placeRegistrationSelectEditor(editor, td);
 
     try { editor.showPicker(); } catch (_) { editor.focus(); }
   }
@@ -830,7 +1051,34 @@
     try {
       const data = await postRegistrationDeadline(url, payloadValue, postField);
       const savedValue = data[responseField] || payloadValue;
-      updateRegistrationDeadlineDom(tr, dateField, savedValue, data[responseLabelField] || '');
+      const savedLabel = data[responseLabelField] || '';
+      updateRegistrationDeadlineDom(tr, dateField, savedValue, savedLabel);
+      if (!dateField || dateField === 'deadline') {
+        const summaryKey = editor.dataset.summaryDeadlineKey || '';
+        if (summaryKey) {
+          updateRegistrationDeadlineDom(
+            registrationSummaryRow(root, summaryKey),
+            'deadline',
+            savedValue,
+            savedLabel,
+          );
+        }
+        const stageTr = registrationRowById(root, editor.dataset.projectId || '');
+        if (stageTr && stageTr.dataset.registrationGroupMember === '1') {
+          const groupKey = stageTr.dataset.registrationGroupKey || '';
+          const members = [...root.querySelectorAll(
+            `table.reg-table tbody tr[data-registration-group-member="1"][data-registration-group-key="${CSS.escape(groupKey)}"]`
+          )];
+          if (members.length && members[members.length - 1] === stageTr) {
+            updateRegistrationDeadlineDom(
+              registrationSummaryRow(root, groupKey),
+              'deadline',
+              savedValue,
+              savedLabel,
+            );
+          }
+        }
+      }
       editor.dataset.previousValue = savedValue || '';
       const picker = getRegistrationDeadlinePicker(root);
       if (picker) picker.value = savedValue || '';
@@ -883,8 +1131,12 @@
     const isoValue = button.dataset.dateValue || button.dataset.deadlineValue || td.dataset.dateValue || td.dataset.deadlineValue || '';
     editor.value = deadlineDisplayFromIso(isoValue);
     editor.dataset.previousValue = isoValue;
+    const summaryDeadline = tr.dataset.regSummary === '1' && dateField === 'deadline';
     editor.dataset.deadlineUrl = url;
-    editor.dataset.projectId = tr.dataset.projectId || '';
+    editor.dataset.summaryDeadlineKey = summaryDeadline ? (tr.dataset.registrationGroupKey || '') : '';
+    editor.dataset.projectId = summaryDeadline
+      ? (tr.dataset.summaryLastId || '')
+      : (tr.dataset.projectId || '');
     editor.dataset.dateField = dateField;
     editor.dataset.datePostField = button.dataset.datePostField || (dateField === 'deadline' ? 'deadline' : dateField);
     editor.dataset.dateResponseField = button.dataset.dateResponseField || 'deadline';
@@ -924,6 +1176,56 @@
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.ok === false) {
       throw new Error(data.error || 'Не удалось изменить статус проекта.');
+    }
+    return data;
+  }
+
+  async function postRegistrationSummaryStatus(url, number, group, mode, projectId) {
+    const body = new FormData();
+    body.append('number', number);
+    body.append('group', group);
+    body.append('project', projectId || '');
+    body.append('mode', mode);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': csrftoken,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || 'Не удалось изменить статус группы.');
+    }
+    return data;
+  }
+
+  function registrationEditorRow(root, editor) {
+    if (editor.dataset.summaryKey) {
+      return registrationSummaryRow(root, editor.dataset.summaryKey);
+    }
+    const projectId = editor.dataset.projectId || '';
+    return projectId ? registrationRowById(root, projectId) : null;
+  }
+
+  async function postRegistrationSummaryFields(url, tr, fields) {
+    const body = new FormData();
+    body.append('number', tr?.dataset?.summaryNumber || '');
+    body.append('group', tr?.dataset?.summaryGroup || '');
+    body.append('project', tr?.dataset?.summaryProject || '');
+    Object.entries(fields).forEach(([key, value]) => body.append(key, value));
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': csrftoken,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || 'Не удалось сохранить значение сводной строки.');
     }
     return data;
   }
@@ -985,6 +1287,11 @@
   document.addEventListener('click', (e) => {
     const root = pane();
     if (!root) return;
+    const summaryStatusBtn = e.target.closest('button[data-registration-summary-status]');
+    if (summaryStatusBtn && root.contains(summaryStatusBtn)) {
+      openRegistrationSummaryStatusEditor(summaryStatusBtn);
+      return;
+    }
     const statusBtn = e.target.closest('button[data-registration-status]');
     if (statusBtn && root.contains(statusBtn)) {
       openRegistrationStatusEditor(statusBtn);
@@ -1009,6 +1316,10 @@
     if (editor && !editor.classList.contains('d-none') && e.target !== editor) {
       closeRegistrationStatusEditor(root);
     }
+    const summaryEditor = getRegistrationSummaryStatusEditor(root);
+    if (summaryEditor && !summaryEditor.classList.contains('d-none') && e.target !== summaryEditor) {
+      closeRegistrationSummaryStatusEditor(root);
+    }
     const managerEditor = getRegistrationManagerEditor(root);
     if (managerEditor && !managerEditor.classList.contains('d-none') && e.target !== managerEditor) {
       closeRegistrationManagerEditor(root);
@@ -1027,6 +1338,7 @@
   document.addEventListener('pointerdown', (e) => {
     const root = pane();
     const editor = getRegistrationStatusEditor(root);
+    const summaryEditor = getRegistrationSummaryStatusEditor(root);
     const managerEditor = getRegistrationManagerEditor(root);
     const coordinatorEditor = getRegistrationCoordinatorEditor(root);
     const deadlineEditor = getRegistrationDeadlineEditor(root);
@@ -1034,6 +1346,10 @@
     if (editor && !editor.classList.contains('d-none')) {
       if (e.target === editor || e.target.closest('button[data-registration-status]')) return;
       closeRegistrationStatusEditor(root);
+    }
+    if (summaryEditor && !summaryEditor.classList.contains('d-none')) {
+      if (e.target === summaryEditor || e.target.closest('button[data-registration-summary-status]')) return;
+      closeRegistrationSummaryStatusEditor(root);
     }
     if (managerEditor && !managerEditor.classList.contains('d-none')) {
       if (e.target === managerEditor || e.target.closest('button[data-registration-manager]')) return;
@@ -1079,10 +1395,42 @@
     editor.disabled = true;
     try {
       const data = await postRegistrationStatus(url, status);
-      updateRegistrationStatusDom(tr, data.status || status);
+      updateRegistrationStatusDom(tr, data.status || status, data.statusDateLabel);
+      if (data.summary) updateRegistrationSummaryDom(root, data.summary);
       closeRegistrationStatusEditor(root);
     } catch (error) {
       alert(error.message || 'Не удалось изменить статус проекта.');
+    } finally {
+      editor.disabled = false;
+    }
+  });
+
+  document.addEventListener('change', async (e) => {
+    const root = pane();
+    const editor = getRegistrationSummaryStatusEditor(root);
+    if (!root || !editor || e.target !== editor) return;
+
+    const url = editor.dataset.statusUrl;
+    const tr = registrationSummaryRow(root, editor.dataset.summaryKey || '');
+    const mode = editor.value;
+    if (!url || !tr) {
+      closeRegistrationSummaryStatusEditor(root);
+      return;
+    }
+
+    editor.disabled = true;
+    try {
+      const data = await postRegistrationSummaryStatus(
+        url,
+        tr.dataset.summaryNumber || '',
+        tr.dataset.summaryGroup || '',
+        mode,
+        tr.dataset.summaryProject || '',
+      );
+      if (data.summary) updateRegistrationSummaryDom(root, data.summary);
+      closeRegistrationSummaryStatusEditor(root);
+    } catch (error) {
+      alert(error.message || 'Не удалось изменить статус группы.');
     } finally {
       editor.disabled = false;
     }
@@ -1237,11 +1585,8 @@
     if (!root || !editor || e.target !== editor) return;
 
     const url = editor.dataset.managerUrl;
-    const projectId = editor.dataset.projectId || '';
     const managerValue = editor.value;
-    const tr = projectId
-      ? root.querySelector(`table.reg-table tbody tr[data-project-id="${CSS.escape(projectId)}"]`)
-      : null;
+    const tr = registrationEditorRow(root, editor);
     if (!url || !tr) {
       closeRegistrationManagerEditor(root);
       return;
@@ -1249,7 +1594,9 @@
 
     editor.disabled = true;
     try {
-      const data = await postRegistrationManager(url, managerValue);
+      const data = editor.dataset.summaryKey
+        ? await postRegistrationSummaryFields(url, tr, { project_manager: managerValue })
+        : await postRegistrationManager(url, managerValue);
       updateRegistrationManagerDom(tr, data.managerValue || managerValue, data.managerLabel || '');
       closeRegistrationManagerEditor(root);
     } catch (error) {
@@ -1265,11 +1612,8 @@
     if (!root || !editor || e.target !== editor) return;
 
     const url = editor.dataset.coordinatorUrl;
-    const projectId = editor.dataset.projectId || '';
     const coordinatorValue = editor.value;
-    const tr = projectId
-      ? root.querySelector(`table.reg-table tbody tr[data-project-id="${CSS.escape(projectId)}"]`)
-      : null;
+    const tr = registrationEditorRow(root, editor);
     if (!url || !tr) {
       closeRegistrationCoordinatorEditor(root);
       return;
@@ -1277,7 +1621,9 @@
 
     editor.disabled = true;
     try {
-      const data = await postRegistrationCoordinator(url, coordinatorValue);
+      const data = editor.dataset.summaryKey
+        ? await postRegistrationSummaryFields(url, tr, { project_coordinator: coordinatorValue })
+        : await postRegistrationCoordinator(url, coordinatorValue);
       updateRegistrationCoordinatorDom(
         tr,
         data.coordinatorValue || coordinatorValue,
@@ -1318,13 +1664,61 @@
       if (!response.ok || data.ok === false) {
         if (data.status && data.status !== 'Не начат') {
           updateRegistrationStatusDom(tr, data.status);
+          if (data.summary) updateRegistrationSummaryDom(root, data.summary);
           return;
         }
         throw new Error(data.error || 'Не удалось запустить проект.');
       }
 
       const status = data.status || 'В работе';
-      updateRegistrationStatusDom(tr, status);
+      updateRegistrationStatusDom(tr, status, data.statusDateLabel);
+      if (data.summary) updateRegistrationSummaryDom(root, data.summary);
+    } catch (error) {
+      btn.disabled = false;
+      alert(error.message || 'Не удалось запустить проект.');
+    } finally {
+      btn.classList.remove('is-pending');
+    }
+  });
+
+  document.addEventListener('click', async (e) => {
+    const root = pane();
+    if (!root) return;
+    const btn = e.target.closest('button[data-registration-summary-launch]');
+    if (!btn || !root.contains(btn) || btn.disabled) return;
+
+    const tr = btn.closest('tr');
+    const url = btn.dataset.launchUrl || tr?.dataset?.summaryLaunchUrl;
+    if (!url || !tr) return;
+
+    const body = new FormData();
+    body.append('number', tr.dataset.summaryNumber || '');
+    body.append('group', tr.dataset.summaryGroup || '');
+    body.append('project', tr.dataset.summaryProject || '');
+    btn.disabled = true;
+    btn.classList.add('is-pending');
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': csrftoken,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        if (data.summary) updateRegistrationSummaryDom(root, data.summary);
+        else btn.disabled = false;
+        alert(data.error || 'Не удалось запустить проект.');
+        return;
+      }
+      if (data.projectId) {
+        const member = registrationRowById(root, data.projectId);
+        if (member) updateRegistrationStatusDom(member, data.status || 'В работе', data.statusDateLabel);
+      }
+      if (data.summary) updateRegistrationSummaryDom(root, data.summary);
     } catch (error) {
       btn.disabled = false;
       alert(error.message || 'Не удалось запустить проект.');
@@ -1349,6 +1743,26 @@
     if (!name) return;
 
     const checked = getCheckedByName(name);
+    const summaryChecked = name === 'registration-select' ? checkedRegistrationSummaries() : [];
+    if (!checked.length && !summaryChecked.length) return;
+
+    if (action === 'edit' && summaryChecked.length) {
+      if (summaryChecked.length !== 1) {
+        alert('Выберите одну сводную строку.');
+        return;
+      }
+      const summaryRow = summaryChecked[0].closest('tr');
+      const summaryUrl = summaryRow?.dataset?.groupEditUrl;
+      if (!summaryUrl) return;
+      try { delete window.__tableSel[name]; } catch (_) { window.__tableSel[name] = []; }
+      if (window.__tableSelLast === name) window.__tableSelLast = null;
+      summaryChecked.forEach((box) => { box.checked = false; });
+      updateRowHighlightFor('registration-summary-select');
+      updateRegistrationActionButtons();
+      await htmx.ajax('GET', summaryUrl, { target: '#projects-pane', swap: 'outerHTML' });
+      return;
+    }
+
     if (!checked.length) return;
 
     // как в policy: запомним выбор именно этой таблицы
@@ -1365,9 +1779,13 @@
       // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
       try { delete window.__tableSel[name]; } catch (_) { window.__tableSel[name] = []; }
       if (window.__tableSelLast === name) window.__tableSelLast = null;
-      window.TableSelection?.clearOnModalHide('projects-modal', name, root);
 
-      // грузим форму в модалку ПРОЕКТОВ — как в Продуктах
+      if (name === 'registration-select') {
+        await htmx.ajax('GET', url, { target: '#projects-pane', swap: 'outerHTML' });
+        return;
+      }
+
+      window.TableSelection?.clearOnModalHide('projects-modal', name, root);
       await htmx.ajax('GET', url, { target: '#projects-modal .modal-content', swap: 'innerHTML' });
       ensureActionsVisibility(name);
       return;
@@ -1420,7 +1838,11 @@
         // Project numbers (xx/1, xx/2 …) follow the registry order and are refreshed server-side.
         refreshAfterSave: name === 'registration-select',
         // Asset codes (A1, A2 …) are derived from the order and renumbered in place.
-        onAfterMove: name === 'work-select' ? (table) => updateWorkAssetCodes(table) : undefined,
+        onAfterMove: name === 'work-select'
+          ? (table) => updateWorkAssetCodes(table)
+          : name === 'registration-select'
+            ? (table) => window.__anchorRegistrationSummaries?.(table)
+            : undefined,
         refresh: () => {
           window.__tableSel[name] = getCheckedByName(name).map(ch => String(ch.value));
           window.__tableSelLast = name;
@@ -1469,6 +1891,11 @@
     const rowCb = e.target.closest('tbody input.form-check-input[name]');
     if (!rowCb || !root.contains(rowCb)) return;
     const name = rowCb.name;
+    if (name === 'registration-summary-select') {
+      updateRowHighlightFor(name);
+      updateRegistrationActionButtons();
+      return;
+    }
     updateMasterStateFor(name);
     updateRowHighlightFor(name);
     ensureActionsVisibility(name);
@@ -1480,6 +1907,7 @@
   document.body.addEventListener('htmx:afterSettle', function (e) {
     if (!(e.target && e.target.id === 'projects-pane')) return;
     initProjectRegistryColPicker();
+    initProjectContractTermsSectionToggle(e.target);
     bindProjectScheduleScrollGaps(e.target);
     scheduleProjectScheduleScrollGapsUpdate();
     const last = window.__tableSelLast;
@@ -1865,4 +2293,434 @@
       btn.disabled = false;
     }
   });
+
+  function escapeRegistrationCsvText(value) {
+    return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function registrationCsvFilterQuery() {
+    var values = window.__regProjectFilter || [];
+    if (!values.length || values.indexOf('__all__') !== -1) return '';
+    var ids = values.map(String).filter(function (value) {
+      return value && value !== '__all__';
+    });
+    if (!ids.length) return '';
+    return '?project=' + encodeURIComponent(ids.join(','));
+  }
+
+  function updateRegistrationCsvDownloadLink() {
+    var btn = document.getElementById('registration-csv-download-btn');
+    if (!btn) return;
+    var base = btn.dataset.baseUrl || btn.getAttribute('href').split('?')[0];
+    btn.dataset.baseUrl = base;
+    btn.setAttribute('href', base + registrationCsvFilterQuery());
+  }
+
+  function showRegistrationCsvResult(html) {
+    var body = document.getElementById('projects-csv-result-body');
+    var modalEl = document.getElementById('projects-csv-result-modal');
+    if (!body || !modalEl || !window.bootstrap) {
+      alert(String(html || '').replace(/<[^>]+>/g, ''));
+      return;
+    }
+    body.innerHTML = html;
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  async function refreshProjectsPane() {
+    var root = pane();
+    var url = (root && (root.getAttribute('hx-get') || root.dataset.refreshUrl)) || '/projects/partial/';
+    if (!window.htmx) return;
+    await window.htmx.ajax('GET', url, { target: '#projects-pane', swap: 'outerHTML' });
+  }
+
+  async function handleRegistrationCsvUpload(uploadUrl, file) {
+    var formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      var resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        var html = '<div class="mb-2"><strong>Создано строк: ' + data.created +
+          '; обновлено строк: ' + data.updated + '</strong></div>';
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (var i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + escapeRegistrationCsvText(data.warnings[i]) + '</div>';
+          }
+          html += '</div>';
+        }
+        showRegistrationCsvResult(html);
+        await refreshProjectsPane();
+      } else {
+        showRegistrationCsvResult('<div class="text-danger"><strong>Ошибка:</strong> ' +
+          escapeRegistrationCsvText(data.error || 'Неизвестная ошибка') + '</div>');
+      }
+    } catch (err) {
+      showRegistrationCsvResult('<div class="text-danger"><strong>Ошибка загрузки:</strong> ' +
+        escapeRegistrationCsvText(err.message) + '</div>');
+    }
+  }
+
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('#registration-csv-download-btn')) {
+      updateRegistrationCsvDownloadLink();
+      return;
+    }
+    var btn = e.target.closest('#registration-csv-upload-btn');
+    if (!btn) return;
+    var fileInput = document.getElementById('registration-csv-file-input');
+    if (fileInput) {
+      fileInput.value = '';
+      fileInput.click();
+    }
+  });
+
+  document.addEventListener('change', async function (e) {
+    if (e.target.id !== 'registration-csv-file-input') return;
+    var file = e.target.files && e.target.files[0];
+    var btn = document.getElementById('registration-csv-upload-btn');
+    var uploadUrl = btn && btn.getAttribute('data-upload-url');
+    e.target.value = '';
+    if (!file || !uploadUrl) return;
+    await handleRegistrationCsvUpload(uploadUrl, file);
+  });
+
+  document.addEventListener('reg-filter-changed', updateRegistrationCsvDownloadLink, true);
+
+  const REGISTRATION_FORM_LEAVE_MESSAGE = 'Есть несохранённые изменения. Уйти без сохранения?';
+  const REGISTRATION_FORM_CANCEL_MESSAGE = 'Сбросить внесённые изменения?';
+  let registrationFormSession = null;
+  let registrationFormActionsHideLock = false;
+  let registrationFormDirtySyncScheduled = false;
+
+  function escapeRegistrationHeaderText(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function registrationFormActionsEl() {
+    return document.getElementById('registration-form-actions');
+  }
+
+  function registrationFormSaveBtn() {
+    return document.querySelector('#registration-form-actions [data-registration-form-save-btn]');
+  }
+
+  function registrationFormCancelBtn() {
+    return document.querySelector('#registration-form-actions [data-registration-form-cancel-btn]');
+  }
+
+  function getRegistrationForm() {
+    return pane()?.querySelector('form[data-registration-form]') || null;
+  }
+
+  function isRegistrationFormActive(root) {
+    root = root || pane();
+    return !!(root && root.classList.contains('registration-form-page') && root.dataset.headerCurrentLabel && root.querySelector('form[data-registration-form]'));
+  }
+
+  function projectsCatalogUrl() {
+    return pane()?.dataset?.headerRootUrl || '/projects/partial/';
+  }
+
+  function loadProjectsCatalog() {
+    if (!window.htmx) return Promise.resolve();
+    return Promise.resolve(htmx.ajax('GET', projectsCatalogUrl(), { target: '#projects-pane', swap: 'outerHTML' }));
+  }
+
+  function reloadRegistrationFormPage() {
+    const currentUrl = pane()?.dataset?.headerCurrentUrl || '';
+    if (!currentUrl || !window.htmx) return Promise.resolve();
+    return Promise.resolve(htmx.ajax('GET', currentUrl, { target: '#projects-pane', swap: 'outerHTML' }));
+  }
+
+  function serializeRegistrationForm(form) {
+    if (!form) return '';
+    const data = new FormData(form);
+    const parts = [];
+    data.forEach(function (value, key) {
+      if (key === 'csrfmiddlewaretoken') return;
+      parts.push(key + '=' + (value instanceof File ? (value.name + ':' + value.size + ':' + value.type) : String(value)));
+    });
+    parts.sort();
+    return parts.join('\n');
+  }
+
+  function syncRegistrationFormActions() {
+    const actions = registrationFormActionsEl();
+    const saveBtn = registrationFormSaveBtn();
+    const cancelBtn = registrationFormCancelBtn();
+    const active = !registrationFormActionsHideLock && isRegistrationFormActive();
+    if (actions) {
+      actions.classList.toggle('d-none', !active);
+      actions.classList.toggle('d-flex', active);
+    }
+    const dirty = !!(registrationFormSession && registrationFormSession.isDirty());
+    const saving = !!(registrationFormSession && registrationFormSession.saving);
+    if (saveBtn && saveBtn.dataset.loading !== '1') saveBtn.disabled = !active || saving || !dirty;
+    if (cancelBtn && cancelBtn.dataset.loading !== '1') cancelBtn.disabled = !active || saving;
+  }
+
+  function clearRegistrationFormActionLoading() {
+    const saveBtn = registrationFormSaveBtn();
+    const cancelBtn = registrationFormCancelBtn();
+    if (saveBtn?.dataset?.loading === '1') {
+      saveBtn.innerHTML = saveBtn.dataset.originalHtml || 'Сохранить';
+      delete saveBtn.dataset.loading;
+    }
+    if (cancelBtn?.dataset?.loading === '1') {
+      cancelBtn.innerHTML = cancelBtn.dataset.originalHtml || 'Отмена';
+      delete cancelBtn.dataset.loading;
+    }
+  }
+
+  function hideRegistrationFormActions() {
+    registrationFormActionsHideLock = true;
+    clearRegistrationFormActionLoading();
+    const actions = registrationFormActionsEl();
+    if (actions) {
+      actions.classList.add('d-none');
+      actions.classList.remove('d-flex');
+    }
+  }
+
+  function destroyRegistrationFormSession() {
+    if (registrationFormSession?.form) {
+      registrationFormSession.form.removeEventListener('input', onRegistrationFormDirtyEvent);
+      registrationFormSession.form.removeEventListener('change', onRegistrationFormDirtyEvent);
+      registrationFormSession.form.removeEventListener('click', onRegistrationFormDirtyEvent);
+    }
+    registrationFormSession = null;
+    clearRegistrationFormActionLoading();
+    syncRegistrationFormActions();
+  }
+
+  function onRegistrationFormDirtyEvent() {
+    if (registrationFormDirtySyncScheduled) return;
+    registrationFormDirtySyncScheduled = true;
+    window.requestAnimationFrame(function () {
+      registrationFormDirtySyncScheduled = false;
+      syncRegistrationFormActions();
+    });
+  }
+
+  function ensureRegistrationFormSession(form) {
+    form = form || getRegistrationForm();
+    registrationFormActionsHideLock = false;
+    if (!form || !isRegistrationFormActive()) {
+      destroyRegistrationFormSession();
+      return null;
+    }
+    if (registrationFormSession && registrationFormSession.form === form) {
+      syncRegistrationFormActions();
+      return registrationFormSession;
+    }
+    destroyRegistrationFormSession();
+    registrationFormActionsHideLock = false;
+    const session = {
+      form: form,
+      baseline: '',
+      saving: false,
+      ready: false,
+      hasErrors: form.dataset.registrationFormHasErrors === '1',
+      isDirty: function () {
+        if (this.hasErrors) return true;
+        if (!this.ready) return false;
+        return serializeRegistrationForm(this.form) !== this.baseline;
+      },
+    };
+    registrationFormSession = session;
+    clearRegistrationFormActionLoading();
+    form.addEventListener('input', onRegistrationFormDirtyEvent);
+    form.addEventListener('change', onRegistrationFormDirtyEvent);
+    form.addEventListener('click', onRegistrationFormDirtyEvent);
+    window.requestAnimationFrame(function () {
+      window.requestAnimationFrame(function () {
+        if (registrationFormSession !== session) return;
+        session.baseline = serializeRegistrationForm(form);
+        session.ready = true;
+        syncRegistrationFormActions();
+      });
+    });
+    syncRegistrationFormActions();
+    return session;
+  }
+
+  function updateRegistrationHeader() {
+    const heading = document.getElementById('projects-section-title');
+    const filter = document.getElementById('master-project-filter-dropdown');
+    const root = pane();
+    const currentLabel = isRegistrationFormActive(root) ? (root.dataset.headerCurrentLabel || '') : '';
+    if (filter) filter.classList.toggle('d-none', !!currentLabel);
+    if (!heading) {
+      syncRegistrationFormActions();
+      return;
+    }
+    if (!currentLabel) {
+      heading.textContent = 'Проекты';
+      syncRegistrationFormActions();
+      return;
+    }
+    const rootLabel = root.dataset.headerRootLabel || 'Проекты';
+    const rootUrl = root.dataset.headerRootUrl || '';
+    const currentUrl = root.dataset.headerCurrentUrl || '';
+    const rootHref = rootUrl
+      ? ' href="#projects" hx-get="' + escapeRegistrationHeaderText(rootUrl) + '" hx-target="#projects-pane" hx-swap="outerHTML"'
+      : '';
+    const currentHref = currentUrl
+      ? ' href="#projects" hx-get="' + escapeRegistrationHeaderText(currentUrl) + '" hx-target="#projects-pane" hx-swap="outerHTML"'
+      : '';
+    heading.innerHTML = ''
+      + '<a class="proposal-header-link"' + rootHref + '>' + escapeRegistrationHeaderText(rootLabel) + '</a>'
+      + '<span class="proposal-header-separator"> / </span>'
+      + '<a class="proposal-header-link"' + currentHref + '>' + escapeRegistrationHeaderText(currentLabel) + '</a>';
+    if (window.htmx) window.htmx.process(heading);
+    syncRegistrationFormActions();
+  }
+
+  function setRegistrationFormSaveLoading(isLoading) {
+    const saveBtn = registrationFormSaveBtn();
+    const cancelBtn = registrationFormCancelBtn();
+    if (registrationFormSession) registrationFormSession.saving = !!isLoading;
+    if (!(saveBtn instanceof HTMLButtonElement)) return;
+    if (isLoading) {
+      if (saveBtn.dataset.loading === '1') return;
+      saveBtn.dataset.loading = '1';
+      saveBtn.dataset.originalHtml = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Сохранение...';
+      if (cancelBtn && cancelBtn.dataset.loading !== '1') cancelBtn.disabled = true;
+      return;
+    }
+    if (saveBtn.dataset.originalHtml) saveBtn.innerHTML = saveBtn.dataset.originalHtml;
+    delete saveBtn.dataset.loading;
+    syncRegistrationFormActions();
+  }
+
+  function setRegistrationFormCancelLoading(isLoading) {
+    const button = registrationFormCancelBtn();
+    if (!(button instanceof HTMLButtonElement)) return;
+    if (isLoading) {
+      if (button.dataset.loading === '1') return;
+      button.dataset.loading = '1';
+      button.dataset.originalHtml = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Отмена';
+      return;
+    }
+    if (button.dataset.originalHtml) button.innerHTML = button.dataset.originalHtml;
+    delete button.dataset.loading;
+    syncRegistrationFormActions();
+  }
+
+  function saveRegistrationForm() {
+    const session = registrationFormSession;
+    const form = getRegistrationForm();
+    if (!form || (session && session.saving)) return;
+    if (session && !session.isDirty()) return;
+    if (typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+      return;
+    }
+    form.submit();
+  }
+
+  async function cancelRegistrationForm() {
+    const session = registrationFormSession;
+    if (!session || session.saving) return;
+    if (!session.isDirty()) {
+      hideRegistrationFormActions();
+      destroyRegistrationFormSession();
+      window.__currentProjectsSection = 'launch';
+      await loadProjectsCatalog();
+      return;
+    }
+    if (!window.confirm(REGISTRATION_FORM_CANCEL_MESSAGE)) return;
+    destroyRegistrationFormSession();
+    setRegistrationFormCancelLoading(true);
+    await reloadRegistrationFormPage();
+  }
+
+  async function leaveRegistrationForm(sectionKey) {
+    if (registrationFormSession?.saving) return;
+    if (registrationFormSession?.isDirty() && !window.confirm(REGISTRATION_FORM_LEAVE_MESSAGE)) return;
+    hideRegistrationFormActions();
+    destroyRegistrationFormSession();
+    window.__currentProjectsSection = sectionKey;
+    if (window.UIPref) window.UIPref.set('projects:section', sectionKey);
+    hideRegistrationFormActions();
+    await loadProjectsCatalog();
+  }
+
+  function registrationFormForRequest(target) {
+    if (!(target instanceof Element)) return null;
+    if (target.matches('form[data-registration-form]')) return target;
+    return target.closest('form[data-registration-form]');
+  }
+
+  document.addEventListener('click', async (event) => {
+    const saveBtn = event.target.closest('#registration-form-actions [data-registration-form-save-btn]');
+    if (saveBtn) {
+      event.preventDefault();
+      saveRegistrationForm();
+      return;
+    }
+    const cancelBtn = event.target.closest('#registration-form-actions [data-registration-form-cancel-btn]');
+    if (cancelBtn) {
+      event.preventDefault();
+      await cancelRegistrationForm();
+    }
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    if (!registrationFormSession?.isDirty()) return;
+    const target = event.detail?.target;
+    if (!target || target.id !== 'projects-pane') return;
+    const elt = event.detail?.elt;
+    if (registrationFormForRequest(elt)) return;
+    if (!window.confirm(REGISTRATION_FORM_LEAVE_MESSAGE)) {
+      event.preventDefault();
+      return;
+    }
+    destroyRegistrationFormSession();
+  });
+
+  document.body.addEventListener('htmx:beforeRequest', function (event) {
+    if (!registrationFormForRequest(event.detail?.elt)) return;
+    setRegistrationFormSaveLoading(true);
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    if (!registrationFormForRequest(event.detail?.elt)) return;
+    setRegistrationFormSaveLoading(false);
+  });
+
+  document.body.addEventListener('htmx:afterSettle', function (event) {
+    const target = event.target;
+    if (!(target instanceof Element) || target.id !== 'projects-pane') return;
+    if (isRegistrationFormActive(target)) ensureRegistrationFormSession(getRegistrationForm());
+    else destroyRegistrationFormSession();
+    updateRegistrationHeader();
+  });
+
+  const projectsSidebar = document.getElementById('projects-second-sidebar-list');
+  if (projectsSidebar) {
+    projectsSidebar.addEventListener('click', function (event) {
+      if (!isRegistrationFormActive()) return;
+      const link = event.target.closest('[data-projects-section]');
+      if (!link || !projectsSidebar.contains(link)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      leaveRegistrationForm(link.dataset.projectsSection || 'launch');
+    }, true);
+  }
 })();

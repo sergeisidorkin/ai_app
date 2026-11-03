@@ -20,7 +20,7 @@
 
     <div class="row">
       <div class="col-md-6 mb-3">
-        <label class="form-label">Проект</label>
+        <label class="form-label">Проект ID</label>
         {{ form.project }}
       </div>
       <div class="col-md-2 mb-3">
@@ -127,7 +127,7 @@
       if (nameInput) nameInput.value = j.name || nameInput.value || "";
 
       if (codeInput) {
-        const sameProject = currentWorkId && String(id) === String({{ work.project_id|default:"''" }});
+        const sameProject = currentWorkId && String(id) === String({{ form.owning_project_id|default:"''" }});
         codeInput.value = sameProject
           ? (codeInput.defaultValue || j.next_asset_code || "")
           : (j.next_asset_code || "");

@@ -1219,6 +1219,31 @@ def _format_proposal_schedule_term(value, unit):
     return f"{display} {labels.get(unit, 'мес.')}"
 
 
+def _proposal_stage_flag(payload, key, default):
+    from projects_app.stage_terms import enabled_flag
+
+    if not isinstance(payload, dict) or key not in payload:
+        return default
+    return enabled_flag(payload.get(key), default)
+
+
+def _proposal_schedule_term_unit(value, default):
+    raw = str(value or "").strip()
+    if raw in {"days", "weeks", "months"}:
+        return raw
+    return default
+
+
+def _proposal_stage_delay_days(payload):
+    from projects_app.stage_terms import term_to_days
+
+    if not isinstance(payload, dict):
+        return 0
+    unit = _proposal_schedule_term_unit(payload.get("next_stage_delay_unit"), "days")
+    days = term_to_days(payload.get("next_stage_delay_days") or 0, unit)
+    return int(days.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def _proposal_schedule_base_start_date(today=None):
     current = (today or timezone.localdate()) + timedelta(days=14)
     previous_monday = current - timedelta(days=current.weekday())
@@ -1272,8 +1297,31 @@ def _build_proposal_payment_schedule_rows(proposals):
         product_count = len(products)
         for index, product in enumerate(products, start=1):
             payload = _proposal_stage_payload_for_product(stage_payloads, product, index - 1)
-            service_term_months = _proposal_schedule_decimal(
-                _proposal_stage_value(payload, "service_term_months", proposal, "service_term_months")
+            source_enabled = _proposal_stage_flag(payload, "source_data_term_enabled", False)
+            source_date_enabled = _proposal_stage_flag(payload, "source_data_date_enabled", False)
+            preliminary_term_enabled = _proposal_stage_flag(payload, "service_term_months_enabled", True)
+            preliminary_date_enabled = _proposal_stage_flag(payload, "preliminary_report_date_enabled", True)
+            final_date_enabled = _proposal_stage_flag(payload, "final_report_date_enabled", True)
+            source_term = (
+                _proposal_schedule_decimal(payload.get("source_data_term") if isinstance(payload, dict) else None)
+                if source_enabled
+                else None
+            )
+            source_unit = _proposal_schedule_term_unit(
+                payload.get("source_data_term_unit") if isinstance(payload, dict) else None,
+                "weeks",
+            )
+            source_date = (
+                _proposal_schedule_date(payload.get("source_data_date") if isinstance(payload, dict) else None)
+                if source_enabled and source_date_enabled
+                else None
+            )
+            service_term_months = (
+                _proposal_schedule_decimal(
+                    _proposal_stage_value(payload, "service_term_months", proposal, "service_term_months")
+                )
+                if preliminary_term_enabled
+                else None
             )
             preliminary_report_term_unit = _proposal_schedule_preliminary_term_unit(
                 _proposal_stage_value(payload, "preliminary_report_term_unit", proposal, "preliminary_report_term_unit")
@@ -1284,27 +1332,43 @@ def _build_proposal_payment_schedule_rows(proposals):
             final_report_term_unit = _proposal_schedule_final_term_unit(
                 _proposal_stage_value(payload, "final_report_term_unit", proposal, "final_report_term_unit")
             )
-            preliminary_report_date = _proposal_schedule_date(
-                _proposal_stage_value(payload, "preliminary_report_date", proposal, "preliminary_report_date")
+            preliminary_report_date = (
+                _proposal_schedule_date(
+                    _proposal_stage_value(payload, "preliminary_report_date", proposal, "preliminary_report_date")
+                )
+                if preliminary_date_enabled
+                else None
             )
-            final_report_date = _proposal_schedule_date(
-                _proposal_stage_value(payload, "final_report_date", proposal, "final_report_date")
+            final_report_date = (
+                _proposal_schedule_date(
+                    _proposal_stage_value(payload, "final_report_date", proposal, "final_report_date")
+                )
+                if final_date_enabled
+                else None
             )
-            next_stage_delay_days = _proposal_schedule_int(
-                payload.get("next_stage_delay_days") if isinstance(payload, dict) else 0
-            ) or 0
+            next_stage_delay_days = _proposal_stage_delay_days(payload)
 
-            if preliminary_report_date and service_term_months is not None:
+            if source_date and source_term is not None:
+                start_date = _subtract_proposal_schedule_term(source_date, source_term, source_unit)
+            elif preliminary_report_date and service_term_months is not None:
                 start_date = _subtract_proposal_schedule_term(
                     preliminary_report_date,
                     service_term_months,
                     preliminary_report_term_unit,
                 )
+                if source_term is not None:
+                    start_date = _subtract_proposal_schedule_term(start_date, source_term, source_unit)
             else:
                 start_date = rolling_start_date
+            chain_date = start_date
+            if source_term is not None:
+                if not source_date:
+                    source_date = _add_proposal_schedule_term(chain_date, source_term, source_unit)
+                if source_date:
+                    chain_date = source_date
             if not preliminary_report_date and service_term_months is not None:
                 preliminary_report_date = _add_proposal_schedule_term(
-                    start_date,
+                    chain_date,
                     service_term_months,
                     preliminary_report_term_unit,
                 )
@@ -1314,7 +1378,7 @@ def _build_proposal_payment_schedule_rows(proposals):
                     final_report_term_weeks,
                     final_report_term_unit,
                 )
-            stage_end_date = final_report_date or preliminary_report_date or start_date
+            stage_end_date = final_report_date or preliminary_report_date or source_date or start_date
             rolling_start_date = (
                 stage_end_date + timedelta(days=next_stage_delay_days)
                 if stage_end_date
@@ -1338,8 +1402,12 @@ def _build_proposal_payment_schedule_rows(proposals):
                     "type": (getattr(product, "short_name", "") or str(product or "")).strip(),
                     "name": proposal.name,
                     "stage": f"Этап {index}",
-                    "evaluation_date": _proposal_schedule_date(
-                        _proposal_stage_value(payload, "evaluation_date", proposal, "evaluation_date")
+                    "evaluation_date": (
+                        _proposal_schedule_date(
+                            _proposal_stage_value(payload, "evaluation_date", proposal, "evaluation_date")
+                        )
+                        if _proposal_stage_flag(payload, "evaluation_date_enabled", True)
+                        else None
                     ),
                     "start_date": start_date,
                     "service_term_months": service_term_months,
@@ -2014,6 +2082,8 @@ def _proposal_product_autofill_data(product_ids=None, group_member=None):
         if not product_id or product_id in typical_service_terms_map:
             continue
         typical_service_terms_map[product_id] = {
+            "source_data_term": format(item.source_data_weeks, ".1f"),
+            "source_data_term_unit": item.source_data_term_unit,
             "preliminary_report_months": format(item.preliminary_report_months, ".1f"),
             "preliminary_report_term_unit": item.preliminary_report_term_unit,
             "final_report_weeks": format(item.final_report_weeks, ".1f"),

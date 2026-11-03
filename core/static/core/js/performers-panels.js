@@ -2042,7 +2042,7 @@
       window.__participationProjectFilter = values.slice();
       const showAll = values.includes(FILTER_ALL) || !values.length;
       getParticipationRows().forEach((row) => {
-        const pid = row.dataset.projectId || '';
+        const pid = row.dataset.owningProjectId || row.dataset.projectId || '';
         const visible = showAll || values.includes(pid);
         row.classList.toggle('d-none', !visible);
         if (!visible) {
@@ -6723,7 +6723,7 @@
 
       if (!allProj || !allAsset) {
         perfRows.forEach(function(row) {
-          var mp = allProj || pf.indexOf(row.dataset.projectId || '') !== -1;
+          var mp = allProj || pf.indexOf(row.dataset.owningProjectId || row.dataset.projectId || '') !== -1;
           var ma = allAsset || af.indexOf(row.dataset.assetName || '') !== -1;
           if (!(mp && ma)) row.classList.add('d-none');
         });

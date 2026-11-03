@@ -71,7 +71,7 @@ PERSONAL_WEEK_LIMIT_ERROR = "Нельзя выбрать слишком дале
 WORKTIME_ACCESS_ERROR = 'Табель доступен только штатным сотрудникам с правами staff. Пользователи с трудоустройством "Внештатный сотрудник" не допускаются.'
 WORKTIME_CSV_MODE_ERROR = "Загрузка и скачивание CSV доступны только для месячного табеля с разбивкой по сотрудникам."
 WORKTIME_CSV_ADMIN_ERROR = "Загрузка и скачивание CSV доступны только пользователям с ролью Администратор."
-WORKTIME_CSV_BASE_HEADERS = ("Сотрудник", "Проект", "Тип", "Название")
+WORKTIME_CSV_BASE_HEADERS = ("Сотрудник", "Этап", "Тип", "Название")
 WORKTIME_COMPANY_FILTER_ALL = "__all__"
 WORKTIME_COMPOSITION_CATEGORIES = (
     {
@@ -645,6 +645,7 @@ def _build_worktime_csv_project_index():
     duplicate_project_keys = set()
     registrations = (
         ProjectRegistration.objects
+        .registry_rows()
         .select_related("type")
         .prefetch_related("product_links__product")
         .order_by("id")
@@ -1339,6 +1340,7 @@ def _available_personal_week_registrations(user, week_start):
     }
     return (
         ProjectRegistration.objects
+        .registry_rows()
         .select_related("type")
         .exclude(pk__in=used_registration_ids)
         .order_by("number", "id")

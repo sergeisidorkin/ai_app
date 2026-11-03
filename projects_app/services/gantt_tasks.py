@@ -82,10 +82,12 @@ class _ScheduleRow:
     parent_id: str = ""
     level: int = 0
     has_children: bool = False
+    owning_project_id: int = 0
 
     def as_dict(self) -> dict:
         return {
             "project_id": self.project_id,
+            "owning_project_id": self.owning_project_id or self.project_id,
             "task_id": self.task_id,
             "row_number": self.row_number,
             "task": self.task,
@@ -252,6 +254,7 @@ def _iter_project_rows(project, executor_labels: dict[str, str] | None = None) -
         executor_raw = str(task.get("executor") or "").strip()
         yield _ScheduleRow(
             project_id=project.pk,
+            owning_project_id=getattr(project, "owning_project_id", None) or project.pk,
             task_id=task_id,
             row_number=wbs_by_id.get(task_id, ""),
             task=str(task.get("text") or "").strip(),

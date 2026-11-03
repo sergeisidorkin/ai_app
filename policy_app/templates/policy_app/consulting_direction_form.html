@@ -27,7 +27,7 @@
         <h6 class="mb-0">Вид консалтинга</h6>
       </div>
       <div id="consulting-kind-rows" class="catalog-editor-list"></div>
-      <div class="d-flex align-items-stretch gap-2 mt-3">
+      <div class="catalog-editor-actions d-flex align-items-stretch gap-2">
         <button type="button" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center" id="consulting-kind-add-btn">
           <i class="bi bi-plus-circle me-2"></i>Добавить вид
         </button>
@@ -52,7 +52,7 @@
         <h6 class="mb-0">Тип услуг</h6>
       </div>
       <div id="consulting-service-type-rows" class="catalog-editor-list"></div>
-      <div class="d-flex align-items-stretch gap-2 mt-3">
+      <div class="catalog-editor-actions d-flex align-items-stretch gap-2">
         <button type="button" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center" id="consulting-service-type-add-btn">
           <i class="bi bi-plus-circle me-2"></i>Добавить тип
         </button>
@@ -77,7 +77,7 @@
         <h6 class="mb-0">Подтип услуги</h6>
       </div>
       <div id="consulting-service-subtype-rows" class="catalog-editor-list"></div>
-      <div class="d-flex align-items-stretch gap-2 mt-3">
+      <div class="catalog-editor-actions d-flex align-items-stretch gap-2">
         <button type="button" class="btn btn-sm proposal-asset-add-btn d-flex align-items-center" id="consulting-service-subtype-add-btn">
           <i class="bi bi-plus-circle me-2"></i>Добавить подтип
         </button>
@@ -122,6 +122,28 @@
   #policy-modal #consulting-direction-form .modal-body.modal-body-scroll {
     flex: 1 1 auto;
     min-height: 0;
+    padding-bottom: 0;
+  }
+  #policy-modal #consulting-direction-form .catalog-editor-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 6;
+    margin-top: .25rem;
+    margin-bottom: 0;
+    padding-top: .75rem;
+    padding-bottom: .75rem;
+    background: #fff;
+    border-top: 1px solid transparent;
+  }
+  #policy-modal #consulting-direction-form .catalog-editor-actions.is-stuck {
+    border-top-color: #e9ecef;
+  }
+  #policy-modal #consulting-direction-form .catalog-editor-actions-marker {
+    display: block;
+    height: 1px;
+    margin-top: -1px;
+    visibility: hidden;
+    pointer-events: none;
   }
   #policy-modal .catalog-editor-section {
     padding: 0;
@@ -336,7 +358,49 @@
       panel.classList.toggle("d-none", !hasSelected);
       panel.classList.toggle("d-flex", hasSelected);
     });
+    syncCatalogActionSticky();
   }
+
+  const catalogActionSyncs = [];
+
+  function attachCatalogActionSticky(bar) {
+    const section = bar.closest(".catalog-editor-section");
+    const scrollport = form.querySelector(".modal-body");
+    if (!section || !scrollport || bar.dataset.stickyStateBound === "1") return;
+    bar.dataset.stickyStateBound = "1";
+
+    const marker = document.createElement("span");
+    marker.className = "catalog-editor-actions-marker";
+    marker.setAttribute("aria-hidden", "true");
+    bar.insertAdjacentElement("afterend", marker);
+
+    function sync() {
+      if (!bar.isConnected) return;
+      const port = scrollport.getBoundingClientRect();
+      const sectionRect = section.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const isStuck = (
+        sectionRect.top < port.bottom - 1
+        && sectionRect.bottom > port.top + 1
+        && markerRect.top >= port.bottom - 1
+      );
+      bar.classList.toggle("is-stuck", isStuck);
+    }
+
+    scrollport.addEventListener("scroll", sync, { passive: true });
+    if ("ResizeObserver" in window) {
+      const resizeObserver = new ResizeObserver(sync);
+      resizeObserver.observe(section);
+      resizeObserver.observe(scrollport);
+    }
+    catalogActionSyncs.push(sync);
+  }
+
+  function syncCatalogActionSticky() {
+    catalogActionSyncs.forEach((sync) => sync());
+  }
+
+  form.querySelectorAll(".catalog-editor-actions").forEach(attachCatalogActionSticky);
 
   function toggleSelected(collectionKey, index, checked) {
     if (!state[collectionKey] || !state[collectionKey][index]) return;

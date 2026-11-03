@@ -7,7 +7,13 @@ function attachRegistrationProducts(node) {
   if (!container || !metaEl || container.dataset.bound === "1") return;
   container.dataset.bound = "1";
 
-  const isContractProposalTermsMode = Boolean(node.querySelector("#contract-stage-terms-tbody"));
+  const isContractProposalTermsMode = Boolean(
+    node.querySelector("#contract-stage-terms-tbody, #registration-stage-terms-tbody")
+  );
+  const isProjectRegistrationTerms = Boolean(node.querySelector("#registration-stage-terms-tbody"));
+  const usesRegistryStageTerms = isProjectRegistrationTerms || Boolean(node.querySelector("#contract-stage-terms-tbody"));
+  const isRegistrationGroupEdit = node.dataset.groupEdit === "1";
+  const hasRegistrationContracts = Boolean(node.querySelector("#registration-contracts-container"));
   const termsConfig = isContractProposalTermsMode ? {
     termRowSelector: ".proposal-stage-terms-row",
     delayRowSelector: ".proposal-stage-delay-row",
@@ -30,8 +36,8 @@ function attachRegistrationProducts(node) {
     delayRowClass: "proposal-stage-delay-row",
     delayColspan: 5,
     evaluationRowSelector: ".proposal-stage-evaluation-row",
-    getEvaluationTbody: () => node.querySelector("#contract-stage-evaluation-tbody"),
-    getTbody: () => node.querySelector("#contract-stage-terms-tbody"),
+    getEvaluationTbody: () => node.querySelector("#contract-stage-evaluation-tbody, #registration-stage-evaluation-tbody"),
+    getTbody: () => node.querySelector("#contract-stage-terms-tbody, #registration-stage-terms-tbody"),
   } : {
     termRowSelector: ".registration-contract-terms-row",
     delayRowSelector: ".registration-stage-delay-row",
@@ -116,18 +122,35 @@ function attachRegistrationProducts(node) {
   const createStageDelayRow = () => {
     const row = document.createElement("tr");
     row.className = `${termsConfig.delayRowClass} d-none`;
+    const fieldHtml = usesRegistryStageTerms
+      ? [
+          `<div class="proposal-stage-field-toggle-wrap proposal-stage-delay-input-wrap">`,
+          `<div class="form-control proposal-stage-delay-number-shell">`,
+          `<input type="number" name="next_stage_delay_days" min="0" step="0.1" inputmode="decimal" class="${termsConfig.delayInputSelector.slice(1)}" value="">`,
+          `<select name="next_stage_delay_unit" class="form-select proposal-stage-delay-unit" aria-label="Единица лага">`,
+          `<option value="days" selected>дн.</option>`,
+          `<option value="weeks">нед.</option>`,
+          `<option value="months">мес.</option>`,
+          `</select>`,
+          `</div>`,
+          `<button type="button" class="btn btn-sm ${termsConfig.delayRemoveClass}" title="Удалить лаг" aria-label="Удалить лаг">&times;</button>`,
+          `</div>`,
+        ].join("")
+      : [
+          `<div class="${isContractProposalTermsMode ? "proposal-stage-delay-input-wrap" : "registration-stage-delay-input-wrap"}">`,
+          `<div class="${isContractProposalTermsMode ? "proposal-stage-delay-number-shell" : "registration-stage-delay-number-shell"}">`,
+          `<input type="number" name="next_stage_delay_days" step="1" inputmode="numeric" class="form-control ${termsConfig.delayInputSelector.slice(1)}" value="">`,
+          `<span class="${isContractProposalTermsMode ? "proposal-stage-delay-unit" : "registration-stage-delay-unit"}" aria-hidden="true">дн.</span>`,
+          `</div>`,
+          `<button type="button" class="btn btn-sm ${termsConfig.delayRemoveClass}" title="Удалить лаг" aria-label="Удалить лаг">&times;</button>`,
+          `</div>`,
+        ].join("");
     row.innerHTML = [
       `<td class="${isContractProposalTermsMode ? "proposal-terms-stage-col" : "registration-contract-terms-stage-col"}">`,
       `<input type="text" class="form-control readonly-field ${termsConfig.stageLabelSelector.slice(1)}" value="Лаг" readonly tabindex="-1">`,
       "</td>",
       "<td>",
-      `<div class="${isContractProposalTermsMode ? "proposal-stage-delay-input-wrap" : "registration-stage-delay-input-wrap"}">`,
-      `<div class="${isContractProposalTermsMode ? "proposal-stage-delay-number-shell" : "registration-stage-delay-number-shell"}">`,
-      `<input type="number" name="next_stage_delay_days" step="1" inputmode="numeric" class="form-control ${termsConfig.delayInputSelector.slice(1)}" value="">`,
-      `<span class="${isContractProposalTermsMode ? "proposal-stage-delay-unit" : "registration-stage-delay-unit"}" aria-hidden="true">дн.</span>`,
-      "</div>",
-      `<button type="button" class="btn btn-sm ${termsConfig.delayRemoveClass}" title="Удалить лаг" aria-label="Удалить лаг">&times;</button>`,
-      "</div>",
+      fieldHtml,
       "</td>",
       `<td colspan="${termsConfig.delayColspan}"></td>`,
     ].join("");
@@ -164,14 +187,29 @@ function attachRegistrationProducts(node) {
     delete clone.dataset.productId;
     delete clone.dataset.forceDatesFromTerms;
     delete clone.dataset.manualDateSource;
+    delete clone.dataset.contractTermsLocked;
+    delete clone.dataset.contractId;
+    delete clone.dataset.contractEnd;
+    clone.classList.remove("is-contract-terms-locked");
+    clone.querySelector(".registration-stage-project-values")?.remove();
+    const registrationToggleStartsOff = (input) => usesRegistryStageTerms && (
+      input.classList.contains("proposal-stage-source-data-term-toggle")
+      || input.classList.contains("proposal-stage-source-data-date-toggle")
+      || input.classList.contains("proposal-stage-preliminary-report-date-toggle")
+      || input.classList.contains("proposal-stage-final-report-date-toggle")
+      || input.classList.contains("proposal-stage-source-data-term-enabled")
+      || input.classList.contains("proposal-stage-source-data-date-enabled")
+      || input.classList.contains("proposal-stage-preliminary-report-date-enabled")
+      || input.classList.contains("proposal-stage-final-report-date-enabled")
+    );
     clone.querySelectorAll("input").forEach((input) => {
       delete input.dataset.hasPicker;
       if (input.type === "checkbox") {
-        input.checked = true;
+        input.checked = !registrationToggleStartsOff(input);
         return;
       }
       if (input.type === "hidden" && input.name && input.name.endsWith("_enabled")) {
-        input.value = "true";
+        input.value = registrationToggleStartsOff(input) ? "false" : "true";
         return;
       }
       if (!input.classList.contains(termsConfig.stageLabelSelector.slice(1))) {
@@ -198,6 +236,12 @@ function attachRegistrationProducts(node) {
     const clone = row.cloneNode(true);
     delete clone.dataset.eventsBound;
     delete clone.dataset.productId;
+    clone.classList.remove("d-none");
+    const common = clone.querySelector(".registration-evaluation-common");
+    if (common) {
+      common.closest("td")?.classList.remove("registration-evaluation-common-cell");
+      common.remove();
+    }
     clone.querySelectorAll("input").forEach((input) => {
       delete input.dataset.hasPicker;
       if (input.type === "checkbox") {
@@ -331,8 +375,16 @@ function attachRegistrationProducts(node) {
       const finalTermUnitSelect = termsConfig.finalTermUnitSelector
         ? termRow.querySelector(termsConfig.finalTermUnitSelector)
         : null;
-      if (stageInput) stageInput.value = "Этап " + (index + 1);
-      if (evaluationStageInput) evaluationStageInput.value = "Этап " + (index + 1);
+      const writeStageLabel = (input, value) => {
+        if (!input) return;
+        input.value = value;
+        const compact = input.parentElement?.querySelector(".proposal-stage-label-compact");
+        if (!compact) return;
+        const match = String(value).match(/^Этап\s+(\d+)$/);
+        compact.textContent = match ? match[1] : value;
+      };
+      writeStageLabel(stageInput, "Этап " + (index + 1));
+      writeStageLabel(evaluationStageInput, "Этап " + (index + 1));
       const terms = product?.typical_service_terms || {};
       if (!productId && previousProductId) {
         if (sourceDataTermInput) sourceDataTermInput.value = "";
@@ -606,6 +658,70 @@ function attachRegistrationProducts(node) {
     });
   };
 
+  const refreshProductContractOptions = (extraSelects = []) => {
+    if (!hasRegistrationContracts) return;
+    const contractSelects = [...node.querySelectorAll("#registration-contracts-container .registration-contract-select")];
+    const source = contractSelects[0] || node.querySelector(".registration-contract-select");
+    if (!source) return;
+    const allowed = [];
+    const seen = new Set();
+    contractSelects.forEach((select) => {
+      const value = String(select.value || "").trim();
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      allowed.push(value);
+    });
+    const sourceByValue = new Map([...source.options].map((option) => [option.value, option.textContent]));
+    const productSelects = [...node.querySelectorAll(".registration-product-contract-select")];
+    extraSelects.forEach((select) => {
+      if (select && !productSelects.includes(select)) productSelects.push(select);
+    });
+    productSelects.forEach((select) => {
+      if (select.dataset.contractChangeBound !== "1") {
+        select.dataset.contractChangeBound = "1";
+        select.addEventListener("change", () => {
+          select.dataset.contractTouched = "1";
+        });
+      }
+      const preferred = select.dataset.contractTouched === "1"
+        ? String(select.value || "")
+        : String(select.value || select.closest(".registration-product-row")?.dataset.selectedContractId || "");
+      select.replaceChildren();
+      const blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = sourceByValue.has("") ? sourceByValue.get("") : "— Не выбрано —";
+      select.appendChild(blank);
+      allowed.forEach((value) => {
+        if (!sourceByValue.has(value)) return;
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = sourceByValue.get(value);
+        select.appendChild(option);
+      });
+      select.value = allowed.includes(preferred) ? preferred : "";
+    });
+    if (node.dataset.registrationContractGroups === "1") node.__contractStageTermsApi?.sync();
+  };
+
+  const fillProductContractSelect = (select) => {
+    if (!select || !hasRegistrationContracts) return;
+    refreshProductContractOptions([select]);
+  };
+
+  if (hasRegistrationContracts && node.dataset.productContractLinkBound !== "1") {
+    node.dataset.productContractLinkBound = "1";
+    node.addEventListener("change", (event) => {
+      if (event.target?.classList?.contains("registration-contract-select")) {
+        refreshProductContractOptions();
+      }
+    });
+    node.addEventListener("click", (event) => {
+      if (event.target?.closest?.("#registration-add-contract, .registration-contract-remove")) {
+        refreshProductContractOptions();
+      }
+    });
+  }
+
   const buildRow = (initialState = {}) => {
     const row = document.createElement("div");
     row.className = "registration-product-row";
@@ -613,9 +729,13 @@ function attachRegistrationProducts(node) {
     row.dataset.selectedServiceCategory = initialState.serviceCategory || "";
     row.dataset.selectedServiceSubtype = initialState.serviceSubtype || "";
     row.dataset.selectedProductId = initialState.productId || "";
+    const contractField = hasRegistrationContracts
+      ? '<div class="col-12"><select name="stage_contract_id" class="form-select registration-product-contract-select" aria-label="Договор ID"></select></div>'
+      : "";
     let html = '<div class="registration-product-row-inner">'
       + '<span class="badge rounded-circle d-flex align-items-center justify-content-center registration-product-badge"></span>'
       + '<div class="row g-2 flex-grow-1 registration-product-fields">'
+      + contractField
       + '<div class="col-12 col-xl-3"><select name="type_consulting" class="form-select registration-consulting-select"></select></div>'
       + '<div class="col-12 col-xl-3"><select name="type_service_category" class="form-select registration-service-category-select"></select></div>'
       + '<div class="col-12 col-xl-3"><select name="type_service_subtype" class="form-select registration-service-subtype-select"></select></div>'
@@ -623,8 +743,10 @@ function attachRegistrationProducts(node) {
       + '</div>'
       + '<button type="button" class="btn btn-sm registration-product-remove" title="Удалить" aria-label="Удалить строку типа">&times;</button>'
       + '</div>'
-      + '<input type="hidden" name="row_group_id" value="">';
+      + '<input type="hidden" name="row_group_id" value="">'
+      + '<input type="hidden" name="registration_row_id" value="">';
     row.innerHTML = html;
+    fillProductContractSelect(row.querySelector(".registration-product-contract-select"));
     bindRow(row);
     syncRow(row, initialState);
     return row;
@@ -645,6 +767,19 @@ function attachRegistrationProducts(node) {
       return;
     }
     const rows = getProductRows();
+    if (isRegistrationGroupEdit) {
+      if (rows.length <= 1) {
+        alert("В группе должна остаться хотя бы одна строка.");
+        return;
+      }
+      if (!window.confirm("Удалить строку проекта из группы? Строка исчезнет из реестра после сохранения.")) {
+        return;
+      }
+      row?.remove();
+      if (window.ProductGroupPicker) ProductGroupPicker.prune(container, registrationGroupOptions());
+      renumberRows();
+      return;
+    }
     const isFirstRow = row && rows[0] === row;
     if (isFirstRow) {
       if (window.ProductGroupPicker) ProductGroupPicker.clearMemberMarker(row);
@@ -671,6 +806,7 @@ function attachRegistrationProducts(node) {
     ProductGroupPicker.restore(container, registrationGroupOptions());
   }
   container.querySelectorAll(".registration-product-row").forEach((row) => {
+    fillProductContractSelect(row.querySelector(".registration-product-contract-select"));
     bindRow(row);
     syncRow(row, {
       consultingType: row.dataset.selectedConsultingType || "",

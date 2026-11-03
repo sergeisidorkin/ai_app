@@ -68,6 +68,7 @@ from projects_app.models import (
     PerformerReportUpload,
     ProjectRegistration,
     ProjectRegistrationProduct,
+    RegistrationGroupSummaryState,
     RegistrationWorkspaceFolder,
     ReportCheckLine,
     ReportCheckRule,
@@ -1092,7 +1093,8 @@ class ProjectRegistrationFormViewTests(TestCase):
         response = self.client.get(reverse("registration_form_create"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Добавить проект")
+        self.assertContains(response, 'class="registration-form-page"', html=False)
+        self.assertContains(response, 'data-header-current-label="Новый проект"', html=False)
         self.assertContains(response, 'id="registration-type-meta"', html=False)
         self.assertContains(response, 'name="type_consulting"', html=False)
         self.assertContains(response, 'name="type_service_category"', html=False)
@@ -1107,30 +1109,116 @@ class ProjectRegistrationFormViewTests(TestCase):
         content = response.content.decode("utf-8")
         schedule_field_order = [
             '<label class="form-label">Год</label>',
-            '<label class="form-label">Дата оценки</label>',
-            '<label class="form-label">Дедлайн</label>',
             '<label class="form-label">Руководитель проекта</label>',
             '<label class="form-label">Координатор проекта</label>',
+            '<label class="form-label">Дедлайн</label>',
             '<label class="form-label">Статус</label>',
+            '<label class="form-label">Договоры</label>',
         ]
         schedule_field_positions = [content.index(item) for item in schedule_field_order]
         self.assertEqual(schedule_field_positions, sorted(schedule_field_positions))
+        self.assertContains(response, "repeat(4, minmax(0, 1fr))", html=False)
         self.assertContains(response, '<label class="form-label mb-2">Сроки</label>', html=False)
-        self.assertContains(response, '<th class="registration-contract-terms-stage-col">Этап</th>', html=False)
+        self.assertLess(
+            content.index('<label class="form-label">Статус</label>'),
+            content.index('<label class="form-label mb-2">Сроки</label>'),
+        )
+        self.assertContains(response, "Дата начала проекта", html=False)
+        self.assertContains(response, 'name="project_start_date"', html=False)
+        self.assertContains(response, 'id="registration-stage-terms-tbody"', html=False)
+        self.assertContains(response, 'id="registration-stage-evaluation-tbody"', html=False)
+        self.assertContains(response, "Исходные данные", html=False)
+        self.assertContains(response, "Исходные данные (дата)", html=False)
+        self.assertContains(response, "Предварительный отчёт", html=False)
+        self.assertContains(response, "Предварительный отчёт (дата)", html=False)
+        self.assertContains(response, "Итоговый отчёт", html=False)
+        self.assertContains(response, "Итоговый отчёт (дата)", html=False)
+        self.assertNotContains(response, "Дата предоставления данных", html=False)
+        self.assertNotContains(response, "Дата Предварительного отчёта", html=False)
+        self.assertNotContains(response, "Дата Итогового отчёта", html=False)
+        self.assertContains(response, "<th>Дата оценки</th>", html=False)
+        self.assertNotContains(response, 'name="status_date"', html=False)
+        self.assertNotContains(response, "Дата статуса", html=False)
         self.assertContains(response, 'value="Итого"', html=False)
-        self.assertContains(response, "js-registration-report-terms-lock", html=False)
-        self.assertContains(response, "registration-stage-delay-add", html=False)
-        self.assertContains(response, "registration-stage-next-delay-days", html=False)
+        self.assertContains(response, "js-proposal-report-terms-lock", html=False)
+        self.assertContains(response, "proposal-stage-source-data-term", html=False)
+        stage_terms_source = (
+            Path(__file__).resolve().parents[1] / "core/static/core/js/contracts-stage-terms.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("proposal-stage-next-delay-days", stage_terms_source)
+        self.assertNotContains(response, "Исх. данные, дней", html=False)
+        self.assertNotContains(response, 'name="stage1_weeks"', html=False)
+        self.assertNotContains(response, "js-registration-report-terms-lock", html=False)
         self.assertNotContains(response, "Дата Предварительного отчёта, оконч. расчет")
+        head_order = [
+            '<label class="form-label">Номер</label>',
+            '<label class="form-label">Группа</label>',
+            '<label class="form-label">Название</label>',
+            '<label class="form-label">Год</label>',
+            '<label class="form-label">Договоры</label>',
+            '<label class="form-label">Тип</label>',
+        ]
+        head_positions = [content.index(item) for item in head_order]
+        self.assertEqual(head_positions, sorted(head_positions))
+        self.assertEqual(content.count('<label class="form-label">Год</label>'), 1)
+        self.assertEqual(content.count('name="year"'), 1)
+        self.assertEqual(content.count('name="agreement_number"'), 1)
+        self.assertEqual(content.count('name="agreement_type"'), 1)
+        self.assertEqual(content.count('name="contract_project_registration"'), 1)
+        self.assertContains(response, "Добавить договор")
+        self.assertContains(response, "Добавить продукт")
+        self.assertContains(response, 'class="registration-summary-head-grid"', html=False)
+        self.assertContains(response, '<div class="col-12">Договор ID</div>', html=False)
+        self.assertEqual(content.count('class="col-12 registration-summary-section"'), 4)
+        self.assertContains(response, "registration-schedule-grid--summary", html=False)
+        self.assertContains(response, "registration-contract-row-4", html=False)
+        self.assertNotContains(response, 'registration-contract-row-5"', html=False)
+        self.assertNotContains(response, '<label class="form-label">№ соглашения</label>', html=False)
+        self.assertNotContains(response, 'name="registration_row_id"', html=False)
+        self.assertNotContains(response, 'name="group_source_id"', html=False)
+        form_tag = content[content.index("<form"):content.index(">", content.index("<form"))]
+        self.assertIn('class="registration-summary-layout"', form_tag)
+        self.assertNotIn("data-group-edit", form_tag)
+        self.assertEqual(
+            content.count(
+                '<select name="stage_contract_id" class="form-select registration-product-contract-select" aria-label="Договор ID"></select>'
+            ),
+            1,
+        )
+        picker_source = (
+            Path(__file__).resolve().parents[1] / "core/static/core/js/registration-type-picker.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            '<select name="stage_contract_id" class="form-select registration-product-contract-select" aria-label="Договор ID"></select>',
+            picker_source,
+        )
+        self.assertIn("const contractField = hasRegistrationContracts", picker_source)
+        self.assertIn("refreshProductContractOptions([select])", picker_source)
+        self.assertIn('if (isRegistrationGroupEdit) {', picker_source)
+        self.assertIn("В группе должна остаться хотя бы одна строка.", picker_source)
 
     def test_registration_form_renders_contract_id_field(self):
+        from projects_app.forms import _next_project_number
+
         contract_project = ContractProjectRegistration.objects.create(
-            number=8101,
+            number=_next_project_number(),
             sub_number=1,
             group_member=self.group_member,
             type=self.product,
             name="Договор для выбора",
             year=2026,
+            agreement_number="AGR-3333",
+            contract_date=date(2026, 4, 15),
+            customer="ООО Заказчик договора",
+        )
+        other_contract = ContractProjectRegistration.objects.create(
+            number=8101,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор другого номера",
+            year=2026,
+            agreement_number="AGR-8101",
         )
 
         response = self.client.get(reverse("registration_form_create"))
@@ -1139,6 +1227,127 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertContains(response, "Договор ID")
         self.assertContains(response, 'name="contract_project_registration"', html=False)
         self.assertContains(response, contract_project.short_uid)
+        self.assertNotContains(response, other_contract.short_uid)
+        self.assertContains(response, "registration-contract-derived", html=False)
+        self.assertContains(response, 'id="registration-contract-meta"', html=False)
+        contract_meta = json.loads(response.context["registration_contract_meta_json"])
+        self.assertEqual(set(contract_meta), {str(contract_project.pk)})
+        self.assertEqual(contract_meta[str(contract_project.pk)]["agreement_number"], "AGR-3333")
+        self.assertEqual(contract_meta[str(contract_project.pk)]["customer"], "ООО Заказчик договора")
+
+    def test_registration_edit_uses_summary_layout_and_keeps_linked_contract(self):
+        linked = ContractProjectRegistration.objects.create(
+            number=7000,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор другого номера",
+            year=2026,
+            agreement_type=ContractProjectRegistration.AgreementType.ADDENDUM,
+            agreement_number="AGR-7000",
+            contract_date=date(2026, 5, 2),
+            customer="ООО Связанный заказчик",
+        )
+        same_number = ContractProjectRegistration.objects.create(
+            number=6212,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор того же номера",
+            year=2026,
+            agreement_number="AGR-6212",
+        )
+        other = ContractProjectRegistration.objects.create(
+            number=8000,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Посторонний договор",
+            year=2026,
+            agreement_number="AGR-8000",
+        )
+        registration = ProjectRegistration.objects.create(
+            number=6212,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            agreement_number="РУЧНОЙ",
+            type=self.product,
+            name="Обычная строка",
+            status="Не начат",
+            year=2026,
+            contract_project_registration=linked,
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=registration,
+            product=self.product,
+            rank=1,
+        )
+
+        response = self.client.get(reverse("registration_form_edit", args=[registration.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'class="registration-form-page"', html=False)
+        self.assertContains(response, f'data-header-current-label="{registration.short_uid}"', html=False)
+        self.assertNotContains(response, "Добавить продукт")
+        content = response.content.decode("utf-8")
+        form_tag = content[content.index("<form"):content.index(">", content.index("<form"))]
+        self.assertIn('class="registration-summary-layout"', form_tag)
+        self.assertNotIn("data-group-edit", form_tag)
+        self.assertContains(response, linked.short_uid)
+        self.assertContains(response, same_number.short_uid)
+        self.assertNotContains(response, other.short_uid)
+        self.assertContains(response, f'data-selected-contract-id="{linked.pk}"', html=False)
+        self.assertContains(response, 'value="AGR-7000"', html=False)
+        self.assertNotContains(response, 'value="РУЧНОЙ"', html=False)
+        self.assertContains(response, 'value="ООО Связанный заказчик"', html=False)
+        self.assertContains(response, 'value="2026-05-02"', html=False)
+        self.assertEqual(response.context["form"].initial["agreement_type"], "ADDENDUM")
+        self.assertEqual(response.context["form"].initial["agreement_number"], "AGR-7000")
+        self.assertTrue(response.context["form"].fields["agreement_number"].widget.attrs.get("readonly"))
+        contract_meta = json.loads(response.context["registration_contract_meta_json"])
+        self.assertEqual(set(contract_meta), {str(linked.pk), str(same_number.pk)})
+        self.assertEqual(
+            content.count(
+                '<select name="stage_contract_id" class="form-select registration-product-contract-select" aria-label="Договор ID"></select>'
+            ),
+            1,
+        )
+
+    def test_registration_create_error_filters_contracts_by_posted_number(self):
+        matching = ContractProjectRegistration.objects.create(
+            number=4444,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор из отправленного номера",
+            year=2026,
+            agreement_number="AGR-4444",
+        )
+        other = ContractProjectRegistration.objects.create(
+            number=5555,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор другого отправленного номера",
+            year=2026,
+            agreement_number="AGR-5555",
+        )
+
+        response = self.client.post(
+            reverse("registration_form_create"),
+            {
+                "number": "4444",
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "name": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, matching.short_uid)
+        self.assertNotContains(response, other.short_uid)
+        self.assertContains(response, 'data-header-current-label="Новый проект"', html=False)
+        self.assertNotIn("HX-Retarget", response.headers)
 
     def test_projects_registry_shows_contract_id_column(self):
         contract_project = ContractProjectRegistration.objects.create(
@@ -1223,9 +1432,207 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
         self.assertIn(f'data-selected-product-id="{self.product.pk}"', content)
-        self.assertIn('name="stage1_weeks" value="5.0"', content)
-        self.assertIn('name="stage2_weeks" value="10.0"', content)
-        self.assertIn("productRow.dataset.selectedProductId", content)
+        self.assertIn(
+            'name="service_term_months" min="0" step="0.1" inputmode="decimal" '
+            'class="proposal-stage-service-term-months" value="5.0"',
+            content,
+        )
+        self.assertIn(
+            'name="final_report_term_weeks" min="0" step="0.1" inputmode="decimal" '
+            'class="proposal-stage-final-report-term-weeks" value="10.0"',
+            content,
+        )
+        self.assertNotIn('name="stage1_weeks"', content)
+
+    def test_locked_agreement_type_does_not_block_project_start_save(self):
+        registration = ProjectRegistration.objects.create(
+            number=6218,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект без выбора вида соглашения",
+            status="Не начат",
+            year=2026,
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=registration,
+            product=self.product,
+            rank=1,
+        )
+
+        form = self.client.get(reverse("registration_form_edit", args=[registration.pk]))
+        content = form.content.decode("utf-8")
+        tag_start = content.rfind("<select", 0, content.index('name="agreement_type"'))
+        tag = content[tag_start:content.index(">", tag_start)]
+        self.assertNotIn("required", tag)
+
+        saved = self.client.post(
+            reverse("registration_form_edit", args=[registration.pk]),
+            {
+                "number": 6218,
+                "group_member": self.group_member.pk,
+                "agreement_type": "",
+                "type_id": [self.product.pk],
+                "name": registration.name,
+                "status": "Не начат",
+                "year": 2026,
+                "project_start_date": "2026-07-07",
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertNotContains(saved, "Проверьте введённые данные")
+        registration.refresh_from_db()
+        self.assertEqual(registration.project_start_date, date(2026, 7, 7))
+        self.assertEqual(registration.agreement_type, ProjectRegistration.AgreementType.MAIN)
+
+    def test_registration_edit_saves_project_start_stage_chain(self):
+        registration = ProjectRegistration.objects.create(
+            number=6213,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с цепочкой сроков",
+            status="Не начат",
+            year=2026,
+            deadline=date(2026, 1, 10),
+            contract_start=date(2026, 3, 1),
+            input_data=10,
+            stage1_weeks="1.0",
+            stage2_weeks="2.0",
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=registration,
+            product=self.product,
+            rank=1,
+        )
+
+        response = self.client.post(
+            reverse("registration_form_edit", args=[registration.pk]),
+            {
+                "number": 6213,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": "Проект с цепочкой сроков",
+                "status": "Не начат",
+                "deadline": "2026-01-10",
+                "year": 2026,
+                "project_manager": "",
+                "contract_start": "2026-03-01",
+                "project_start_date": "2026-01-01",
+                "source_data_term": ["10"],
+                "source_data_term_unit": ["days"],
+                "source_data_term_enabled": ["true"],
+                "service_term_months": ["1.0"],
+                "preliminary_report_term_unit": ["months"],
+                "service_term_months_enabled": ["true"],
+                "final_report_term_weeks": ["2"],
+                "final_report_term_unit": ["weeks"],
+                "final_report_date_enabled": ["true"],
+                "evaluation_date": ["2026-06-01"],
+                "evaluation_date_enabled": ["true"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        registration.refresh_from_db()
+        self.assertEqual(registration.project_start_date, date(2026, 1, 1))
+        self.assertEqual(registration.contract_start, date(2026, 3, 1))
+        self.assertEqual(registration.input_data, 10)
+        self.assertEqual(str(registration.stage1_weeks), "1.0")
+        self.assertEqual(str(registration.stage2_weeks), "2.0")
+        self.assertEqual(registration.stage1_end, date(2026, 2, 11))
+        self.assertEqual(registration.stage2_end, date(2026, 2, 25))
+        self.assertEqual(registration.completion_calc, date(2026, 2, 25))
+        self.assertEqual(registration.evaluation_date, date(2026, 6, 1))
+        self.assertEqual(len(registration.stage_terms_json), 1)
+        stage = registration.stage_terms_json[0]
+        self.assertEqual(stage["source_data_term_unit"], "days")
+        self.assertEqual(stage["preliminary_report_term_unit"], "months")
+        self.assertEqual(stage["final_report_term_unit"], "weeks")
+        self.assertEqual(stage["source_data_date"], "2026-01-11")
+        self.assertEqual(stage["evaluation_date"], "2026-06-01")
+
+        again = self.client.get(reverse("registration_form_edit", args=[registration.pk]))
+        again_html = again.content.decode("utf-8")
+        self.assertIn('name="project_start_date" value="2026-01-01"', again_html)
+        self.assertIn('value="days" selected', again_html)
+        self.assertIn('value="10.0"', again_html)
+
+    def test_contract_conditions_keep_other_stages_when_json_exists(self):
+        registration = ProjectRegistration.objects.create(
+            number=6214,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с двумя этапами",
+            status="Не начат",
+            year=2026,
+            project_start_date=date(2026, 1, 1),
+            contract_start=date(2026, 1, 1),
+            input_data=0,
+            stage1_weeks="2.0",
+            stage2_weeks="1.0",
+            stage_terms_json=[
+                {
+                    "rank": 1,
+                    "product_id": str(self.product.pk),
+                    "source_data_term": "0",
+                    "source_data_term_unit": "days",
+                    "source_data_term_enabled": True,
+                    "service_term_months": "1.0",
+                    "preliminary_report_term_unit": "months",
+                    "service_term_months_enabled": True,
+                    "final_report_term_weeks": "1.0",
+                    "final_report_term_unit": "weeks",
+                    "final_report_date_enabled": True,
+                    "evaluation_date_enabled": True,
+                    "evaluation_date": "2026-01-01",
+                    "next_stage_delay_days": 0,
+                },
+                {
+                    "rank": 2,
+                    "product_id": str(self.extra_product.pk),
+                    "source_data_term": "0",
+                    "source_data_term_unit": "days",
+                    "source_data_term_enabled": True,
+                    "service_term_months": "2.0",
+                    "preliminary_report_term_unit": "months",
+                    "service_term_months_enabled": True,
+                    "final_report_term_weeks": "1.0",
+                    "final_report_term_unit": "weeks",
+                    "final_report_date_enabled": True,
+                    "evaluation_date_enabled": True,
+                    "evaluation_date": "2026-06-01",
+                    "next_stage_delay_days": 0,
+                },
+            ],
+        )
+
+        form = ContractConditionsForm(
+            {
+                "agreement_type": "MAIN",
+                "agreement_number": "",
+                "contract_start": "2026-01-01",
+                "contract_end": "",
+                "input_data": "5",
+                "stage1_weeks": "3.0",
+                "stage2_weeks": "2.0",
+                "stage3_weeks": "0",
+                "contract_subject": "",
+            },
+            instance=registration,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        registration.refresh_from_db()
+        self.assertEqual(len(registration.stage_terms_json), 2)
+        self.assertEqual(registration.stage_terms_json[0]["service_term_months"], "1.0")
+        self.assertEqual(registration.stage_terms_json[1]["service_term_months"], "3.0")
+        self.assertEqual(registration.stage_terms_json[1]["source_data_term"], "5.0")
+        self.assertEqual(registration.input_data, 5)
+        self.assertEqual(str(registration.stage1_weeks), "3.0")
+        self.assertEqual(str(registration.stage2_weeks), "2.0")
 
     def test_registration_edit_rejects_multiple_products(self):
         registration = ProjectRegistration.objects.create(
@@ -1266,6 +1673,1324 @@ class ProjectRegistrationFormViewTests(TestCase):
             [self.product.pk],
         )
 
+    def _group_edit_url(self, number=6211, group="RU"):
+        return f"{reverse('registration_group_summary_edit')}?number={number}&group={group}"
+
+    def _create_registration_group(self):
+        first = ProjectRegistration.objects.create(
+            number=6211,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый продукт",
+            status="Не начат",
+            year=2026,
+            deadline=date(2026, 1, 10),
+            customer="Старый заказчик",
+            stage1_weeks="1.0",
+            stage2_weeks="3.0",
+            position=1,
+        )
+        second = ProjectRegistration.objects.create(
+            number=6211,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй продукт",
+            status="Не начат",
+            year=2026,
+            deadline=date(2026, 6, 1),
+            customer="Другой заказчик",
+            stage1_weeks="2.0",
+            stage2_weeks="4.0",
+            position=2,
+        )
+        other = ProjectRegistration.objects.create(
+            number=7000,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Чужой проект",
+            status="Не начат",
+            year=2026,
+            position=3,
+        )
+        return first, second, other
+
+    def _group_edit_payload(self, first, second, **extra):
+        payload = {
+            "number": 6211,
+            "group_member": self.group_member.pk,
+            "agreement_type": "MAIN",
+            "name": "Общее имя",
+            "status": "В работе",
+            "deadline": "2026-03-03",
+            "year": 2026,
+            "customer": "Новый заказчик",
+            "project_manager": "",
+            "group_source_id": [first.pk, second.pk],
+            "registration_row_id": [second.pk, first.pk],
+            "type_id": [self.extra_product.pk, self.product.pk],
+            "stage1_weeks": ["9.0", "8.0"],
+            "stage2_weeks": ["4.0", "3.0"],
+        }
+        payload.update(extra)
+        return payload
+
+    def _evaluation_tbody(self, html):
+        start = html.index('id="registration-stage-evaluation-tbody"')
+        return html[start:html.index("</tbody>", start)]
+
+    def test_single_stage_hides_shared_evaluation_control(self):
+        response = self.client.get(reverse("registration_form_create"))
+
+        tbody = self._evaluation_tbody(response.content.decode("utf-8"))
+        self.assertIn('class="registration-evaluation-common d-none"', tbody)
+        self.assertIn("Общая для всех этапов", tbody)
+        self.assertIn('value="Этап 1"', tbody)
+        self.assertNotIn('value="Все"', tbody)
+        self.assertLess(tbody.index("Общая для всех этапов"), tbody.index("js-registration-evaluation-common"))
+        self.assertIn('colspan="5" class="registration-evaluation-common-cell"', tbody)
+
+    def test_matching_evaluation_dates_open_as_one_shared_row(self):
+        self._create_registration_group()
+
+        response = self.client.get(self._group_edit_url())
+
+        tbody = self._evaluation_tbody(response.content.decode("utf-8"))
+        self.assertIn('class="registration-evaluation-common"', tbody)
+        self.assertNotIn('class="registration-evaluation-common d-none"', tbody)
+        self.assertIn(
+            'class="form-check-input js-registration-evaluation-common" name="evaluation_date_common" value="true" aria-label="Общая для всех этапов" checked',
+            tbody,
+        )
+        self.assertIn('value="Все"', tbody)
+        self.assertIn('class="proposal-stage-evaluation-row d-none"', tbody)
+        self.assertEqual(tbody.count("proposal-stage-evaluation-row"), 2)
+
+    def test_different_evaluation_dates_open_as_separate_rows(self):
+        first, second, _other = self._create_registration_group()
+        first.evaluation_date = date(2026, 1, 15)
+        second.evaluation_date = date(2026, 6, 20)
+        first.save(update_fields=["evaluation_date"])
+        second.save(update_fields=["evaluation_date"])
+
+        response = self.client.get(self._group_edit_url())
+
+        tbody = self._evaluation_tbody(response.content.decode("utf-8"))
+        self.assertIn('value="Этап 1"', tbody)
+        self.assertIn('value="Этап 2"', tbody)
+        self.assertNotIn('value="Все"', tbody)
+        self.assertNotIn("proposal-stage-evaluation-row d-none", tbody)
+        self.assertNotIn(
+            'aria-label="Общая для всех этапов" checked',
+            tbody,
+        )
+        self.assertIn('value="2026-01-15"', tbody)
+        self.assertIn('value="2026-06-20"', tbody)
+
+    def test_saved_separate_evaluation_dates_stay_separate_when_values_match(self):
+        first, second, _other = self._create_registration_group()
+        shared = {
+            "evaluation_date": "2026-04-01",
+            "evaluation_date_enabled": True,
+            "evaluation_date_common": False,
+            "source_data_term": "0",
+            "source_data_term_unit": "days",
+            "source_data_term_enabled": True,
+            "service_term_months": "1.0",
+            "preliminary_report_term_unit": "months",
+            "service_term_months_enabled": True,
+            "final_report_term_weeks": "0",
+            "final_report_term_unit": "weeks",
+            "final_report_date_enabled": True,
+        }
+        first.stage_terms_json = [dict(shared)]
+        second.stage_terms_json = [dict(shared, product_id=str(self.extra_product.pk))]
+        first.evaluation_date = date(2026, 4, 1)
+        second.evaluation_date = date(2026, 4, 1)
+        first.save(update_fields=["stage_terms_json", "evaluation_date"])
+        second.save(update_fields=["stage_terms_json", "evaluation_date"])
+
+        response = self.client.get(self._group_edit_url())
+
+        tbody = self._evaluation_tbody(response.content.decode("utf-8"))
+        self.assertIn('value="Этап 1"', tbody)
+        self.assertIn('value="Этап 2"', tbody)
+        self.assertNotIn('value="Все"', tbody)
+        self.assertNotIn('aria-label="Общая для всех этапов" checked', tbody)
+
+    def _evaluation_group_payload(self, first, second, **extra):
+        payload = {
+            "number": 6211,
+            "group_member": self.group_member.pk,
+            "agreement_type": "MAIN",
+            "name": "Общее имя",
+            "status": "В работе",
+            "deadline": "2026-03-03",
+            "year": 2026,
+            "customer": "Новый заказчик",
+            "project_manager": "",
+            "project_start_date": "2026-01-10",
+            "group_source_id": [first.pk, second.pk],
+            "registration_row_id": [first.pk, second.pk],
+            "type_id": [self.product.pk, self.extra_product.pk],
+            "source_data_term": ["0", "0"],
+            "source_data_term_unit": ["days", "days"],
+            "source_data_term_enabled": ["true", "true"],
+            "service_term_months": ["1.0", "1.0"],
+            "preliminary_report_term_unit": ["months", "months"],
+            "service_term_months_enabled": ["true", "true"],
+            "final_report_term_weeks": ["0", "0"],
+            "final_report_term_unit": ["weeks", "weeks"],
+            "final_report_date_enabled": ["true", "true"],
+            "evaluation_date": ["2026-03-15", "2026-08-01"],
+            "evaluation_date_enabled": ["true", "false"],
+        }
+        payload.update(extra)
+        return payload
+
+    def test_shared_evaluation_checkbox_copies_date_and_toggle_to_every_stage(self):
+        first, second, _other = self._create_registration_group()
+
+        saved = self.client.post(
+            self._group_edit_url(),
+            self._evaluation_group_payload(first, second, evaluation_date_common=["false", "true"]),
+        )
+
+        self.assertEqual(saved.status_code, 200, saved.content.decode("utf-8")[:800])
+        self.assertNotContains(saved, "Проверьте введённые данные")
+        first.refresh_from_db()
+        second.refresh_from_db()
+        for stage in (first, second):
+            stored = stage.stage_terms_json[0]
+            self.assertEqual(stored["evaluation_date"], "2026-03-15")
+            self.assertTrue(stored["evaluation_date_enabled"])
+            self.assertTrue(stored["evaluation_date_common"])
+            self.assertEqual(stage.evaluation_date, date(2026, 3, 15))
+
+        reopened = self.client.get(self._group_edit_url())
+        tbody = self._evaluation_tbody(reopened.content.decode("utf-8"))
+        self.assertIn('value="Все"', tbody)
+        self.assertIn("proposal-stage-evaluation-row d-none", tbody)
+        self.assertIn('aria-label="Общая для всех этапов" checked', tbody)
+
+    def test_unchecked_shared_evaluation_keeps_stage_dates(self):
+        first, second, _other = self._create_registration_group()
+
+        saved = self.client.post(
+            self._group_edit_url(),
+            self._evaluation_group_payload(first, second, evaluation_date_common="false"),
+        )
+
+        self.assertEqual(saved.status_code, 200, saved.content.decode("utf-8")[:800])
+        self.assertNotContains(saved, "Проверьте введённые данные")
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.stage_terms_json[0]["evaluation_date"], "2026-03-15")
+        self.assertTrue(first.stage_terms_json[0]["evaluation_date_enabled"])
+        self.assertFalse(first.stage_terms_json[0]["evaluation_date_common"])
+        self.assertEqual(second.stage_terms_json[0]["evaluation_date"], "")
+        self.assertFalse(second.stage_terms_json[0]["evaluation_date_enabled"])
+        self.assertFalse(second.stage_terms_json[0]["evaluation_date_common"])
+        self.assertEqual(first.evaluation_date, date(2026, 3, 15))
+        self.assertIsNone(second.evaluation_date)
+
+        reopened = self.client.get(self._group_edit_url())
+        tbody = self._evaluation_tbody(reopened.content.decode("utf-8"))
+        self.assertIn('value="Этап 1"', tbody)
+        self.assertIn('value="Этап 2"', tbody)
+        self.assertNotIn('value="Все"', tbody)
+        self.assertNotIn("proposal-stage-evaluation-row d-none", tbody)
+        self.assertNotIn('aria-label="Общая для всех этапов" checked', tbody)
+
+    def test_registration_group_edit_form_lists_every_member(self):
+        first, second, _other = self._create_registration_group()
+        contract = ContractProjectRegistration.objects.create(
+            number=6211,
+            sub_number=1,
+            group_member=self.group_member,
+            name="Договор группы",
+            contract_date=date(2026, 4, 15),
+            customer="ООО Заказчик группы",
+        )
+        other_contract = ContractProjectRegistration.objects.create(
+            number=7000,
+            sub_number=1,
+            group_member=self.group_member,
+            name="Договор другого номера",
+            contract_date=date(2026, 5, 1),
+            customer="ООО Чужой договор",
+        )
+        first.contract_project_registration = contract
+        first.save(update_fields=["contract_project_registration"])
+        contract.refresh_from_db()
+        other_contract.refresh_from_db()
+
+        response = self.client.get(self._group_edit_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'class="registration-form-page"', html=False)
+        content = response.content.decode("utf-8")
+        head_order = [
+            '<label class="form-label">Номер</label>',
+            '<label class="form-label">Группа</label>',
+            '<label class="form-label">Название</label>',
+            '<label class="form-label">Год</label>',
+            '<label class="form-label">Договоры</label>',
+        ]
+        head_positions = [content.index(item) for item in head_order]
+        self.assertEqual(head_positions, sorted(head_positions))
+        self.assertLess(
+            content.index('<label class="form-label">Договоры</label>'),
+            content.index('<label class="form-label">Тип</label>'),
+        )
+        self.assertEqual(content.count('<label class="form-label">Год</label>'), 1)
+        self.assertLess(
+            content.index('<label class="form-label">Год</label>'),
+            content.index("<th>Дата оценки</th>"),
+        )
+        self.assertEqual(content.count('name="year"'), 1)
+        self.assertEqual(content.count('name="agreement_number"'), 1)
+        self.assertEqual(content.count('name="agreement_type"'), 1)
+        self.assertEqual(content.count('name="contract_project_registration"'), 1)
+        self.assertEqual(content.count('name="customer"'), 4)
+        self.assertEqual(
+            content.count(
+                '<select name="stage_contract_id" class="form-select registration-product-contract-select" aria-label="Договор ID"></select>'
+            ),
+            2,
+        )
+        type_labels = content[content.index("registration-type-head-labels"):]
+        self.assertLess(type_labels.index(">Договор ID<"), type_labels.index(">Вид консалтинга<"))
+        self.assertContains(response, "registration-summary-head-grid", html=False)
+        self.assertEqual(content.count('class="col-12 registration-summary-section"'), 4)
+        self.assertContains(response, "registration-contracts-row", html=False)
+        self.assertContains(response, "registration-contract-refresh-btn", html=False)
+        self.assertContains(response, "Добавить договор")
+        self.assertNotContains(response, "Добавить договора")
+        self.assertContains(response, 'id="registration-add-contract"', html=False)
+        self.assertContains(response, "registration-contract-derived", html=False)
+        self.assertContains(response, "registration-contract-remove", html=False)
+        self.assertContains(response, 'id="registration-contract-meta"', html=False)
+        contract_meta = json.loads(response.context["registration_contract_meta_json"])
+        self.assertEqual(set(contract_meta), {str(contract.pk)})
+        self.assertNotIn(str(other_contract.pk), contract_meta)
+        self.assertContains(response, f'value="{contract.pk}"', html=False)
+        self.assertNotContains(response, f'value="{other_contract.pk}"', html=False)
+        self.assertContains(response, "— Не выбрано —", html=False)
+        self.assertContains(response, f'data-selected-contract-id="{contract.pk}"', html=False)
+        self.assertEqual(contract_meta[str(contract.pk)]["contract_date"], "2026-04-15")
+        self.assertEqual(contract_meta[str(contract.pk)]["contract_end"], "")
+        self.assertTrue(contract_meta[str(contract.pk)]["contract_end_enabled"])
+        self.assertEqual(contract_meta[str(contract.pk)]["agreement_type"], contract.agreement_type)
+        self.assertEqual(contract_meta[str(contract.pk)]["agreement_number"], contract.agreement_number)
+        self.assertEqual(contract_meta[str(contract.pk)]["customer"], "ООО Заказчик группы")
+        self.assertContains(response, f'value="{contract.agreement_number}"', html=False)
+        self.assertContains(response, "registration-schedule-grid--summary", html=False)
+        self.assertContains(response, "registration-contract-row-4", html=False)
+        self.assertContains(response, 'aria-label="Дата соглашения"', html=False)
+        self.assertContains(response, ">Дата соглашения<", html=False)
+        self.assertContains(response, 'aria-label="Заказчик"', html=False)
+        self.assertContains(response, 'value="ООО Заказчик группы"', html=False)
+        self.assertContains(response, "registration-contract-customer", html=False)
+        self.assertContains(response, 'value="2026-04-15"', html=False)
+        self.assertNotContains(response, 'name="contract_date"', html=False)
+        self.assertContains(response, 'data-group-edit="1"', html=False)
+        group_form_tag = content[content.index("<form"):content.index(">", content.index("<form"))]
+        self.assertIn('data-group-edit="1"', group_form_tag)
+        self.assertNotIn("registration-summary-layout", group_form_tag)
+        self.assertContains(response, f'name="registration_row_id" value="{first.pk}"', html=False)
+        self.assertContains(response, f'name="registration_row_id" value="{second.pk}"', html=False)
+        self.assertContains(response, f'name="group_source_id" value="{first.pk}"', html=False)
+        self.assertContains(response, f'name="group_source_id" value="{second.pk}"', html=False)
+        self.assertContains(response, 'data-stage1-weeks="1.0"', html=False)
+        self.assertContains(response, 'data-stage1-weeks="2.0"', html=False)
+        self.assertContains(response, 'data-stage2-weeks="3.0"', html=False)
+        self.assertContains(response, 'data-stage2-weeks="4.0"', html=False)
+        self.assertContains(response, 'name="project_start_date"', html=False)
+        self.assertContains(response, 'name="source_data_term"', html=False)
+        self.assertContains(response, 'name="evaluation_date"', html=False)
+        picker_source = (
+            Path(__file__).resolve().parents[1] / "core/static/core/js/registration-type-picker.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("В группе должна остаться хотя бы одна строка.", picker_source)
+        self.assertIn(
+            "Удалить строку проекта из группы? Строка исчезнет из реестра после сохранения.",
+            picker_source,
+        )
+        self.assertContains(response, f'data-selected-product-id="{self.product.pk}"', html=False)
+        self.assertContains(response, f'data-selected-product-id="{self.extra_product.pk}"', html=False)
+
+    def test_registration_group_edit_applies_shared_fields_and_row_order(self):
+        first, second, other = self._create_registration_group()
+
+        response = self.client.post(self._group_edit_url(), self._group_edit_payload(first, second))
+
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(first.name, "Общее имя")
+        self.assertEqual(second.name, "Общее имя")
+        self.assertEqual(first.customer, "Новый заказчик")
+        self.assertEqual(second.customer, "Новый заказчик")
+        self.assertEqual(first.status, "Не начат")
+        self.assertEqual(second.status, "Не начат")
+        self.assertEqual(first.deadline, date(2026, 3, 3))
+        self.assertEqual(second.deadline, date(2026, 6, 1))
+        self.assertEqual(str(second.stage1_weeks), "9.0")
+        self.assertEqual(str(first.stage1_weeks), "8.0")
+        self.assertEqual(str(second.stage2_weeks), "4.0")
+        self.assertEqual(str(first.stage2_weeks), "3.0")
+        self.assertEqual(
+            list(ProjectRegistration.objects.filter(number=6211).order_by("position", "id").values_list("id", flat=True)),
+            [second.pk, first.pk],
+        )
+        self.assertEqual(
+            list(second.product_links.order_by("rank").values_list("product_id", flat=True)),
+            [self.extra_product.pk],
+        )
+        self.assertEqual(
+            list(first.product_links.order_by("rank").values_list("product_id", flat=True)),
+            [self.product.pk],
+        )
+        self.assertEqual(other.name, "Чужой проект")
+        self.assertGreater(other.position, first.position)
+
+    def test_registration_group_edit_status_matches_the_table_and_deadline_follows_the_last_stage(self):
+        first, second, _other = self._create_registration_group()
+        form = self.client.get(self._group_edit_url())
+        self.assertEqual(form.status_code, 200)
+        content = form.content.decode("utf-8")
+        self.assertIn('name="summary_status_mode"', content)
+        self.assertNotIn('name="status"', content)
+        self.assertIn(">Не начат</option>", content)
+        self.assertIn(">Отложен</option>", content)
+        self.assertNotIn(">На проверке</option>", content)
+        self.assertIn('value="2026-06-01"', content)
+
+        response = self.client.post(
+            self._group_edit_url(),
+            self._group_edit_payload(first, second, summary_status_mode="deferred", deadline="2026-07-07"),
+        )
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, "Не начат")
+        self.assertEqual(second.status, "Не начат")
+        self.assertEqual(second.deadline, date(2026, 6, 1))
+        self.assertEqual(first.deadline, date(2026, 7, 7))
+        self.assertTrue(
+            RegistrationGroupSummaryState.objects.filter(number=6211, group_label="RU", deferred=True).exists()
+        )
+
+    def test_registration_stage_form_locks_project_roles(self):
+        first, second, _other = self._create_registration_group()
+        first.project_manager = "Общий Руководитель Проекта"
+        first.project_coordinator = "Общий Координатор Проекта"
+        first.save(update_fields=["project_manager", "project_coordinator"])
+        second.project_manager = "Этапный Руководитель Проекта"
+        second.project_coordinator = "Этапный Координатор Проекта"
+        second.save(update_fields=["project_manager", "project_coordinator"])
+
+        response = self.client.get(reverse("registration_form_edit", args=[second.pk]))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        manager_at = content.index('id="id_project_manager"')
+        coordinator_at = content.index('id="id_project_coordinator"')
+        self.assertIn("disabled", content[manager_at - 120:manager_at + 40])
+        self.assertIn("disabled", content[coordinator_at - 120:coordinator_at + 40])
+        self.assertIn("Общий Руководитель Проекта", content)
+        self.assertNotIn("Этапный Руководитель Проекта", content)
+
+        saved = self.client.post(
+            reverse("registration_form_edit", args=[second.pk]),
+            {
+                "number": second.number,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.extra_product.pk],
+                "name": second.name,
+                "status": second.status,
+                "deadline": "2026-08-08",
+                "year": 2026,
+                "project_manager": "Чужой Руководитель Проекта",
+                "project_coordinator": "Чужой Координатор Проекта",
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.project_manager, "Общий Руководитель Проекта")
+        self.assertEqual(second.project_manager, "Этапный Руководитель Проекта")
+        self.assertEqual(second.project_coordinator, "Этапный Координатор Проекта")
+        self.assertEqual(second.deadline, date(2026, 8, 8))
+        self.assertEqual(first.deadline, date(2026, 1, 10))
+
+    def test_project_start_date_is_shared_across_stage_and_summary_modals(self):
+        def start_date_tag(response):
+            content = response.content.decode("utf-8")
+            marker = 'name="project_start_date"'
+            at = content.index(marker)
+            return content[content.rfind("<input", 0, at):content.index(">", at)]
+
+        first, second, other = self._create_registration_group()
+        first.project_start_date = date(2026, 2, 2)
+        first.save(update_fields=["project_start_date"])
+        second.project_start_date = date(2026, 9, 9)
+        second.save(update_fields=["project_start_date"])
+
+        stage = self.client.get(reverse("registration_form_edit", args=[second.pk]))
+        self.assertEqual(stage.status_code, 200)
+        self.assertContains(stage, 'name="project_start_date" value="2026-02-02"', html=False)
+        stage_tag = start_date_tag(stage)
+        self.assertIn('data-project-start-locked="1"', stage_tag)
+        self.assertIn("readonly", stage_tag)
+        self.assertIn("readonly-field", stage_tag)
+        self.assertNotIn("disabled", stage_tag)
+        stage_label = stage.content.decode("utf-8")
+        stage_label = stage_label[stage_label.index("Дата начала проекта"):stage_label.index("Дата начала проекта") + 250]
+        self.assertNotIn("js-proposal-report-date-lock", stage_label)
+        self.assertNotContains(stage, 'name="project_start_date" value="2026-09-09"', html=False)
+        summary = self.client.get(self._group_edit_url())
+        self.assertContains(summary, 'name="project_start_date" value="2026-02-02"', html=False)
+        self.assertNotIn('data-project-start-locked="1"', start_date_tag(summary))
+        summary_label = summary.content.decode("utf-8")
+        summary_label = summary_label[summary_label.index("Дата начала проекта"):summary_label.index("Дата начала проекта") + 350]
+        self.assertIn("js-proposal-report-date-lock", summary_label)
+
+        saved = self.client.post(
+            reverse("registration_form_edit", args=[second.pk]),
+            {
+                "number": second.number,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.extra_product.pk],
+                "name": second.name,
+                "status": second.status,
+                "year": 2026,
+                "project_start_date": "2026-03-03",
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(first.project_start_date, date(2026, 2, 2))
+        self.assertEqual(second.project_start_date, date(2026, 2, 2))
+        self.assertIsNone(other.project_start_date)
+
+        summary_saved = self.client.post(
+            self._group_edit_url(),
+            self._group_edit_payload(first, second, project_start_date="2026-03-03"),
+        )
+        self.assertEqual(summary_saved.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.project_start_date, date(2026, 3, 3))
+        self.assertEqual(second.project_start_date, date(2026, 3, 3))
+        refreshed = self.client.get(reverse("registration_form_edit", args=[first.pk]))
+        self.assertContains(refreshed, 'name="project_start_date" value="2026-03-03"', html=False)
+        self.assertIn('data-project-start-locked="1"', start_date_tag(refreshed))
+        summary_after = self.client.get(self._group_edit_url())
+        self.assertContains(summary_after, 'name="project_start_date" value="2026-03-03"', html=False)
+        self.assertNotIn('data-project-start-locked="1"', start_date_tag(summary_after))
+
+        parent = ProjectRegistration.objects.create(
+            number=6234,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Сводный проект",
+            status="Не начат",
+            year=2026,
+            project_start_date=date(2026, 4, 4),
+            position=10,
+        )
+        stage_one = ProjectRegistration.objects.create(
+            number=6234,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый этап",
+            status="Не начат",
+            year=2026,
+            stage_project=parent,
+            project_start_date=date(2026, 1, 1),
+            position=11,
+        )
+        stage_two = ProjectRegistration.objects.create(
+            number=6234,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй этап",
+            status="Не начат",
+            year=2026,
+            stage_project=parent,
+            project_start_date=date(2026, 8, 8),
+            position=12,
+        )
+        parent_stage = self.client.get(reverse("registration_form_edit", args=[stage_two.pk]))
+        self.assertContains(parent_stage, 'name="project_start_date" value="2026-04-04"', html=False)
+        self.assertIn('data-project-start-locked="1"', start_date_tag(parent_stage))
+        parent_summary = self.client.get(
+            f"{reverse('registration_group_summary_edit')}?number=6234&group=RU&project={parent.pk}"
+        )
+        self.assertContains(parent_summary, 'name="project_start_date" value="2026-04-04"', html=False)
+        self.assertNotIn('data-project-start-locked="1"', start_date_tag(parent_summary))
+
+        parent_saved = self.client.post(
+            reverse("registration_form_edit", args=[stage_one.pk]),
+            {
+                "number": stage_one.number,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": stage_one.name,
+                "status": stage_one.status,
+                "year": 2026,
+                "project_start_date": "2026-05-05",
+            },
+        )
+        self.assertEqual(parent_saved.status_code, 200)
+        parent.refresh_from_db()
+        stage_one.refresh_from_db()
+        stage_two.refresh_from_db()
+        self.assertEqual(parent.project_start_date, date(2026, 4, 4))
+        self.assertEqual(stage_one.project_start_date, date(2026, 4, 4))
+        self.assertEqual(stage_two.project_start_date, date(2026, 4, 4))
+        parent_summary_after = self.client.get(
+            f"{reverse('registration_group_summary_edit')}?number=6234&group=RU&project={parent.pk}"
+        )
+        self.assertContains(parent_summary_after, 'name="project_start_date" value="2026-04-04"', html=False)
+
+    def test_registration_group_edit_inserts_a_new_row_inside_the_group(self):
+        first, second, other = self._create_registration_group()
+
+        response = self.client.post(
+            self._group_edit_url(),
+            self._group_edit_payload(
+                first,
+                second,
+                registration_row_id=[first.pk, second.pk, ""],
+                type_id=[self.product.pk, self.extra_product.pk, self.product.pk],
+                stage1_weeks=["1.0", "2.0", "6.0"],
+                stage2_weeks=["3.0", "4.0", "7.0"],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        projects = list(ProjectRegistration.objects.filter(number=6211).order_by("position", "id"))
+        self.assertEqual(len(projects), 3)
+        self.assertEqual([project.name for project in projects], ["Общее имя", "Общее имя", "Общее имя"])
+        self.assertEqual([str(project.stage1_weeks) for project in projects], ["1.0", "2.0", "6.0"])
+        self.assertEqual([project.pk for project in projects[:2]], [first.pk, second.pk])
+        other.refresh_from_db()
+        self.assertEqual(other.name, "Чужой проект")
+        self.assertGreater(other.position, projects[-1].position)
+        self.assertEqual(
+            list(projects[2].product_links.order_by("rank").values_list("product_id", flat=True)),
+            [self.product.pk],
+        )
+
+    def test_customer_block_keeps_one_customer_or_splits_it_by_product(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        first, second = self._create_summary_pair(6244)
+        first.customer = "Общий заказчик"
+        second.customer = "Общий заказчик"
+        first.country = country
+        second.country = country
+        first.save(update_fields=["customer", "country"])
+        second.save(update_fields=["customer", "country"])
+        summary_url = f"{reverse('registration_group_summary_edit')}?number=6244&group=RU"
+
+        same = self.client.get(summary_url)
+        same_html = same.content.decode("utf-8")
+        self.assertEqual(same.status_code, 200)
+        self.assertContains(same, ">Наименование<")
+        self.assertContains(same, "Все продукты")
+        self.assertNotContains(same, 'id="registration-add-customer-product"', html=False)
+        self.assertNotContains(same, "registration-customer-remove", html=False)
+        self.assertEqual(same_html.count('name="customer_scope"'), 1)
+        self.assertIn('value="Общий заказчик"', same_html)
+        identifier_at = same_html.index('id="reg-identifier-field"')
+        identifier_tag = same_html[same_html.rfind("<input", 0, identifier_at):same_html.index(">", identifier_at)]
+        self.assertIn('type="hidden"', identifier_tag)
+        self.assertIn('name="identifier"', identifier_tag)
+
+        first.customer = "Заказчик этапа А"
+        second.customer = "Заказчик этапа Б"
+        first.save(update_fields=["customer"])
+        second.save(update_fields=["customer"])
+        self.product.display_name = "Полное имя продукта"
+        self.product.save(update_fields=["display_name"])
+        mixed = self.client.get(summary_url)
+        mixed_html = mixed.content.decode("utf-8")
+        self.assertEqual(mixed_html.count('name="customer_scope"'), 2)
+        self.assertIn("Заказчик этапа А", mixed_html)
+        self.assertIn("Заказчик этапа Б", mixed_html)
+        self.assertNotIn('value="all" selected', mixed_html)
+        mixed_customers = mixed_html[
+            mixed_html.index('id="registration-customers-container"'):mixed_html.index("Владелец активов")
+        ]
+        self.assertIn("DD Полное имя продукта", mixed_customers)
+        self.assertIn(">DD<", mixed_customers)
+
+        stage = self.client.get(reverse("registration_form_edit", args=[first.pk]))
+        stage_html = stage.content.decode("utf-8")
+        self.assertNotContains(stage, 'id="registration-add-customer-product"', html=False)
+        self.assertContains(stage, "Заказчик этапа А")
+        customer_block = stage_html[
+            stage_html.index('id="registration-customers-container"'):stage_html.index("Владелец активов")
+        ]
+        self.assertNotIn("Все продукты", customer_block)
+        self.assertNotIn("<select name=\"customer_scope\"", customer_block)
+        self.assertIn("registration-customer-product-locked", customer_block)
+        self.assertIn('value="DD"', customer_block)
+        self.assertNotIn("Полное имя продукта", customer_block)
+        self.assertIn(f'value="{self.product.pk}"', customer_block)
+        self.assertIn("readonly", customer_block)
+
+        created = self.client.post(
+            reverse("registration_form_create"),
+            {
+                "number": 6245,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk, self.extra_product.pk],
+                "name": "Два заказчика",
+                "status": "Не начат",
+                "year": 2026,
+                "project_manager": "",
+                "customer_scope": [str(self.product.pk), str(self.extra_product.pk)],
+                "customer": ["Заказчик А", "Заказчик Б"],
+                "country": ["", ""],
+                "identifier": ["ИД-А", "ИД-Б"],
+                "registration_number": ["100", "200"],
+                "registration_region": ["", ""],
+                "registration_date": ["", ""],
+                "asset_owner_matches_customer": "on",
+            },
+        )
+        self.assertEqual(created.status_code, 200, created.content.decode("utf-8")[:500])
+        stages = {
+            item.type_id: item
+            for item in ProjectRegistration.objects.filter(number=6245, stage_project__isnull=False)
+        }
+        self.assertEqual(stages[self.product.pk].customer, "Заказчик А")
+        self.assertEqual(stages[self.extra_product.pk].customer, "Заказчик Б")
+        self.assertEqual(stages[self.product.pk].identifier, "ИД-А")
+        self.assertEqual(stages[self.extra_product.pk].registration_number, "200")
+        self.assertEqual(stages[self.product.pk].asset_owner, "Заказчик А")
+        self.assertEqual(stages[self.extra_product.pk].asset_owner, "Заказчик Б")
+        self.assertEqual(stages[self.product.pk].asset_owner_identifier, "ИД-А")
+
+        shared = self.client.post(
+            summary_url,
+            self._group_edit_payload(
+                first,
+                second,
+                number=6244,
+                customer_scope=["all"],
+                customer=["Один заказчик"],
+                country=[""],
+                identifier=["ОБЩ"],
+                registration_number=["300"],
+                registration_region=[""],
+                registration_date=[""],
+                asset_owner_matches_customer="on",
+            ),
+        )
+        self.assertEqual(shared.status_code, 200, shared.content.decode("utf-8")[:500])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.customer, "Один заказчик")
+        self.assertEqual(second.customer, "Один заказчик")
+        self.assertEqual(first.asset_owner, "Один заказчик")
+        self.assertEqual(second.asset_owner_identifier, "ОБЩ")
+
+        split = self.client.post(
+            summary_url,
+            self._group_edit_payload(
+                first,
+                second,
+                number=6244,
+                customer_scope=[str(self.extra_product.pk), str(self.product.pk)],
+                customer=["Заказчик второго", "Заказчик первого"],
+                country=["", ""],
+                identifier=["", ""],
+                registration_number=["", ""],
+                registration_region=["", ""],
+                registration_date=["", ""],
+            ),
+        )
+        self.assertEqual(split.status_code, 200, split.content.decode("utf-8")[:500])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.customer, "Заказчик первого")
+        self.assertEqual(second.customer, "Заказчик второго")
+
+    def _contract_stage_payload(self, product, source_data_term):
+        return {
+            "product_id": str(product.pk),
+            "source_data_term": source_data_term,
+            "source_data_term_unit": "days",
+            "source_data_term_enabled": True,
+            "service_term_months": "3.0",
+            "preliminary_report_term_unit": "months",
+            "service_term_months_enabled": True,
+            "final_report_term_weeks": "2.0",
+            "final_report_term_unit": "weeks",
+            "final_report_date_enabled": True,
+            "section_text": "Текст раздела договора",
+        }
+
+    def _project_stage_terms(self, product, *, source="2.0", preliminary="1.0", final="1.0"):
+        return {
+            "product_id": str(product.pk),
+            "source_data_term": source,
+            "source_data_term_unit": "days",
+            "source_data_term_enabled": True,
+            "source_data_date_enabled": True,
+            "service_term_months": preliminary,
+            "preliminary_report_term_unit": "months",
+            "service_term_months_enabled": True,
+            "preliminary_report_date_enabled": True,
+            "final_report_term_weeks": final,
+            "final_report_term_unit": "weeks",
+            "final_report_date_enabled": True,
+            "next_stage_delay_days": 0,
+        }
+
+    def test_registration_terms_are_grouped_by_consecutive_contracts(self):
+        products = [self.product, self.extra_product]
+        for position, short_name in ((3, "GEO"), (4, "LAB")):
+            products.append(Product.objects.create(
+                short_name=short_name,
+                name_en=short_name,
+                name_ru=short_name,
+                consulting_type="Горный",
+                service_category="Аудит",
+                service_subtype="Аудит соответствия стандартам",
+                position=position,
+            ))
+        first_contract = ContractProjectRegistration.objects.create(
+            number=6311,
+            sub_number=1,
+            group_member=self.group_member,
+            name="Первый договор",
+            contract_date=date(2026, 4, 15),
+            agreement_number="AGR-A",
+        )
+        second_contract = ContractProjectRegistration.objects.create(
+            number=6311,
+            sub_number=2,
+            group_member=self.group_member,
+            name="Второй договор",
+            contract_date=date(2026, 5, 20),
+            agreement_number="AGR-B",
+        )
+        contracts = [first_contract, first_contract, second_contract, second_contract]
+        for index, (product, contract) in enumerate(zip(products, contracts), start=1):
+            ProjectRegistration.objects.create(
+                number=6311,
+                group_member=self.group_member,
+                agreement_type=ProjectRegistration.AgreementType.MAIN,
+                type=product,
+                name=f"Продукт {index}",
+                status="Не начат",
+                year=2026,
+                position=index,
+                project_start_date=date(2026, 1, 10),
+                contract_project_registration=contract,
+                stage_terms_json=[self._project_stage_terms(product)],
+            )
+
+        response = self.client.get(f"{reverse('registration_group_summary_edit')}?number=6311&group=RU")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode("utf-8")
+        self.assertNotIn("Начало контракта", html)
+        tbody = html[
+            html.index('id="registration-stage-terms-tbody"'):html.index('id="registration-stage-evaluation-tbody"')
+        ]
+        self.assertEqual(tbody.count("registration-contract-terms-header"), 2)
+        self.assertEqual(tbody.count(">Дата договора<"), 2)
+        self.assertEqual(tbody.count(">Договор ID<"), 2)
+        self.assertEqual(tbody.count(">№ соглашения<"), 2)
+        self.assertIn('aria-label="№ соглашения" value="AGR-A"', tbody)
+        self.assertIn('aria-label="№ соглашения" value="AGR-B"', tbody)
+        self.assertEqual(tbody.count("registration-stage-terms-columns"), 2)
+        first_contract_labels = tbody.index(">Дата договора<")
+        first_stage_labels = tbody.index("registration-stage-terms-columns")
+        self.assertLess(first_contract_labels, first_stage_labels)
+        self.assertLess(first_stage_labels, tbody.index('value="Этап 1"'))
+        second_contract_labels = tbody.index(">Дата договора<", first_stage_labels)
+        second_stage_labels = tbody.index("registration-stage-terms-columns", first_stage_labels + 1)
+        self.assertLess(tbody.index('value="Этап 2"'), second_contract_labels)
+        self.assertLess(second_contract_labels, second_stage_labels)
+        self.assertLess(second_stage_labels, tbody.index('value="Этап 3"'))
+        self.assertLess(tbody.index(first_contract.short_uid), tbody.index('value="Этап 1"'))
+        self.assertLess(tbody.index('value="Этап 2"'), tbody.index(second_contract.short_uid))
+        self.assertLess(tbody.index(second_contract.short_uid), tbody.index('value="Этап 3"'))
+        self.assertLess(tbody.index('value="Этап 3"'), tbody.index('value="Этап 4"'))
+        self.assertIn('value="2026-04-15"', tbody)
+        self.assertIn('value="2026-05-20"', tbody)
+
+    def test_unsigned_contract_terms_follow_project_start_and_keep_separate_ends(self):
+        from projects_app.stage_terms import compute_grouped_stage_chains
+
+        first_contract = ContractProjectRegistration.objects.create(
+            number=6312,
+            sub_number=1,
+            group_member=self.group_member,
+            name="Неподписанный договор",
+            status="Договор подписан факсимиле",
+            contract_date=date(2026, 4, 15),
+            agreement_type=ContractProjectRegistration.AgreementType.ADDENDUM,
+            agreement_number="AGR-FAX",
+        )
+        second_contract = ContractProjectRegistration.objects.create(
+            number=6312,
+            sub_number=2,
+            group_member=self.group_member,
+            name="Второй неподписанный договор",
+            status="Разрабатывается проект договора",
+            contract_date=date(2026, 6, 1),
+            agreement_type=ContractProjectRegistration.AgreementType.MAIN,
+            agreement_number="AGR-DRAFT",
+        )
+        first = ProjectRegistration.objects.create(
+            number=6312,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый продукт",
+            status="Не начат",
+            year=2026,
+            position=1,
+            project_start_date=date(2026, 1, 10),
+            contract_project_registration=first_contract,
+            stage_terms_json=[self._project_stage_terms(self.product, source="2.0", preliminary="1.0", final="0")],
+        )
+        second = ProjectRegistration.objects.create(
+            number=6312,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй продукт",
+            status="Не начат",
+            year=2026,
+            position=2,
+            project_start_date=date(2026, 1, 10),
+            contract_project_registration=second_contract,
+            stage_terms_json=[self._project_stage_terms(self.extra_product, source="2.0", preliminary="2.0", final="0")],
+        )
+        first_contract.stage_payloads_json = [self._contract_stage_payload(self.product, "9")]
+        first_contract.save(update_fields=["stage_payloads_json"])
+
+        opened = self.client.get(f"{reverse('registration_group_summary_edit')}?number=6312&group=RU")
+        opened_html = opened.content.decode("utf-8")
+        self.assertNotIn("data-contract-terms-locked", opened_html)
+        self.assertIn('name="source_data_term"', opened_html)
+        self.assertIn('class="proposal-stage-source-data-term" value="2.0"', opened_html)
+        self.assertNotIn('class="proposal-stage-source-data-term" value="9.0"', opened_html)
+
+        saved = self.client.post(
+            f"{reverse('registration_group_summary_edit')}?number=6312&group=RU",
+            {
+                "number": 6312,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "name": "Общее имя",
+                "status": "В работе",
+                "deadline": "2026-03-03",
+                "year": 2026,
+                "customer": "Новый заказчик",
+                "project_manager": "",
+                "project_start_date": "2026-01-10",
+                "group_source_id": [first.pk, second.pk],
+                "registration_row_id": [first.pk, second.pk],
+                "type_id": [self.product.pk, self.extra_product.pk],
+                "stage_contract_id": [str(first_contract.pk), str(second_contract.pk)],
+                "contract_group_id": [str(first_contract.pk), str(second_contract.pk)],
+                "contract_group_end": ["2026-12-01", "2027-03-01"],
+                "source_data_term": ["2", "2"],
+                "source_data_term_unit": ["days", "days"],
+                "source_data_term_enabled": ["true", "true"],
+                "service_term_months": ["1.0", "2.0"],
+                "preliminary_report_term_unit": ["months", "months"],
+                "service_term_months_enabled": ["true", "true"],
+                "final_report_term_weeks": ["0", "0"],
+                "final_report_term_unit": ["weeks", "weeks"],
+                "final_report_date_enabled": ["true", "true"],
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.content.decode("utf-8")[:800])
+        self.assertNotContains(saved, "Проверьте введённые данные")
+        expected = compute_grouped_stage_chains(
+            date(2026, 1, 10),
+            [
+                self._project_stage_terms(self.product, source="2", preliminary="1.0", final="0"),
+                self._project_stage_terms(self.extra_product, source="2", preliminary="2.0", final="0"),
+            ],
+            [str(first_contract.pk), str(second_contract.pk)],
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.stage_terms_json[0]["preliminary_report_date"], expected[0]["preliminary_report_date"])
+        self.assertEqual(second.stage_terms_json[0]["preliminary_report_date"], expected[1]["preliminary_report_date"])
+        self.assertNotEqual(
+            first.stage_terms_json[0]["preliminary_report_date"],
+            second.stage_terms_json[0]["preliminary_report_date"],
+        )
+        self.assertEqual(first.contract_start, date(2026, 4, 15))
+        self.assertEqual(second.contract_start, date(2026, 6, 1))
+        self.assertEqual(first.contract_end, date(2026, 12, 1))
+        self.assertEqual(second.contract_end, date(2027, 3, 1))
+        self.assertEqual(first.agreement_type, ProjectRegistration.AgreementType.ADDENDUM)
+        self.assertEqual(first.agreement_number, "AGR-FAX")
+        self.assertEqual(second.agreement_number, "AGR-DRAFT")
+
+    def test_signed_contract_shows_contract_terms_without_replacing_project_schedule(self):
+        contract = ContractProjectRegistration.objects.create(
+            number=6313,
+            sub_number=1,
+            group_member=self.group_member,
+            name="Подписанный договор",
+            status="Договор подписан ЭЦП",
+            contract_date=date(2026, 4, 15),
+            agreement_type=ContractProjectRegistration.AgreementType.ADDENDUM,
+            agreement_number="AGR-SIGN",
+            stage_payloads_json=[self._contract_stage_payload(self.product, "9")],
+        )
+        other = ContractProjectRegistration.objects.create(
+            number=6313,
+            sub_number=2,
+            group_member=self.group_member,
+            name="Второй подписанный договор",
+            status="Договор в 2 экз. отправлен почтой",
+            contract_date=date(2026, 6, 1),
+            agreement_number="AGR-MAIL",
+            stage_payloads_json=[self._contract_stage_payload(self.extra_product, "8")],
+        )
+        first = ProjectRegistration.objects.create(
+            number=6313,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый продукт",
+            status="Не начат",
+            year=2026,
+            position=1,
+            project_start_date=date(2026, 1, 10),
+            contract_project_registration=contract,
+            stage_terms_json=[self._project_stage_terms(self.product)],
+        )
+        second = ProjectRegistration.objects.create(
+            number=6313,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй продукт",
+            status="Не начат",
+            year=2026,
+            position=2,
+            project_start_date=date(2026, 1, 10),
+            contract_project_registration=other,
+            stage_terms_json=[self._project_stage_terms(self.extra_product, source="4.0")],
+        )
+
+        opened = self.client.get(f"{reverse('registration_group_summary_edit')}?number=6313&group=RU")
+        self.assertEqual(opened.status_code, 200)
+        html = opened.content.decode("utf-8")
+        tbody = html[
+            html.index('id="registration-stage-terms-tbody"'):html.index('id="registration-stage-evaluation-tbody"')
+        ]
+        self.assertEqual(tbody.count("data-contract-terms-locked"), 2)
+        self.assertIn('class="proposal-stage-source-data-term" value="9.0"', tbody)
+        self.assertIn('class="proposal-stage-source-data-term" value="8.0"', tbody)
+        self.assertIn('name="source_data_term" data-field="source_data_term" value="2.0"', tbody)
+        self.assertIn('name="source_data_term" data-field="source_data_term" value="4.0"', tbody)
+        self.assertEqual(tbody.count('name="source_data_term"'), 2)
+        meta = json.loads(opened.context["registration_contract_meta_json"])
+        self.assertEqual(meta[str(contract.pk)]["status"], "Договор подписан ЭЦП")
+        self.assertTrue(meta[str(contract.pk)]["signed"])
+        self.assertEqual(meta[str(contract.pk)]["short_uid"], contract.short_uid)
+        self.assertEqual(meta[str(contract.pk)]["stages"][0]["source_data_term"], "9")
+        self.assertNotIn("section_text", meta[str(contract.pk)]["stages"][0])
+        self.assertTrue(meta[str(other.pk)]["signed"])
+
+        saved = self.client.post(
+            f"{reverse('registration_group_summary_edit')}?number=6313&group=RU",
+            {
+                "number": 6313,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "name": "Общее имя",
+                "status": "В работе",
+                "deadline": "2026-03-03",
+                "year": 2026,
+                "customer": "Новый заказчик",
+                "project_manager": "",
+                "project_start_date": "2026-01-10",
+                "group_source_id": [first.pk, second.pk],
+                "registration_row_id": [first.pk, second.pk],
+                "type_id": [self.product.pk, self.extra_product.pk],
+                "stage_contract_id": [str(contract.pk), str(other.pk)],
+                "contract_group_id": [str(contract.pk), str(other.pk)],
+                "contract_group_end": ["2026-12-31", "2027-01-15"],
+                "source_data_term": ["2", "4"],
+                "source_data_term_unit": ["days", "days"],
+                "source_data_term_enabled": ["true", "true"],
+                "service_term_months": ["1.0", "1.0"],
+                "preliminary_report_term_unit": ["months", "months"],
+                "service_term_months_enabled": ["true", "true"],
+                "final_report_term_weeks": ["1.0", "1.0"],
+                "final_report_term_unit": ["weeks", "weeks"],
+                "final_report_date_enabled": ["true", "true"],
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.content.decode("utf-8")[:800])
+        self.assertNotContains(saved, "Проверьте введённые данные")
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.stage_terms_json[0]["source_data_term"], "2.0")
+        self.assertEqual(second.stage_terms_json[0]["source_data_term"], "4.0")
+        self.assertEqual(first.stage_terms_json[0]["service_term_months"], "1.0")
+        self.assertEqual(first.stage_terms_json[0]["source_data_date"], "2026-01-12")
+        self.assertEqual(second.stage_terms_json[0]["source_data_date"], "2026-01-14")
+        self.assertEqual(first.contract_start, date(2026, 4, 15))
+        self.assertEqual(second.contract_start, date(2026, 6, 1))
+        self.assertEqual(first.contract_end, date(2026, 12, 31))
+        self.assertEqual(second.contract_end, date(2027, 1, 15))
+        self.assertEqual(first.agreement_type, ProjectRegistration.AgreementType.ADDENDUM)
+        self.assertEqual(first.agreement_number, "AGR-SIGN")
+        self.assertEqual(second.agreement_number, "AGR-MAIL")
+
+    def test_owner_block_mirrors_customer_and_saves_by_product(self):
+        first, second = self._create_summary_pair(6246)
+        first.customer = "Заказчик этапа А"
+        second.customer = "Заказчик этапа Б"
+        first.asset_owner = "Владелец этапа А"
+        second.asset_owner = "Владелец этапа Б"
+        first.asset_owner_identifier = "ВА"
+        second.asset_owner_identifier = "ВБ"
+        first.asset_owner_matches_customer = False
+        second.asset_owner_matches_customer = False
+        first.save()
+        second.save()
+        self.product.display_name = "Полное имя продукта"
+        self.product.save(update_fields=["display_name"])
+        self.extra_product.display_name = "Контрольное имя"
+        self.extra_product.save(update_fields=["display_name"])
+        summary_url = f"{reverse('registration_group_summary_edit')}?number=6246&group=RU"
+
+        split = self.client.get(summary_url)
+        split_html = split.content.decode("utf-8")
+        self.assertEqual(split.status_code, 200)
+        owner = split_html[
+            split_html.index('id="registration-owners-container"'):split_html.index("Дата начала проекта")
+        ]
+        self.assertIn("registration-owner-match-row", owner)
+        self.assertIn('name="asset_owner_matches_customer"', owner)
+        self.assertLess(
+            owner.rindex('class="registration-owner-product-row"'),
+            owner.index("registration-owner-match-row"),
+        )
+        self.assertNotIn(
+            'class="registration-owner-product-row"',
+            owner[owner.index("registration-owner-match-row"):],
+        )
+        self.assertIn("Владелец этапа А", owner)
+        self.assertIn("Владелец этапа Б", owner)
+        self.assertIn("DD Полное имя продукта", owner)
+        self.assertIn(">DD<", owner)
+        self.assertIn("CTRL Контрольное имя", owner)
+        self.assertIn(">CTRL<", owner)
+        self.assertNotIn("Идентификатор", owner)
+        identifier_at = owner.index('id="reg-asset-owner-identifier-field"')
+        identifier_tag = owner[owner.rfind("<input", 0, identifier_at):owner.index(">", identifier_at)]
+        self.assertIn('type="hidden"', identifier_tag)
+        self.assertIn('name="asset_owner_identifier"', identifier_tag)
+        self.assertNotIn("checked", owner[owner.index('name="asset_owner_matches_customer"') - 80:owner.index('name="asset_owner_matches_customer"') + 80])
+
+        first.asset_owner_matches_customer = True
+        second.asset_owner_matches_customer = True
+        first.save(update_fields=["asset_owner_matches_customer"])
+        second.save(update_fields=["asset_owner_matches_customer"])
+        mirrored = self.client.get(summary_url)
+        mirrored_html = mirrored.content.decode("utf-8")
+        mirrored_owner = mirrored_html[
+            mirrored_html.index('id="registration-owners-container"'):mirrored_html.index("Дата начала проекта")
+        ]
+        self.assertIn("Заказчик этапа А", mirrored_owner)
+        self.assertIn("Заказчик этапа Б", mirrored_owner)
+        self.assertIn("DD Полное имя продукта", mirrored_owner)
+        self.assertIn(">DD<", mirrored_owner)
+        self.assertIn("CTRL Контрольное имя", mirrored_owner)
+        self.assertIn(">CTRL<", mirrored_owner)
+        self.assertLess(
+            mirrored_owner.rindex('class="registration-owner-product-row"'),
+            mirrored_owner.index("registration-owner-match-row"),
+        )
+        self.assertIn("checked", mirrored_owner)
+        self.assertIn("readonly", mirrored_owner)
+
+        stage = self.client.get(reverse("registration_form_edit", args=[first.pk]))
+        stage_html = stage.content.decode("utf-8")
+        stage_owner = stage_html[
+            stage_html.index('id="registration-owners-container"'):stage_html.index("Дата начала проекта")
+        ]
+        self.assertIn("registration-owner-product-locked", stage_owner)
+        self.assertIn('value="DD"', stage_owner)
+        self.assertNotIn("Все продукты", stage_owner)
+        self.assertNotIn('<select name="asset_owner_scope"', stage_owner)
+        self.assertNotIn("Полное имя продукта", stage_owner)
+
+        saved = self.client.post(
+            summary_url,
+            self._group_edit_payload(
+                first,
+                second,
+                number=6246,
+                asset_owner_scope=[str(self.product.pk), str(self.extra_product.pk)],
+                asset_owner=["Владелец первого", "Владелец второго"],
+                asset_owner_country=["", ""],
+                asset_owner_identifier=["ИД-П", "ИД-В"],
+                asset_owner_registration_number=["11", "22"],
+                asset_owner_region=["", ""],
+                asset_owner_registration_date=["", ""],
+            ),
+        )
+        self.assertEqual(saved.status_code, 200, saved.content.decode("utf-8")[:500])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertFalse(first.asset_owner_matches_customer)
+        self.assertFalse(second.asset_owner_matches_customer)
+        self.assertEqual(first.asset_owner, "Владелец первого")
+        self.assertEqual(second.asset_owner, "Владелец второго")
+        self.assertEqual(first.asset_owner_identifier, "ИД-П")
+        self.assertEqual(second.asset_owner_identifier, "ИД-В")
+        self.assertEqual(first.asset_owner_registration_number, "11")
+        self.assertEqual(second.asset_owner_registration_number, "22")
+
+    def test_contract_meta_includes_customer_party_for_refresh(self):
+        from projects_app.forms import _next_project_number
+
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        contract = ContractProjectRegistration.objects.create(
+            number=_next_project_number(),
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор с реквизитами",
+            year=2026,
+            customer="ООО Полный заказчик",
+            country=country,
+            identifier="ИНН",
+            registration_number="998877",
+            registration_region="Москва",
+            registration_date=date(2024, 1, 2),
+        )
+
+        response = self.client.get(reverse("registration_form_create"))
+
+        meta = json.loads(response.context["registration_contract_meta_json"])
+        party = meta[str(contract.pk)]
+        self.assertEqual(party["customer"], "ООО Полный заказчик")
+        self.assertEqual(party["country_id"], str(country.pk))
+        self.assertEqual(party["identifier"], "ИНН")
+        self.assertEqual(party["registration_number"], "998877")
+        self.assertEqual(party["registration_region"], "Москва")
+        self.assertEqual(party["registration_date"], "2024-01-02")
+
+    def test_registration_group_edit_deletes_a_removed_member_on_save(self):
+        first, second, other = self._create_registration_group()
+
+        response = self.client.post(
+            self._group_edit_url(),
+            self._group_edit_payload(
+                first,
+                second,
+                registration_row_id=[first.pk],
+                type_id=[self.product.pk],
+                stage1_weeks=["5.0"],
+                stage2_weeks=["6.0"],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(ProjectRegistration.objects.filter(pk=first.pk).exists())
+        self.assertFalse(ProjectRegistration.objects.filter(pk=second.pk).exists())
+        self.assertTrue(ProjectRegistration.objects.filter(pk=other.pk).exists())
+        first.refresh_from_db()
+        self.assertEqual(first.name, "Общее имя")
+        self.assertEqual(str(first.stage1_weeks), "5.0")
+        self.assertEqual(str(first.stage2_weeks), "6.0")
+
+    def test_registration_group_edit_keeps_rows_when_the_last_product_is_removed(self):
+        first, second, _other = self._create_registration_group()
+
+        response = self.client.post(
+            self._group_edit_url(),
+            self._group_edit_payload(
+                first,
+                second,
+                name="",
+                registration_row_id=[first.pk, second.pk],
+                type_id=[self.product.pk, self.extra_product.pk],
+                stage1_weeks=["1.5", "2.5"],
+                stage2_weeks=["3.5", "4.5"],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Проверьте введённые данные")
+        self.assertContains(response, f'name="registration_row_id" value="{first.pk}"', html=False)
+        self.assertContains(response, f'name="registration_row_id" value="{second.pk}"', html=False)
+        self.assertContains(response, f'name="group_source_id" value="{first.pk}"', html=False)
+        self.assertContains(response, 'data-stage1-weeks="1.5"', html=False)
+        self.assertContains(response, 'data-stage1-weeks="2.5"', html=False)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.name, "Первый продукт")
+        self.assertEqual(second.name, "Второй продукт")
+        self.assertEqual(str(first.stage1_weeks), "1.0")
+
+        empty = self.client.post(
+            self._group_edit_url(),
+            {
+                "number": 6211,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "name": "Общее имя",
+                "status": "Не начат",
+                "year": 2026,
+                "project_manager": "",
+                "group_source_id": [first.pk, second.pk],
+            },
+        )
+
+        self.assertEqual(empty.status_code, 200)
+        self.assertContains(empty, "Укажите хотя бы один продукт.")
+        self.assertTrue(ProjectRegistration.objects.filter(pk=first.pk).exists())
+        self.assertTrue(ProjectRegistration.objects.filter(pk=second.pk).exists())
+
     def test_projects_registry_groups_repeated_numbers_visually(self):
         first = ProjectRegistration.objects.create(
             number=6211,
@@ -1299,8 +3024,334 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertContains(response, 'data-reg-group-cell="number"', html=False)
         self.assertContains(response, 'querySelector(\'[data-reg-group-cell="agreement-type"]\')', html=False)
         self.assertContains(response, "__refreshRegistrationVisibleGroups", html=False)
+        self.assertContains(response, 'data-reg-summary="1"', html=False)
+        self.assertContains(response, 'data-registration-group-toggle="6211:RU"', html=False)
+        self.assertContains(response, 'id="registration-groups-toggle"', html=False)
+        self.assertContains(response, "__toggleVisibleRegistrationGroups", html=False)
+        self.assertContains(response, 'data-registration-group-member="1"', html=False)
+        self.assertContains(response, 'name="registration-summary-select"', html=False)
+        self.assertContains(response, "registration-group/edit/", html=False)
+        self.assertContains(response, 'data-group-edit-url="', html=False)
+        self.assertContains(
+            response,
+            '<td class="project-id-cell" data-col="project-id" data-reg-summary-cell="project-id"></td>',
+            html=False,
+        )
+        self.assertContains(response, 'data-registration-summary-status', html=False)
+        self.assertContains(response, 'data-registration-summary-launch', html=False)
+        self.assertContains(response, 'data-summary-status="Не начат"', html=False)
+        self.assertContains(response, 'data-summary-can-launch="1"', html=False)
+        self.assertContains(response, 'id="registration-summary-status-editor"', html=False)
+        self.assertContains(
+            response,
+            '<td data-col="type" data-reg-summary-cell="type">DD-CTRL</td>',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            '<td data-col="group" data-reg-summary-cell="group">RU</td>',
+            html=False,
+        )
+        self.assertEqual(
+            response.content.decode("utf-8").count(
+                '<td class="col-project-number" data-col="number" data-reg-group-cell="number">6211</td>'
+            ),
+            0,
+        )
         self.assertContains(response, first.short_uid)
         self.assertContains(response, second.short_uid)
+
+    def test_projects_registry_summary_owns_people_deadline_and_shared_evaluation_date(self):
+        first, second = self._create_summary_pair(6230)
+        first.project_manager = "Общий Руководитель Проекта"
+        first.project_coordinator = "Общий Координатор Проекта"
+        first.deadline = date(2026, 1, 10)
+        first.evaluation_date = date(2031, 3, 15)
+        first.save(update_fields=["project_manager", "project_coordinator", "deadline", "evaluation_date"])
+        second.project_manager = "Этапный Руководитель Проекта"
+        second.project_coordinator = "Этапный Координатор Проекта"
+        second.deadline = date(2026, 9, 9)
+        second.evaluation_date = date(2031, 3, 15)
+        second.save(update_fields=["project_manager", "project_coordinator", "deadline", "evaluation_date"])
+
+        page = self.client.get(reverse("projects_partial"))
+        content = page.content.decode("utf-8")
+        self.assertEqual(content.count("Общий Р.П."), 1)
+        self.assertEqual(content.count("Общий К.П."), 1)
+        self.assertNotIn("Этапный Р.П.", content)
+        self.assertNotIn("Этапный К.П.", content)
+        self.assertIn("registration-group/manager/", content)
+        self.assertIn("registration-group/coordinator/", content)
+        self.assertEqual(content.count("09.09.2026"), 2)
+        self.assertEqual(content.count("10.01.2026"), 1)
+        self.assertEqual(content.count("15.03.2031"), 3)
+        summary_deadline = content.index('data-reg-summary-cell="deadline"')
+        self.assertIn("data-registration-deadline", content[summary_deadline:summary_deadline + 700])
+        summary_evaluation = content.index('data-reg-summary-cell="evaluation-date"')
+        evaluation_cell = content[summary_evaluation:content.index("</td>", summary_evaluation)]
+        self.assertIn("reg-deadline-btn", evaluation_cell)
+        self.assertNotIn("data-registration-date", evaluation_cell)
+        self.assertIn("15.03.2031", evaluation_cell)
+
+        changed = self.client.post(
+            reverse("registration_deadline_update", args=[second.pk]),
+            {"deadline": "2026-12-12"},
+        )
+        self.assertEqual(changed.status_code, 200)
+        second.refresh_from_db()
+        self.assertEqual(second.deadline, date(2026, 12, 12))
+        refreshed = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        self.assertEqual(refreshed.count("12.12.2026"), 2)
+
+        earlier = self.client.post(
+            reverse("registration_deadline_update", args=[first.pk]),
+            {"deadline": "2026-02-02"},
+        )
+        self.assertEqual(earlier.status_code, 200)
+        after_earlier = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        self.assertEqual(after_earlier.count("02.02.2026"), 1)
+        self.assertEqual(after_earlier.count("12.12.2026"), 2)
+
+        people = self.client.post(
+            reverse("registration_group_summary_manager"),
+            {"number": first.number, "group": "RU", "project_manager": "Новый Руководитель Проекта"},
+        )
+        self.assertEqual(people.status_code, 200)
+        self.assertEqual(people.json()["managerLabel"], "Новый Р.П.")
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.project_manager, "Новый Руководитель Проекта")
+        self.assertEqual(second.project_manager, "Новый Руководитель Проекта")
+
+        second.evaluation_date = date(2031, 4, 20)
+        second.save(update_fields=["evaluation_date"])
+        mixed = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        self.assertEqual(mixed.count("15.03.2031"), 1)
+        self.assertEqual(mixed.count("20.04.2031"), 1)
+        mixed_summary = mixed.index('data-reg-summary-cell="evaluation-date"')
+        mixed_cell = mixed[mixed_summary:mixed.index("</td>", mixed_summary)]
+        self.assertNotIn("reg-deadline-btn", mixed_cell)
+
+    def test_registry_shows_shared_customer_and_owner_only_on_the_summary_row(self):
+        country = OKSMCountry.objects.create(
+            number=901,
+            code="901",
+            short_name="Тестовия",
+            alpha2="T1",
+            alpha3="TS1",
+        )
+        owner_country = OKSMCountry.objects.create(
+            number=902,
+            code="902",
+            short_name="Владельчия",
+            alpha2="T2",
+            alpha3="TS2",
+        )
+        other_country = OKSMCountry.objects.create(
+            number=903,
+            code="903",
+            short_name="Другая",
+            alpha2="T3",
+            alpha3="TS3",
+        )
+        other_owner_country = OKSMCountry.objects.create(
+            number=904,
+            code="904",
+            short_name="Иная",
+            alpha2="T4",
+            alpha3="TS4",
+        )
+        shared = {
+            "country": country,
+            "customer": "Заказчик Общий",
+            "identifier": "ИД-ОБЩ",
+            "registration_number": "НОМЕР-ЗАКАЗ",
+            "registration_region": "Регион Общий",
+            "registration_date": date(2026, 11, 11),
+            "asset_owner": "Владелец Общий",
+            "asset_owner_country": owner_country,
+            "asset_owner_identifier": "ВЛ-ОБЩ",
+            "asset_owner_registration_number": "НОМЕР-ВЛАД",
+            "asset_owner_region": "Край Владельца",
+            "asset_owner_registration_date": date(2026, 12, 12),
+        }
+        first, second = self._create_summary_pair(6232)
+        for registration in (first, second):
+            for field, value in shared.items():
+                setattr(registration, field, value)
+            registration.save(update_fields=list(shared))
+
+        uniform = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        for value in (
+            "Заказчик Общий",
+            "Тестовия",
+            "ИД-ОБЩ",
+            "НОМЕР-ЗАКАЗ",
+            "Регион Общий",
+            "11.11.26",
+            "Тестовия",
+            "Владельчия",
+            "Владелец Общий",
+            "ВЛ-ОБЩ",
+            "НОМЕР-ВЛАД",
+            "Край Владельца",
+            "12.12.26",
+        ):
+            self.assertEqual(uniform.count(value), 1, value)
+
+        second.customer = "Заказчик Этапа"
+        second.country = other_country
+        second.identifier = "ИД-ЭТАП"
+        second.registration_number = "НОМЕР-ЭТАП"
+        second.registration_region = "Край Этапа"
+        second.registration_date = date(2026, 1, 2)
+        second.asset_owner = "Владелец Этапа"
+        second.asset_owner_country = other_owner_country
+        second.asset_owner_identifier = "ВЛ-ЭТАП"
+        second.asset_owner_registration_number = "НОМЕР-ИНОЙ"
+        second.asset_owner_region = "Край Иного"
+        second.asset_owner_registration_date = date(2026, 3, 4)
+        second.save()
+        mixed = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        for value in (
+            "Заказчик Общий",
+            "Заказчик Этапа",
+            "ИД-ОБЩ",
+            "ИД-ЭТАП",
+            "НОМЕР-ЗАКАЗ",
+            "НОМЕР-ЭТАП",
+            "Тестовия",
+            "Другая",
+            "Владельчия",
+            "Иная",
+            "Регион Общий",
+            "Край Этапа",
+            "11.11.26",
+            "02.01.26",
+            "Владелец Общий",
+            "Владелец Этапа",
+            "ВЛ-ОБЩ",
+            "ВЛ-ЭТАП",
+            "НОМЕР-ВЛАД",
+            "НОМЕР-ИНОЙ",
+            "Край Владельца",
+            "Край Иного",
+            "12.12.26",
+            "04.03.26",
+        ):
+            self.assertEqual(mixed.count(value), 1, value)
+
+        ProjectRegistration.objects.create(
+            number=6233,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Один этап",
+            status="Не начат",
+            year=2026,
+            customer="Заказчик Единственный",
+            asset_owner="Владелец Единственный",
+            position=1,
+        )
+        single = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        self.assertEqual(single.count("Заказчик Единственный"), 1)
+        self.assertEqual(single.count("Владелец Единственный"), 1)
+
+    def test_parent_project_summary_keeps_roles_and_last_stage_deadline(self):
+        parent = ProjectRegistration.objects.create(
+            number=6231,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Сводный проект",
+            status="Не начат",
+            year=2026,
+            project_manager="Родитель Руководитель Проекта",
+            project_coordinator="Родитель Координатор Проекта",
+            deadline=date(2026, 2, 2),
+            position=1,
+        )
+        first = ProjectRegistration.objects.create(
+            number=6231,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый этап родителя",
+            status="Не начат",
+            year=2026,
+            stage_project=parent,
+            project_manager="Этап Один Руководитель",
+            deadline=date(2026, 1, 1),
+            evaluation_date=date(2032, 1, 5),
+            position=2,
+        )
+        second = ProjectRegistration.objects.create(
+            number=6231,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй этап родителя",
+            status="В работе",
+            year=2026,
+            stage_project=parent,
+            project_manager="Этап Два Руководитель",
+            deadline=date(2026, 4, 4),
+            evaluation_date=date(2032, 6, 6),
+            position=3,
+        )
+
+        page = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        self.assertEqual(page.count("Родитель Р.П."), 1)
+        self.assertEqual(page.count("Родитель К.П."), 1)
+        self.assertNotIn("Этап О.Р.", page)
+        self.assertNotIn("Этап Д.Р.", page)
+        self.assertEqual(page.count("04.04.2026"), 2)
+        self.assertEqual(page.count("01.01.2026"), 1)
+        self.assertNotIn("02.02.2026", page)
+        self.assertEqual(page.count("05.01.2032"), 1)
+        self.assertEqual(page.count("06.06.2032"), 1)
+
+        form = self.client.get(reverse("registration_form_edit", args=[first.pk]))
+        self.assertContains(form, "Родитель Руководитель Проекта")
+        self.assertContains(form, "disabled", html=False)
+
+        saved = self.client.post(
+            reverse("registration_form_edit", args=[first.pk]),
+            {
+                "number": 6231,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": first.name,
+                "status": "Не начат",
+                "deadline": "2026-03-03",
+                "year": 2026,
+                "project_manager": "Чужой Руководитель Проекта",
+                "project_coordinator": "Чужой Координатор Проекта",
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        parent.refresh_from_db()
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(parent.project_manager, "Родитель Руководитель Проекта")
+        self.assertEqual(parent.project_coordinator, "Родитель Координатор Проекта")
+        self.assertEqual(first.project_manager, "Этап Один Руководитель")
+        self.assertEqual(first.deadline, date(2026, 3, 3))
+        self.assertEqual(second.deadline, date(2026, 4, 4))
+        self.assertEqual(parent.deadline, date(2026, 2, 2))
+
+        people = self.client.post(
+            reverse("registration_group_summary_manager"),
+            {"project": parent.pk, "project_manager": "Сводный Руководитель Проекта"},
+        )
+        self.assertEqual(people.status_code, 200)
+        parent.refresh_from_db()
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(parent.project_manager, "Сводный Руководитель Проекта")
+        self.assertEqual(first.project_manager, "Сводный Руководитель Проекта")
+        self.assertEqual(second.project_manager, "Сводный Руководитель Проекта")
 
     def test_projects_registry_keeps_grouped_labels_hidden_for_same_contract_id(self):
         contract_project = ContractProjectRegistration.objects.create(
@@ -1342,17 +3393,31 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertNotIn('class="registration-number-has-next registration-number-contract-has-next"', content)
         self.assertEqual(
             content.count(
-                f'<td class="contract-id-cell" data-col="contract-id" data-reg-group-cell="contract-id"><span class="clf-id-droid-mono">{contract_project.short_uid}</span></td>'
+                f'<td class="contract-id-cell" data-col="contract-id" data-reg-summary-cell="contract-id"><span class="clf-id-droid-mono">{contract_project.short_uid}</span></td>'
             ),
             1,
         )
         self.assertEqual(
+            content.count(
+                f'<td class="contract-id-cell" data-col="contract-id" data-reg-group-cell="contract-id"><span class="clf-id-droid-mono">{contract_project.short_uid}</span></td>'
+            ),
+            0,
+        )
+        self.assertEqual(
+            content.count('<td data-col="agreement-type" data-reg-summary-cell="agreement-type">Основной договор</td>'),
+            1,
+        )
+        self.assertEqual(
             content.count('<td data-col="agreement-type" data-reg-group-cell="agreement-type">Основной договор</td>'),
+            0,
+        )
+        self.assertEqual(
+            content.count('<td data-col="group" data-reg-summary-cell="group">RU</td>'),
             1,
         )
         self.assertEqual(
             content.count('<td data-col="group" data-reg-group-cell="group">RU</td>'),
-            1,
+            0,
         )
 
     def test_projects_registry_shows_grouped_labels_for_different_contract_ids(self):
@@ -1419,8 +3484,16 @@ class ProjectRegistrationFormViewTests(TestCase):
             2,
         )
         self.assertEqual(
+            content.count('<td data-col="agreement-type" data-reg-summary-cell="agreement-type">Основной договор</td>'),
+            0,
+        )
+        self.assertEqual(
+            content.count('<td data-col="group" data-reg-summary-cell="group">RU</td>'),
+            1,
+        )
+        self.assertEqual(
             content.count('<td data-col="group" data-reg-group-cell="group">RU</td>'),
-            2,
+            0,
         )
 
     def test_projects_registry_customer_details_are_hidden_by_default_in_colpicker(self):
@@ -1470,9 +3543,142 @@ class ProjectRegistrationFormViewTests(TestCase):
         response = self.client.post(reverse("registration_launch", args=[registration.pk]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"ok": True, "status": "В работе"})
+        today = timezone.localdate()
+        self.assertEqual(response.json(), {
+            "ok": True,
+            "status": "В работе",
+            "statusDate": today.isoformat(),
+            "statusDateLabel": today.strftime("%d.%m.%Y"),
+        })
         registration.refresh_from_db()
         self.assertEqual(registration.status, "В работе")
+        self.assertEqual(registration.status_date, today)
+        self.assertEqual(registration.project_start_date, today)
+
+    def test_launch_and_status_change_fill_project_start_date_without_locking_it(self):
+        def start_date_tag(response):
+            content = response.content.decode("utf-8")
+            marker = 'name="project_start_date"'
+            at = content.index(marker)
+            return content[content.rfind("<input", 0, at):content.index(">", at)]
+
+        planned = date(2020, 1, 1)
+        registration = ProjectRegistration.objects.create(
+            number=6204,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с плановой датой начала",
+            status="Не начат",
+            year=2026,
+            project_start_date=planned,
+        )
+
+        response = self.client.post(
+            reverse("registration_status_update", args=[registration.pk]),
+            {"status": "В работе"},
+        )
+
+        today = timezone.localdate()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["statusDate"], today.isoformat())
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, "В работе")
+        self.assertEqual(registration.status_date, today)
+        self.assertEqual(registration.project_start_date, today)
+
+        form = self.client.get(reverse("registration_form_edit", args=[registration.pk]))
+        self.assertContains(form, f'name="project_start_date" value="{today.isoformat()}"', html=False)
+        tag = start_date_tag(form)
+        self.assertNotIn('data-project-start-locked="1"', tag)
+        self.assertNotIn("readonly", tag)
+
+        saved = self.client.post(
+            reverse("registration_form_edit", args=[registration.pk]),
+            {
+                "number": registration.number,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": registration.name,
+                "status": "В работе",
+                "year": 2026,
+                "project_start_date": "2026-07-07",
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertNotContains(saved, "Проверьте введённые данные")
+        registration.refresh_from_db()
+        self.assertEqual(registration.project_start_date, date(2026, 7, 7))
+        self.assertEqual(registration.status_date, today)
+
+        finished = self.client.post(
+            reverse("registration_status_update", args=[registration.pk]),
+            {"status": "Завершён"},
+        )
+        self.assertEqual(finished.status_code, 200)
+        registration.refresh_from_db()
+        self.assertEqual(registration.project_start_date, date(2026, 7, 7))
+        self.assertEqual(registration.status_date, today)
+
+    def test_group_launch_copies_status_date_into_shared_project_start_date(self):
+        parent = ProjectRegistration.objects.create(
+            number=62012,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Сводный проект",
+            status="Не начат",
+            year=2026,
+            position=1,
+        )
+        first = ProjectRegistration.objects.create(
+            number=62012,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый этап",
+            status="Не начат",
+            year=2026,
+            stage_project=parent,
+            position=2,
+        )
+        second = ProjectRegistration.objects.create(
+            number=62012,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй этап",
+            status="Не начат",
+            year=2026,
+            stage_project=parent,
+            position=3,
+        )
+
+        response = self.client.post(reverse("registration_launch", args=[first.pk]))
+
+        today = timezone.localdate()
+        self.assertEqual(response.status_code, 200)
+        parent.refresh_from_db()
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, "В работе")
+        self.assertEqual(first.status_date, today)
+        self.assertEqual(first.project_start_date, today)
+        self.assertEqual(second.status, "Не начат")
+        self.assertEqual(second.project_start_date, today)
+        self.assertEqual(parent.project_start_date, today)
+
+        summary = self.client.get(
+            f"{reverse('registration_group_summary_edit')}?number=62012&group=RU&project={parent.pk}"
+        )
+        self.assertContains(summary, f'name="project_start_date" value="{today.isoformat()}"', html=False)
+        content = summary.content.decode("utf-8")
+        marker = 'name="project_start_date"'
+        at = content.index(marker)
+        tag = content[content.rfind("<input", 0, at):content.index(">", at)]
+        self.assertNotIn('data-project-start-locked="1"', tag)
+        self.assertNotIn("readonly", tag)
 
     def test_registration_launch_rejects_already_started_project(self):
         registration = ProjectRegistration.objects.create(
@@ -1509,9 +3715,400 @@ class ProjectRegistrationFormViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"ok": True, "status": "На проверке"})
+        today = timezone.localdate()
+        self.assertEqual(response.json(), {
+            "ok": True,
+            "status": "На проверке",
+            "statusDate": today.isoformat(),
+            "statusDateLabel": today.strftime("%d.%m.%Y"),
+        })
         registration.refresh_from_db()
         self.assertEqual(registration.status, "На проверке")
+        self.assertEqual(registration.status_date, today)
+        self.assertIsNone(registration.project_start_date)
+
+    def test_registration_status_date_changes_only_when_status_changes(self):
+        registration = ProjectRegistration.objects.create(
+            number=62031,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект с датой статуса",
+            status="Не начат",
+            year=2026,
+        )
+        self.assertIsNone(registration.status_date)
+
+        registration.status_date = date(2024, 5, 6)
+        registration.save(update_fields=["status_date"])
+        unchanged = self.client.post(
+            reverse("registration_status_update", args=[registration.pk]),
+            {"status": "Не начат"},
+        )
+        self.assertEqual(unchanged.status_code, 200)
+        registration.refresh_from_db()
+        self.assertEqual(registration.status_date, date(2024, 5, 6))
+
+        registration.status = "В работе"
+        registration.status_date = date(2020, 1, 2)
+        registration.save()
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, "В работе")
+        self.assertEqual(registration.status_date, date(2020, 1, 2))
+
+        registration.status = "Завершён"
+        registration.save(update_fields=["status"])
+        registration.refresh_from_db()
+        self.assertEqual(registration.status_date, timezone.localdate())
+
+        returned = self.client.post(
+            reverse("registration_status_update", args=[registration.pk]),
+            {"status": "Не начат"},
+        )
+        self.assertEqual(returned.status_code, 200)
+        self.assertEqual(returned.json()["status"], "Не начат")
+        self.assertEqual(returned.json()["statusDate"], "")
+        self.assertEqual(returned.json()["statusDateLabel"], "")
+        registration.refresh_from_db()
+        self.assertIsNone(registration.status_date)
+
+        registration.status_date = date(2024, 5, 6)
+        registration.save(update_fields=["status_date"])
+        page = self.client.get(reverse("projects_partial"))
+        row = page.content.decode("utf-8")
+        row_start = row.index(f'data-project-id="{registration.pk}"')
+        row_end = row.index("</tr>", row_start)
+        status_cell = row[row_start:row_end]
+        self.assertIn('data-col="status-date" data-reg-status-date></td>', status_cell)
+        self.assertNotIn("06.05.2024", status_cell)
+
+    def test_registration_summary_status_date_follows_the_summary_label(self):
+        first, second = self._create_summary_pair(62032)
+        RegistrationGroupSummaryState.objects.create(
+            number=62032,
+            group_label="RU",
+            status_date=date(2024, 5, 6),
+        )
+        initial = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        summary_start = initial.index('data-summary-status="Не начат"')
+        summary_end = initial.index("</tr>", summary_start)
+        self.assertIn(
+            'data-reg-summary-status-date></td>',
+            initial[summary_start:summary_end],
+        )
+        self.assertNotIn("06.05.2024", initial[summary_start:summary_end])
+
+        deferred = self.client.post(
+            reverse("registration_group_summary_status"),
+            {"number": first.number, "group": "RU", "mode": "deferred"},
+        )
+        today = timezone.localdate()
+        self.assertEqual(deferred.status_code, 200)
+        self.assertEqual(deferred.json()["summary"]["statusDateLabel"], today.strftime("%d.%m.%Y"))
+        state = RegistrationGroupSummaryState.objects.get(number=62032, group_label="RU")
+        self.assertEqual(state.status_date, today)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertIsNone(first.status_date)
+        self.assertIsNone(second.status_date)
+
+        state.status_date = date(2020, 1, 1)
+        state.save(update_fields=["status_date"])
+        stage_response = self.client.post(
+            reverse("registration_status_update", args=[second.pk]),
+            {"status": "В работе"},
+        )
+        self.assertEqual(stage_response.status_code, 200)
+        self.assertEqual(stage_response.json()["summary"]["label"], "Отложен")
+        self.assertEqual(stage_response.json()["summary"]["statusDateLabel"], "01.01.2020")
+        second.refresh_from_db()
+        state.refresh_from_db()
+        self.assertEqual(second.status_date, today)
+        self.assertEqual(state.status_date, date(2020, 1, 1))
+
+        cleared = self.client.post(
+            reverse("registration_group_summary_status"),
+            {"number": first.number, "group": "RU", "mode": "auto"},
+        )
+        self.assertEqual(cleared.status_code, 200)
+        self.assertEqual(cleared.json()["summary"]["statusDate"], today.isoformat())
+        state.refresh_from_db()
+        self.assertEqual(state.status_date, today)
+
+        page = self.client.get(reverse("projects_partial"))
+        self.assertContains(page, '<th data-col="status-date">Дата статуса</th>', html=False)
+        self.assertContains(page, today.strftime("%d.%m.%Y"))
+        self.assertContains(
+            page,
+            f'<td data-col="status-date" data-reg-status-date>{today.strftime("%d.%m.%Y")}</td>',
+            html=False,
+        )
+
+    def test_parent_summary_status_date_is_stored_on_the_project(self):
+        parent = ProjectRegistration.objects.create(
+            number=62033,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Сводный проект",
+            status="Не начат",
+            year=2026,
+            position=30,
+        )
+        stage = ProjectRegistration.objects.create(
+            number=62033,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Этап",
+            status="Не начат",
+            year=2026,
+            stage_project=parent,
+            position=31,
+        )
+        ProjectRegistration.objects.create(
+            number=62033,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Следующий этап",
+            status="Не начат",
+            year=2026,
+            stage_project=parent,
+            position=32,
+        )
+
+        response = self.client.post(
+            reverse("registration_group_summary_status"),
+            {"number": parent.number, "group": "RU", "project": parent.pk, "mode": "deferred"},
+        )
+        self.assertEqual(response.status_code, 200)
+        parent.refresh_from_db()
+        stage.refresh_from_db()
+        self.assertEqual(parent.summary_status_date, timezone.localdate())
+        self.assertIsNone(stage.status_date)
+        self.assertFalse(
+            RegistrationGroupSummaryState.objects.filter(number=62033, group_label="RU").exists()
+        )
+
+    def test_project_registration_admin_allows_manual_status_date(self):
+        from django.contrib import admin as django_admin
+
+        admin_instance = django_admin.site._registry[ProjectRegistration]
+        self.assertIn("status_date", admin_instance.list_display)
+        self.assertIn("status_date", admin_instance.list_editable)
+        self.assertNotIn("status_date", admin_instance.readonly_fields)
+        summary_admin = django_admin.site._registry[RegistrationGroupSummaryState]
+        self.assertIn("status_date", summary_admin.list_editable)
+        form = ProjectRegistrationForm()
+        self.assertNotIn("status_date", form.fields)
+        self.assertNotIn("summary_status_date", form.fields)
+
+    def _create_summary_pair(self, number, first_status="Не начат", second_status="Не начат", position=1):
+        first = ProjectRegistration.objects.create(
+            number=number,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Первый этап",
+            status=first_status,
+            year=2026,
+            position=position,
+        )
+        second = ProjectRegistration.objects.create(
+            number=number,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.extra_product,
+            name="Второй этап",
+            status=second_status,
+            year=2026,
+            position=position + 1,
+        )
+        return first, second
+
+    def test_registration_summary_state_uses_the_later_stage(self):
+        from projects_app.registration_summary import registration_summary_state
+
+        later = registration_summary_state(["На проверке", "В работе"], False)
+        self.assertEqual(later["label"], "В работе (2/2)")
+        self.assertEqual(later["auto_label"], "В работе (2/2)")
+        self.assertFalse(later["can_launch"])
+
+        untouched = registration_summary_state(["Не начат", "Не начат"], False)
+        self.assertEqual(untouched["label"], "Не начат")
+        self.assertTrue(untouched["can_launch"])
+
+        finished = registration_summary_state(["Завершён", "Завершён"], False)
+        self.assertEqual(finished["label"], "Завершён (2/2)")
+        self.assertFalse(finished["can_launch"])
+
+        partial = registration_summary_state(["Завершён", "Не начат"], False)
+        self.assertEqual(partial["label"], "Завершён (1/2)")
+
+        stored_deferred_stage = registration_summary_state(["На проверке", "Отложен"], False)
+        self.assertEqual(stored_deferred_stage["label"], "На проверке (1/2)")
+        self.assertFalse(stored_deferred_stage["can_launch"])
+
+        deferred = registration_summary_state(["Не начат", "Не начат"], True)
+        self.assertEqual(deferred["label"], "Отложен")
+        self.assertEqual(deferred["auto_label"], "Не начат")
+        self.assertFalse(deferred["can_launch"])
+
+    def test_projects_registry_summary_reflects_stage_statuses(self):
+        self._create_summary_pair(6221, "На проверке", "В работе")
+        response = self.client.get(reverse("projects_partial"))
+        self.assertContains(response, 'data-summary-status="В работе (2/2)"', html=False)
+        self.assertContains(response, 'data-summary-auto-status="В работе (2/2)"', html=False)
+        self.assertNotContains(response, "data-registration-summary-launch", html=False)
+        self.assertContains(response, "reg-launch-status--work", html=False)
+
+        ProjectRegistration.objects.filter(number=6221).update(status="Завершён")
+        finished = self.client.get(reverse("projects_partial"))
+        self.assertContains(finished, 'data-summary-status="Завершён (2/2)"', html=False)
+        self.assertContains(finished, "reg-launch-status--done", html=False)
+
+    def test_registration_group_deferred_survives_stage_status_change_until_cleared(self):
+        first, second = self._create_summary_pair(6222)
+        response = self.client.post(
+            reverse("registration_group_summary_status"),
+            {"number": first.number, "group": "RU", "mode": "deferred"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["summary"]["label"], "Отложен")
+        self.assertTrue(response.json()["summary"]["deferred"])
+        self.assertFalse(response.json()["summary"]["canLaunch"])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, "Не начат")
+        self.assertEqual(second.status, "Не начат")
+        self.assertTrue(
+            RegistrationGroupSummaryState.objects.filter(number=6222, group_label="RU", deferred=True).exists()
+        )
+
+        page = self.client.get(reverse("projects_partial"))
+        self.assertContains(page, 'data-summary-status="Отложен"', html=False)
+        self.assertContains(page, 'data-summary-deferred="1"', html=False)
+        self.assertNotContains(page, "data-registration-summary-launch", html=False)
+
+        stage_response = self.client.post(
+            reverse("registration_status_update", args=[second.pk]),
+            {"status": "В работе"},
+        )
+        self.assertEqual(stage_response.status_code, 200)
+        self.assertEqual(stage_response.json()["summary"]["label"], "Отложен")
+        self.assertEqual(stage_response.json()["summary"]["autoLabel"], "В работе (2/2)")
+        second.refresh_from_db()
+        self.assertEqual(second.status, "В работе")
+        self.assertTrue(
+            RegistrationGroupSummaryState.objects.filter(number=6222, group_label="RU", deferred=True).exists()
+        )
+
+        cleared = self.client.post(
+            reverse("registration_group_summary_status"),
+            {"number": first.number, "group": "RU", "mode": "auto"},
+        )
+        self.assertEqual(cleared.status_code, 200)
+        self.assertEqual(cleared.json()["summary"]["label"], "В работе (2/2)")
+        self.assertFalse(cleared.json()["summary"]["deferred"])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, "Не начат")
+        self.assertEqual(second.status, "В работе")
+
+    def test_registration_group_launch_starts_only_the_first_stage(self):
+        first, second = self._create_summary_pair(6223)
+        with patch("projects_app.views.copy_typical_gantt_to_project") as copy_gantt:
+            response = self.client.post(
+                reverse("registration_group_summary_launch"),
+                {"number": first.number, "group": "RU"},
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["projectId"], first.pk)
+        self.assertEqual(payload["summary"]["label"], "В работе (1/2)")
+        self.assertFalse(payload["summary"]["canLaunch"])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, "В работе")
+        self.assertEqual(second.status, "Не начат")
+        copy_gantt.assert_called_once()
+        self.assertEqual(copy_gantt.call_args.args[0].pk, first.pk)
+
+        member_first, member_second = self._create_summary_pair(6228, position=5)
+        member_launch = self.client.post(reverse("registration_launch", args=[member_first.pk]))
+        self.assertEqual(member_launch.status_code, 200)
+        self.assertEqual(member_launch.json()["summary"]["label"], "В работе (1/2)")
+        self.assertFalse(member_launch.json()["summary"]["canLaunch"])
+        member_second.refresh_from_db()
+        self.assertEqual(member_second.status, "Не начат")
+
+    def test_registration_group_launch_rejects_started_or_deferred_group(self):
+        first, second = self._create_summary_pair(6224, "Не начат", "В работе")
+        rejected = self.client.post(
+            reverse("registration_group_summary_launch"),
+            {"number": first.number, "group": "RU"},
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertFalse(rejected.json()["ok"])
+        first.refresh_from_db()
+        self.assertEqual(first.status, "Не начат")
+
+        pending_first, pending_second = self._create_summary_pair(6225, position=3)
+        RegistrationGroupSummaryState.objects.create(number=6225, group_label="RU", deferred=True)
+        deferred = self.client.post(
+            reverse("registration_group_summary_launch"),
+            {"number": pending_first.number, "group": "RU"},
+        )
+        self.assertEqual(deferred.status_code, 400)
+        self.assertEqual(deferred.json()["summary"]["label"], "Отложен")
+        pending_first.refresh_from_db()
+        pending_second.refresh_from_db()
+        self.assertEqual(pending_first.status, "Не начат")
+        self.assertEqual(pending_second.status, "Не начат")
+
+    def test_registration_status_update_rejects_deferred_for_group_stage(self):
+        first, second = self._create_summary_pair(6226)
+        rejected = self.client.post(
+            reverse("registration_status_update", args=[second.pk]),
+            {"status": "Отложен"},
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertFalse(rejected.json()["ok"])
+        second.refresh_from_db()
+        self.assertEqual(second.status, "Не начат")
+
+        moved = self.client.post(
+            reverse("registration_status_update", args=[first.pk]),
+            {"status": "На проверке"},
+        )
+        self.assertEqual(moved.status_code, 200)
+        self.assertEqual(moved.json()["summary"]["label"], "На проверке (1/2)")
+
+        standalone = ProjectRegistration.objects.create(
+            number=6227,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Отдельный проект",
+            status="Не начат",
+            year=2026,
+            position=10,
+        )
+        allowed = self.client.post(
+            reverse("registration_status_update", args=[standalone.pk]),
+            {"status": "Отложен"},
+        )
+        self.assertEqual(allowed.status_code, 200)
+        today = timezone.localdate()
+        self.assertEqual(allowed.json(), {
+            "ok": True,
+            "status": "Отложен",
+            "statusDate": today.isoformat(),
+            "statusDateLabel": today.strftime("%d.%m.%Y"),
+        })
+        standalone.refresh_from_db()
+        self.assertEqual(standalone.status, "Отложен")
 
     def test_registration_status_update_copies_gantt_to_russian_production_calendar(self):
         country = OKSMCountry.objects.create(
@@ -2919,7 +5516,7 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
             2,
         )
         newest_entity = BusinessEntityRecord.objects.order_by("-id").first()
-        project = ProjectRegistration.objects.get(number=4444)
+        project = ProjectRegistration.objects.get(number=4444, stage_project__isnull=False)
         self.assertEqual(newest_entity.source, "[Проекты / Заказчик]")
         self.assertEqual(newest_entity.record_author, "projects-registry-user")
         self.assertEqual(project.type_short_display, "DD")
@@ -2961,7 +5558,8 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         first.refresh_from_db()
         self.assertEqual(first.short_uid, duplicates[0].short_uid)
         self.assertEqual(duplicates[0].short_uid, "44440010RU")
-        self.assertEqual(duplicates[1].short_uid, "44440020RU")
+        self.assertEqual(duplicates[1].stage_project.short_uid, "44440020RU")
+        self.assertEqual(duplicates[1].short_uid, "444400200RU")
         self.assertEqual(
             list(duplicates[1].product_links.order_by("rank").values_list("product_id", flat=True)),
             [self.product.pk],
@@ -3004,20 +5602,23 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         projects = list(ProjectRegistration.objects.filter(number=4444).order_by("position", "id"))
-        self.assertEqual(len(projects), 2)
-        self.assertEqual([project.type_short_display for project in projects], ["DD", self.second_product.short_name])
-        self.assertEqual([project.short_uid for project in projects], ["44440010RU", "44440020RU"])
+        stages = [project for project in projects if project.stage_project_id]
+        parent = next(project for project in projects if project.stage_project_id is None)
+        self.assertEqual(len(stages), 2)
+        self.assertEqual(parent.short_uid, "44440000RU")
+        self.assertEqual([project.type_short_display for project in stages], ["DD", self.second_product.short_name])
+        self.assertEqual([project.short_uid for project in stages], ["444400010RU", "444400020RU"])
         self.assertEqual(
-            list(projects[0].product_links.order_by("rank").values_list("product_id", flat=True)),
+            list(stages[0].product_links.order_by("rank").values_list("product_id", flat=True)),
             [self.product.pk],
         )
         self.assertEqual(
-            list(projects[1].product_links.order_by("rank").values_list("product_id", flat=True)),
+            list(stages[1].product_links.order_by("rank").values_list("product_id", flat=True)),
             [self.second_product.pk],
         )
         self.assertEqual(BusinessEntityRecord.objects.count(), 1)
 
-        deps_response = self.client.get(reverse("work_deps"), {"project": projects[1].pk})
+        deps_response = self.client.get(reverse("work_deps"), {"project": stages[1].pk})
 
         self.assertEqual(deps_response.status_code, 200)
         self.assertEqual(deps_response.json()["type_short"], self.second_product.short_name)
@@ -3049,7 +5650,7 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        projects = list(ProjectRegistration.objects.filter(number=4444).order_by("position", "id"))
+        projects = list(ProjectRegistration.objects.filter(number=4444, stage_project__isnull=False).order_by("position", "id"))
         self.assertEqual([project.type_short_display for project in projects], ["DD", "DD2"])
         self.assertEqual([str(project.stage1_weeks) for project in projects], ["1.0", "2.0"])
         self.assertFalse(ProjectRegistration.objects.filter(product_links__product=group).exists())
@@ -3062,10 +5663,10 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        projects = list(ProjectRegistration.objects.filter(number=4444).order_by("position", "id"))
+        projects = list(ProjectRegistration.objects.filter(number=4444, stage_project__isnull=False).order_by("position", "id"))
         self.assertEqual(len(projects), 2)
         self.assertEqual([project.type_short_display for project in projects], ["DD", "DD"])
-        self.assertEqual([project.short_uid for project in projects], ["44440010RU", "44440020RU"])
+        self.assertEqual([project.short_uid for project in projects], ["444400010RU", "444400020RU"])
         self.assertEqual([str(project.stage1_weeks) for project in projects], ["1.0", "2.0"])
         self.assertEqual([str(project.stage2_weeks) for project in projects], ["3.0", "4.0"])
         self.assertEqual(
@@ -3085,9 +5686,166 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        projects = list(ProjectRegistration.objects.filter(number=4444).order_by("position", "id"))
+        projects = list(ProjectRegistration.objects.filter(number=4444, stage_project__isnull=False).order_by("position", "id"))
         self.assertEqual([str(project.stage1_weeks) for project in projects], ["1.0", "2.0"])
         self.assertEqual([str(project.stage2_weeks) for project in projects], ["3.0", "4.0"])
+
+    def test_registration_create_keeps_stage_chain_across_product_rows(self):
+        response = self._post_registration(
+            type_id=[self.product.pk, self.second_product.pk],
+            project_start_date="2026-01-01",
+            source_data_term=["0", "0"],
+            source_data_term_unit=["days", "days"],
+            source_data_term_enabled=["true", "true"],
+            service_term_months=["1.0", "1.0"],
+            preliminary_report_term_unit=["months", "months"],
+            service_term_months_enabled=["true", "true"],
+            final_report_term_weeks=["0", "0"],
+            final_report_term_unit=["weeks", "weeks"],
+            final_report_date_enabled=["true", "true"],
+            next_stage_delay_days=["10"],
+            evaluation_date=["2026-01-01", "2026-06-01"],
+            evaluation_date_enabled=["true", "true"],
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8")[:1500])
+        projects = list(ProjectRegistration.objects.filter(number=4444, stage_project__isnull=False).order_by("position", "id"))
+        self.assertEqual(len(projects), 2)
+        self.assertEqual(projects[0].stage2_end, date(2026, 2, 1))
+        self.assertEqual(projects[1].stage2_end, date(2026, 3, 11))
+        self.assertEqual(projects[0].project_start_date, date(2026, 1, 1))
+        self.assertEqual(projects[1].project_start_date, date(2026, 1, 1))
+        self.assertEqual(projects[0].evaluation_date, date(2026, 1, 1))
+        self.assertEqual(projects[1].evaluation_date, date(2026, 6, 1))
+        self.assertEqual(projects[1].stage_terms_json[0]["preliminary_report_date"], "2026-03-11")
+        self.assertEqual(len(projects[0].stage_terms_json), 1)
+        self.assertEqual(len(projects[1].stage_terms_json), 1)
+
+    def test_registration_terms_toggles_and_columns_stay_on_the_project(self):
+        response = self._post_registration(
+            project_start_date="2026-01-01",
+            source_data_term=["2"],
+            source_data_term_unit=["weeks"],
+            source_data_term_enabled=["false"],
+            source_data_date_enabled=["true"],
+            service_term_months=["1.0"],
+            preliminary_report_term_unit=["months"],
+            service_term_months_enabled=["true"],
+            preliminary_report_date_enabled=["false"],
+            final_report_term_weeks=["1"],
+            final_report_term_unit=["weeks"],
+            final_report_date_enabled=["false"],
+            source_date_collapsed="true",
+            preliminary_date_collapsed="false",
+            final_date_collapsed="true",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8")[:1500])
+        stage = ProjectRegistration.objects.get(number=4444, stage_project__isnull=False)
+        parent = stage.stage_project
+        saved = stage.stage_terms_json[0]
+        self.assertFalse(saved["source_data_term_enabled"])
+        self.assertTrue(saved["source_data_date_enabled"])
+        self.assertFalse(saved["preliminary_report_date_enabled"])
+        self.assertFalse(saved["final_report_date_enabled"])
+        self.assertEqual(parent.terms_columns_json, {})
+        self.assertEqual(stage.terms_columns_json, {})
+        opened = self.client.get(reverse("registration_form_edit", args=[stage.pk]))
+        html = opened.content.decode("utf-8")
+        self.assertIn(
+            'class="proposal-assets-editor proposal-terms-editor is-source-date-collapsed is-preliminary-date-collapsed is-final-date-collapsed"',
+            html,
+        )
+        self.assertIn(f'data-terms-project-key="{parent.short_uid}"', html)
+        self.assertNotIn('name="source_date_collapsed"', html)
+        self.assertIn('aria-label="Развернуть столбец «Исходные данные (дата)»"', html)
+        self.assertIn('name="final_report_date_enabled" class="proposal-stage-final-report-date-enabled" value="false"', html)
+
+    def test_contract_end_toggle_stays_on_the_project(self):
+        response = self._post_registration(
+            type_id=[self.product.pk, self.second_product.pk],
+            project_start_date="2026-01-01",
+            source_data_term=["0", "0"],
+            source_data_term_unit=["days", "days"],
+            source_data_term_enabled=["true", "true"],
+            service_term_months=["1", "1"],
+            preliminary_report_term_unit=["months", "months"],
+            service_term_months_enabled=["true", "true"],
+            final_report_term_weeks=["1", "1"],
+            final_report_term_unit=["weeks", "weeks"],
+            final_report_date_enabled=["false", "false"],
+            stage_contract_id=["", ""],
+            contract_group_id=[""],
+            contract_group_end=["2026-12-31"],
+            contract_group_end_enabled=["false"],
+        )
+        self.assertEqual(response.status_code, 200, response.content.decode("utf-8")[:1500])
+        stages = list(
+            ProjectRegistration.objects.filter(number=4444, stage_project__isnull=False).order_by("position", "id")
+        )
+        self.assertEqual(len(stages), 2)
+        parent = stages[0].stage_project
+        for stage in stages:
+            self.assertEqual(stage.contract_end, date(2026, 12, 31))
+            self.assertFalse(stage.contract_end_enabled)
+        self.assertFalse(parent.contract_end_enabled)
+
+        opened = self.client.get(reverse("registration_form_edit", args=[stages[0].pk]))
+        html = opened.content.decode("utf-8")
+        self.assertIn(
+            'name="contract_group_end_enabled" class="registration-contract-group-end-enabled" value="false"',
+            html,
+        )
+        self.assertIn("registration-contract-end-field is-stage-field-disabled", html)
+
+        group_url = f"{reverse('registration_group_summary_edit')}?project={parent.pk}"
+        group_page = self.client.get(group_url)
+        self.assertEqual(group_page.status_code, 200, group_page.content.decode("utf-8")[:800])
+        self.assertIn(
+            'name="contract_group_end_enabled" class="registration-contract-group-end-enabled" value="false"',
+            group_page.content.decode("utf-8"),
+        )
+        saved = self.client.post(
+            group_url,
+            {
+                "number": 4444,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "name": "Проект Альфа",
+                "status": "Не начат",
+                "deadline": "2026-01-10",
+                "year": 2026,
+                "customer": 'ООО "Синхронизация"',
+                "country": self.country.pk,
+                "identifier": "ОГРН",
+                "registration_number": "1234567890",
+                "registration_date": "2025-02-10",
+                "project_manager": "",
+                "project_start_date": "2026-01-01",
+                "group_source_id": [stage.pk for stage in stages],
+                "registration_row_id": [stage.pk for stage in stages],
+                "type_id": [self.product.pk, self.second_product.pk],
+                "stage_contract_id": ["", ""],
+                "contract_group_id": [""],
+                "contract_group_end": ["2026-12-31"],
+                "contract_group_end_enabled": ["true"],
+                "source_data_term": ["0", "0"],
+                "source_data_term_unit": ["days", "days"],
+                "source_data_term_enabled": ["true", "true"],
+                "service_term_months": ["1", "1"],
+                "preliminary_report_term_unit": ["months", "months"],
+                "service_term_months_enabled": ["true", "true"],
+                "final_report_term_weeks": ["1", "1"],
+                "final_report_term_unit": ["weeks", "weeks"],
+                "final_report_date_enabled": ["false", "false"],
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.content.decode("utf-8")[:1500])
+        parent.refresh_from_db()
+        self.assertTrue(parent.contract_end_enabled)
+        for stage in stages:
+            stage.refresh_from_db()
+            self.assertTrue(stage.contract_end_enabled)
 
 
 class WorkVolumePerformerCreationTests(TestCase):
@@ -4802,9 +7560,19 @@ class ProjectProductLinkSyncTests(TestCase):
         self.assertContains(response, 'bi bi-circle', html=False)
         self.assertContains(response, 'reg-launch-status--work', html=False)
         self.assertContains(response, "Сроки проекта по договору")
-        self.assertContains(response, "Срок предв. отчёта, мес.")
+        self.assertContains(response, 'bi bi-calendar-week', html=False)
+        self.assertContains(response, 'id="project-contract-terms-section-toggle"', html=False)
+        self.assertContains(response, 'bi bi-plus-square', html=False)
+        self.assertContains(response, 'id="project-contract-terms-section-body" class="d-none"', html=False)
+        self.assertContains(response, "Срок предв. отчёта")
+        self.assertContains(response, "0 дн.")
+        self.assertNotContains(response, "Исх. данные, дней")
+        self.assertNotContains(response, "Срок предв. отчёта, мес.")
         self.assertContains(response, "Дата предв. отчёта")
-        self.assertContains(response, "Срок итог. отчёта, нед.")
+        self.assertContains(response, "Срок итог. отчёта")
+        self.assertNotContains(response, "Срок итог. отчёта, нед.")
+        self.assertContains(response, "0,0 мес.")
+        self.assertContains(response, "0,0 нед.")
         self.assertContains(response, "Дата итог. отчёта")
         self.assertNotContains(response, "Этап 3, нед.")
         self.assertContains(response, "График проекта")
@@ -4848,13 +7616,14 @@ class ProjectProductLinkSyncTests(TestCase):
         )
         registration_header_order = [
             '<th class="nowrap" data-col="name">Название</th>',
+            '<th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>',
+            '<th data-col="status">Статус</th>',
+            '<th data-col="status-date">Дата статуса</th>',
             '<th data-col="year">Год</th>',
             '<th data-col="evaluation-date">Дата оценки</th>',
             '<th data-col="deadline">Дедлайн</th>',
             '<th data-col="manager">Руководитель проекта</th>',
             '<th data-col="coordinator">Координатор проекта</th>',
-            '<th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>',
-            '<th data-col="status">Статус</th>',
         ]
         registration_header_positions = [content.index(item) for item in registration_header_order]
         self.assertEqual(registration_header_positions, sorted(registration_header_positions))
@@ -8531,7 +11300,7 @@ class ReportSubmissionTests(TestCase):
         self.assertIn('id="perf-section-code"', create_html)
         self.assertIn('for="perf-section-code">Код</label>', create_html)
         self.assertIn('class="form-control readonly-field" id="perf-section-code"', create_html)
-        self.assertRegex(create_html, r'class="col-md-4"[\s\S]{0,120}>Этап</label>')
+        self.assertRegex(create_html, r'class="col-md-4"[\s\S]{0,120}>Этап ID</label>')
         self.assertRegex(create_html, r'class="col-md-2"[\s\S]{0,120}>Продукт</label>')
         self.assertRegex(create_html, r'class="col-md-6"[\s\S]{0,120}>Название</label>')
         self.assertRegex(create_html, r'class="col-md-4"[\s\S]{0,120}>Актив</label>')
@@ -20461,14 +23230,43 @@ class ProjectsModalFormErrorRetargetTests(TestCase):
         self._assert_retargeted_to_modal(response, "projects_app/legal_entity_form.html")
         self.assertEqual(LegalEntity.objects.count(), 0)
 
-    def test_registration_form_create_error_is_retargeted_to_modal(self):
+    def test_registration_form_create_error_stays_on_page(self):
         response = self.client.post(
             reverse("registration_form_create"),
             {"short_uid": ""},
             HTTP_HX_REQUEST="true",
         )
-        self._assert_retargeted_to_modal(response, "projects_app/registration_form.html")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("HX-Retarget", response.headers)
+        self.assertContains(response, 'class="registration-form-page"', html=False)
+        self.assertContains(response, 'data-header-current-label="Новый проект"', html=False)
+        self.assertTemplateUsed(response, "projects_app/registration_form.html")
         self.assertEqual(ProjectRegistration.objects.count(), 0)
+
+    def test_registration_form_edit_error_stays_on_page(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC", country_name="Россия", country_code="643", country_alpha2="RU", position=0
+        )
+        product = Product.objects.create(short_name="DD-PAGE", name_en="Due Diligence", name_ru="ДД")
+        registration = ProjectRegistration.objects.create(
+            number=42,
+            group_member=group_member,
+            type=product,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            name="Страница",
+            status="Не начат",
+            year=2026,
+        )
+        response = self.client.post(
+            reverse("registration_form_edit", args=[registration.pk]),
+            {"name": ""},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("HX-Retarget", response.headers)
+        self.assertContains(response, 'class="registration-form-page"', html=False)
+        self.assertContains(response, f'data-header-current-label="{registration.short_uid}"', html=False)
+        self.assertTemplateUsed(response, "projects_app/registration_form.html")
 
     def test_work_form_get_has_no_retarget(self):
         response = self.client.get(reverse("work_form_create"))
@@ -20528,7 +23326,7 @@ class ProjectRowOrderTests(TestCase):
         a2 = WorkVolume.objects.create(project=project_a, name="Фабрика", asset_name="Фабрика", manager="M", position=2)
         b1 = WorkVolume.objects.create(project=project_b, name="Склад", asset_name="Склад", manager="M", position=1)
 
-        with patch("projects_app.row_order.report_folder_locked_asset_keys", return_value=set()):
+        with patch("projects_app.report_submission.report_folder_locked_asset_keys", return_value=set()):
             response = self._post("work-volume", [a2.pk, a1.pk, b1.pk], [a1.pk, a2.pk, b1.pk])
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(
@@ -20539,7 +23337,7 @@ class ProjectRowOrderTests(TestCase):
         self.assertEqual(b1.position, 1)
 
         with patch(
-            "projects_app.row_order.report_folder_locked_asset_keys",
+            "projects_app.report_submission.report_folder_locked_asset_keys",
             return_value={(project_a.pk, "Карьер")},
         ):
             response = self._post("work-volume", [a1.pk, a2.pk], [a2.pk, a1.pk])
@@ -20562,3 +23360,876 @@ class ProjectRowOrderTests(TestCase):
         self.assertIn('data-row-order-key="project-registration"', content)
         self.assertIn('data-row-order-key="work-volume"', content)
         self.assertIn('data-row-order-key="legal-entity"', content)
+
+
+class ProjectRegistrationCsvTests(TestCase):
+    def setUp(self):
+        self.admin = get_user_model().objects.create_user(
+            username="registry-csv-admin",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=self.admin, role=ADMIN_GROUP)
+        self.staff = get_user_model().objects.create_user(
+            username="registry-csv-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.admin)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.contract = ContractProjectRegistration.objects.create(
+            number=4500,
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор реестра",
+            year=2026,
+        )
+        self.registration = self._registration(
+            number=4501,
+            name="Исходный проект",
+            contract=self.contract,
+        )
+        self.other = self._registration(number=4502, name="Второй проект", contract=None)
+
+    def _registration(self, *, number, name, contract):
+        registration = ProjectRegistration.objects.create(
+            number=number,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name=name,
+            status="Не начат",
+            year=2026,
+            deadline=date(2026, 3, 15),
+            evaluation_date=date(2026, 1, 10),
+            customer="ООО Ромашка",
+            country=self.country,
+            project_manager="Иванов Иван Иванович",
+            contract_project_registration=contract,
+        )
+        ProjectRegistrationProduct.objects.create(
+            registration=registration,
+            product=self.product,
+            rank=1,
+        )
+        registration.refresh_from_db()
+        return registration
+
+    def _csv_upload(self, rows, *, name="project_registrations.csv", header=None):
+        from projects_app.views import REGISTRATION_CSV_HEADERS
+
+        header = list(header or REGISTRATION_CSV_HEADERS)
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=";", lineterminator="\n")
+        writer.writerow(header)
+        for row in rows:
+            if isinstance(row, dict):
+                writer.writerow([row.get(header, "") for header in REGISTRATION_CSV_HEADERS])
+            else:
+                writer.writerow(row)
+        upload = SimpleUploadedFile(
+            name,
+            output.getvalue().encode("utf-8-sig"),
+            content_type="text/csv",
+        )
+        return self.client.post(reverse("registration_csv_upload"), {"csv_file": upload})
+
+    def _downloaded_rows(self, **params):
+        from projects_app.views import REGISTRATION_CSV_HEADERS
+
+        response = self.client.get(reverse("registration_csv_download"), params)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("project_registrations.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                f"{name}*" if name in {"Номер", "Вид соглашения", "Группа", "Тип", "Название", "Статус"} else name
+                for name in REGISTRATION_CSV_HEADERS
+            ],
+        )
+        return rows
+
+    def _col(self, header, name):
+        if name in header:
+            return header.index(name)
+        return header.index(f"{name}*")
+
+    def test_csv_buttons_visible_only_for_administrator(self):
+        response = self.client.get(reverse("projects_partial"))
+
+        self.assertContains(response, 'id="registration-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="registration-csv-upload-btn"', html=False)
+        self.assertContains(response, reverse("registration_csv_download"))
+        self.assertContains(response, reverse("registration_csv_upload"))
+
+        self.client.force_login(self.staff)
+        response = self.client.get(reverse("projects_partial"))
+        self.assertContains(response, "Добавить проект")
+        self.assertNotContains(response, 'id="registration-csv-download-btn"', html=False)
+        self.assertNotContains(response, 'id="registration-csv-upload-btn"', html=False)
+
+    def test_csv_download_exports_registry_columns_and_project_filter(self):
+        rows = self._downloaded_rows()
+        exported = {
+            row[self._col(rows[0], "Проект ID")]: row
+            for row in rows[1:]
+        }
+        header = rows[0]
+        original = exported[self.registration.short_uid]
+        self.assertEqual(original[self._col(header, "Номер")], "4501")
+        self.assertEqual(original[self._col(header, "Договор ID")], self.contract.short_uid)
+        self.assertEqual(original[self._col(header, "Вид соглашения")], "Основной договор")
+        self.assertEqual(original[self._col(header, "Группа")], "RU")
+        self.assertEqual(original[self._col(header, "Тип")], "DD")
+        self.assertEqual(original[self._col(header, "Название")], "Исходный проект")
+        self.assertEqual(original[self._col(header, "Год")], "2026")
+        self.assertEqual(original[self._col(header, "Дата оценки")], "10.01.2026")
+        self.assertEqual(original[self._col(header, "Дедлайн")], "15.03.2026")
+        self.assertEqual(original[self._col(header, "Руководитель проекта")], "Иванов Иван Иванович")
+        self.assertEqual(original[self._col(header, "Статус")], "Не начат")
+        self.assertEqual(original[self._col(header, "Дата статуса")], "")
+        self.assertLess(self._col(header, "Статус"), self._col(header, "Дата статуса"))
+        self.assertLess(self._col(header, "Дата статуса"), self._col(header, "Заказчик: наименование"))
+        self.assertEqual(original[self._col(header, "Заказчик: наименование")], "ООО Ромашка")
+        self.assertEqual(original[self._col(header, "Заказчик: страна")], "Россия")
+
+        filtered = self._downloaded_rows(project=str(self.other.pk))
+        filtered_ids = [row[self._col(filtered[0], "Проект ID")] for row in filtered[1:]]
+        self.assertEqual(filtered_ids, [self.other.short_uid])
+
+    def test_csv_upload_creates_row_and_round_trip_does_not_duplicate(self):
+        response = self._csv_upload([{
+            "Номер": "4503",
+            "Вид соглашения": "Основной договор",
+            "Группа": "RU",
+            "Тип": "DD",
+            "Название": "Проект из CSV",
+            "Год": "2026",
+            "Статус": "Не начат",
+            "Дедлайн": "20.04.2026",
+            "Заказчик: наименование": "ООО Ромашка",
+            "Заказчик: страна": "Россия",
+        }])
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertEqual(response.json()["warnings"], [])
+        created = ProjectRegistration.objects.get(name="Проект из CSV")
+        self.assertTrue(created.short_uid)
+        self.assertEqual(created.status, "Не начат")
+        self.assertEqual(created.deadline, date(2026, 4, 20))
+        self.assertEqual(created.customer, "ООО Ромашка")
+        self.assertEqual(created.country, self.country)
+        self.assertEqual(created.gantt_data, {})
+        self.assertEqual(list(created.ordered_product_ids), [self.product.pk])
+
+        before = ProjectRegistration.objects.count()
+        rows = self._downloaded_rows()
+        again = self._csv_upload(rows[1:], header=rows[0])
+        self.assertEqual(again.status_code, 200, again.content)
+        self.assertEqual(again.json()["created"], 0)
+        self.assertEqual(again.json()["updated"], before)
+        self.assertEqual(again.json()["warnings"], [])
+        self.assertEqual(ProjectRegistration.objects.count(), before)
+
+    def test_csv_upload_updates_existing_project_without_launching_it(self):
+        rows = self._downloaded_rows(project=str(self.registration.pk))
+        header = rows[0]
+        data = rows[1]
+        data[self._col(header, "Название")] = "Обновлённое имя"
+        data[self._col(header, "Статус")] = "В работе"
+
+        response = self._csv_upload([data], header=header)
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 1)
+        self.assertEqual(response.json()["warnings"], [])
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.name, "Обновлённое имя")
+        self.assertEqual(self.registration.status, "В работе")
+        self.assertEqual(self.registration.status_date, timezone.localdate())
+        self.assertEqual(self.registration.gantt_data, {})
+        self.assertEqual(ProjectRegistration.objects.filter(name="Исходный проект").count(), 0)
+        self.assertEqual(ProjectRegistration.objects.filter(pk=self.registration.pk).count(), 1)
+
+    def test_csv_status_date_round_trip_and_manual_value(self):
+        self.registration.status = "В работе"
+        self.registration.status_date = date(2026, 2, 1)
+        self.registration.save(update_fields=["status", "status_date"])
+
+        rows = self._downloaded_rows(project=str(self.registration.pk))
+        header = rows[0]
+        self.assertEqual(rows[1][self._col(header, "Дата статуса")], "01.02.2026")
+
+        rows[1][self._col(header, "Дата статуса")] = "05.06.2026"
+        updated = self._csv_upload([rows[1]], header=header)
+        self.assertEqual(updated.status_code, 200, updated.content)
+        self.assertEqual(updated.json()["warnings"], [])
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.status, "В работе")
+        self.assertEqual(self.registration.status_date, date(2026, 6, 5))
+
+        rows[1][self._col(header, "Статус")] = "Не начат"
+        rows[1][self._col(header, "Дата статуса")] = "05.06.2026"
+        cleared = self._csv_upload([rows[1]], header=header)
+        self.assertEqual(cleared.status_code, 200, cleared.content)
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.status, "Не начат")
+        self.assertIsNone(self.registration.status_date)
+        exported = self._downloaded_rows(project=str(self.registration.pk))
+        self.assertEqual(exported[1][self._col(exported[0], "Дата статуса")], "")
+
+        invalid = self._csv_upload([{
+            "Номер": "4501",
+            "Проект ID": self.registration.short_uid,
+            "Вид соглашения": "Основной договор",
+            "Группа": "RU",
+            "Тип": "DD",
+            "Название": "Исходный проект",
+            "Статус": "В работе",
+            "Дата статуса": "32.13.2026",
+        }])
+        self.assertEqual(invalid.json()["updated"], 0)
+        self.assertIn("Дата статуса", " ".join(invalid.json()["warnings"]))
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.status, "Не начат")
+
+    def test_csv_summary_status_date_round_trip(self):
+        parent = self._registration(number=4509, name="Сводный проект", contract=self.contract)
+        started = self._registration(number=4509, name="Этап 1", contract=self.contract)
+        waiting = self._registration(number=4509, name="Этап 2", contract=self.contract)
+        started.stage_project = parent
+        started.status = "В работе"
+        started.status_date = date(2026, 2, 1)
+        started.save()
+        waiting.stage_project = parent
+        waiting.save()
+        parent.summary_status_date = date(2026, 3, 4)
+        parent.save(update_fields=["summary_status_date"])
+
+        rows = self._downloaded_rows()
+        header = rows[0]
+        by_id = {row[self._col(header, "Проект ID")]: row for row in rows[1:]}
+        self.assertEqual(by_id[parent.short_uid][self._col(header, "Дата статуса")], "04.03.2026")
+        self.assertEqual(by_id[started.short_uid][self._col(header, "Дата статуса")], "01.02.2026")
+        self.assertEqual(by_id[waiting.short_uid][self._col(header, "Дата статуса")], "")
+
+        by_id[parent.short_uid][self._col(header, "Дата статуса")] = "05.06.2026"
+        by_id[started.short_uid][self._col(header, "Дата статуса")] = "07.08.2026"
+        updated = self._csv_upload(
+            [by_id[parent.short_uid], by_id[started.short_uid], by_id[waiting.short_uid]],
+            header=header,
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        self.assertEqual(updated.json()["warnings"], [])
+        parent.refresh_from_db()
+        started.refresh_from_db()
+        waiting.refresh_from_db()
+        self.assertEqual(parent.summary_status_date, date(2026, 6, 5))
+        self.assertEqual(started.status_date, date(2026, 8, 7))
+        self.assertIsNone(waiting.status_date)
+
+        by_id[parent.short_uid][self._col(header, "Дата статуса")] = ""
+        cleared = self._csv_upload([by_id[parent.short_uid]], header=header)
+        self.assertEqual(cleared.status_code, 200, cleared.content)
+        self.assertEqual(cleared.json()["warnings"], [])
+        parent.refresh_from_db()
+        self.assertIsNone(parent.summary_status_date)
+
+        started.status = "Не начат"
+        started.status_date = None
+        started.save(update_fields=["status", "status_date"])
+        ProjectRegistration.objects.filter(pk=parent.pk).update(summary_status_date=date(2026, 1, 1))
+        hidden = self._downloaded_rows(project=str(parent.pk))
+        self.assertEqual(hidden[1][self._col(hidden[0], "Дата статуса")], "")
+        kept = self._csv_upload(hidden[1:], header=hidden[0])
+        self.assertEqual(kept.status_code, 200, kept.content)
+        self.assertEqual(kept.json()["warnings"], [])
+        parent.refresh_from_db()
+        self.assertEqual(parent.summary_status_date, date(2026, 1, 1))
+
+    def test_csv_shared_evaluation_checkbox_round_trip(self):
+        parent = self._registration(number=4510, name="Общая оценка", contract=self.contract)
+        first = self._registration(number=4510, name="Этап оценки 1", contract=self.contract)
+        second = self._registration(number=4510, name="Этап оценки 2", contract=self.contract)
+        first.stage_project = parent
+        first.evaluation_date = date(2026, 3, 15)
+        first.stage_terms_json = [{
+            "evaluation_date": "2026-03-15",
+            "evaluation_date_enabled": True,
+            "evaluation_date_common": False,
+            "source_data_term_enabled": True,
+            "source_data_term": "0",
+            "source_data_term_unit": "days",
+            "service_term_months_enabled": True,
+            "service_term_months": "1.0",
+            "preliminary_report_term_unit": "months",
+            "final_report_term_weeks": "0",
+            "final_report_term_unit": "weeks",
+            "final_report_date_enabled": True,
+        }]
+        first.save()
+        second.stage_project = parent
+        second.evaluation_date = date(2026, 8, 1)
+        second.stage_terms_json = [dict(first.stage_terms_json[0], evaluation_date="2026-08-01")]
+        second.save()
+        parent.refresh_from_db()
+        first.refresh_from_db()
+        second.refresh_from_db()
+
+        rows = self._downloaded_rows()
+        header = rows[0]
+        by_id = {row[self._col(header, "Проект ID")]: row for row in rows[1:]}
+        column = self._col(header, "Общая для всех этапов")
+        self.assertEqual(by_id[parent.short_uid][column], "нет")
+        self.assertEqual(by_id[first.short_uid][column], "нет")
+        self.assertEqual(by_id[second.short_uid][column], "нет")
+
+        by_id[parent.short_uid][column] = "да"
+        enabled = self._csv_upload([by_id[parent.short_uid]], header=header)
+        self.assertEqual(enabled.status_code, 200, enabled.content)
+        self.assertEqual(enabled.json()["warnings"], [])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertTrue(first.stage_terms_json[0]["evaluation_date_common"])
+        self.assertTrue(second.stage_terms_json[0]["evaluation_date_common"])
+        self.assertEqual(first.evaluation_date, date(2026, 3, 15))
+        self.assertEqual(second.evaluation_date, date(2026, 3, 15))
+        self.assertEqual(second.stage_terms_json[0]["evaluation_date"], "2026-03-15")
+
+        exported = self._downloaded_rows()
+        exported_header = exported[0]
+        exported_by_id = {row[self._col(exported_header, "Проект ID")]: row for row in exported[1:]}
+        exported_column = self._col(exported_header, "Общая для всех этапов")
+        self.assertEqual(exported_by_id[first.short_uid][exported_column], "да")
+        exported_by_id[first.short_uid][exported_column] = "нет"
+        exported_by_id[second.short_uid][exported_column] = "нет"
+        exported_by_id[second.short_uid][self._col(exported_header, "Дата оценки")] = "20.06.2026"
+        separated = self._csv_upload(
+            [exported_by_id[first.short_uid], exported_by_id[second.short_uid]],
+            header=exported_header,
+        )
+        self.assertEqual(separated.status_code, 200, separated.content)
+        self.assertEqual(separated.json()["warnings"], [])
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertFalse(first.stage_terms_json[0]["evaluation_date_common"])
+        self.assertFalse(second.stage_terms_json[0]["evaluation_date_common"])
+        self.assertEqual(first.evaluation_date, date(2026, 3, 15))
+        self.assertEqual(second.evaluation_date, date(2026, 6, 20))
+
+        stale_header = [name for name in exported_header if name != "Общая для всех этапов"]
+        stale_row = [
+            cell
+            for index, cell in enumerate(exported_by_id[first.short_uid])
+            if exported_header[index] != "Общая для всех этапов"
+        ]
+        stale_row[self._col(stale_header, "Название")] = "Этап без колонки"
+        kept = self._csv_upload([stale_row], header=stale_header)
+        self.assertEqual(kept.status_code, 200, kept.content)
+        self.assertEqual(kept.json()["warnings"], [])
+        first.refresh_from_db()
+        self.assertEqual(first.name, "Этап без колонки")
+        self.assertFalse(first.stage_terms_json[0]["evaluation_date_common"])
+
+        invalid = self._csv_upload([{
+            "Номер": "4510",
+            "Проект ID": second.short_uid,
+            "Вид соглашения": "Основной договор",
+            "Группа": "RU",
+            "Тип": "DD",
+            "Название": "Этап оценки 2",
+            "Статус": "Не начат",
+            "Общая для всех этапов": "возможно",
+        }])
+        self.assertEqual(invalid.json()["updated"], 0)
+        self.assertIn("Общая для всех этапов", " ".join(invalid.json()["warnings"]))
+        second.refresh_from_db()
+        self.assertFalse(second.stage_terms_json[0]["evaluation_date_common"])
+
+    def test_csv_round_trip_keeps_and_updates_term_toggles(self):
+        self.registration.contract_end_enabled = False
+        self.registration.evaluation_date = None
+        self.registration.project_start_date = date(2026, 1, 1)
+        self.registration.stage_terms_json = [{
+            "source_data_term_enabled": False,
+            "source_data_term": "2.0",
+            "source_data_term_unit": "weeks",
+            "source_data_date_enabled": True,
+            "source_data_date": "2026-01-15",
+            "service_term_months_enabled": True,
+            "service_term_months": "1.0",
+            "preliminary_report_term_unit": "months",
+            "preliminary_report_date_enabled": False,
+            "preliminary_report_date": "",
+            "final_report_term_weeks": "1.0",
+            "final_report_term_unit": "weeks",
+            "final_report_date_enabled": False,
+            "final_report_date": "",
+            "evaluation_date_enabled": False,
+            "evaluation_date": "",
+            "next_stage_delay_days": 0,
+            "next_stage_delay_unit": "days",
+        }]
+        self.registration.save()
+
+        rows = self._downloaded_rows(project=str(self.registration.pk))
+        header = rows[0]
+        self.assertEqual(rows[1][self._col(header, "Оконч. договора вкл.")], "нет")
+        self.assertEqual(rows[1][self._col(header, "Исходные данные вкл.")], "нет")
+        self.assertEqual(rows[1][self._col(header, "Исходные данные (дата) вкл.")], "да")
+        self.assertEqual(rows[1][self._col(header, "Предварительный отчёт вкл.")], "да")
+        self.assertEqual(rows[1][self._col(header, "Предварительный отчёт (дата) вкл.")], "нет")
+        self.assertEqual(rows[1][self._col(header, "Итоговый отчёт (дата) вкл.")], "нет")
+        self.assertEqual(rows[1][self._col(header, "Дата оценки вкл.")], "нет")
+
+        again = self._csv_upload([rows[1]], header=header)
+        self.assertEqual(again.status_code, 200, again.content)
+        self.assertEqual(again.json()["warnings"], [])
+        self.registration.refresh_from_db()
+        kept = self.registration.stage_terms_json[0]
+        self.assertFalse(self.registration.contract_end_enabled)
+        self.assertFalse(kept["source_data_term_enabled"])
+        self.assertEqual(kept["source_data_term_unit"], "weeks")
+        self.assertTrue(kept["source_data_date_enabled"])
+        self.assertFalse(kept["preliminary_report_date_enabled"])
+        self.assertFalse(kept["evaluation_date_enabled"])
+        self.assertIsNone(self.registration.evaluation_date)
+        self.assertEqual(self.registration.project_start_date, date(2026, 1, 1))
+
+        rows[1][self._col(header, "Оконч. договора вкл.")] = "да"
+        rows[1][self._col(header, "Исходные данные вкл.")] = "да"
+        rows[1][self._col(header, "Дата оценки вкл.")] = "да"
+        rows[1][self._col(header, "Дата оценки")] = "10.01.2026"
+        updated = self._csv_upload([rows[1]], header=header)
+        self.assertEqual(updated.status_code, 200, updated.content)
+        self.assertEqual(updated.json()["warnings"], [])
+        self.registration.refresh_from_db()
+        changed = self.registration.stage_terms_json[0]
+        self.assertTrue(self.registration.contract_end_enabled)
+        self.assertTrue(changed["source_data_term_enabled"])
+        self.assertEqual(changed["source_data_term_unit"], "weeks")
+        self.assertEqual(changed["source_data_term"], "2.0")
+        self.assertTrue(changed["evaluation_date_enabled"])
+        self.assertEqual(self.registration.evaluation_date, date(2026, 1, 10))
+        self.assertFalse(changed["final_report_date_enabled"])
+
+        invalid = self._csv_upload([{
+            "Номер": "4501",
+            "Проект ID": self.registration.short_uid,
+            "Вид соглашения": "Основной договор",
+            "Группа": "RU",
+            "Тип": "DD",
+            "Название": "Исходный проект",
+            "Статус": "Не начат",
+            "Исходные данные вкл.": "возможно",
+        }])
+        self.assertEqual(invalid.json()["updated"], 0)
+        self.assertIn("Исходные данные вкл.", " ".join(invalid.json()["warnings"]))
+        self.registration.refresh_from_db()
+        self.assertTrue(self.registration.stage_terms_json[0]["source_data_term_enabled"])
+
+        old_header = [name for name in header if name not in {
+            "Оконч. договора вкл.",
+            "Исходные данные вкл.",
+            "Исходные данные (дата) вкл.",
+            "Предварительный отчёт вкл.",
+            "Предварительный отчёт (дата) вкл.",
+            "Итоговый отчёт (дата) вкл.",
+            "Дата оценки вкл.",
+        }]
+        old_row = rows[1][:len(old_header)]
+        old_row[self._col(old_header, "Название")] = "Имя без тогглов"
+        legacy = self._csv_upload([old_row], header=old_header)
+        self.assertEqual(legacy.status_code, 200, legacy.content)
+        self.assertEqual(legacy.json()["warnings"], [])
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.name, "Имя без тогглов")
+        self.assertTrue(self.registration.contract_end_enabled)
+        self.assertTrue(self.registration.stage_terms_json[0]["source_data_term_enabled"])
+        self.assertEqual(self.registration.stage_terms_json[0]["source_data_term_unit"], "weeks")
+
+    def test_csv_upload_skips_invalid_rows(self):
+        before = ProjectRegistration.objects.count()
+        response = self._csv_upload([
+            {
+                "Номер": "4503",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Проект ID": "НЕТ-ТАКОГО",
+                "Тип": "DD",
+                "Название": "Неизвестный проект",
+                "Статус": "Не начат",
+            },
+            {
+                "Номер": "4504",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Тип": "НЕТ",
+                "Название": "Неизвестный тип",
+                "Статус": "Не начат",
+            },
+            {
+                "Номер": "4505",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Тип": "DD",
+                "Название": "Неизвестный статус",
+                "Статус": "Черновик",
+            },
+        ])
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertEqual(ProjectRegistration.objects.count(), before)
+        warnings = " ".join(response.json()["warnings"])
+        self.assertIn("не найден", warnings)
+        self.assertIn("неизвестный тип", warnings)
+        self.assertIn("неизвестный статус", warnings)
+
+    def test_csv_upload_rejects_non_csv_and_missing_columns(self):
+        upload = SimpleUploadedFile("projects.txt", b"not csv", content_type="text/plain")
+        response = self.client.post(reverse("registration_csv_upload"), {"csv_file": upload})
+        self.assertEqual(response.status_code, 400)
+
+        upload = SimpleUploadedFile(
+            "projects.csv",
+            "Номер;Название\n1;Проект\n".encode("utf-8-sig"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("registration_csv_upload"), {"csv_file": upload})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("нет столбцов", response.json()["error"])
+
+    def test_csv_endpoints_forbidden_for_non_admin_role(self):
+        from projects_app.views import REGISTRATION_CSV_ADMIN_ERROR
+
+        self.client.force_login(self.staff)
+        download = self.client.get(reverse("registration_csv_download"))
+        self.assertEqual(download.status_code, 403)
+        self.assertEqual(download.json()["error"], REGISTRATION_CSV_ADMIN_ERROR)
+
+        uploaded = self._csv_upload([{
+            "Номер": "4503",
+            "Вид соглашения": "Основной договор",
+            "Группа": "RU",
+            "Тип": "DD",
+            "Название": "Чужая загрузка",
+            "Статус": "Не начат",
+        }])
+        self.assertEqual(uploaded.status_code, 403)
+        self.assertEqual(uploaded.json()["error"], REGISTRATION_CSV_ADMIN_ERROR)
+        self.assertFalse(ProjectRegistration.objects.filter(name="Чужая загрузка").exists())
+
+
+class ProjectServiceScopeTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="service-scope-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product_a = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        self.product_b = Product.objects.create(
+            short_name="QA",
+            name_en="QAQC",
+            name_ru="QAQC",
+            consulting_type="Горный",
+            service_category="Контроль",
+            service_subtype="Контроль качества",
+            position=2,
+        )
+        self.product_a.sections.create(
+            code="GEO",
+            short_name="Geology",
+            short_name_ru="Геология",
+            name_en="Geology",
+            name_ru="Геология",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.product_b.sections.create(
+            code="MIN",
+            short_name="Mining",
+            short_name_ru="Горное дело",
+            name_en="Mining",
+            name_ru="Горное дело",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.parent = ProjectRegistration.objects.create(
+            number=7101,
+            name="Проект объёма",
+            year=2026,
+            group="RU",
+            position=1,
+        )
+        self.stage_one = ProjectRegistration.objects.create(
+            number=7101,
+            type=self.product_a,
+            name="Проект объёма",
+            year=2026,
+            group="RU",
+            stage_project=self.parent,
+            position=2,
+        )
+        self.stage_two = ProjectRegistration.objects.create(
+            number=7101,
+            type=self.product_b,
+            name="Проект объёма",
+            year=2026,
+            group="RU",
+            stage_project=self.parent,
+            position=3,
+        )
+        ProjectRegistration.refresh_number_sequences([7101])
+        self.parent.refresh_from_db()
+        self.stage_one.refresh_from_db()
+        self.stage_two.refresh_from_db()
+
+    def _work_payload(self, **extra):
+        payload = {
+            "project": self.parent.pk,
+            "type": "DD-QA",
+            "name": "Проект объёма",
+            "asset_name": "Карьер",
+            "country": "",
+            "identifier": "ОГРН",
+            "registration_number": "100",
+            "registration_date": "",
+            "manager": "",
+        }
+        payload.update(extra)
+        return payload
+
+    def _section(self, html, start, end):
+        return html[html.index(start):html.index(end)]
+
+    def test_work_form_copies_asset_to_every_stage_and_shows_project_id(self):
+        created = self.client.post(reverse("work_form_create"), self._work_payload())
+        self.assertEqual(created.status_code, 200, created.content)
+        copies = list(WorkVolume.objects.filter(asset_name="Карьер").order_by("project__position", "id"))
+        self.assertEqual([item.project_id for item in copies], [self.stage_one.pk, self.stage_two.pk])
+        self.assertEqual(len({item.scope_key for item in copies}), 1)
+        self.assertTrue(copies[0].scope_key)
+        self.assertEqual(copies[0].identifier, "ОГРН")
+        self.assertEqual(copies[1].identifier, "ОГРН")
+        self.assertFalse(WorkVolume.objects.filter(project=self.parent).exists())
+        self.assertEqual(
+            Performer.objects.filter(registration=self.stage_one, asset_name="Карьер").count(),
+            1,
+        )
+        self.assertEqual(
+            Performer.objects.filter(registration=self.stage_two, asset_name="Карьер").count(),
+            1,
+        )
+        self.assertEqual(
+            LegalEntity.objects.filter(work_item__asset_name="Карьер").values("scope_key").distinct().count(),
+            1,
+        )
+
+        page = self.client.get(reverse("projects_partial"))
+        html = page.content.decode()
+        work_html = self._section(html, "Объем услуг: активы", "Объем услуг: юрлица")
+        legal_html = html[html.index("Объем услуг: юрлица"):]
+        self.assertIn(">Проект ID<", work_html)
+        self.assertIn(">Проект ID<", legal_html)
+        self.assertNotIn(">Этап ID<", work_html)
+        self.assertNotIn(">Этап ID<", legal_html)
+        self.assertIn("width:110px", work_html)
+        self.assertIn("width:110px", legal_html)
+        self.assertIn(self.parent.short_uid, work_html)
+        self.assertNotIn(self.stage_one.short_uid, work_html)
+        self.assertNotIn(self.stage_two.short_uid, work_html)
+        self.assertEqual(work_html.count('data-edit-url="'), 1)
+        self.assertEqual(legal_html.count('data-edit-url="'), 1)
+
+        form = self.client.get(reverse("work_form_create"))
+        form_html = form.content.decode()
+        self.assertIn(">Проект ID<", form_html)
+        self.assertNotIn(">Этап ID<", form_html)
+        self.assertIn(self.parent.short_uid, form_html)
+        self.assertNotIn(self.stage_one.short_uid, form_html)
+
+        edited = self.client.post(
+            reverse("work_form_edit", args=[copies[0].pk]),
+            self._work_payload(asset_name="Рудник", registration_number="200"),
+        )
+        self.assertEqual(edited.status_code, 200, edited.content)
+        self.assertEqual(
+            set(WorkVolume.objects.filter(scope_key=copies[0].scope_key).values_list("asset_name", flat=True)),
+            {"Рудник"},
+        )
+        self.assertEqual(Performer.objects.filter(asset_name="Рудник").count(), 2)
+        self.assertFalse(Performer.objects.filter(asset_name="Карьер").exists())
+
+        removed = self.client.post(reverse("work_delete", args=[copies[0].pk]))
+        self.assertEqual(removed.status_code, 200)
+        self.assertFalse(WorkVolume.objects.filter(scope_key=copies[0].scope_key).exists())
+        self.assertFalse(Performer.objects.filter(registration__in=[self.stage_one, self.stage_two]).exists())
+
+    def test_legal_entity_form_copies_row_to_every_stage_asset(self):
+        self.client.post(reverse("work_form_create"), self._work_payload())
+        work = WorkVolume.objects.get(project=self.stage_one, asset_name="Карьер")
+        created = self.client.post(
+            reverse("legal_entity_form_create"),
+            {
+                "work_item": work.pk,
+                "work_type": "DD-QA",
+                "work_name": "Проект объёма",
+                "legal_name": "ООО Недра",
+                "country": "",
+                "identifier": "",
+                "registration_number": "55",
+                "registration_date": "",
+            },
+        )
+        self.assertEqual(created.status_code, 200, created.content)
+        rows = list(LegalEntity.objects.filter(legal_name="ООО Недра"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len({row.scope_key for row in rows}), 1)
+        self.assertEqual(
+            {row.work_item.project_id for row in rows},
+            {self.stage_one.pk, self.stage_two.pk},
+        )
+
+        form = self.client.get(reverse("legal_entity_form_create"))
+        self.assertContains(form, self.parent.short_uid)
+        self.assertNotContains(form, self.stage_one.short_uid)
+
+        self.client.post(reverse("legal_entity_delete", args=[rows[0].pk]))
+        self.assertFalse(LegalEntity.objects.filter(legal_name="ООО Недра").exists())
+
+    def test_new_stage_receives_existing_assets_and_legal_entities(self):
+        from projects_app.service_scope import align_project_service_scope
+
+        self.client.post(reverse("work_form_create"), self._work_payload())
+        scope_key = WorkVolume.objects.get(project=self.stage_one).scope_key
+        stage_three = ProjectRegistration.objects.create(
+            number=7101,
+            type=self.product_a,
+            name="Проект объёма",
+            year=2026,
+            group="RU",
+            stage_project=self.parent,
+            position=4,
+        )
+        align_project_service_scope(self.parent)
+        self.assertTrue(WorkVolume.objects.filter(project=stage_three, scope_key=scope_key, asset_name="Карьер").exists())
+        self.assertEqual(LegalEntity.objects.filter(work_item__scope_key=scope_key).count(), 3)
+        self.assertEqual(Performer.objects.filter(registration=stage_three, asset_name="Карьер").count(), 1)
+
+    def test_deleting_stage_keeps_its_assets_on_the_other_stages(self):
+        WorkVolume.objects.create(
+            project=self.stage_two,
+            name="Проект объёма",
+            asset_name="Только второй",
+            manager="",
+            position=1,
+        )
+        response = self.client.post(reverse("registration_delete", args=[self.stage_two.pk]))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(ProjectRegistration.objects.filter(pk=self.stage_two.pk).exists())
+        kept = WorkVolume.objects.get(asset_name="Только второй")
+        self.assertEqual(kept.project_id, self.stage_one.pk)
+
+    def test_asset_reorder_is_blocked_when_a_later_stage_folder_is_locked(self):
+        quarry_key = uuid.uuid4()
+        factory_key = uuid.uuid4()
+        first_quarry = WorkVolume.objects.create(
+            project=self.stage_one, name="Проект объёма", asset_name="Карьер",
+            scope_key=quarry_key, position=1,
+        )
+        first_factory = WorkVolume.objects.create(
+            project=self.stage_one, name="Проект объёма", asset_name="Фабрика",
+            scope_key=factory_key, position=2,
+        )
+        second_quarry = WorkVolume.objects.create(
+            project=self.stage_two, name="Проект объёма", asset_name="Карьер",
+            scope_key=quarry_key, position=1,
+        )
+        second_factory = WorkVolume.objects.create(
+            project=self.stage_two, name="Проект объёма", asset_name="Фабрика",
+            scope_key=factory_key, position=2,
+        )
+        PerformerReportUpload.objects.create(
+            registration=self.stage_two,
+            executor="Исполнитель",
+            asset_name="Карьер",
+            file_name="7101_A1_отчет.docx",
+            cloud_path="/Corporate Root/06 Отчеты/A1 Карьер/7101_A1_отчет.docx",
+            is_full_report=True,
+        )
+
+        page = self.client.get(reverse("projects_partial")).content.decode()
+        self.assertIn('data-row-order-locked="1"', page)
+
+        response = self.client.post(
+            reverse("row_order_save", args=["work-volume"]),
+            data=json.dumps({
+                "ordered_ids": [first_factory.pk, first_quarry.pk],
+                "base_order_ids": [first_quarry.pk, first_factory.pk],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertIn("заблокирована", response.json()["error"])
+        self.assertEqual(
+            list(WorkVolume.objects.filter(project=self.stage_one).order_by("position").values_list("asset_name", flat=True)),
+            ["Карьер", "Фабрика"],
+        )
+        self.assertEqual(
+            list(WorkVolume.objects.filter(project=self.stage_two).order_by("position").values_list("asset_name", flat=True)),
+            ["Карьер", "Фабрика"],
+        )
+
+        moved = self.client.post(reverse("work_move_down", args=[first_quarry.pk]))
+        self.assertEqual(moved.status_code, 200)
+        positions = {
+            item.pk: item.position
+            for item in WorkVolume.objects.filter(
+                pk__in=[first_quarry.pk, first_factory.pk, second_quarry.pk, second_factory.pk]
+            )
+        }
+        self.assertEqual(positions[first_quarry.pk], 1)
+        self.assertEqual(positions[first_factory.pk], 2)
+        self.assertEqual(positions[second_quarry.pk], 1)
+        self.assertEqual(positions[second_factory.pk], 2)

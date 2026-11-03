@@ -31,9 +31,9 @@
             <input class="form-check-input js-reg-filter" type="checkbox"
                    value="{{ r.id }}" id="reg-filter-{{ r.id }}"
                    data-summary-label="{{ r.short_uid }}"
-                   data-full-label="{{ r.short_uid }}{% if r.type_short_display %} {{ r.type_short_display }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}">
+                   data-full-label="{{ r.short_uid }}{% if r.filter_type_label %} {{ r.filter_type_label }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}">
             <label class="form-check-label" for="reg-filter-{{ r.id }}">
-              {{ r.short_uid }}{% if r.type_short_display %} {{ r.type_short_display }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}
+              {{ r.short_uid }}{% if r.filter_type_label %} {{ r.filter_type_label }}{% endif %}{% if r.name %} {{ r.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -59,16 +59,17 @@
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="contract-id" id="registration-col-contract-id" checked><label class="form-check-label" for="registration-col-contract-id">Договор ID</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="agreement-type" id="registration-col-agreement-type" checked><label class="form-check-label" for="registration-col-agreement-type">Вид соглашения</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="group" id="registration-col-group" checked><label class="form-check-label" for="registration-col-group">Группа</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="project-id" id="registration-col-project-id" checked><label class="form-check-label" for="registration-col-project-id">Проект ID</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="project-id" id="registration-col-project-id" checked><label class="form-check-label" for="registration-col-project-id">Проект (этап) ID</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="type" id="registration-col-type" checked><label class="form-check-label" for="registration-col-type">Тип</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="name" id="registration-col-name" checked><label class="form-check-label" for="registration-col-name">Название</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="launch" id="registration-col-launch" checked><label class="form-check-label" for="registration-col-launch">Иконки статуса</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="registration-col-status" checked><label class="form-check-label" for="registration-col-status">Статус</label></div></div>
+          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status-date" id="registration-col-status-date" checked><label class="form-check-label" for="registration-col-status-date">Дата статуса</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="year" id="registration-col-year" checked><label class="form-check-label" for="registration-col-year">Год</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="evaluation-date" id="registration-col-evaluation-date" checked><label class="form-check-label" for="registration-col-evaluation-date">Дата оценки</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="deadline" id="registration-col-deadline" checked><label class="form-check-label" for="registration-col-deadline">Дедлайн</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="manager" id="registration-col-manager" checked><label class="form-check-label" for="registration-col-manager">Руководитель проекта</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="coordinator" id="registration-col-coordinator" checked><label class="form-check-label" for="registration-col-coordinator">Координатор проекта</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="launch" id="registration-col-launch" checked><label class="form-check-label" for="registration-col-launch">Иконки статуса</label></div></div>
-          <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="status" id="registration-col-status" checked><label class="form-check-label" for="registration-col-status">Статус</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="customer" id="registration-col-customer" checked><label class="form-check-label" for="registration-col-customer">Заказчик: наименование</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="country" id="registration-col-country" data-default-hidden="true"><label class="form-check-label" for="registration-col-country">Заказчик: страна</label></div></div>
           <div class="tkp-colpicker-item"><div class="form-check"><input class="form-check-input" type="checkbox" value="identifier" id="registration-col-identifier" data-default-hidden="true"><label class="form-check-label" for="registration-col-identifier">Заказчик: идент.</label></div></div>
@@ -99,13 +100,14 @@
           <col class="project-id" data-col="project-id">       <!-- 7: Проект ID -->
           <col class="reg-type" data-col="type">          <!-- 7: Тип -->
           <col class="reg-name" data-col="name">         <!-- 8: Название -->
-          <col class="reg-year" data-col="year">         <!-- 9: Год -->
-          <col class="reg-evaluation-date" data-col="evaluation-date">     <!-- 10: Дата оценки -->
-          <col class="reg-deadline" data-col="deadline">     <!-- 11: Дедлайн -->
-          <col class="reg-manager" data-col="manager">      <!-- 12: Руководитель проекта -->
-          <col class="reg-coordinator" data-col="coordinator"> <!-- 13: Координатор проекта -->
-          <col class="reg-launch" data-col="launch">       <!-- 13: Запуск -->
-          <col class="reg-status" data-col="status">       <!-- 14: Статус -->
+          <col class="reg-launch" data-col="launch">       <!-- 9: Запуск -->
+          <col class="reg-status" data-col="status">       <!-- 10: Статус -->
+          <col class="reg-status-date" data-col="status-date"> <!-- Дата статуса -->
+          <col class="reg-year" data-col="year">         <!-- 11: Год -->
+          <col class="reg-evaluation-date" data-col="evaluation-date">     <!-- 12: Дата оценки -->
+          <col class="reg-deadline" data-col="deadline">     <!-- 13: Дедлайн -->
+          <col class="reg-manager" data-col="manager">      <!-- 14: Руководитель проекта -->
+          <col class="reg-coordinator" data-col="coordinator"> <!-- 15: Координатор проекта -->
           <col class="reg-customer" data-col="customer">     <!-- 15: Заказчик -->
           <col class="reg-country" data-col="country">      <!-- 16: Страна -->
           <col class="reg-identifier" data-col="identifier">   <!-- 17: Идентификатор -->
@@ -134,21 +136,32 @@
             </div>
           {% endif %}
         </th>
-        <th class="col-project-number" data-col="number">Номер</th>
+        <th class="col-project-number" data-col="number">
+          <button type="button"
+                  class="clf-wrap-btn"
+                  id="registration-groups-toggle"
+                  title="Свернуть/развернуть строки">
+            <i class="bi bi-arrows-collapse"></i>
+          </button>
+          Номер
+        </th>
         <th data-col="contract-id">Договор ID</th>
         <th data-col="agreement-type">Вид соглашения</th>
         <th data-col="group">Группа</th>
-        <th class="project-quick-edit-col" style="width:1%; padding:0;"></th>
-        <th data-col="project-id">Проект ID</th>
+        <th class="project-quick-edit-col" style="width:1%; padding:0;">
+          <span class="reg-project-id-heading" data-col="project-id">Проект (этап) ID</span>
+        </th>
+        <th data-col="project-id"><span class="reg-project-id-heading-sizer" aria-hidden="true">Проект (этап) ID</span></th>
         <th data-col="type">Тип</th>
         <th class="nowrap" data-col="name">Название</th>
+        <th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>
+        <th data-col="status">Статус</th>
+        <th data-col="status-date">Дата статуса</th>
         <th data-col="year">Год</th>
         <th data-col="evaluation-date">Дата оценки</th>
         <th data-col="deadline">Дедлайн</th>
         <th data-col="manager">Руководитель проекта</th>
         <th data-col="coordinator">Координатор проекта</th>
-        <th class="reg-launch-cell" data-col="launch"><span class="visually-hidden">Запуск</span></th>
-        <th data-col="status">Статус</th>
         <th class="reg-customer-cell proposal-split-header proposal-split-header-inline" data-col="customer"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">наименование</span></th>
         <th class="proposal-split-header" data-col="country"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">страна</span></th>
         <th class="proposal-split-header" data-col="identifier"><span class="proposal-split-header-prefix">Заказчик: </span><span class="proposal-split-header-suffix">идент.</span></th>
@@ -165,14 +178,196 @@
       </thead>
       <tbody>
       {% for r in registrations %}
+        {% if r.opens_registration_summary %}
+        <tr class="registration-group-summary"
+            data-reg-summary="1"
+            data-registration-group-key="{{ r.registration_summary_key }}"
+            data-summary-number="{{ r.number }}"
+            data-summary-group="{{ r.registration_summary_group }}"
+            data-summary-status="{{ r.registration_summary_label }}"
+            data-summary-auto-status="{{ r.registration_summary_auto_label }}"
+            data-summary-deferred="{% if r.registration_summary_deferred %}1{% else %}0{% endif %}"
+            data-summary-can-launch="{% if r.registration_summary_can_launch %}1{% else %}0{% endif %}"
+            data-summary-status-url="{% url 'registration_group_summary_status' %}"
+            data-summary-project="{{ r.stage_project_id|default:'' }}"
+            data-summary-last-id="{{ r.registration_summary_last_id }}"
+            data-summary-launch-url="{% url 'registration_group_summary_launch' %}"
+            data-group-edit-url="{% url 'registration_group_summary_edit' %}?number={{ r.number }}&group={{ r.registration_summary_group|urlencode }}{% if r.stage_project_id %}&project={{ r.stage_project_id }}{% endif %}">
+          <td class="text-nowrap registration-group-summary-check">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="registration-summary-select"
+                       value="{{ r.registration_summary_key }}"
+                       aria-label="Выделить сводную строку">
+              </div>
+            {% endif %}
+          </td>
+          <td class="col-project-number" data-col="number" data-reg-summary-cell="number">
+            <button type="button"
+                    class="registration-group-toggle"
+                    data-registration-group-toggle="{{ r.registration_summary_key }}"
+                    aria-expanded="true"
+                    aria-label="Свернуть/развернуть группу">
+              <i class="bi bi-caret-down-fill"></i>
+            </button>
+            <span data-reg-summary-number>{{ r.number|stringformat:"04d" }}</span>
+          </td>
+          <td class="contract-id-cell" data-col="contract-id" data-reg-summary-cell="contract-id">{% if r.registration_summary_contract_label %}<span class="clf-id-droid-mono">{{ r.registration_summary_contract_label }}</span>{% endif %}</td>
+          <td data-col="agreement-type" data-reg-summary-cell="agreement-type">{% if r.registration_summary_hide_contract %}{{ r.registration_summary_agreement }}{% endif %}</td>
+          <td data-col="group" data-reg-summary-cell="group">{{ r.group_display }}</td>
+          <td class="text-center p-0 project-quick-edit-col" style="width:1%;">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <i class="bi bi-pencil-square text-secondary project-quick-edit"
+                 role="button"
+                 title="Редактировать"
+                 aria-label="Редактировать"></i>
+            {% endif %}
+          </td>
+          <td class="project-id-cell" data-col="project-id" data-reg-summary-cell="project-id">{% if r.stage_project_id %}<span class="clf-id-droid-mono">{{ r.stage_project.short_uid }}</span>{% endif %}</td>
+          <td data-col="type" data-reg-summary-cell="type">{{ r.registration_summary_type }}</td>
+          <td data-col="name" data-reg-summary-cell="name">{% if r.stage_project_id %}{{ r.stage_project.name }}{% else %}{{ r.name }}{% endif %}</td>
+          <td class="reg-launch-cell text-center" data-col="launch" data-reg-summary-cell="launch" data-reg-summary-launch-cell>
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              {% if r.registration_summary_can_launch %}
+                <button type="button"
+                        class="btn btn-link p-0 reg-launch-btn"
+                        data-registration-summary-launch
+                        data-launch-url="{% url 'registration_group_summary_launch' %}"
+                        title="Запустить проект"
+                        aria-label="Запустить проект">
+                  <i class="bi bi-play-circle" aria-hidden="true"></i>
+                </button>
+              {% else %}
+                <button type="button"
+                        class="btn btn-link p-0 reg-launch-btn reg-launch-indicator{% if r.registration_summary_indicator_class %} {{ r.registration_summary_indicator_class }}{% endif %}"
+                        disabled
+                        title="{{ r.registration_summary_label }}"
+                        aria-label="Статус группы: {{ r.registration_summary_label }}">
+                  <i class="bi bi-circle" aria-hidden="true"></i>
+                </button>
+              {% endif %}
+            {% else %}
+              {% if r.registration_summary_can_launch %}
+                <i class="bi bi-play-circle text-muted reg-launch-icon" aria-hidden="true"></i>
+              {% else %}
+                <i class="bi bi-circle reg-launch-icon reg-launch-indicator{% if r.registration_summary_indicator_class %} {{ r.registration_summary_indicator_class }}{% endif %}"
+                   title="{{ r.registration_summary_label }}"
+                   aria-label="Статус группы: {{ r.registration_summary_label }}"></i>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td data-reg-summary-status-cell
+              data-status-value="{{ r.registration_summary_label }}"
+              data-col="status"
+              data-reg-summary-cell="status">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-status-btn"
+                      data-registration-summary-status
+                      data-status-value="{{ r.registration_summary_label }}"
+                      title="Изменить статус группы">
+                {{ r.registration_summary_label }}
+              </button>
+            {% else %}
+              {{ r.registration_summary_label }}
+            {% endif %}
+          </td>
+          <td data-col="status-date" data-reg-summary-cell="status-date" data-reg-summary-status-date>{{ r.registration_summary_status_date }}</td>
+          <td data-col="year" data-reg-summary-cell="year">{{ r.registration_summary_year }}</td>
+          <td data-col="evaluation-date"
+              data-reg-summary-cell="evaluation-date"
+              {% if r.registration_summary_evaluation_date is not None and request.user.is_authenticated and request.user.is_staff and not is_expert %}data-reg-date-cell{% endif %}>
+            {% if r.registration_summary_evaluation_date is not None %}
+              {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+                <button type="button"
+                        class="btn btn-link p-0 reg-deadline-btn reg-deadline-btn--readonly"
+                        tabindex="-1">
+                  {{ r.registration_summary_evaluation_date }}
+                </button>
+              {% else %}
+                {{ r.registration_summary_evaluation_date }}
+              {% endif %}
+            {% endif %}
+          </td>
+          <td data-reg-deadline-cell
+              data-deadline-value="{{ r.registration_summary_deadline_iso }}"
+              data-col="deadline"
+              data-reg-summary-cell="deadline">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-deadline-btn"
+                      data-registration-deadline
+                      data-deadline-url="{% url 'registration_deadline_update' r.registration_summary_last_id %}"
+                      data-deadline-value="{{ r.registration_summary_deadline_iso }}"
+                      title="Изменить дедлайн проекта">
+                {{ r.registration_summary_deadline }}
+              </button>
+            {% else %}
+              {{ r.registration_summary_deadline }}
+            {% endif %}
+          </td>
+          <td data-reg-manager-cell
+              data-manager-value="{{ r.registration_summary_manager_value }}"
+              data-col="manager"
+              data-reg-summary-cell="manager">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-manager-btn"
+                      data-registration-manager
+                      data-manager-url="{% url 'registration_group_summary_manager' %}"
+                      data-manager-value="{{ r.registration_summary_manager_value }}"
+                      title="Изменить руководителя проекта">
+                {{ r.registration_summary_manager|short_fio }}
+              </button>
+            {% else %}
+              {{ r.registration_summary_manager|short_fio }}
+            {% endif %}
+          </td>
+          <td data-reg-coordinator-cell
+              data-coordinator-value="{{ r.registration_summary_coordinator_value }}"
+              data-col="coordinator"
+              data-reg-summary-cell="coordinator">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-coordinator-btn"
+                      data-registration-coordinator
+                      data-coordinator-url="{% url 'registration_group_summary_coordinator' %}"
+                      data-coordinator-value="{{ r.registration_summary_coordinator_value }}"
+                      data-coordinator-label="{{ r.registration_summary_coordinator }}"
+                      title="Изменить координатора проекта">
+                {{ r.registration_summary_coordinator|short_fio }}
+              </button>
+            {% else %}
+              {{ r.registration_summary_coordinator|short_fio }}
+            {% endif %}
+          </td>
+          <td data-col="customer" data-reg-summary-cell="customer">{% if r.registration_summary_customer is not None %}{{ r.registration_summary_customer }}{% endif %}</td>
+          <td data-col="country" data-reg-summary-cell="country">{% if r.registration_summary_country is not None %}{{ r.registration_summary_country }}{% endif %}</td>
+          <td data-col="identifier" data-reg-summary-cell="identifier">{% if r.registration_summary_identifier is not None %}{{ r.registration_summary_identifier }}{% endif %}</td>
+          <td data-col="registration-number" data-reg-summary-cell="registration-number">{% if r.registration_summary_registration_number is not None %}{{ r.registration_summary_registration_number }}{% endif %}</td>
+          <td data-col="region" data-reg-summary-cell="region">{% if r.registration_summary_region is not None %}{{ r.registration_summary_region }}{% endif %}</td>
+          <td data-col="date" data-reg-summary-cell="date">{% if r.registration_summary_registration_date is not None %}{{ r.registration_summary_registration_date }}{% endif %}</td>
+          <td data-col="asset-owner" data-reg-summary-cell="asset-owner">{% if r.registration_summary_asset_owner is not None %}{{ r.registration_summary_asset_owner }}{% endif %}</td>
+          <td data-col="asset-owner-country" data-reg-summary-cell="asset-owner-country">{% if r.registration_summary_asset_owner_country is not None %}{{ r.registration_summary_asset_owner_country }}{% endif %}</td>
+          <td data-col="asset-owner-identifier" data-reg-summary-cell="asset-owner-identifier">{% if r.registration_summary_asset_owner_identifier is not None %}{{ r.registration_summary_asset_owner_identifier }}{% endif %}</td>
+          <td data-col="asset-owner-reg-number" data-reg-summary-cell="asset-owner-reg-number">{% if r.registration_summary_asset_owner_registration_number is not None %}{{ r.registration_summary_asset_owner_registration_number }}{% endif %}</td>
+          <td data-col="asset-owner-region" data-reg-summary-cell="asset-owner-region">{% if r.registration_summary_asset_owner_region is not None %}{{ r.registration_summary_asset_owner_region }}{% endif %}</td>
+          <td data-col="asset-owner-date" data-reg-summary-cell="asset-owner-date">{% if r.registration_summary_asset_owner_date is not None %}{{ r.registration_summary_asset_owner_date }}{% endif %}</td>
+        </tr>
+        {% endif %}
         <tr
           data-project-id="{{ r.id }}"
+          data-owning-project-id="{{ r.owning_project_id }}"
           data-reg-group-key="{{ r.number_group_key }}"
           data-reg-group-number="{{ r.number|stringformat:'04d' }}"
           data-reg-group-contract-id="{{ r.contract_project_registration_id|default:'' }}"
           data-reg-group-contract-label="{% if r.contract_project_registration %}{{ r.contract_project_registration.short_uid }}{% endif %}"
           data-reg-group-agreement-type="{{ r.get_agreement_type_display }}"
           data-reg-group-group="{{ r.group_display }}"
+          data-reg-group-type="{{ r.type_short_display }}"
+          {% if r.in_registration_summary %}data-registration-group-member="1" data-registration-group-key="{{ r.registration_summary_key }}"{% endif %}
           data-edit-url="{% url 'registration_form_edit' r.pk %}"
           data-delete-url="{% url 'registration_delete' r.pk %}"
           data-status-url="{% url 'registration_status_update' r.pk %}"
@@ -196,10 +391,10 @@
               </div>
             {% endif %}
           </td>
-          <td class="col-project-number" data-col="number" data-reg-group-cell="number">{% if r.is_first_for_number %}{{ r.number|stringformat:"04d" }}{% endif %}</td>
-          <td class="contract-id-cell" data-col="contract-id" data-reg-group-cell="contract-id">{% if r.is_first_for_number_contract and r.contract_project_registration %}<span class="clf-id-droid-mono">{{ r.contract_project_registration.short_uid }}</span>{% endif %}</td>
-          <td data-col="agreement-type" data-reg-group-cell="agreement-type">{% if r.is_first_for_number_contract %}{{ r.get_agreement_type_display }}{% endif %}</td>
-          <td data-col="group" data-reg-group-cell="group">{% if r.is_first_for_number_contract %}{{ r.group_display }}{% endif %}</td>
+          <td class="col-project-number" data-col="number" data-reg-group-cell="number">{% if r.is_first_for_number and not r.in_registration_summary %}{{ r.number|stringformat:"04d" }}{% endif %}</td>
+          <td class="contract-id-cell" data-col="contract-id" data-reg-group-cell="contract-id">{% if r.is_first_for_number_contract and r.contract_project_registration and not r.registration_summary_hide_contract %}<span class="clf-id-droid-mono">{{ r.contract_project_registration.short_uid }}</span>{% endif %}</td>
+          <td data-col="agreement-type" data-reg-group-cell="agreement-type">{% if r.is_first_for_number_contract and not r.registration_summary_hide_contract %}{{ r.get_agreement_type_display }}{% endif %}</td>
+          <td data-col="group" data-reg-group-cell="group">{% if r.is_first_for_number_contract and not r.in_registration_summary %}{{ r.group_display }}{% endif %}</td>
           <td class="text-center p-0 project-quick-edit-col" style="width:1%;">
             {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
               <i class="bi bi-pencil-square text-secondary project-quick-edit"
@@ -208,74 +403,9 @@
                  aria-label="Редактировать проект"></i>
             {% endif %}
           </td>
-          <td class="project-id-cell" data-col="project-id"><span class="clf-id-droid-mono">{{ r.short_uid }}</span></td>
+          <td class="project-id-cell" data-col="project-id"><span class="clf-id-droid-mono">{{ r.registry_uid|default:r.short_uid }}</span></td>
           <td data-col="type">{{ r.type_short_display }}</td>
           <td data-col="name">{{ r.name }}</td>
-          <td data-col="year">{{ r.year }}</td>
-          <td data-reg-date-cell
-              data-reg-date-field="evaluation_date"
-              data-date-value="{{ r.evaluation_date|date:'Y-m-d' }}"
-              data-col="evaluation-date">
-            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-              <button type="button"
-                      class="btn btn-link p-0 reg-deadline-btn reg-evaluation-date-btn"
-                      data-registration-date
-                      data-date-field="evaluation_date"
-                      data-date-url="{% url 'registration_evaluation_date_update' r.pk %}"
-                      data-date-value="{{ r.evaluation_date|date:'Y-m-d' }}"
-                      data-date-post-field="evaluation_date"
-                      data-date-response-field="evaluationDate"
-                      data-date-response-label-field="evaluationDateLabel"
-                      title="Изменить дату оценки">
-                {{ r.evaluation_date|date:"d.m.Y" }}
-              </button>
-            {% else %}
-              {{ r.evaluation_date|date:"d.m.Y" }}
-            {% endif %}
-          </td>
-          <td data-reg-deadline-cell data-deadline-value="{{ r.deadline|date:'Y-m-d' }}" data-col="deadline">
-            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-              <button type="button"
-                      class="btn btn-link p-0 reg-deadline-btn"
-                      data-registration-deadline
-                      data-deadline-url="{% url 'registration_deadline_update' r.pk %}"
-                      data-deadline-value="{{ r.deadline|date:'Y-m-d' }}"
-                      title="Изменить дедлайн проекта">
-                {{ r.deadline|date:"d.m.Y" }}
-              </button>
-            {% else %}
-              {{ r.deadline|date:"d.m.Y" }}
-            {% endif %}
-          </td>
-          <td data-reg-manager-cell data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}" data-col="manager">
-            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-              <button type="button"
-                      class="btn btn-link p-0 reg-manager-btn"
-                      data-registration-manager
-                      data-manager-url="{% url 'registration_manager_update' r.pk %}"
-                      data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}"
-                      title="Изменить руководителя проекта">
-                {{ r.project_manager|short_fio }}
-              </button>
-            {% else %}
-              {{ r.project_manager|short_fio }}
-            {% endif %}
-          </td>
-          <td data-reg-coordinator-cell data-coordinator-value="{{ r.project_coordinator_prs_id|default:r.project_coordinator }}" data-col="coordinator">
-            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
-              <button type="button"
-                      class="btn btn-link p-0 reg-coordinator-btn"
-                      data-registration-coordinator
-                      data-coordinator-url="{% url 'registration_coordinator_update' r.pk %}"
-                      data-coordinator-value="{{ r.project_coordinator_prs_id|default:r.project_coordinator }}"
-                      data-coordinator-label="{{ r.project_coordinator }}"
-                      title="Изменить координатора проекта">
-                {{ r.project_coordinator|short_fio }}
-              </button>
-            {% else %}
-              {{ r.project_coordinator|short_fio }}
-            {% endif %}
-          </td>
           <td class="reg-launch-cell text-center" data-reg-launch-cell data-col="launch">
             {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
               {% if r.status == "Не начат" %}
@@ -321,18 +451,88 @@
               {{ r.status }}
             {% endif %}
           </td>
-          <td data-col="customer">{{ r.customer }}</td>
-          <td data-col="country">{{ r.country.short_name|default:"" }}</td>
-          <td data-col="identifier">{{ r.identifier }}</td>
-          <td data-col="registration-number">{{ r.registration_number }}</td>
-          <td data-col="region">{{ r.registration_region }}</td>
-          <td data-col="date">{{ r.registration_date|date:"d.m.y" }}</td>
-          <td data-col="asset-owner">{{ r.asset_owner }}</td>
-          <td data-col="asset-owner-country">{{ r.asset_owner_country.short_name|default:"" }}</td>
-          <td data-col="asset-owner-identifier">{{ r.asset_owner_identifier }}</td>
-          <td data-col="asset-owner-reg-number">{{ r.asset_owner_registration_number }}</td>
-          <td data-col="asset-owner-region">{{ r.asset_owner_region }}</td>
-          <td data-col="asset-owner-date">{{ r.asset_owner_registration_date|date:"d.m.y" }}</td>
+          <td data-col="status-date" data-reg-status-date>{% if r.status != "Не начат" %}{{ r.status_date|date:"d.m.Y" }}{% endif %}</td>
+          <td data-col="year">{{ r.year }}</td>
+          <td data-reg-date-cell
+              data-reg-date-field="evaluation_date"
+              data-date-value="{{ r.evaluation_date|date:'Y-m-d' }}"
+              data-col="evaluation-date">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-deadline-btn reg-evaluation-date-btn"
+                      data-registration-date
+                      data-date-field="evaluation_date"
+                      data-date-url="{% url 'registration_evaluation_date_update' r.pk %}"
+                      data-date-value="{{ r.evaluation_date|date:'Y-m-d' }}"
+                      data-date-post-field="evaluation_date"
+                      data-date-response-field="evaluationDate"
+                      data-date-response-label-field="evaluationDateLabel"
+                      title="Изменить дату оценки">
+                {{ r.evaluation_date|date:"d.m.Y" }}
+              </button>
+            {% else %}
+              {{ r.evaluation_date|date:"d.m.Y" }}
+            {% endif %}
+          </td>
+          <td data-reg-deadline-cell data-deadline-value="{{ r.deadline|date:'Y-m-d' }}" data-col="deadline">
+            {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+              <button type="button"
+                      class="btn btn-link p-0 reg-deadline-btn"
+                      data-registration-deadline
+                      data-deadline-url="{% url 'registration_deadline_update' r.pk %}"
+                      data-deadline-value="{{ r.deadline|date:'Y-m-d' }}"
+                      title="Изменить дедлайн проекта">
+                {{ r.deadline|date:"d.m.Y" }}
+              </button>
+            {% else %}
+              {{ r.deadline|date:"d.m.Y" }}
+            {% endif %}
+          </td>
+          <td data-reg-manager-cell data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}" data-col="manager">
+            {% if not r.in_registration_summary %}
+              {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+                <button type="button"
+                        class="btn btn-link p-0 reg-manager-btn"
+                        data-registration-manager
+                        data-manager-url="{% url 'registration_manager_update' r.pk %}"
+                        data-manager-value="{{ r.project_manager_prs_id|default:r.project_manager }}"
+                        title="Изменить руководителя проекта">
+                  {{ r.project_manager|short_fio }}
+                </button>
+              {% else %}
+                {{ r.project_manager|short_fio }}
+              {% endif %}
+            {% endif %}
+          </td>
+          <td data-reg-coordinator-cell data-coordinator-value="{{ r.project_coordinator_prs_id|default:r.project_coordinator }}" data-col="coordinator">
+            {% if not r.in_registration_summary %}
+              {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+                <button type="button"
+                        class="btn btn-link p-0 reg-coordinator-btn"
+                        data-registration-coordinator
+                        data-coordinator-url="{% url 'registration_coordinator_update' r.pk %}"
+                        data-coordinator-value="{{ r.project_coordinator_prs_id|default:r.project_coordinator }}"
+                        data-coordinator-label="{{ r.project_coordinator }}"
+                        title="Изменить координатора проекта">
+                  {{ r.project_coordinator|short_fio }}
+                </button>
+              {% else %}
+                {{ r.project_coordinator|short_fio }}
+              {% endif %}
+            {% endif %}
+          </td>
+          <td data-col="customer">{% if not r.registration_hide_customer %}{{ r.customer }}{% endif %}</td>
+          <td data-col="country">{% if not r.registration_hide_country %}{{ r.country.short_name|default:"" }}{% endif %}</td>
+          <td data-col="identifier">{% if not r.registration_hide_identifier %}{{ r.identifier }}{% endif %}</td>
+          <td data-col="registration-number">{% if not r.registration_hide_registration_number %}{{ r.registration_number }}{% endif %}</td>
+          <td data-col="region">{% if not r.registration_hide_region %}{{ r.registration_region }}{% endif %}</td>
+          <td data-col="date">{% if not r.registration_hide_registration_date %}{{ r.registration_date|date:"d.m.y" }}{% endif %}</td>
+          <td data-col="asset-owner">{% if not r.registration_hide_asset_owner %}{{ r.asset_owner }}{% endif %}</td>
+          <td data-col="asset-owner-country">{% if not r.registration_hide_asset_owner_country %}{{ r.asset_owner_country.short_name|default:"" }}{% endif %}</td>
+          <td data-col="asset-owner-identifier">{% if not r.registration_hide_asset_owner_identifier %}{{ r.asset_owner_identifier }}{% endif %}</td>
+          <td data-col="asset-owner-reg-number">{% if not r.registration_hide_asset_owner_registration_number %}{{ r.asset_owner_registration_number }}{% endif %}</td>
+          <td data-col="asset-owner-region">{% if not r.registration_hide_asset_owner_region %}{{ r.asset_owner_region }}{% endif %}</td>
+          <td data-col="asset-owner-date">{% if not r.registration_hide_asset_owner_date %}{{ r.asset_owner_registration_date|date:"d.m.y" }}{% endif %}</td>
         </tr>
       {% empty %}
         <tr><td colspan="26" class="text-muted">Пока нет данных.</td></tr>
@@ -350,8 +550,8 @@
         <button
           class="btn btn-primary btn-sm d-flex align-items-center"
           hx-get="{% url 'registration_form_create' %}"
-          hx-target="#projects-modal .modal-content"
-          hx-swap="innerHTML">
+          hx-target="#projects-pane"
+          hx-swap="outerHTML">
           <i class="bi bi-plus-circle me-2"></i>Добавить проект
         </button>
         <div id="registrations-actions" class="d-none">
@@ -388,6 +588,23 @@
             <i class="bi bi-gear"></i>
           </button>
         </div>
+        {% if is_admin %}
+          <a href="{% url 'registration_csv_download' %}"
+             id="registration-csv-download-btn"
+             class="btn btn-primary btn-sm d-flex align-items-center"
+             title="Скачать CSV"
+             role="button">
+            <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+          </a>
+          <button type="button"
+                  id="registration-csv-upload-btn"
+                  class="btn btn-primary btn-sm d-flex align-items-center"
+                  data-upload-url="{% url 'registration_csv_upload' %}"
+                  title="Загрузить CSV">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+          </button>
+          <input type="file" id="registration-csv-file-input" accept=".csv" class="d-none">
+        {% endif %}
       </div>
 
       <select id="registration-status-editor"
@@ -396,6 +613,10 @@
         {% for value, label in registration_status_choices %}
           <option value="{{ value }}">{{ label }}</option>
         {% endfor %}
+      </select>
+      <select id="registration-summary-status-editor"
+              class="form-select form-select-sm d-none"
+              aria-label="Статус группы проектов">
       </select>
       <select id="registration-manager-editor"
               class="form-select form-select-sm d-none"
@@ -541,12 +762,24 @@
     {% endif %}
 
   <!-- Условия контракта -->
-  <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 50px;">
-    <h5 class="table-section-title">
-      <i class="bi bi-table me-2"></i> Сроки проекта по договору
-    </h5>
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
+        <i class="bi bi-calendar-week"></i> Сроки проекта по договору
+      </h5>
+      <button type="button"
+              id="project-contract-terms-section-toggle"
+              class="btn btn-link btn-sm text-secondary text-decoration-none p-0 d-inline-flex align-items-center proposal-section-toggle active"
+              data-section-body-id="project-contract-terms-section-body"
+              aria-expanded="false"
+              aria-label="Развернуть раздел «Сроки проекта по договору»"
+              title="Развернуть раздел «Сроки проекта по договору»">
+        <i class="bi bi-plus-square"></i>
+      </button>
+    </div>
   </div>
 
+  <div id="project-contract-terms-section-body" class="d-none">
   <div class="contract-table-wrap">
 
     <table class="table table-sm align-middle contract-table">
@@ -580,7 +813,7 @@
             </div>
           {% endif %}
         </th>
-        <th style="width:105px; min-width:105px; max-width:105px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
+        <th style="width:120px; min-width:120px; max-width:120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Этап ID</th>
         <th>Тип</th>
         <th class="nowrap">Название</th>
         <th>Вид соглашения</th>
@@ -589,16 +822,16 @@
         <th>Оконч.</th>
         <th>Оконч. <i class="bi bi-lock"></i></th>
         <th>Исх. данные</th>
-        <th>Срок предв. отчёта, мес.</th>
+        <th>Срок предв. отчёта</th>
         <th>Дата предв. отчёта</th>
-        <th>Срок итог. отчёта, нед.</th>
+        <th>Срок итог. отчёта</th>
         <th>Дата итог. отчёта</th>
-        <th>Срок, нед.</th>
+        <th>Срок</th>
       </tr>
       </thead>
       <tbody>
       {% for r in registrations %}
-        <tr data-project-id="{{ r.id }}">
+        <tr data-project-id="{{ r.id }}" data-owning-project-id="{{ r.owning_project_id }}">
           <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
@@ -611,7 +844,7 @@
               </div>
             {% endif %}
           </td>
-          <td class="project-id-cell" style="width:125px; min-width:125px; max-width:125px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.short_uid }}</span></td>
+          <td class="project-id-cell" style="width:120px; min-width:120px; max-width:120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.short_uid }}</span></td>
           <td>{{ r.type_short_display }}</td>
           <td>{{ r.name }}</td>
           <td>{{ r.get_agreement_type_display }}</td>
@@ -619,18 +852,19 @@
           <td>{{ r.contract_start|date:"d.m.y" }}</td>
           <td>{{ r.contract_end|date:"d.m.y" }}</td>
           <td class="completion-calc-cell">{{ r.completion_calc|date:"d.m.y" }}</td>
-          <td>{{ r.input_data }}</td>
-          <td>{{ r.stage1_weeks|comma_decimal:1 }}</td>
+          <td>{% if r.input_data != None %}{{ r.input_data }} дн.{% endif %}</td>
+          <td>{{ r.stage1_weeks|comma_decimal:1 }} мес.</td>
           <td>{{ r.stage1_end|date:"d.m.y" }}</td>
-          <td>{{ r.stage2_weeks|comma_decimal:1 }}</td>
+          <td>{{ r.stage2_weeks|comma_decimal:1 }} нед.</td>
           <td>{{ r.stage2_end|date:"d.m.y" }}</td>
-          <td>{{ r.term_weeks|comma_decimal:1 }}</td>
+          <td>{{ r.term_weeks|comma_decimal:1 }} нед.</td>
         </tr>
       {% empty %}
         <tr><td colspan="15" class="text-muted">Пока нет данных.</td></tr>
       {% endfor %}
       </tbody>
     </table>
+  </div>
   </div>
 
       </div>
@@ -682,10 +916,10 @@
             <input class="form-check-input js-project-schedule-filter" type="radio"
                    name="project-schedule-project-radio" value="{{ project.id }}" id="project-schedule-filter-{{ project.id }}"
                    data-summary-label="{{ project.short_uid }}"
-                   data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}"
-                   data-gantt-url="{% url 'project_schedule_gantt' project.id %}">
+                   data-full-label="{{ project.short_uid }}{% if project.filter_type_label %} {{ project.filter_type_label }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}"
+                   data-gantt-url="{% url 'project_schedule_gantt' project.gantt_registration_id %}">
             <span class="form-check-label">
-              {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+              {{ project.short_uid }}{% if project.filter_type_label %} {{ project.filter_type_label }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
             </span>
           </label>
         {% empty %}
@@ -757,6 +991,7 @@
         <tr
           class="project-schedule-row{% if item.has_children %} project-schedule-row-parent{% endif %}{% if item.parent_id %} project-schedule-row-child{% endif %}"
           data-project-id="{{ item.project_id }}"
+          data-owning-project-id="{{ item.owning_project_id|default:item.project_id }}"
           data-task-id="{{ item.task_id }}"
           data-parent-id="{{ item.parent_id }}"
           data-level="{{ item.level }}"
@@ -963,7 +1198,7 @@
   </div>
 
   <!-- Объем работ -->
-  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
     <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
       <i class="bi bi-table"></i> Объем услуг: активы
     </h5>
@@ -983,9 +1218,9 @@
             <input class="form-check-input js-work-filter" type="checkbox"
                    value="{{ project.id }}" id="work-filter-{{ project.id }}"
                    data-summary-label="{{ project.short_uid }}"
-                   data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+                   data-full-label="{{ project.short_uid }}{% if project.filter_type_label %} {{ project.filter_type_label }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
             <label class="form-check-label" for="work-filter-{{ project.id }}">
-              {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+              {{ project.short_uid }}{% if project.filter_type_label %} {{ project.filter_type_label }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -1025,7 +1260,7 @@
             </div>
           {% endif %}
         </th>
-        <th style="width:105px; min-width:105px; max-width:105px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
+        <th style="width:110px; min-width:110px; max-width:110px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект ID</th>
         <th>Тип</th>
         <th>Название</th>
         <th>Наименование актива</th>
@@ -1041,6 +1276,7 @@
       {% for w in work_items %}
         <tr
           data-project-id="{{ w.project_id }}"
+          data-owning-project-id="{{ w.project.owning_project_id }}"
           data-edit-url="{% url 'work_form_edit' w.pk %}"
           data-delete-url="{% url 'work_delete' w.pk %}"
           data-move-up-url="{% url 'work_move_up' w.pk %}"
@@ -1063,9 +1299,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap" style="width:125px; min-width:125px; max-width:125px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ w.project.short_uid }}</span></td>
-          <td class="text-nowrap">{{ w.project.type_short_display|default:w.type }}</td>
-          <td>{{ w.name }}</td>
+          <td class="text-nowrap" style="width:110px; min-width:110px; max-width:110px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ w.service_owner.short_uid }}</span></td>
+          <td class="text-nowrap">{{ w.service_owner.filter_type_label|default:w.type }}</td>
+          <td>{{ w.service_owner.name|default:w.name }}</td>
           <td class="text-nowrap">{{ w.asset_name }}</td>
           <td class="text-nowrap js-asset-code">{{ w.asset_code }}</td>
           <td class="text-nowrap">{{ w.country.short_name|default:"" }}</td>
@@ -1110,7 +1346,7 @@
     {% endif %}
 
   <!-- Юридические лица -->
-  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 50px;">
+  <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
     <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
       <i class="bi bi-table"></i> Объем услуг: юрлица
     </h5>
@@ -1130,9 +1366,9 @@
             <input class="form-check-input js-legal-filter" type="checkbox"
                    value="{{ project.id }}" id="legal-filter-{{ project.id }}"
                    data-summary-label="{{ project.short_uid }}"
-                   data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
+                   data-full-label="{{ project.short_uid }}{% if project.filter_type_label %} {{ project.filter_type_label }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
             <label class="form-check-label" for="legal-filter-{{ project.id }}">
-              {{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
+              {{ project.short_uid }}{% if project.filter_type_label %} {{ project.filter_type_label }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}
             </label>
           </div>
         {% empty %}
@@ -1171,7 +1407,7 @@
             </div>
           {% endif %}
         </th>
-        <th style="width:105px; min-width:105px; max-width:105px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект</th>
+        <th style="width:110px; min-width:110px; max-width:110px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Проект ID</th>
         <th>Тип</th>
         <th>Название</th>
         <th>Наименование актива</th>
@@ -1190,7 +1426,8 @@
           data-move-up-url="{% url 'legal_entity_move_up' entity.pk %}"
           data-move-down-url="{% url 'legal_entity_move_down' entity.pk %}"
           data-row-order-scope="{{ entity.project_id }}"
-          data-project-id="{{ entity.project_id }}">
+          data-project-id="{{ entity.project_id }}"
+          data-owning-project-id="{{ entity.project.owning_project_id }}">
           <td class="text-nowrap" style="width:30px; min-width:30px; max-width:30px;">
             {% if request.user.is_authenticated and request.user.is_staff %}
               <div class="form-check">
@@ -1204,9 +1441,9 @@
               </div>
             {% endif %}
           </td>
-          <td class="text-nowrap" style="width:125px; min-width:125px; max-width:125px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ entity.project.short_uid }}</span></td>
-          <td class="text-nowrap">{{ entity.work_item.project.type_short_display|default:entity.work_type }}</td>
-          <td>{{ entity.work_name }}</td>
+          <td class="text-nowrap" style="width:110px; min-width:110px; max-width:110px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"><span class="clf-id-droid-mono" style="display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ entity.service_owner.short_uid }}</span></td>
+          <td class="text-nowrap">{{ entity.service_owner.filter_type_label|default:entity.work_type }}</td>
+          <td>{{ entity.service_owner.name|default:entity.work_name }}</td>
           <td class="text-nowrap">{{ entity.work_item.asset_name|default:entity.work_item.name }}</td>
           <td>{{ entity.legal_name|default:"—" }}</td>
           <td class="text-nowrap">{{ entity.country.short_name|default:"" }}</td>
@@ -1278,6 +1515,136 @@
         menu.style.minWidth = Math.max(controlWidth, 200, contentWidth) + "px";
       });
     };
+    const REGISTRATION_GROUP_COLLAPSE_KEY = "registration-groups-collapsed";
+
+    function loadRegistrationGroupCollapsed() {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(REGISTRATION_GROUP_COLLAPSE_KEY) || "[]");
+        return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+      } catch (err) {
+        return new Set();
+      }
+    }
+
+    function saveRegistrationGroupCollapsed(collapsed) {
+      try {
+        window.localStorage.setItem(REGISTRATION_GROUP_COLLAPSE_KEY, JSON.stringify(Array.from(collapsed)));
+      } catch (err) {
+        // The table still collapses for this page view.
+      }
+    }
+
+    function summaryMembers(summary) {
+      const key = summary?.dataset?.registrationGroupKey || "";
+      const members = [];
+      let row = summary?.nextElementSibling || null;
+      while (
+        row
+        && row.dataset.registrationGroupMember === "1"
+        && (row.dataset.registrationGroupKey || "") === key
+      ) {
+        members.push(row);
+        row = row.nextElementSibling;
+      }
+      return members;
+    }
+
+    window.__anchorRegistrationSummaries = function(table) {
+      if (!table) return;
+      Array.from(table.querySelectorAll('tr[data-reg-summary="1"]')).forEach((summary) => {
+        const key = summary.dataset.registrationGroupKey || "";
+        const first = Array.from(table.querySelectorAll('tr[data-registration-group-member="1"]'))
+          .find((member) => (member.dataset.registrationGroupKey || "") === key);
+        if (!first || summary.nextElementSibling === first) return;
+        first.parentNode.insertBefore(summary, first);
+      });
+    };
+
+    function applyRegistrationGroupCollapsed(root) {
+      const pane = root || document.getElementById("projects-pane");
+      if (!pane) return;
+      const collapsed = loadRegistrationGroupCollapsed();
+      pane.querySelectorAll("[data-registration-group-toggle]").forEach((button) => {
+        const id = String(button.getAttribute("data-registration-group-toggle") || "");
+        button.setAttribute("aria-expanded", collapsed.has(id) ? "false" : "true");
+      });
+      pane.querySelectorAll('tr[data-registration-group-member="1"]').forEach((row) => {
+        const hidden = collapsed.has(String(row.dataset.registrationGroupKey || ""));
+        row.classList.toggle("registration-group-member-collapsed", hidden);
+        if (hidden) {
+          row.querySelectorAll('input[name="registration-select"]').forEach((box) => {
+            box.checked = false;
+          });
+        }
+      });
+      if (window.__refreshProjectsSelectionState) window.__refreshProjectsSelectionState();
+      syncRegistrationGroupsToggle(pane);
+    }
+
+    function visibleRegistrationSummaries(pane) {
+      return Array.from(pane.querySelectorAll('table.reg-table tr[data-reg-summary="1"]'))
+        .filter((summary) => !summary.classList.contains("d-none"));
+    }
+
+    function syncRegistrationGroupsToggle(pane) {
+      const button = pane?.querySelector("#registration-groups-toggle");
+      if (!button) return;
+      const collapsed = loadRegistrationGroupCollapsed();
+      const visible = visibleRegistrationSummaries(pane);
+      const allCollapsed = visible.length > 0 && visible.every((summary) => (
+        collapsed.has(summary.dataset.registrationGroupKey || "")
+      ));
+      button.classList.toggle("active", allCollapsed);
+      const icon = button.querySelector("i");
+      if (icon) icon.className = allCollapsed ? "bi bi-arrows-expand" : "bi bi-arrows-collapse";
+    }
+
+    window.__toggleVisibleRegistrationGroups = function() {
+      const pane = document.getElementById("projects-pane");
+      if (!pane) return;
+      const collapsed = loadRegistrationGroupCollapsed();
+      const visible = visibleRegistrationSummaries(pane);
+      const allCollapsed = visible.length > 0 && visible.every((summary) => (
+        collapsed.has(summary.dataset.registrationGroupKey || "")
+      ));
+      visible.forEach((summary) => {
+        const id = summary.dataset.registrationGroupKey || "";
+        if (!id) return;
+        if (allCollapsed) collapsed.delete(id);
+        else collapsed.add(id);
+      });
+      saveRegistrationGroupCollapsed(collapsed);
+      applyRegistrationGroupCollapsed(pane);
+    };
+
+    window.__toggleRegistrationGroupCollapsed = function(groupId) {
+      const collapsed = loadRegistrationGroupCollapsed();
+      const id = String(groupId || "");
+      if (!id) return;
+      if (collapsed.has(id)) collapsed.delete(id);
+      else collapsed.add(id);
+      saveRegistrationGroupCollapsed(collapsed);
+      applyRegistrationGroupCollapsed(document.getElementById("projects-pane"));
+    };
+
+    if (!window.__registrationGroupToggleBound) {
+      window.__registrationGroupToggleBound = true;
+      document.addEventListener("click", (event) => {
+        const groupsToggle = event.target.closest("#registration-groups-toggle");
+        if (groupsToggle) {
+          event.preventDefault();
+          event.stopPropagation();
+          window.__toggleVisibleRegistrationGroups();
+          return;
+        }
+        const button = event.target.closest("[data-registration-group-toggle]");
+        if (!button) return;
+        event.preventDefault();
+        event.stopPropagation();
+        window.__toggleRegistrationGroupCollapsed(button.getAttribute("data-registration-group-toggle") || "");
+      });
+    }
+
     window.__refreshRegistrationVisibleGroups = window.__refreshRegistrationVisibleGroups || function(root) {
       const pane = root || document.getElementById("projects-pane");
       const table = pane?.querySelector("table.reg-table");
@@ -1333,6 +1700,44 @@
 
         previousVisibleRow = row;
       });
+
+      window.__anchorRegistrationSummaries(table);
+      table.querySelectorAll('tr[data-reg-summary="1"]').forEach((summary) => {
+        const members = summaryMembers(summary).filter((row) => !row.classList.contains("d-none"));
+        const show = members.length >= 2;
+        summary.classList.toggle("d-none", !show);
+        if (!show) return;
+        const first = members[0];
+        const numberValue = summary.querySelector("[data-reg-summary-number]");
+        const contractCell = summary.querySelector('[data-reg-summary-cell="contract-id"]');
+        const agreementCell = summary.querySelector('[data-reg-summary-cell="agreement-type"]');
+        const groupCell = summary.querySelector('[data-reg-summary-cell="group"]');
+        const typeCell = summary.querySelector('[data-reg-summary-cell="type"]');
+        if (numberValue) numberValue.textContent = first.dataset.regGroupNumber || "";
+        if (groupCell) groupCell.textContent = first.dataset.regGroupGroup || "";
+        const contractIds = new Set(members.map((row) => row.dataset.regGroupContractId || ""));
+        const agreements = new Set(members.map((row) => row.dataset.regGroupAgreementType || ""));
+        const uniformContract = contractIds.size === 1 && agreements.size === 1;
+        setDroidMonoCellValue(contractCell, uniformContract ? (first.dataset.regGroupContractLabel || "") : "");
+        if (agreementCell) agreementCell.textContent = uniformContract ? (first.dataset.regGroupAgreementType || "") : "";
+        if (typeCell) {
+          typeCell.textContent = members
+            .map((row) => (row.dataset.regGroupType || "").trim())
+            .filter(Boolean)
+            .join("-");
+        }
+        members.forEach((row) => {
+          const memberNumber = row.querySelector('[data-reg-group-cell="number"]');
+          const memberGroup = row.querySelector('[data-reg-group-cell="group"]');
+          if (memberNumber) memberNumber.textContent = "";
+          if (memberGroup) memberGroup.textContent = "";
+          if (!uniformContract) return;
+          setDroidMonoCellValue(row.querySelector('[data-reg-group-cell="contract-id"]'), "");
+          const memberAgreement = row.querySelector('[data-reg-group-cell="agreement-type"]');
+          if (memberAgreement) memberAgreement.textContent = "";
+        });
+      });
+      applyRegistrationGroupCollapsed(pane);
     };
 
     function initRegFilter() {
@@ -1345,7 +1750,10 @@
       const regRows = pane.querySelectorAll("table.reg-table tbody tr");
       const contractRows = pane.querySelectorAll("table.contract-table tbody tr");
 
-      if (!dropdown || checks.length === 0 || dropdown.dataset.bound === "1") return;
+      if (!dropdown || checks.length === 0 || dropdown.dataset.bound === "1") {
+        applyRegistrationGroupCollapsed(pane);
+        return;
+      }
       dropdown.dataset.bound = "1";
       window.bindProjectFilterMenuWidth(dropdown);
 
@@ -1369,7 +1777,8 @@
         const showAll = values.includes(FILTER_ALL) || values.length === 0;
         [regRows, contractRows].forEach(rows => {
           rows.forEach(row => {
-            const pid = row.dataset.projectId || "";
+            if (row.dataset.regSummary === "1") return;
+            const pid = row.dataset.owningProjectId || row.dataset.projectId || "";
             row.classList.toggle("d-none", !showAll && !values.includes(pid));
           });
         });
@@ -1462,7 +1871,7 @@
         window.__legalProjectFilter = values.slice();
         const showAll = values.includes(FILTER_ALL) || values.length === 0;
         rows.forEach((row) => {
-          const pid = row.dataset.projectId || "";
+          const pid = row.dataset.owningProjectId || row.dataset.projectId || "";
           row.classList.toggle("d-none", !showAll && !values.includes(pid));
         });
         updateLabel(values);
@@ -1562,7 +1971,7 @@
         const projectId = value || "";
         window.__projectScheduleFilter = projectId ? [projectId] : [];
         rows.forEach((row) => {
-          const pid = row.dataset.projectId || "";
+          const pid = row.dataset.owningProjectId || row.dataset.projectId || "";
           const visible = !!projectId && pid === projectId;
           row.classList.toggle("d-none", !visible);
           if (!visible) {
@@ -1889,7 +2298,7 @@
         window.__workProjectFilter = values.slice();
         const showAll = values.includes(FILTER_ALL) || values.length === 0;
         rows.forEach((row) => {
-          const pid = row.dataset.projectId || "";
+          const pid = row.dataset.owningProjectId || row.dataset.projectId || "";
           row.classList.toggle("d-none", !showAll && !values.includes(pid));
         });
         updateLabel(values);
@@ -2071,7 +2480,8 @@
           perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(r) { allRows.push(r); });
         }
         allRows.forEach(function(row) {
-          var pid = row.dataset.projectId || "";
+          if (row.dataset.regSummary === "1") return;
+          var pid = row.dataset.owningProjectId || row.dataset.projectId || "";
           if (mv.indexOf(pid) === -1) row.classList.add("d-none");
         });
       }
@@ -2093,14 +2503,14 @@
       ];
       tables.forEach(function(rows) {
         rows.forEach(function(row) {
-          var pid = row.dataset.projectId || "";
+          var pid = row.dataset.owningProjectId || row.dataset.projectId || "";
           row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
         });
       });
       var perfPane = document.getElementById("performers-pane");
       if (perfPane) {
         perfPane.querySelectorAll("#performers-main-section table.performers-table tbody tr").forEach(function(row) {
-          var pid = row.dataset.projectId || "";
+          var pid = row.dataset.owningProjectId || row.dataset.projectId || "";
           row.classList.toggle("d-none", !showAll && values.indexOf(pid) === -1);
         });
       }
@@ -2168,7 +2578,7 @@
         }
       }
       pane.querySelectorAll("table.project-schedule-table tbody tr").forEach(function(row) {
-        var visible = !!selectedValue && (row.dataset.projectId || "") === selectedValue;
+        var visible = !!selectedValue && (row.dataset.owningProjectId || row.dataset.projectId || "") === selectedValue;
         row.classList.toggle("d-none", !visible);
         if (!visible) {
           var checkbox = row.querySelector('input[name="project-schedule-select"]');

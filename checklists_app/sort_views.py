@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponseForbidden, JsonResponse
+from django.http import Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
@@ -35,10 +35,9 @@ def _sort_project(request):
     project_uid = (request.GET.get("project_uid") or request.POST.get("project_uid") or "").strip()
     if not project_uid:
         return None, JsonResponse({"error": "Не выбран проект."}, status=400)
-    project = get_object_or_404(
-        ProjectRegistration.objects.select_related("type"),
-        short_uid=project_uid,
-    )
+    project = ProjectRegistration.get_for_code(project_uid)
+    if project is None:
+        raise Http404
     return project, None
 
 
@@ -90,7 +89,7 @@ def sort_panel(request):
     project_options = _project_options(request.user)
     selected_project_uid = project_options[0]["short_uid"] if project_options else None
     selected_project = (
-        ProjectRegistration.objects.select_related("type").filter(short_uid=selected_project_uid).first()
+        ProjectRegistration.get_for_code(selected_project_uid)
     )
     meta = _project_meta(selected_project, None) if selected_project else {
         "assets": [],
@@ -143,10 +142,9 @@ def sort_start(request):
     if not section_id or section_id == "all":
         return JsonResponse({"error": "Не выбран раздел."}, status=400)
 
-    project = get_object_or_404(
-        ProjectRegistration.objects.select_related("type"),
-        short_uid=project_uid,
-    )
+    project = ProjectRegistration.get_for_code(project_uid)
+    if project is None:
+        raise Http404
     resolved_asset = _resolve_asset_name(project, asset_name)
     section = _resolve_section(project, section_id, resolved_asset)
     if section is None:

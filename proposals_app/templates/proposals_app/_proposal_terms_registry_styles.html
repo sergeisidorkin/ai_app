@@ -1,0 +1,909 @@
+<style>
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-labels,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-fields {
+    display: grid;
+    grid-template-columns: repeat(6, var(--proposal-terms-field));
+    column-gap: calc(var(--proposal-stage-field-toggle-space) + 0.5rem);
+    justify-content: start;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-labels {
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-labels .form-label {
+    margin-bottom: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-fields {
+    margin-bottom: 0.35rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-fields > div {
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-end-field {
+    position: relative;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-end-field > .proposal-stage-field-toggle {
+    position: absolute;
+    left: calc(100% + .5rem);
+    top: 0;
+    height: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-end-field.is-stage-field-disabled .registration-contract-group-end {
+    background-color: #fdfdfe !important;
+    border-color: #eef1f4 !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+    pointer-events: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-header:has(.registration-contract-end-field.is-stage-field-disabled) .registration-contract-end-label {
+    color: #c6ccd2 !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-header > td,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th {
+    background: transparent;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-header > td {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+    padding-left: 0 !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor {
+    container-type: inline-size;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .contract-date-terms-field,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table {
+    --proposal-terms-pair: calc((var(--proposal-terms-stage) + (100cqi - var(--proposal-terms-stage)) / 6) * var(--proposal-terms-fit));
+    --proposal-terms-source: calc(var(--proposal-terms-pair) - var(--proposal-terms-stage));
+    --proposal-terms-field: calc(var(--proposal-terms-pair) - var(--proposal-stage-field-toggle-space) - 0.25rem);
+    --proposal-terms-span: calc(var(--proposal-terms-field) + var(--proposal-stage-field-toggle-space) + 0.5rem);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-fields > .form-control,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-fields > div > .form-control,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-terms-fields > .proposal-stage-final-term-shell {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table col.proposal-terms-source-col {
+    width: var(--proposal-terms-source);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table col.proposal-terms-span-col {
+    width: var(--proposal-terms-span);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table col.proposal-terms-final-date-col {
+    width: calc(var(--proposal-terms-span) + 2.25rem);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-source-data-date,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-preliminary-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-preliminary-report-date,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-terms-row .proposal-stage-final-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-final-report-date,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-total-source-data-date,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-total-preliminary-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-total-final-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-total-preliminary-report-date,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-total-final-report-date {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    width: var(--proposal-terms-field);
+    min-width: 0;
+    max-width: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th {
+    vertical-align: bottom;
+    padding-top: 0.65rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contracts-fields > div {
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-id-wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2.375rem;
+    gap: 0.5rem;
+    align-items: stretch;
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-id-wrap > select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-refresh-btn {
+    width: 2.375rem;
+    min-width: 0;
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+    color: #212529;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .375rem;
+    box-shadow: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-refresh-btn:hover {
+    color: #212529;
+    background-color: #f8f9fa;
+    border-color: #ced4da;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-refresh-btn:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-refresh-btn:focus-visible {
+    color: #212529;
+    background-color: #fff;
+    border-color: #ced4da;
+    box-shadow: 0 0 0 0.25rem rgba(206, 212, 218, 0.45);
+  }
+  @media (min-width: 1200px) {
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-schedule-grid {
+      grid-template-columns:
+        repeat(3, minmax(0, calc(15.5556% - 0.4222rem)))
+        repeat(2, minmax(0, calc(26.6667% - 0.3667rem)));
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-schedule-grid--summary {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-summary-head-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-contracts-labels,
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-contracts-fields {
+      grid-template-columns:
+        minmax(0, calc((100% - 1.5rem) / 8 + (0.5rem + 2.375rem) / 2))
+        repeat(4, minmax(0, calc((100% - ((100% - 1.5rem) / 8 + (0.5rem + 2.375rem) / 2) - 2rem) / 4)));
+    }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-row-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section tr.is-contract-terms-locked .js-proposal-stage-field-toggle {
+    pointer-events: none;
+  }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-row-5 {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-col-type-aligned {
+      flex: 0 0 calc(25% - 26px);
+      width: calc(25% - 26px);
+      max-width: calc(25% - 26px);
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-col-type-aligned-wide {
+      flex: 0 0 calc(50% - 26px);
+      width: calc(50% - 26px);
+      max-width: calc(50% - 26px);
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-col-subtype-aligned {
+      flex: 0 0 calc(25% - 26px);
+      width: calc(25% - 26px);
+      max-width: calc(25% - 26px);
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-col-type-block-end {
+      flex: 0 0 calc(25% + 52px);
+      width: calc(25% + 52px);
+      max-width: calc(25% + 52px);
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-type-head-labels,
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-product-fields {
+      display: grid;
+      grid-template-columns: calc(25% - 26px) 25% 25% calc(25% + 26px);
+      align-items: center;
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-type-head-labels > [class*="col-"],
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-product-fields > [class*="col-"] {
+      width: auto;
+      max-width: none;
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+      padding-right: calc(var(--bs-gutter-x, 1.5rem) * .5);
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-type-head-labels > :nth-child(1) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5 + 18px);
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-type-head-labels > :nth-child(2) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5 + 8px);
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-type-head-labels > :nth-child(4) {
+      padding-left: calc(var(--bs-gutter-x, 1.5rem) * .5);
+      transform: translateX(-8px);
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section form[data-group-edit="1"] .registration-type-head,
+    #proposals-pane.proposal-form-page .registration-terms-section form[data-group-edit="1"] .registration-product-row-inner {
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section form[data-group-edit="1"] .registration-type-head-labels,
+    #proposals-pane.proposal-form-page .registration-terms-section form[data-group-edit="1"] .registration-product-fields {
+      grid-template-columns:
+        minmax(0, calc((100% - 1.5rem) / 8 + (0.5rem + 2.375rem) / 2))
+        repeat(4, minmax(0, 1fr));
+      gap: 0.5rem;
+      margin-left: 0;
+      margin-right: 0;
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section form[data-group-edit="1"] .registration-type-head-labels > [class*="col-"],
+    #proposals-pane.proposal-form-page .registration-terms-section form[data-group-edit="1"] .registration-product-fields > [class*="col-"] {
+      width: auto;
+      max-width: none;
+      padding-left: 0;
+      padding-right: 0;
+      transform: none;
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section form.registration-summary-layout .registration-type-head,
+    #proposals-pane.proposal-form-page .registration-terms-section form.registration-summary-layout .registration-product-row-inner {
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section form.registration-summary-layout .registration-type-head-labels,
+    #proposals-pane.proposal-form-page .registration-terms-section form.registration-summary-layout .registration-product-fields {
+      grid-template-columns:
+        minmax(0, calc((100% - 1.5rem) / 8 + (0.5rem + 2.375rem) / 2))
+        repeat(4, minmax(0, 1fr));
+      gap: 0.5rem;
+      margin-left: 0;
+      margin-right: 0;
+    }
+    #proposals-pane.proposal-form-page .registration-terms-section form.registration-summary-layout .registration-type-head-labels > [class*="col-"],
+    #proposals-pane.proposal-form-page .registration-terms-section form.registration-summary-layout .registration-product-fields > [class*="col-"] {
+      width: auto;
+      max-width: none;
+      padding-left: 0;
+      padding-right: 0;
+      transform: none;
+    }
+  }
+  @media (max-width: 1199.98px) {
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-type-head,
+    #proposals-pane.proposal-form-page .registration-terms-section .registration-contracts-head {
+      display: none;
+    }
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-assets-editor {
+    border: 1px solid #dee2e6;
+    border-radius: .5rem;
+    padding: 1rem;
+    overflow: visible;
+    position: relative;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-assets-editor.proposal-payment-schedule-editor {
+    padding-bottom: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-payment-schedule-editor-body {
+    padding-bottom: 2rem !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor {
+    --proposal-terms-stage: 5.5rem;
+    --proposal-stage-field-toggle-space: 2.3rem;
+    --proposal-terms-fit: 1;
+    min-width: 0;
+    max-width: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-payment-schedule-editor .js-proposal-payment-group > .row + .row {
+    margin-top: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-payment-stage-block {
+    border-top: 1px solid #dee2e6;
+    padding-top: 1.25rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-payment-stage-block + .proposal-payment-stage-block {
+    margin-top: 2rem !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-payment-stage-title {
+    display: block;
+    margin-top: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-assets-editor .table-responsive {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor .table-responsive {
+    overflow-x: clip;
+    overflow-y: visible;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .contract-date-terms-field {
+    box-sizing: border-box;
+    margin-left: 0;
+    margin-bottom: .5rem;
+    padding-left: 0;
+    padding-right: 0;
+    width: var(--proposal-terms-field);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .contract-stage-report-terms-group {
+    margin-top: 1rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .contract-stage-evaluation-terms-group {
+    margin-top: .75rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-assets-table {
+    margin-bottom: 0;
+    table-layout: fixed;
+    width: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-assets-table.proposal-report-terms-table {
+    width: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor .contract-stage-report-terms-group,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor .contract-stage-evaluation-terms-group {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-evaluation-terms-table {
+    width: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-evaluation-terms-table > tbody > tr > td {
+    --bs-table-accent-bg: transparent;
+    --bs-table-bg-state: transparent;
+    --bs-table-bg-type: transparent;
+    background-color: #fff !important;
+    box-shadow: none !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-evaluation-common-cell {
+    overflow: visible;
+    vertical-align: middle;
+    background-color: #fff !important;
+    box-shadow: none !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-evaluation-common {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-evaluation-common-label {
+    line-height: 1.2;
+    background: transparent;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-evaluation-common .form-check-input {
+    margin: 0;
+    flex: 0 0 auto;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-terms-total-row .proposal-stage-total-source-data-term,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-terms-total-row .proposal-stage-total-service-term-months,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-terms-total-row .proposal-stage-total-final-report-term-weeks {
+    width: auto;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-terms-total-row .proposal-stage-total-source-data-term-shell {
+    box-sizing: border-box;
+    width: calc(100% - var(--proposal-stage-field-toggle-space));
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-table th {
+    white-space: nowrap;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-label {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 100%;
+    gap: .25rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .contract-date-terms-field > .registration-terms-label {
+    overflow: hidden;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-label-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-label > .js-proposal-report-terms-lock,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-label > .js-proposal-report-date-lock,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-column-toggle {
+    flex: 0 0 auto;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:nth-child(3),
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:nth-child(5),
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:nth-child(7) {
+    position: relative;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:nth-child(3) .registration-terms-label,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:nth-child(5) .registration-terms-label,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:nth-child(7) .registration-terms-label {
+    padding-right: 1.6rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-column-toggle {
+    position: absolute;
+    right: .65rem;
+    bottom: .3875rem;
+    top: auto;
+    margin: 0;
+    line-height: 1;
+    font-size: 1rem;
+    color: #6c757d;
+    z-index: 2;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-column-toggle:hover,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-column-toggle:focus {
+    color: #495057;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-terms-column-toggle-collapsed {
+    display: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-report-terms-table col.proposal-terms-source-col {
+    width: calc(var(--proposal-terms-source) + var(--proposal-terms-span));
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .contract-date-terms-field {
+    width: calc(var(--proposal-terms-field) + var(--proposal-terms-span));
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-report-terms-table col.proposal-terms-source-date-col,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-report-terms-table col.proposal-terms-preliminary-date-col {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-report-terms-table col.proposal-terms-preliminary-col {
+    width: calc(var(--proposal-terms-span) * 2);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-preliminary-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-total-preliminary-term-shell {
+    flex: 1 1 auto;
+    width: auto;
+    max-width: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-total-preliminary-term-shell {
+    width: calc(100% - var(--proposal-stage-field-toggle-space));
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .registration-stage-terms-columns > th:nth-child(3),
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .registration-stage-terms-columns > th:nth-child(5) {
+    width: 0;
+    max-width: 0;
+    padding: 0 !important;
+    overflow: visible;
+    position: relative;
+    color: transparent;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .registration-stage-terms-columns > th:nth-child(3) .registration-terms-label-text,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .registration-stage-terms-columns > th:nth-child(3) .js-proposal-report-date-lock,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .registration-stage-terms-columns > th:nth-child(5) .registration-terms-label-text,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .registration-stage-terms-columns > th:nth-child(5) .js-proposal-report-date-lock {
+    display: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .registration-stage-terms-columns > th:nth-child(3) .registration-terms-column-toggle,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .registration-stage-terms-columns > th:nth-child(5) .registration-terms-column-toggle {
+    color: #6c757d;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .registration-terms-column-toggle[data-terms-column="source-date"] .registration-terms-column-toggle-expanded,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .registration-terms-column-toggle[data-terms-column="preliminary-date"] .registration-terms-column-toggle-expanded {
+    display: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .registration-terms-column-toggle[data-terms-column="source-date"] .registration-terms-column-toggle-collapsed,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .registration-terms-column-toggle[data-terms-column="preliminary-date"] .registration-terms-column-toggle-collapsed,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .registration-terms-column-toggle[data-terms-column="final-date"] .registration-terms-column-toggle-collapsed {
+    display: inline;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .proposal-report-terms-table col.proposal-terms-final-col {
+    width: calc(var(--proposal-terms-span) * 2);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .proposal-report-terms-table col.proposal-terms-final-date-col {
+    width: 2.25rem !important;
+    min-width: 2.25rem;
+    max-width: 2.25rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .proposal-stage-final-report-cell {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .proposal-stage-final-report-wrap {
+    justify-content: center;
+    gap: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .proposal-stage-final-report-field-wrap,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .proposal-stage-total-final-report-date {
+    display: none !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .registration-stage-terms-columns > th:nth-child(7) .registration-terms-label-text,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .registration-stage-terms-columns > th:nth-child(7) .js-proposal-report-date-lock {
+    display: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .registration-terms-column-toggle[data-terms-column="final-date"] .registration-terms-column-toggle-expanded {
+    display: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-stage-terms-row > td:nth-child(3),
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-stage-terms-total-row > td:nth-child(3),
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-terms-row > td:nth-child(5),
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-terms-total-row > td:nth-child(5) {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    padding: 0 !important;
+    overflow: hidden;
+    border: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-stage-terms-row > td:nth-child(3) > *,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-stage-terms-total-row > td:nth-child(3) > *,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-terms-row > td:nth-child(5) > *,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-terms-total-row > td:nth-child(5) > * {
+    display: none !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-table .proposal-terms-stage-col {
+    width: var(--proposal-terms-stage);
+    min-width: var(--proposal-terms-stage);
+    max-width: var(--proposal-terms-stage);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-table th.proposal-terms-stage-col,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-table td.proposal-terms-stage-col {
+    padding-left: 0 !important;
+    padding-right: .25rem !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-table > :not(caption) > * > * {
+    border-top: 0;
+    border-bottom: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-label-shell {
+    position: relative;
+    display: block;
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-label-compact {
+    display: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-stage-labels-compact .proposal-stage-label-input {
+    padding-left: .15rem;
+    padding-right: .15rem;
+    text-overflow: ellipsis;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-stage-labels-compact .proposal-stage-label-shell .proposal-stage-label-input {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-stage-labels-compact .proposal-stage-label-compact {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    color: #6c757d;
+    font-size: 1rem;
+    line-height: 1;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-label-input {
+    text-align: center;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .js-proposal-report-terms-lock,
+  #proposals-pane.proposal-form-page .registration-terms-section .js-proposal-report-date-lock {
+    cursor: pointer;
+    color: #6c757d;
+    font-size: .875rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .js-proposal-report-terms-lock:hover {
+    color: #495057;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .js-proposal-report-terms-lock.is-stage-lock-disabled,
+  #proposals-pane.proposal-form-page .registration-terms-section .js-proposal-report-date-lock.is-stage-lock-disabled,
+  #proposals-pane.proposal-form-page .registration-terms-section .js-proposal-report-terms-lock.is-stage-lock-disabled:hover,
+  #proposals-pane.proposal-form-page .registration-terms-section .js-proposal-report-date-lock.is-stage-lock-disabled:hover {
+    color: #c6ccd2;
+    cursor: default;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:has(.is-stage-lock-disabled),
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:has(.is-stage-lock-disabled) .registration-terms-label,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-stage-terms-columns > th:has(.is-stage-lock-disabled) .registration-terms-label-text,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-evaluation-terms-table thead th.is-stage-column-disabled {
+    color: #c6ccd2 !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-report-wrap {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-report-field-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-action-slot {
+    flex: 0 0 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-action-slot:empty {
+    display: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-add {
+    width: 1.75rem;
+    height: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: #6c757d;
+    border: 1px solid #ced4da;
+    background-color: #f8f9fa;
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-add:hover,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-add:focus {
+    background-color: #eef1f4;
+    color: #343a40;
+    border-color: #ced4da;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-number-shell {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-number-shell .proposal-stage-next-delay-days {
+    text-align: left;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap > .form-control,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap > .proposal-stage-source-data-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap > .proposal-stage-preliminary-term-shell {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-field-toggle-wrap > .proposal-stage-source-data-date,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-field-toggle-wrap > .proposal-stage-preliminary-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-field-toggle-wrap > .proposal-stage-preliminary-report-date,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-report-terms-table .proposal-stage-field-toggle-wrap > .proposal-stage-final-report-date {
+    flex: 0 0 auto;
+    width: var(--proposal-terms-field);
+    min-width: 0;
+    max-width: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-report-terms-table .proposal-stage-field-toggle-wrap > .proposal-stage-preliminary-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-total-preliminary-term-shell {
+    flex: 1 1 auto;
+    width: auto;
+    max-width: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-preliminary-date-collapsed .proposal-stage-total-preliminary-term-shell {
+    width: calc(100% - var(--proposal-stage-field-toggle-space));
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .proposal-stage-terms-row .proposal-stage-final-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-final-date-collapsed .proposal-stage-total-final-term-shell {
+    flex: 1 1 auto;
+    width: calc(100% - var(--proposal-stage-field-toggle-space));
+    max-width: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    box-sizing: border-box;
+    width: 1.8rem;
+    margin: 0;
+    padding: 0 .25rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle .form-check-input {
+    cursor: pointer;
+    flex: 0 0 auto;
+    width: 1.3rem;
+    height: .65rem;
+    margin: 0 !important;
+    background-size: .4875rem .4875rem;
+    background-position: left .08125rem center;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle .form-check-input:checked {
+    background-position: right .08125rem center;
+    background-color: var(--bs-primary, #0d6efd);
+    border-color: var(--bs-primary, #0d6efd);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .form-control,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-shell {
+    background-color: #fdfdfe !important;
+    border-color: #eef1f4 !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-service-term-months,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-unit {
+    background-color: #fdfdfe !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled input::placeholder {
+    color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-source-data-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-field-toggle-wrap.is-stage-field-disabled .proposal-stage-preliminary-term-unit {
+    border-left-color: #eef1f4 !important;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23c6ccd2' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-source-data-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-number-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-preliminary-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-term-shell,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-term-shell {
+    display: flex;
+    align-items: stretch;
+    min-width: 10.5rem;
+    padding: 0;
+    overflow: hidden;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-term-shell {
+    min-width: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-term-shell > .js-term-weeks {
+    background-color: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-source-data-term-shell .proposal-stage-source-data-term,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-number-shell .proposal-stage-next-delay-days,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-preliminary-term-shell .proposal-stage-service-term-months,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-shell .proposal-stage-final-report-term-weeks,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-term-shell .js-term-weeks,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-term-shell .proposal-stage-total-source-data-term,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-term-shell .proposal-stage-total-service-term-months,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-term-shell .proposal-stage-total-final-report-term-weeks {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: auto;
+    padding: .375rem .25rem .375rem .75rem;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    text-align: left;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-source-data-term-shell .proposal-stage-source-data-term:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-number-shell .proposal-stage-next-delay-days:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-preliminary-term-shell .proposal-stage-service-term-months:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-shell .proposal-stage-final-report-term-weeks:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-term-shell .js-term-weeks:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-term-shell .proposal-stage-total-source-data-term:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-term-shell .proposal-stage-total-service-term-months:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-term-shell .proposal-stage-total-final-report-term-weeks:focus {
+    outline: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-source-data-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section select.proposal-stage-delay-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-preliminary-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-source-data-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-preliminary-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-final-term-unit {
+    flex: 0 0 5.5rem;
+    width: 5.5rem;
+    padding: .375rem 2.25rem .375rem .75rem;
+    border: 0;
+    border-left: 1px solid #dee2e6;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    background-color: transparent;
+    background-position: right .75rem center;
+    color: #6c757d;
+    box-shadow: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-source-data-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-preliminary-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-final-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-group-term-unit {
+    background-color: #fff !important;
+    color: #212529 !important;
+    -webkit-text-fill-color: #212529 !important;
+    cursor: pointer;
+    pointer-events: auto !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-field-disabled,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-terms-total-row input.form-control.readonly-field.proposal-stage-total-field-disabled,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-term-shell.proposal-stage-total-field-disabled {
+    background-color: #fdfdfe !important;
+    border-color: #eef1f4 !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-field-disabled input,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-field-disabled select {
+    background-color: #fdfdfe !important;
+    color: #c6ccd2 !important;
+    -webkit-text-fill-color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-field-disabled select {
+    border-left-color: #eef1f4 !important;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23c6ccd2' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-field-disabled input::placeholder {
+    color: #c6ccd2 !important;
+    opacity: 1;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-source-data-term-unit:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section select.proposal-stage-delay-unit:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-preliminary-term-unit:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-unit:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-source-data-term-unit:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-preliminary-term-unit:focus,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-final-term-unit:focus {
+    outline: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-source-data-term-shell.readonly-field .proposal-stage-source-data-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-number-shell.readonly-field .proposal-stage-delay-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-preliminary-term-shell.readonly-field .proposal-stage-preliminary-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-shell.readonly-field .proposal-stage-final-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-term-shell.readonly-field .registration-term-unit {
+    pointer-events: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-shell.readonly-field .registration-contract-group-term-unit {
+    pointer-events: auto;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section span.proposal-stage-delay-unit {
+    position: absolute;
+    top: 50%;
+    right: .9rem;
+    transform: translateY(-50%);
+    color: #6c757d;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 2;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.8rem;
+    height: 1.75rem;
+    padding: 0;
+    line-height: 1;
+    font-size: 1.25rem;
+    color: #adb5bd;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-remove:hover,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-remove:focus {
+    color: #dc3545;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-delay-number-shell .proposal-stage-next-delay-days {
+    padding-right: .75rem;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section select.proposal-stage-delay-unit {
+    position: static;
+    top: auto;
+    right: auto;
+    transform: none;
+    pointer-events: auto;
+    z-index: auto;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section input[name="proposal_project_start_date"][data-project-start-locked="1"] {
+    background-color: var(--locked-field-bg) !important;
+    color: var(--locked-field-fg) !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: var(--locked-field-fg);
+    cursor: default;
+    pointer-events: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section input[name="proposal_project_start_date"][data-project-start-locked="1"]::-webkit-calendar-picker-indicator {
+    display: none;
+    -webkit-appearance: none;
+  }
+</style>
