@@ -3328,7 +3328,7 @@ class ContractsCloudLabelTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertEqual(content.count("proposal-stage-terms-row"), 2)
+        self.assertEqual(content.count('class="proposal-stage-terms-row"'), 2)
         self.assertEqual(content.count("proposal-stage-evaluation-row"), 2)
         self.assertContains(response, 'value="3.0"', html=False)
         self.assertContains(response, 'value="Этап 1"', html=False)
