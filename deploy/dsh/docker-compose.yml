@@ -31,8 +31,11 @@ services:
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
       DASHSCOPE_WS_API_KEY: ${DASHSCOPE_WS_API_KEY:-}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
-      SGLANG_BASE_URL: ${SGLANG_BASE_URL:-http://host.docker.internal:30000/v1}
+      SGLANG_BASE_URL: ${SGLANG_BASE_URL:-http://sglang:30000/v1}
       SGLANG_API_KEY: ${SGLANG_API_KEY:-}
+    networks:
+      - default
+      - sglang
     volumes:
       # Persistent harness state. Copy this directory when moving servers.
       - "${ROOT:-./data}/home:/home/node/.dsh"
@@ -41,3 +44,10 @@ services:
       - "${ROOT:-./data}/skills:/home/node/.dsh/skills"
     working_dir: /workspace
     pids_limit: 256
+
+networks:
+  # Internal link to the SGLang container. DSH reaches it as http://sglang:30000/v1.
+  # The host publish stays on 127.0.0.1 and is not the path used by this container.
+  sglang:
+    name: dsh-sglang
+    internal: true

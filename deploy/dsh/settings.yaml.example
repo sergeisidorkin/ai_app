@@ -450,7 +450,7 @@ llm-pi-ai:
       displayName: SGLang
       apiKeyEnv: SGLANG_API_KEY
       api: openai-completions
-      baseURL: http://host.docker.internal:30000/v1
+      baseURL: http://sglang:30000/v1
       compat:
         supportsDeveloperRole: false
         maxTokensField: max_tokens

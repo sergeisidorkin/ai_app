@@ -13,6 +13,7 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/sglang
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStartPre=/bin/sh -c '/usr/bin/docker network inspect dsh-sglang >/dev/null 2>&1 || { echo "dsh-sglang network is missing; start the DSH stack first" >&2; exit 1; }'
 ExecStart=/usr/bin/docker compose --env-file /opt/sglang/sglang.env up -d
 ExecStartPost=/opt/sglang/sglang-healthcheck.sh
 ExecStop=/usr/bin/docker compose --env-file /opt/sglang/sglang.env stop

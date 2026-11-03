@@ -10,8 +10,12 @@ services:
         max-file: "3"
     shm_size: 16gb
     gpus: all
+    # Loopback is only for the host healthcheck. DSH uses the dsh-sglang network.
     ports:
       - "127.0.0.1:${SGLANG_PORT:-30000}:30000"
+    networks:
+      - default
+      - sglang
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
@@ -25,3 +29,8 @@ services:
       - ${SGLANG_CACHE:-/opt/sglang/cache}:/cache
       - ${SGLANG_ROOT:-/opt/sglang}/start-server.sh:/opt/start-server.sh:ro
     entrypoint: ["/opt/start-server.sh"]
+
+networks:
+  sglang:
+    name: dsh-sglang
+    external: true

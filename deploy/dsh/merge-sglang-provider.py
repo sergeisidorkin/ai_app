@@ -51,39 +51,69 @@ def _spaces(line: str) -> int:
     return len(line) - len(line.lstrip(" "))
 
 
+def _mapping_end(lines: list[str], start: int, parent_indent: int) -> int:
+    """First line at or above ``parent_indent`` that closes the mapping."""
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if _spaces(line) <= parent_indent:
+            return index
+    return len(lines)
+
+
+def _providers_span(lines: list[str]) -> tuple[int, int, int] | None:
+    """Return providers line, its indent, and the line where that mapping ends."""
+    llm_at = next(
+        (index for index, line in enumerate(lines) if re.match(r"^\s*llm-pi-ai:\s*$", line)),
+        None,
+    )
+    if llm_at is None:
+        return None
+    llm_indent = _spaces(lines[llm_at])
+    llm_end = _mapping_end(lines, llm_at, llm_indent)
+    providers_at = None
+    for index in range(llm_at + 1, llm_end):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if _spaces(line) <= llm_indent:
+            break
+        if re.match(r"^\s*providers:\s*$", line):
+            providers_at = index
+            break
+    if providers_at is None:
+        return None
+    providers_indent = _spaces(lines[providers_at])
+    providers_end = _mapping_end(lines, providers_at, providers_indent)
+    return providers_at, providers_indent, providers_end
+
+
 def upsert_sglang_provider(text: str, base_url: str) -> str:
     lines = text.splitlines()
-    default_at = next(
-        (index for index, line in enumerate(lines) if line.startswith("agent-default-model:")),
-        None,
-    )
-    search_until = default_at if default_at is not None else len(lines)
-    providers_at = next(
-        (
-            index
-            for index, line in enumerate(lines[:search_until])
-            if re.match(r"^\s*providers:\s*$", line)
-        ),
-        None,
-    )
-    provider_indent = 4
-    if providers_at is not None:
-        base_indent = _spaces(lines[providers_at])
-        for line in lines[providers_at + 1 : search_until]:
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            spaces = _spaces(line)
-            if spaces > base_indent and PROVIDER_KEY.match(line.strip()):
-                provider_indent = spaces
-                break
+    span = _providers_span(lines)
+    if span is None:
+        return text
+    providers_at, providers_indent, providers_end = span
+    provider_indent = providers_indent + 2
+    for line in lines[providers_at + 1 : providers_end]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        spaces = _spaces(line)
+        if spaces > providers_indent and PROVIDER_KEY.match(line.strip()):
+            provider_indent = spaces
+            break
     indent = " " * provider_indent
     key_re = re.compile("^" + re.escape(indent) + r"sglang:\s*$")
-    start = next((index for index, line in enumerate(lines) if key_re.match(line)), None)
+    start = next(
+        (index for index in range(providers_at + 1, providers_end) if key_re.match(lines[index])),
+        None,
+    )
     block_lines = provider_block(indent, base_url).splitlines()
 
     if start is not None:
-        end = default_at if default_at is not None and default_at > start else len(lines)
-        for index in range(start + 1, end):
+        end = providers_end
+        for index in range(start + 1, providers_end):
             line = lines[index]
             if not line.strip() or line.lstrip().startswith("#"):
                 continue
@@ -96,11 +126,10 @@ def upsert_sglang_provider(text: str, base_url: str) -> str:
                 break
         updated = lines[:start] + block_lines + lines[end:]
     else:
-        insert_at = default_at if default_at is not None else len(lines)
-        prefix = lines[:insert_at]
+        prefix = lines[:providers_end]
         if prefix and prefix[-1].strip():
             prefix = prefix + [""]
-        updated = prefix + block_lines + lines[insert_at:]
+        updated = prefix + block_lines + lines[providers_end:]
 
     rendered = "\n".join(updated)
     if not rendered.endswith("\n"):

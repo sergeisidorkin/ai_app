@@ -63,10 +63,12 @@ copy these `deploy/` files the first time.
 ## Hardware
 
 This production host has an RTX 5090. The local Qwen3.8-27B route is SGLang,
-prepared under `/opt/sglang` and reached from DSH at
-`http://host.docker.internal:30000/v1`. The checkpoint, quantization, KV
-cache, and context length are chosen later, together with the weight
-download. Until that step the server stays stopped.
+prepared under `/opt/sglang`. DSH reaches it on the internal Docker network
+`dsh-sglang` at `http://sglang:30000/v1`. The host port `127.0.0.1:30000` is
+only for the host healthcheck; it is not published on a public interface, and
+`host.docker.internal` does not reach that loopback bind. The checkpoint,
+quantization, KV cache, and context length are chosen later, together with
+the weight download. Until that step the server stays stopped.
 
 DSH itself still only needs RAM for Node and outbound HTTPS to the hosted
 APIs. Qwen3.5-9B Q4 on Ollama belongs on another GPU host, or on a laptop
@@ -74,9 +76,10 @@ with native Ollama.
 
 ## Current Production: DSH Plus Official API
 
-Skip `deploy/ollama` and `docker network create imc-ai`. The DSH container uses
-the default Docker network so it can reach `api.deepseek.com` (or another
-provider).
+Skip `deploy/ollama` and `docker network create imc-ai`. The DSH container
+keeps the default Docker network so it can reach `api.deepseek.com` (or
+another provider). Compose also creates the internal network `dsh-sglang`
+for the local SGLang container.
 
 ```bash
 REPO=~/ai_appdir/ai_app
@@ -110,11 +113,14 @@ blocks it, the UI will start and model calls will fail.
 
 ## Local Qwen3.8-27B Through SGLang
 
-`deploy/sglang` is the local model path on this host. Compose publishes
-`127.0.0.1:30000` only. DSH already has `host.docker.internal` and uses
-provider `sglang`, model id `qwen3.8-27b-local`, label
-`Qwen3.8-27B (локально)`. That id is separate from the hosted Alibaba
-`qwen3.8-27b`. `agent-default-model` is left unchanged.
+`deploy/sglang` is the local model path on this host. Its compose file joins
+the internal network `dsh-sglang` created by the DSH stack, and DSH calls
+`http://sglang:30000/v1`. Compose also publishes `127.0.0.1:30000` for the
+host healthcheck. That bind is not reachable through `host.docker.internal`,
+and it is not placed on `0.0.0.0`. The menu provider is `sglang`, model id
+`qwen3.8-27b-local`, label `Qwen3.8-27B (локально)`. That id is separate
+from the hosted Alibaba `qwen3.8-27b`. `agent-default-model` is left
+unchanged.
 
 `deploy.yml` copies the compose file, `start-server.sh`, the healthcheck,
 and `sglang-compose.service` into place. It does not run `docker compose up`,
