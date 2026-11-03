@@ -454,7 +454,7 @@ llm-pi-ai:
       compat:
         supportsDeveloperRole: false
         maxTokensField: max_tokens
-        thinkingFormat: qwen
+        thinkingFormat: qwen-chat-template
       models:
       - id: qwen3.8-27b-local
         name: Qwen3.8-27B (локально)

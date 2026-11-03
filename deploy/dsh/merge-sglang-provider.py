@@ -29,7 +29,7 @@ def provider_block(indent: str, base_url: str) -> str:
         f"{p2}compat:",
         f"{p4}supportsDeveloperRole: false",
         f"{p4}maxTokensField: max_tokens",
-        f"{p4}thinkingFormat: qwen",
+        f"{p4}thinkingFormat: qwen-chat-template",
         f"{p2}models:",
         f"{p2}- id: {MODEL_ID}",
         f"{p4}name: Qwen3.8-27B (локально)",
