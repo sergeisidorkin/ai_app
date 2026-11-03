@@ -13376,7 +13376,7 @@ body.proposal-service-text-modal-open {
 }
 
 #report-submission-section .performers-table col.col-number {
-  width: 148px !important;
+  width: 116px !important;
 }
 
 #report-submission-section .performers-table col:not(.col-checkbox):not(.col-number) {
@@ -13399,11 +13399,11 @@ body.proposal-service-text-modal-open {
 
 #report-submission-section .performers-table thead th:nth-child(2),
 #report-submission-section .performers-table tbody td:nth-child(2) {
-  width: 148px !important;
-  min-width: 148px !important;
-  max-width: none !important;
+  width: 116px !important;
+  min-width: 116px !important;
+  max-width: 116px !important;
   white-space: nowrap !important;
-  overflow: visible !important;
+  overflow: hidden !important;
   text-overflow: clip !important;
 }
 
