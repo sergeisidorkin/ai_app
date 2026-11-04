@@ -14,7 +14,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.urls import reverse
 
+from classifiers_app.name_history_csv import NAME_HISTORY_CSV_FIELDS
 from classifiers_app.numcap_official_csv import region_from_gar_territory, resolve_numcap_region
+from projects_app.models import ProjectRegistration
 from classifiers_app.models import (
     BusinessEntityAttributeRecord,
     BusinessEntityIdentifierRecord,
@@ -2295,3 +2297,358 @@ class BusinessEntityReorganizationMigrationTests(TransactionTestCase):
         self.assertEqual(relation.event.relation_type, "Слияние")
         self.assertEqual(relation.event.event_date, date(2025, 2, 15))
         self.assertEqual(relation.event.comment, "Историческая строка")
+
+
+class NameHistoryCsvTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="name-history-user",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        RussianFederationSubjectCode.objects.create(
+            subject_name="Кемеровская область — Кузбасс",
+            fns_code="42",
+            position=1,
+        )
+        self.position = 0
+
+    def _next_position(self):
+        self.position += 1
+        return self.position
+
+    def _as_date(self, value):
+        if value in (None, "") or isinstance(value, date):
+            return value or None
+        return date.fromisoformat(value)
+
+    def _make_company(self, *, name, number, short_name, received, changed=None, valid_to=None, identifier_type="ОГРН"):
+        received = self._as_date(received)
+        changed = self._as_date(changed)
+        valid_to = self._as_date(valid_to)
+        entity = BusinessEntityRecord.objects.create(name=name, position=self._next_position())
+        identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=entity,
+            identifier_type=identifier_type,
+            registration_country=self.country,
+            number=number,
+            registration_date=received,
+            valid_from=received,
+            valid_to=valid_to,
+            position=self._next_position(),
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=identifier,
+            registration_country=self.country,
+            identifier=identifier_type,
+            registration_number=number,
+            registration_date=received,
+            short_name=short_name,
+            full_name=short_name,
+            name_received_date=received,
+            name_changed_date=changed,
+            position=self._next_position(),
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+            identifier_record=identifier,
+            registration_country=self.country,
+            valid_from=received,
+            position=self._next_position(),
+        )
+        return entity, identifier
+
+    def _history_file(self, rows):
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=NAME_HISTORY_CSV_FIELDS, delimiter=";", lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            payload = {field: "" for field in NAME_HISTORY_CSV_FIELDS}
+            payload.update(row)
+            writer.writerow(payload)
+        return SimpleUploadedFile(
+            "name-history.csv",
+            ("\ufeff" + buffer.getvalue()).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+    def _row(self, *, entity, identifier, short_name, received, changed="", number=None, entity_name="", registration="", valid_from="", valid_to=""):
+        name = identifier.legal_entity_records.get(attribute=LegalEntityRecord.ATTRIBUTE_NAME, short_name=short_name)
+        registration = registration or received
+        return {
+            "ID-BSN": f"{entity.pk:05d}-BSN",
+            "Наименование бизнес-сущности": entity_name,
+            "ID-IDN": f"{identifier.pk:05d}-IDN",
+            "ID-ATR": f"{name.pk:05d}-ATR",
+            "Идентификатор": "ОГРН",
+            "Регистрационный номер": number if number is not None else identifier.number,
+            "Код страны": "643",
+            "Страна": "Россия",
+            "Дата регистрации": registration,
+            "Идентификатор действителен от": valid_from or registration,
+            "Идентификатор действителен до": valid_to,
+            "Наименование (краткое)": short_name,
+            "Наименование (полное)": short_name,
+            "Дата получения наименования": received,
+            "Дата смены наименования": changed,
+        }
+
+    def test_same_number_merges_and_second_upload_does_not_duplicate(self):
+        number = "1194205016609"
+        older, older_identifier = self._make_company(
+            name='ООО «УК «Элси Мыски»',
+            number=number,
+            short_name='ООО «УК «Элси Мыски»',
+            received="2019-08-05",
+            changed=date(2023, 12, 26),
+        )
+        newer, newer_identifier = self._make_company(
+            name='ООО «УК «Разрез Кийзасский»',
+            number=number,
+            short_name='ООО «УК «Разрез Кийзасский»',
+            received="2024-05-16",
+        )
+        bystander, _bystander_identifier = self._make_company(
+            name="Посторонний",
+            number="1025404670390",
+            short_name="ОАО «Сибантрацит»",
+            received="2002-12-16",
+        )
+
+        upload = self._history_file(
+            [
+                self._row(
+                    entity=older,
+                    identifier=older_identifier,
+                    short_name='ООО «УК «Элси Мыски»',
+                    received="2019-08-05",
+                    changed="2023-12-26",
+                    entity_name="Разрез Кийзасский",
+                ),
+                self._row(
+                    entity=newer,
+                    identifier=newer_identifier,
+                    short_name='ООО «УК «Разрез Кийзасский»',
+                    received="2024-05-16",
+                    registration="2019-08-05",
+                    entity_name="Разрез Кийзасский",
+                ),
+            ]
+        )
+        response = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()["ok"])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 2)
+        self.assertTrue(BusinessEntityRecord.objects.filter(pk=bystander.pk, name="Посторонний").exists())
+        kept = BusinessEntityRecord.objects.get(pk=older.pk)
+        self.assertEqual(kept.name, "Разрез Кийзасский")
+        self.assertEqual(kept.identifiers.count(), 1)
+        identifier = kept.identifiers.get()
+        self.assertEqual(identifier.number, number)
+        self.assertEqual(identifier.registration_region, "Кемеровская область — Кузбасс")
+        self.assertEqual(
+            set(identifier.legal_entity_records.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).values_list("short_name", flat=True)),
+            {'ООО «УК «Элси Мыски»', 'ООО «УК «Разрез Кийзасский»'},
+        )
+        self.assertFalse(BusinessEntityIdentifierRecord.objects.filter(pk=newer_identifier.pk).exists())
+
+        downloaded = self.client.get(reverse("ler_history_csv_download"))
+        self.assertEqual(downloaded.status_code, 200)
+        rows = list(csv.DictReader(io.StringIO(downloaded.content.decode("utf-8-sig")), delimiter=";"))
+        chain = [row for row in rows if row["Регистрационный номер"] == number]
+        self.assertEqual(len(chain), 2)
+        self.assertEqual({row["ID-BSN"] for row in chain}, {f"{older.pk:05d}-BSN"})
+
+        again = SimpleUploadedFile("name-history.csv", downloaded.content, content_type="text/csv")
+        repeat = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": again})
+        self.assertEqual(repeat.status_code, 200, repeat.content)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 2)
+        self.assertEqual(LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).count(), 3)
+        self.assertEqual(BusinessEntityRecord.objects.get(pk=older.pk).name, "Разрез Кийзасский")
+
+    def test_different_registration_number_stays_separate(self):
+        first, first_identifier = self._make_company(
+            name="Первый",
+            number="1025404670620",
+            short_name="АО «Сибантрацит»",
+            received="2001-10-30",
+            changed=date(2022, 10, 17),
+        )
+        second, second_identifier = self._make_company(
+            name="Второй",
+            number="1114214001857",
+            short_name="ООО «Разрез Кийзасский»",
+            received="2011-11-24",
+        )
+        upload = self._history_file(
+            [
+                self._row(entity=first, identifier=first_identifier, short_name="АО «Сибантрацит»", received="2001-10-30", changed="2022-10-17"),
+                self._row(entity=second, identifier=second_identifier, short_name="ООО «Разрез Кийзасский»", received="2011-11-24"),
+            ]
+        )
+        response = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 2)
+        self.assertEqual(first.identifiers.get().number, "1025404670620")
+        self.assertEqual(second.identifiers.get().number, "1114214001857")
+
+    def test_shared_business_entity_keeps_successive_identifiers(self):
+        entity, identifier = self._make_company(
+            name="Продолжение",
+            number="1025404670390",
+            short_name="ОАО «Сибантрацит»",
+            received="2002-12-16",
+            valid_to=date(2019, 12, 31),
+            changed=date(2019, 12, 31),
+        )
+        upload = self._history_file(
+            [
+                self._row(
+                    entity=entity,
+                    identifier=identifier,
+                    short_name="ОАО «Сибантрацит»",
+                    received="2002-12-16",
+                    changed="2019-12-31",
+                    valid_to="2019-12-31",
+                    entity_name="Продолжение",
+                ),
+                {
+                    "ID-BSN": f"{entity.pk:05d}-BSN",
+                    "Наименование бизнес-сущности": "Продолжение",
+                    "Идентификатор": "ОГРН",
+                    "Регистрационный номер": "1194205016609",
+                    "Код страны": "643",
+                    "Страна": "Россия",
+                    "Дата регистрации": "2019-08-05",
+                    "Идентификатор действителен от": "2020-01-01",
+                    "Наименование (краткое)": "ООО «УК «Элси Мыски»",
+                    "Наименование (полное)": "ООО «УК «Элси Мыски»",
+                    "Дата получения наименования": "2020-01-01",
+                },
+            ]
+        )
+        response = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        self.assertEqual(entity.identifiers.count(), 2)
+        self.assertEqual(set(entity.identifiers.values_list("number", flat=True)), {"1025404670390", "1194205016609"})
+
+    def test_overlapping_open_identifiers_leave_registry_unchanged(self):
+        entity, identifier = self._make_company(
+            name="Открытый",
+            number="1025404670390",
+            short_name="ОАО «Сибантрацит»",
+            received="2002-12-16",
+        )
+        upload = self._history_file(
+            [
+                {
+                    "ID-BSN": f"{entity.pk:05d}-BSN",
+                    "Наименование бизнес-сущности": "Открытый",
+                    "Идентификатор": "ОГРН",
+                    "Регистрационный номер": "1194205016609",
+                    "Код страны": "643",
+                    "Страна": "Россия",
+                    "Дата регистрации": "2019-08-05",
+                    "Идентификатор действителен от": "2019-08-05",
+                    "Наименование (краткое)": "ООО «УК «Элси Мыски»",
+                    "Наименование (полное)": "ООО «УК «Элси Мыски»",
+                    "Дата получения наименования": "2019-08-05",
+                }
+            ]
+        )
+        response = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        self.assertEqual(entity.identifiers.count(), 1)
+        self.assertEqual(entity.identifiers.get().number, identifier.number)
+        self.assertEqual(LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).count(), 1)
+
+    def test_project_link_follows_kept_identifier(self):
+        number = "1020202279460"
+        older, older_identifier = self._make_company(
+            name="Учалинский ГОК",
+            number=number,
+            short_name="ОАО «Учалинский ГОК»",
+            received="1997-02-28",
+            changed=date(2015, 12, 1),
+        )
+        _newer, newer_identifier = self._make_company(
+            name="Учалинский ГОК новое",
+            number=number,
+            short_name="АО «Учалинский ГОК»",
+            received="2015-12-11",
+        )
+        project = ProjectRegistration.objects.create(
+            number=1,
+            name="Проект",
+            year=2026,
+            customer_identifier_record=newer_identifier,
+        )
+        upload = self._history_file(
+            [
+                self._row(
+                    entity=older,
+                    identifier=older_identifier,
+                    short_name="ОАО «Учалинский ГОК»",
+                    received="1997-02-28",
+                    changed="2015-12-01",
+                    entity_name="Учалинский ГОК",
+                ),
+                self._row(
+                    entity=_newer,
+                    identifier=newer_identifier,
+                    short_name="АО «Учалинский ГОК»",
+                    received="2015-12-11",
+                    registration="1997-02-28",
+                    entity_name="Учалинский ГОК",
+                ),
+            ]
+        )
+        response = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        project.refresh_from_db()
+        self.assertEqual(project.customer_identifier_record_id, older_identifier.pk)
+        self.assertEqual(BusinessEntityIdentifierRecord.objects.filter(number=number).count(), 1)
+
+    def test_simple_upload_attaches_name_to_existing_number(self):
+        entity, _identifier = self._make_company(
+            name="Амуруголь",
+            number="1022800000123",
+            short_name="АО «Амуруголь»",
+            received="2002-01-15",
+            changed=date(2020, 1, 16),
+        )
+        content = (
+            "Наименование (краткое);Наименование (полное);Страна регистрации;Идент.;Регистр. номер;"
+            "Дата регистрации;Дата записи;Автор записи;Дата получения наименования;Дата смены наименования\n"
+            "АО «Амуруголь новое»;Акционерное общество «Амуруголь»;Россия;ОГРН;1022800000123;"
+            "15.01.2002;;;16.01.2020;\n"
+        )
+        upload = SimpleUploadedFile("names.csv", ("\ufeff" + content).encode("utf-8"), content_type="text/csv")
+        response = self.client.post(reverse("ler_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["created"], 1)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        self.assertEqual(entity.identifiers.count(), 1)
+        self.assertEqual(LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).count(), 2)
+        entity.refresh_from_db()
+        self.assertEqual(entity.name, "Амуруголь")

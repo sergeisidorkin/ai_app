@@ -134,4 +134,6 @@ urlpatterns = [
     path("ler/<int:pk>/move-up/", views.ler_move_up, name="ler_move_up"),
     path("ler/<int:pk>/move-down/", views.ler_move_down, name="ler_move_down"),
     path("ler/csv-upload/", views.ler_csv_upload, name="ler_csv_upload"),
+    path("ler/history-csv-download/", views.ler_history_csv_download, name="ler_history_csv_download"),
+    path("ler/history-csv-upload/", views.ler_history_csv_upload, name="ler_history_csv_upload"),
 ]

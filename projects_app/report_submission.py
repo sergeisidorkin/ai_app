@@ -977,7 +977,7 @@ def apply_appeal_correction(upload, counts, *, force_settled=False) -> None:
 
 
 def start_ai_appeal(*, user, upload):
-    """«Остались ошибочные замечания»: открыть первый ручной шаг, «В работе после ИИ» остаётся."""
+    """«Остались только ошибочные замечания»: открыть первый ручной шаг, «В работе после ИИ» остаётся."""
     from .models import ReportReviewEntry
     from .report_review import REVIEW_PHASE_REVIEW, latest_open_entry, manual_steps, review_chain_for_upload
 
