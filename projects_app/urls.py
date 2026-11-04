@@ -52,6 +52,7 @@ urlpatterns = [
     path("projects/reports/review-upload/", views.report_review_file_upload, name="report_review_file_upload"),
     path("projects/reports/remarks-send/", views.report_remarks_send, name="report_remarks_send"),
     path("projects/reports/remarks-discard/", views.report_remarks_discard, name="report_remarks_discard"),
+    path("projects/reports/ai-appeal/", views.report_ai_appeal, name="report_ai_appeal"),
     path("projects/reports/send/", views.report_file_send, name="report_file_send"),
     path("projects/reports/<int:pk>/check-status/", views.report_check_status, name="report_check_status"),
     path("projects/reports/<int:pk>/check-resume/", views.report_check_resume, name="report_check_resume"),

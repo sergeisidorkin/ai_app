@@ -1684,14 +1684,77 @@ def _render_contracts_development_updated(request):
     return resp
 
 
+def _stored_contract_link_id(form, registration, form_attr, model_attr):
+    if hasattr(form, form_attr):
+        return getattr(form, form_attr) or ""
+    if registration is not None:
+        return getattr(registration, model_attr, None) or ""
+    return ""
+
+
+def _remember_contract_party_links(registration, request):
+    from classifiers_app.models import BusinessEntityIdentifierRecord
+    from projects_app.views import _sync_selection_kwargs, _sync_to_legal_entity_record
+
+    customer_identifier = _sync_to_legal_entity_record(
+        registration.customer,
+        registration.country,
+        registration.identifier,
+        registration.registration_number,
+        registration.registration_date,
+        request.user,
+        business_entity_source="[Договоры / Проекты договоров / Заказчик]",
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
+    )
+    if registration.asset_owner_matches_customer:
+        owner_identifier = customer_identifier
+    else:
+        owner_kwargs = _sync_selection_kwargs(request, "asset_owner_autocomplete")
+        owner_identifier = None
+        raw_id = str(owner_kwargs.get("selected_identifier_record_id") or "").strip()
+        if owner_kwargs.get("selected_from_autocomplete") and raw_id.isdigit():
+            owner_identifier = BusinessEntityIdentifierRecord.objects.filter(pk=int(raw_id)).first()
+    registration.customer_identifier_record = customer_identifier
+    registration.asset_owner_identifier_record = owner_identifier
+    registration.save(update_fields=["customer_identifier_record", "asset_owner_identifier_record"])
+
+
 def _render_contracts_project_registration_form(request, form, *, action, registration=None):
     from projects_app.views import _registration_form_context
-    from proposals_app.views import _proposal_product_autofill_data
+    from proposals_app.views import _autocomplete_link_state, _proposal_product_autofill_data
 
     context = _registration_form_context(form, action, registration)
     context.update(_proposal_product_autofill_data(
         group_member=getattr(registration, "group_member", None),
     ))
+    customer_identifier_record_id, customer_identifier_selected = _autocomplete_link_state(
+        form,
+        "customer_autocomplete",
+        _stored_contract_link_id(
+            form,
+            registration,
+            "linked_customer_identifier_record_id",
+            "customer_identifier_record_id",
+        ),
+    )
+    asset_owner_identifier_record_id, asset_owner_identifier_selected = _autocomplete_link_state(
+        form,
+        "asset_owner_autocomplete",
+        _stored_contract_link_id(
+            form,
+            registration,
+            "linked_asset_owner_identifier_record_id",
+            "asset_owner_identifier_record_id",
+        ),
+    )
+    context.update(
+        {
+            "customer_identifier_record_id": customer_identifier_record_id,
+            "customer_identifier_selected": customer_identifier_selected,
+            "asset_owner_identifier_record_id": asset_owner_identifier_record_id,
+            "asset_owner_identifier_selected": asset_owner_identifier_selected,
+        }
+    )
     prefill_ranked_products = getattr(form, "prefill_ranked_products", None)
     if prefill_ranked_products is not None:
         context["ranked_products"] = prefill_ranked_products
@@ -1880,11 +1943,7 @@ def contracts_project_registration_create(request):
     if not form.is_valid():
         return _render_contracts_project_registration_form(request, form, action="create")
 
-    from projects_app.views import (
-        _next_position,
-        _sync_selection_kwargs,
-        _sync_to_legal_entity_record,
-    )
+    from projects_app.views import _next_position
 
     obj = form.save(commit=False)
     if not getattr(obj, "position", 0):
@@ -1895,16 +1954,7 @@ def contracts_project_registration_create(request):
         getattr(form, "cleaned_type_ids", []),
         getattr(form, "cleaned_row_group_ids", []),
     )
-    _sync_to_legal_entity_record(
-        obj.customer,
-        obj.country,
-        obj.identifier,
-        obj.registration_number,
-        obj.registration_date,
-        request.user,
-        business_entity_source="[Договоры / Проекты договоров / Заказчик]",
-        **_sync_selection_kwargs(request, "customer_autocomplete"),
-    )
+    _remember_contract_party_links(obj, request)
     return _render_contracts_development_updated(request)
 
 
@@ -1927,27 +1977,13 @@ def contracts_project_registration_edit(request, pk):
             request, form, action="edit", registration=registration,
         )
 
-    from projects_app.views import (
-        _sync_selection_kwargs,
-        _sync_to_legal_entity_record,
-    )
-
     obj = form.save()
     _save_ranked_contract_project_products(
         obj,
         getattr(form, "cleaned_type_ids", []),
         getattr(form, "cleaned_row_group_ids", []),
     )
-    _sync_to_legal_entity_record(
-        obj.customer,
-        obj.country,
-        obj.identifier,
-        obj.registration_number,
-        obj.registration_date,
-        request.user,
-        business_entity_source="[Договоры / Проекты договоров / Заказчик]",
-        **_sync_selection_kwargs(request, "customer_autocomplete"),
-    )
+    _remember_contract_party_links(obj, request)
     return _render_contracts_development_updated(request)
 
 

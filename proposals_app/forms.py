@@ -894,6 +894,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         "identifier": asset.identifier or "",
                         "registration_number": asset.registration_number or "",
                         "registration_date": asset.registration_date.strftime("%d.%m.%Y") if asset.registration_date else "",
+                        "selected_identifier_record_id": str(asset.identifier_record_id or ""),
+                        "selected_from_autocomplete": bool(asset.identifier_record_id),
                     }
                     for asset in self.instance.assets.select_related("country").all()
                 ],
@@ -929,6 +931,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                             if legal_entity.registration_date
                             else ""
                         ),
+                        "selected_identifier_record_id": str(legal_entity.identifier_record_id or ""),
+                        "selected_from_autocomplete": bool(legal_entity.identifier_record_id),
                     }
                     for legal_entity in self.instance.legal_entities.select_related("country").all()
                 ],
@@ -3440,6 +3444,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     identifier=item["identifier"],
                     registration_number=item["registration_number"],
                     registration_date=item["registration_date"],
+                    identifier_record=item.get("identifier_record"),
                 )
                 for item in assets
             ]
@@ -3462,6 +3467,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     identifier=item["identifier"],
                     registration_number=item["registration_number"],
                     registration_date=item["registration_date"],
+                    identifier_record=item.get("identifier_record"),
                 )
                 for item in legal_entities
             ]

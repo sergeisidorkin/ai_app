@@ -156,7 +156,7 @@
         </td>
         <td class="text-truncate">{{ p.registration.name }}</td>
         <td class="text-nowrap">{{ p.asset_name }}</td>
-        <td class="text-nowrap js-section-code">{{ p.section_code }}</td>
+        <td class="text-nowrap js-section-code"><span class="clf-id-droid-mono">{{ p.section_code }}</span></td>
         <td class="text-center p-0">
           {% if request.user.is_authenticated and request.user.is_staff %}
             {% if p.executor_locked %}

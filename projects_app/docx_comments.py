@@ -76,14 +76,14 @@ def extract_notes(docx_bytes: bytes) -> list[dict]:
         return []
     parts = _read_zip(docx_bytes)
     notes = []
-    notes.extend(_notes_from_part(parts.get(FOOTNOTES_XML), "footnote"))
-    notes.extend(_notes_from_part(parts.get(ENDNOTES_XML), "endnote"))
+    super_ids = _superscript_style_ids(parts.get(STYLES_XML))
+    notes.extend(_notes_from_part(parts.get(FOOTNOTES_XML), "footnote", super_ids))
+    notes.extend(_notes_from_part(parts.get(ENDNOTES_XML), "endnote", super_ids))
     try:
         root = etree.fromstring(parts[DOCUMENT_XML]) if DOCUMENT_XML in parts else None
     except etree.XMLSyntaxError:
         root = None
     if root is not None:
-        super_ids = _superscript_style_ids(parts.get(STYLES_XML))
         around = _note_ref_around(root, super_ids)
         for note in notes:
             prev_ch, next_ch, prev2_ch, prev_super, next_super = around.get(
@@ -153,6 +153,35 @@ def extract_paragraphs(docx_bytes: bytes) -> list[dict]:
             "has_numpr": has_numpr,
         })
     return paragraphs
+
+
+def extract_superscript_offsets(docx_bytes: bytes) -> frozenset[int]:
+    """Offsets of superscript «<» and «>» in the same coordinates as extract_document_text()."""
+    if not docx_bytes or not docx_bytes.startswith(b"PK"):
+        return frozenset()
+    parts = _read_zip(docx_bytes)
+    xml = parts.get(DOCUMENT_XML)
+    if not xml:
+        return frozenset()
+    try:
+        root = etree.fromstring(xml)
+    except etree.XMLSyntaxError:
+        return frozenset()
+    body = root.find(w("body"))
+    if body is None:
+        return frozenset()
+    super_ids = _superscript_style_ids(parts.get(STYLES_XML))
+    offsets: set[int] = set()
+    offset = 0
+    for paragraph in body.iter(w("p")):
+        for node, value in _iter_paragraph_plain(paragraph):
+            if node is not None and _run_is_superscript(node, super_ids):
+                for index, ch in enumerate(value):
+                    if ch in "<>":
+                        offsets.add(offset + index)
+            offset += len(value)
+        offset += 1
+    return frozenset(offsets)
 
 
 def extract_char_runs(docx_bytes: bytes) -> list[dict]:
@@ -850,6 +879,54 @@ def count_comments_by_author(docx_bytes: bytes) -> dict[str, int]:
     return counts
 
 
+W14_NS = "http://schemas.microsoft.com/office/word/2010/wordml"
+W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"
+COMMENTS_EXTENDED_XML = "word/commentsExtended.xml"
+
+
+def _comment_thread_marks(xml: bytes | None) -> tuple[set[str], set[str]]:
+    """paraId ответов и paraId закрытых цепочек из commentsExtended.xml."""
+    if not xml:
+        return set(), set()
+    try:
+        root = etree.fromstring(xml)
+    except etree.XMLSyntaxError:
+        return set(), set()
+    replies = set()
+    done = set()
+    for item in root.iter(f"{{{W15_NS}}}commentEx"):
+        para_id = (item.get(f"{{{W15_NS}}}paraId") or "").upper()
+        if not para_id:
+            continue
+        if item.get(f"{{{W15_NS}}}paraIdParent"):
+            replies.add(para_id)
+        elif (item.get(f"{{{W15_NS}}}done") or "") in {"1", "true"}:
+            done.add(para_id)
+    return replies, done
+
+
+def count_open_comment_threads_by_author(docx_bytes: bytes) -> dict[str, int]:
+    """Открытые цепочки Word по автору первого комментария: ответы и закрытые цепочки не считаются."""
+    parts = _read_zip(docx_bytes)
+    xml = parts.get(COMMENTS_XML)
+    if not xml:
+        return {}
+    try:
+        root = etree.fromstring(xml)
+    except etree.XMLSyntaxError as exc:
+        raise DocxCommentError("Некорректный word/comments.xml.") from exc
+    replies, done = _comment_thread_marks(parts.get(COMMENTS_EXTENDED_XML))
+    counts: dict[str, int] = {}
+    for comment in root.findall(w("comment")):
+        paragraphs = comment.findall(w("p"))
+        para_id = (paragraphs[-1].get(f"{{{W14_NS}}}paraId") or "").upper() if paragraphs else ""
+        if para_id and (para_id in replies or para_id in done):
+            continue
+        author = (comment.get(w("author")) or "").strip() or "Проверка"
+        counts[author] = counts.get(author, 0) + 1
+    return counts
+
+
 def strip_comments(docx_bytes: bytes) -> bytes:
     """Remove Word comments and comment markers from a DOCX package."""
     if not docx_bytes or not docx_bytes.startswith(b"PK"):
@@ -1041,7 +1118,7 @@ def _walk_text(root: etree._Element) -> tuple[str, list[tuple[etree._Element | N
     return "".join(parts), spans
 
 
-def _notes_from_part(xml: bytes | None, kind: str) -> list[dict]:
+def _notes_from_part(xml: bytes | None, kind: str, super_ids: frozenset[str] | None = None) -> list[dict]:
     if not xml:
         return []
     try:
@@ -1057,19 +1134,28 @@ def _notes_from_part(xml: bytes | None, kind: str) -> list[dict]:
         if nid is None:
             continue
         chunks: list[str] = []
+        raised: set[int] = set()
+        pos = 0
         for paragraph in el.iter(w("p")):
             for node in paragraph.iter(w("t")):
                 if _is_deleted(node):
                     continue
                 value = node.text or ""
                 if value:
+                    if _run_is_superscript(node, super_ids):
+                        for index, ch in enumerate(value):
+                            if ch in "<>":
+                                raised.add(pos + index)
                     chunks.append(value)
+                    pos += len(value)
             chunks.append("\n")
+            pos += 1
         notes.append({
             "id": str(nid),
             "kind": kind,
             "text": "".join(chunks),
             "has_space_tab": _note_has_space_tab(el),
+            "superscript_offsets": frozenset(raised),
         })
     return notes
 

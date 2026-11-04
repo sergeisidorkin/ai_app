@@ -82,7 +82,7 @@
     {% elif row.upload and row.upload.file_name %}
       <span class="report-upload-icon-spacer" aria-hidden="true"></span>
     {% endif %}
-    {% if row.review_entry and row.review_entry.phase == "rework" %}
+    {% if row.review_entry and row.review_entry.phase == "rework" and not row.appeal_resolved %}
     {% elif row.review_entry and row.review_entry.basis_entry and row.review_entry.basis_entry.review_file_name %}
       <a href="{% url 'report_review_entry_download' row.review_entry.basis_entry.pk %}"
          class="report-file-name-link"
@@ -147,9 +147,19 @@
       <span class="report-review-action-rule" aria-hidden="true"></span>
       <button type="button"
               class="report-review-accept-action js-report-review-accept"
-              data-upload-id="{{ row.upload.pk }}">
+              data-upload-id="{{ row.upload.pk }}"
+              {% if row.ai_appeal_review %}title="Все замечания ИИ ошибочны, своих замечаний нет: число замечаний ИИ станет 0"{% endif %}>
         <i class="bi bi-check2-square" aria-hidden="true"></i>
         <span class="report-review-action-text">Принять без замечаний</span>
+      </button>
+    {% endif %}
+    {% if row.can_appeal_ai %}
+      <button type="button"
+              class="report-review-accept-action js-report-ai-appeal"
+              data-upload-id="{{ row.upload.pk }}"
+              title="Передать отчёт следующему проверяющему: часть замечаний ИИ ошибочна">
+        <i class="bi bi-exclamation-circle" aria-hidden="true"></i>
+        <span class="report-review-action-text">Остались ошибочные замечания</span>
       </button>
     {% endif %}
     {% if not row.review_entry and row.upload and row.upload.review_file_name %}
@@ -209,7 +219,20 @@
       <span class="text-muted js-report-check-badge report-check-pending-text">Идет проверка...{% if row.check_progress_label %} {{ row.check_progress_label }}{% endif %}</span>
     {% elif not row.can_review_upload and not row.review_entry %}
       <span class="report-check-result-empty">—</span>
-    {% elif row.review_entry and not row.review_entry.review_file_name and not row.can_review_upload %}
+    {% elif row.appeal_accepted_report %}
+      <a href="{% url 'report_file_download' row.upload.pk %}"
+         class="ct-upload-link report-check-download-icon"
+         download
+         title="Скачать файл">
+        <i class="bi bi-download"></i>
+      </a>
+      <a href="{% url 'report_file_download' row.upload.pk %}"
+         class="report-file-name-link"
+         download
+         title="{{ row.upload.file_name }}">
+        <span class="report-file-name-text">{{ row.upload.file_name }}</span>
+      </a>
+    {% elif row.review_entry and not row.review_entry.review_file_name and not row.can_review_upload and not row.can_appeal_ai %}
       <span class="report-check-result-empty">—</span>
     {% endif %}
   {% endspaceless %}</span></td>

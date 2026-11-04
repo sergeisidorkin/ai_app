@@ -131,6 +131,7 @@ from projects_app.docx_comments import (
     extract_paragraphs,
     extract_ref_fields,
     extract_sections,
+    extract_superscript_offsets,
     extract_tab_offsets,
     extract_table_cells,
     insert_comments,
@@ -2918,6 +2919,7 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertEqual(party["registration_number"], "998877")
         self.assertEqual(party["registration_region"], "Москва")
         self.assertEqual(party["registration_date"], "2024-01-02")
+        self.assertEqual(party["customer_identifier_record_id"], "")
 
     def test_registration_group_edit_deletes_a_removed_member_on_save(self):
         first, second, other = self._create_registration_group()
@@ -5519,6 +5521,12 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
         project = ProjectRegistration.objects.get(number=4444, stage_project__isnull=False)
         self.assertEqual(newest_entity.source, "[Проекты / Заказчик]")
         self.assertEqual(newest_entity.record_author, "projects-registry-user")
+        self.assertEqual(project.customer_identifier_record.business_entity_id, newest_entity.pk)
+        self.assertIsNone(project.asset_owner_identifier_record_id)
+        self.assertEqual(
+            project.stage_project.customer_identifier_record_id,
+            project.customer_identifier_record_id,
+        )
         self.assertEqual(project.type_short_display, "DD")
         self.assertEqual(
             list(project.product_links.order_by("rank").values_list("product_id", flat=True)),
@@ -5596,6 +5604,125 @@ class ProjectRegistrationRegistrySyncTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        project = ProjectRegistration.objects.get(number=4444, stage_project__isnull=False)
+        self.assertEqual(project.customer_identifier_record_id, existing_identifier.pk)
+        self.assertEqual(project.stage_project.customer_identifier_record_id, existing_identifier.pk)
+        self.assertIsNone(project.asset_owner_identifier_record_id)
+
+    def test_resave_with_stored_identifier_does_not_create_another_entity(self):
+        created = self._post_registration()
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        project = ProjectRegistration.objects.get(number=4444, stage_project__isnull=False)
+        stored_id = project.customer_identifier_record_id
+        opened = self.client.get(reverse("registration_form_edit", args=[project.pk]))
+        self.assertEqual(opened.status_code, 200)
+        opened_html = opened.content.decode()
+        self.assertRegex(
+            opened_html,
+            rf'name="customer_autocomplete_identifier_record_id"[^>]*value="{stored_id}"',
+        )
+        self.assertRegex(
+            opened_html,
+            r'name="customer_autocomplete_selected_from_autocomplete"[^>]*value="1"',
+        )
+
+        response = self.client.post(
+            reverse("registration_form_edit", args=[project.pk]),
+            {
+                "number": 4444,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [self.product.pk],
+                "name": "Проект Альфа",
+                "status": "Не начат",
+                "deadline": "2026-01-10",
+                "year": 2026,
+                "customer": 'ООО "Синхронизация"',
+                "country": self.country.pk,
+                "identifier": "ОГРН",
+                "registration_number": "9999999999",
+                "registration_date": "2025-02-10",
+                "project_manager": "",
+                "customer_autocomplete_identifier_record_id": str(stored_id),
+                "customer_autocomplete_selected_from_autocomplete": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        project.refresh_from_db()
+        self.assertEqual(project.registration_number, "9999999999")
+        self.assertEqual(project.customer_identifier_record_id, stored_id)
+
+    def test_owner_matching_customer_reuses_selected_identifier(self):
+        existing_entity = BusinessEntityRecord.objects.create(name='ООО "Связать"', position=1)
+        existing_identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=existing_entity,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            registration_region="Москва",
+            registration_date=timezone.datetime(2025, 2, 10).date(),
+            number="1234567890",
+            valid_from=timezone.datetime(2025, 2, 10).date(),
+            position=1,
+        )
+
+        response = self._post_registration(
+            customer='ООО "Связать"',
+            asset_owner='ООО "Связать"',
+            asset_owner_matches_customer="on",
+            customer_autocomplete_identifier_record_id=str(existing_identifier.pk),
+            customer_autocomplete_selected_from_autocomplete="1",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        project = ProjectRegistration.objects.get(number=4444, stage_project__isnull=False)
+        self.assertEqual(project.customer_identifier_record_id, existing_identifier.pk)
+        self.assertEqual(project.asset_owner_identifier_record_id, existing_identifier.pk)
+        self.assertEqual(project.stage_project.asset_owner_identifier_record_id, existing_identifier.pk)
+
+    def test_contract_meta_carries_customer_identifier_for_refresh(self):
+        from projects_app.forms import _next_project_number
+
+        entity = BusinessEntityRecord.objects.create(name='ООО "Связать"', position=1)
+        identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=entity,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            number="1234567890",
+            valid_from=timezone.datetime(2025, 2, 10).date(),
+            position=1,
+        )
+        contract = ContractProjectRegistration.objects.create(
+            number=_next_project_number(),
+            sub_number=1,
+            group_member=self.group_member,
+            type=self.product,
+            name="Договор со ссылкой",
+            year=2026,
+            customer='ООО "Связать"',
+            country=self.country,
+            customer_identifier_record=identifier,
+        )
+
+        response = self.client.get(reverse("registration_form_create"))
+
+        meta = json.loads(response.context["registration_contract_meta_json"])
+        self.assertEqual(meta[str(contract.pk)]["customer_identifier_record_id"], str(identifier.pk))
+
+    def test_refresh_script_copies_identifier_before_customer_changed_event(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "projects_app"
+            / "templates"
+            / "projects_app"
+            / "registration_form.html"
+        ).read_text()
+        linked = source.index("party.customer_identifier_record_id || party.selected_identifier_record_id")
+        event = source.index('new CustomEvent("registration-customer-changed"', linked)
+        self.assertLess(linked, event)
 
     def test_registration_create_and_work_deps_use_ranked_joined_products(self):
         response = self._post_registration(type_id=[self.product.pk, self.second_product.pk])
@@ -10028,6 +10155,77 @@ class ReportSubmissionTests(TestCase):
         self.assertFalse(rows[1].is_full_report)
         self.assertEqual(rows[1].section_label, "MRK Маркетинг")
 
+    def test_report_table_shows_only_sections_and_materials_accounting_types(self):
+        first, _second = self._create_section_performers()
+        materials = self.product.sections.create(
+            code="MAT",
+            short_name="Materials",
+            short_name_ru="Материалы",
+            name_en="Materials",
+            name_ru="Материалы",
+            accounting_type="Материалы",
+            position=3,
+        )
+        management = self.product.sections.create(
+            code="PRD",
+            short_name="Project Director",
+            short_name_ru="Руководитель проекта",
+            name_en="Project Director",
+            name_ru="Руководитель проекта",
+            accounting_type="Управление",
+            position=4,
+        )
+        materials_row = Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name=self.asset_name,
+            typical_section=materials,
+        )
+        management_row = Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name=self.asset_name,
+            typical_section=management,
+        )
+
+        html = self.client.get(reverse("performers_partial")).content.decode()
+        self.assertIn(f'data-row-id="p-{first.pk}"', html)
+        self.assertIn(f'data-row-id="p-{materials_row.pk}"', html)
+        self.assertNotIn(f'data-row-id="p-{management_row.pk}"', html)
+        self.assertIn("3 раздела", html)
+
+        from projects_app.report_submission import annotate_performers_section_codes
+
+        self.assertEqual(report_section_number(self.project, self.asset_name, performer=materials_row), "03")
+        self.assertEqual(report_section_number(self.project, self.asset_name, performer=management_row), "")
+        codes = {
+            item.pk: item.section_code
+            for item in annotate_performers_section_codes(
+                Performer.objects.filter(registration=self.project).select_related("typical_section")
+            )
+        }
+        self.assertEqual(codes[materials_row.pk], "03")
+        self.assertEqual(codes[management_row.pk], "")
+        filename = build_report_filename(
+            self.project,
+            self.executor,
+            section=materials,
+            original_name="report.docx",
+            performer=materials_row,
+            asset_name=self.asset_name,
+        )
+        self.assertIn("_03 MAT_", filename)
+
+        response = self.client.post(
+            reverse("report_file_upload"),
+            {
+                "performer_id": str(management_row.pk),
+                "file": SimpleUploadedFile("section.docx", b"report-bytes"),
+            },
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(PerformerReportUpload.objects.filter(performer=management_row).exists())
+
     def test_reloaded_table_keeps_polling_until_the_result_file_is_saved(self):
         from datetime import timedelta
 
@@ -11274,8 +11472,8 @@ class ReportSubmissionTests(TestCase):
         first_row = main_html[main_html.find(f'data-row-order-id="{first.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{first.pk}"'))]
         second_row = main_html[main_html.find(f'data-row-order-id="{second.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{second.pk}"'))]
         service_row_html = main_html[main_html.find(f'data-row-order-id="{service_row.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{service_row.pk}"'))]
-        self.assertIn(">01<", first_row)
-        self.assertIn(">02<", second_row)
+        self.assertIn('js-section-code"><span class="clf-id-droid-mono">01</span>', first_row)
+        self.assertIn('js-section-code"><span class="clf-id-droid-mono">02</span>', second_row)
         self.assertNotIn(">01<", service_row_html)
         self.assertNotIn(">02<", service_row_html)
         self.assertIn('data-accounting-type="Разделы"', first_row)
@@ -11352,8 +11550,8 @@ class ReportSubmissionTests(TestCase):
         first_row = main_html[main_html.find(f'data-row-order-id="{first.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{first.pk}"'))]
         second_row = main_html[main_html.find(f'data-row-order-id="{second.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{second.pk}"'))]
         service_row_html = main_html[main_html.find(f'data-row-order-id="{service_row.pk}"'):main_html.find("</tr>", main_html.find(f'data-row-order-id="{service_row.pk}"'))]
-        self.assertIn(">02<", first_row)
-        self.assertIn(">01<", second_row)
+        self.assertIn('js-section-code"><span class="clf-id-droid-mono">02</span>', first_row)
+        self.assertIn('js-section-code"><span class="clf-id-droid-mono">01</span>', second_row)
         self.assertNotIn(">01<", service_row_html)
         self.assertNotIn(">02<", service_row_html)
         self.assertEqual(
@@ -12923,6 +13121,125 @@ class ReportSubmissionAccessTests(TestCase):
                 performer=self.own_mrk,
             )
         )
+
+    def _coordinator_setup(self):
+        coordinator_user, coordinator_employee = self._make_staff(
+            "report-access-coordinator",
+            PROJECTS_COORDINATOR_GROUP,
+            last_name="Кординов",
+            first_name="Карл",
+            patronymic="Карлович",
+        )
+        self.own_project.project_coordinator = Performer.employee_full_name(coordinator_employee)
+        self.own_project.save(update_fields=["project_coordinator"])
+        free_section = self.product.sections.create(
+            code="GEN",
+            short_name="General",
+            short_name_ru="Общий",
+            name_en="General",
+            name_ru="Общий",
+            accounting_type="Раздел",
+            position=3,
+        )
+        free_row = Performer.objects.create(
+            registration=self.own_project,
+            employee=self.expert_employee,
+            executor=Performer.employee_full_name(self.expert_employee),
+            asset_name="Карьер",
+            typical_section=free_section,
+        )
+        foreign_free_row = Performer.objects.create(
+            registration=self.foreign_project,
+            employee=self.other_expert_employee,
+            executor=Performer.employee_full_name(self.other_expert_employee),
+            asset_name="Фабрика",
+            typical_section=free_section,
+        )
+        return coordinator_user, free_row, foreign_free_row
+
+    def test_project_coordinator_uploads_sections_without_expertise(self):
+        from projects_app.report_access import (
+            can_mutate_report_slot,
+            report_visible_registration_ids,
+        )
+
+        coordinator_user, free_row, foreign_free_row = self._coordinator_setup()
+        self.assertEqual(report_visible_registration_ids(coordinator_user), {self.own_project.pk})
+        self.assertTrue(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, performer=free_row)
+        )
+        self.assertFalse(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, performer=self.own_mrk)
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                coordinator_user,
+                project=self.foreign_project,
+                performer=foreign_free_row,
+            )
+        )
+        self.assertTrue(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, is_full_report=True)
+        )
+        self.assertFalse(
+            can_mutate_report_slot(coordinator_user, project=self.foreign_project, is_full_report=True)
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                coordinator_user,
+                project=self.own_project,
+                performers=[free_row, self.own_mrk],
+                is_all_sections=True,
+            )
+        )
+        self.assertTrue(
+            can_mutate_report_slot(
+                coordinator_user,
+                project=self.own_project,
+                performers=[free_row],
+                is_all_sections=True,
+            )
+        )
+
+    def test_coordinator_role_required_for_project_coordinator_uploads(self):
+        from projects_app.report_access import can_mutate_report_slot
+
+        coordinator_user, free_row, _foreign = self._coordinator_setup()
+        employee = coordinator_user.employee_profile
+        employee.role = EXPERT_GROUP
+        employee.save(update_fields=["role"])
+        coordinator_user = get_user_model().objects.get(pk=coordinator_user.pk)
+        self.assertFalse(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, performer=free_row)
+        )
+
+    def test_project_coordinator_http_upload(self):
+        coordinator_user, free_row, _foreign = self._coordinator_setup()
+        self.client.force_login(coordinator_user)
+        denied = self.client.post(
+            reverse("report_file_upload"),
+            {
+                "performer_id": str(self.own_mrk.pk),
+                "file": SimpleUploadedFile("section.docx", b"report-bytes"),
+            },
+        )
+        self.assertEqual(denied.status_code, 403)
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                allowed = self.client.post(
+                    reverse("report_file_upload"),
+                    {
+                        "performer_id": str(free_row.pk),
+                        "file": SimpleUploadedFile("section.docx", _report_docx_bytes("Отчёт.")),
+                        "source_kind": "local",
+                        "local_folder_path": tmp,
+                    },
+                )
+        self.assertEqual(allowed.status_code, 200, allowed.content)
+        self.assertTrue(PerformerReportUpload.objects.filter(performer=free_row).exists())
 
     def test_expert_http_cannot_upload_foreign_or_manage_macros(self):
         self.client.force_login(self.expert_user)
@@ -15423,6 +15740,457 @@ def _word_visible_docx_text(docx_bytes: bytes) -> str:
             parts.append(value)
         parts.append("\n")
     return "".join(parts)
+
+
+def _comment_threads_docx(comments, extended) -> bytes:
+    """Минимальный DOCX только с частями комментариев: (автор, paraId) и записи commentsExtended."""
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    w14_ns = "http://schemas.microsoft.com/office/word/2010/wordml"
+    w15_ns = "http://schemas.microsoft.com/office/word/2012/wordml"
+    body = "".join(
+        f'<w:comment w:id="{index}" w:author="{author}"><w:p w14:paraId="{para_id}"><w:r><w:t>x</w:t></w:r></w:p></w:comment>'
+        for index, (author, para_id) in enumerate(comments)
+    )
+    items = "".join(
+        "<w15:commentEx "
+        + " ".join(f'w15:{key}="{value}"' for key, value in item.items())
+        + "/>"
+        for item in extended
+    )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/comments.xml",
+            f'<w:comments xmlns:w="{w_ns}" xmlns:w14="{w14_ns}">{body}</w:comments>',
+        )
+        archive.writestr(
+            "word/commentsExtended.xml",
+            f'<w15:commentsEx xmlns:w15="{w15_ns}">{items}</w15:commentsEx>',
+        )
+    return buffer.getvalue()
+
+
+class ReportAiAppealTests(TestCase):
+    AI_FINDINGS = {"MRK-01 Термины": 2, "MRK-02 Ссылки": 1}
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="report-appeal-staff",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=self.user, role=ADMIN_GROUP)
+        self.client.force_login(self.user)
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.project = ProjectRegistration.objects.create(
+            number=8301,
+            type=product,
+            name="Проект апелляции",
+            year=2026,
+            status="В работе",
+            project_manager="Иванов Иван Иванович",
+        )
+        section = product.sections.create(
+            code="MRK",
+            short_name="Marketing",
+            short_name_ru="Маркетинг",
+            name_en="Marketing",
+            name_ru="Маркетинг",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.performer = Performer.objects.create(
+            registration=self.project,
+            executor="Петров Петр Петрович",
+            asset_name="Карьер Северный",
+            typical_section=section,
+        )
+
+    def _checked_upload(self, review_order, threshold=1):
+        from projects_app.report_review import sync_review_after_check
+
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            finding_threshold=threshold,
+            review_order=review_order,
+        )
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+            cloud_path="",
+            version=0,
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=sum(self.AI_FINDINGS.values()),
+            check_finding_by_author=dict(self.AI_FINDINGS),
+            checked_at=timezone.now(),
+        )
+        sync_review_after_check(upload)
+        return upload
+
+    def _rows(self, upload):
+        from projects_app.report_access import annotate_report_submission_rows
+
+        return [
+            row for row in annotate_report_submission_rows(
+                self.user,
+                build_report_submission_rows(
+                    Performer.objects.filter(pk=self.performer.pk).select_related("registration"),
+                    [upload],
+                ),
+            )
+            if row.upload and row.upload.pk == upload.pk
+        ]
+
+    def _appeal(self, upload):
+        response = self.client.post(reverse("report_ai_appeal"), {"upload_id": upload.pk})
+        self.assertEqual(response.status_code, 200, response.content)
+        upload.refresh_from_db()
+        return response
+
+    def _reviewer_file(self, authors):
+        plain = _report_docx_bytes("Первый абзац отчёта для замечаний.")
+        return insert_comments(plain, [
+            {"start": 0, "end": 6, "message": f"Замечание {index}", "author": author}
+            for index, author in enumerate(authors)
+        ])
+
+    def test_open_comment_threads_skip_replies_and_resolved(self):
+        from projects_app.docx_comments import count_open_comment_threads_by_author
+
+        docx = _comment_threads_docx(
+            [
+                ("MRK-01 Термины", "0000000A"),
+                ("MRK-01 Термины", "0000000B"),
+                ("КП", "0000000C"),
+                ("MRK-02 Ссылки", "0000000D"),
+            ],
+            [
+                {"paraId": "0000000A", "done": "0"},
+                {"paraId": "0000000B", "done": "1"},
+                {"paraId": "0000000C", "paraIdParent": "0000000A", "done": "0"},
+                {"paraId": "0000000D", "done": "0"},
+            ],
+        )
+        self.assertEqual(
+            count_open_comment_threads_by_author(docx),
+            {"MRK-01 Термины": 1, "MRK-02 Ссылки": 1},
+        )
+
+    def test_appeal_opens_first_manual_step_above_ai_rework(self):
+        from django.test import RequestFactory
+
+        from projects_app.models import ReportReviewEntry
+        from projects_app.views import _render_report_submission_row
+
+        upload = self._checked_upload(["ai", "kp", "rp"])
+        rows = self._rows(upload)
+        self.assertEqual(rows[0].workflow_status, "В работе после ИИ")
+        self.assertTrue(rows[0].can_appeal_ai)
+        request = RequestFactory().get("/")
+        request.user = self.user
+        button_html = _render_report_submission_row(request, rows[0])
+        self.assertIn("Остались ошибочные замечания", button_html)
+        self.assertIn("bi-exclamation-circle", button_html)
+
+        response = self._appeal(upload)
+        self.assertIn("На проверке КП", response.json()["slot_rows_html"])
+        appeal = ReportReviewEntry.objects.get(upload=upload, step="ai", phase="rework")
+        self.assertIsNotNone(appeal.appealed_at)
+        self.assertFalse(appeal.settled)
+        self.assertTrue(ReportReviewEntry.objects.filter(upload=upload, step="kp", phase="review").exists())
+
+        rows = self._rows(upload)
+        self.assertEqual(
+            [row.workflow_status for row in rows],
+            ["На проверке КП", "В работе после ИИ", "Проверен ИИ"],
+        )
+        self.assertFalse(rows[1].can_appeal_ai)
+        self.assertEqual(rows[1].calculated_count_display, "3")
+        self.assertTrue(rows[1].can_correct_findings)
+        self.assertEqual(rows[2].finding_count_display, "3")
+        self.assertEqual(rows[2].corrected_count_display, "—")
+        self.assertFalse(rows[2].can_correct_findings)
+
+        again = self.client.post(reverse("report_ai_appeal"), {"upload_id": upload.pk})
+        self.assertEqual(again.status_code, 400)
+
+    def test_ai_only_chain_has_no_appeal(self):
+        upload = self._checked_upload(["ai"])
+        rows = self._rows(upload)
+        self.assertEqual(rows[0].workflow_status, "В работе после ИИ")
+        self.assertFalse(rows[0].can_appeal_ai)
+        response = self.client.post(reverse("report_ai_appeal"), {"upload_id": upload.pk})
+        self.assertEqual(response.status_code, 400)
+
+    def test_accept_without_remarks_zeroes_ai_findings(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import accept_report_review_without_remarks
+
+        upload = self._checked_upload(["ai", "kp", "rp"])
+        self._appeal(upload)
+        accept_report_review_without_remarks(user=self.user, upload=upload)
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_finding_correction, {"MRK-01 Термины": 0, "MRK-02 Ссылки": 0})
+        self.assertTrue(ReportReviewEntry.objects.get(upload=upload, step="ai").settled)
+
+        rows = self._rows(upload)
+        self.assertEqual(
+            [row.workflow_status for row in rows],
+            ["На проверке РП", "Сдан КП", "Сдан ИИ*", "Проверен ИИ"],
+        )
+        self.assertEqual(rows[2].finding_count_display, "0")
+        self.assertEqual(rows[2].calculated_count_display, "3")
+        self.assertFalse(rows[2].can_correct_findings)
+        self.assertEqual(rows[3].finding_count_display, "3")
+
+        from django.test import RequestFactory
+
+        from projects_app.views import _render_report_submission_row
+
+        request = RequestFactory().get("/")
+        request.user = self.user
+        html = _render_report_submission_row(request, rows[2])
+        report_url = reverse("report_file_download", args=[upload.pk])
+        for col in ("upload", "check-result"):
+            cell = html[html.find(f'data-col="{col}"'):]
+            cell = cell[:cell.find("</td>")]
+            self.assertIn(report_url, cell)
+            self.assertIn("report.docx", cell)
+
+    def test_review_file_recount_keeps_ai_rework_and_returns_to_step(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import (
+            _retire_ai_rework_entries,
+            _return_rework_to_review,
+            ensure_rework_after_remarks,
+            submit_report_review_file,
+        )
+
+        upload = self._checked_upload(["ai", "kp", "rp"])
+        self._appeal(upload)
+        file_bytes = self._reviewer_file(["MRK-01 Термины", "MRK-01 Термины", "КП"])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                submit_report_review_file(
+                    user=self.user,
+                    upload=upload,
+                    file_bytes=file_bytes,
+                    original_name="remarks.docx",
+                    local_folder_path=tmp,
+                )
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_finding_correction, {"MRK-01 Термины": 2, "MRK-02 Ссылки": 0})
+        appeal = ReportReviewEntry.objects.get(upload=upload, step="ai")
+        self.assertTrue(appeal.settled)
+        step_entry = ReportReviewEntry.objects.get(upload=upload, step="kp")
+        self.assertEqual(step_entry.comment_count, 3)
+        self.assertTrue(step_entry.remarks_notice_pending)
+
+        rows = self._rows(upload)
+        self.assertEqual(
+            [row.workflow_status for row in rows],
+            ["Проверен КП", "В работе после ИИ", "Проверен ИИ"],
+        )
+        self.assertEqual(rows[1].finding_count_display, "2")
+        self.assertFalse(rows[1].can_correct_findings)
+
+        from django.test import RequestFactory
+
+        from projects_app.views import _render_report_submission_row
+
+        request = RequestFactory().get("/")
+        request.user = self.user
+        report_url = reverse("report_file_download", args=[upload.pk])
+        for row in rows:
+            html = _render_report_submission_row(request, row)
+            cell = html[html.find('data-col="upload"'):]
+            cell = cell[:cell.find("</td>")]
+            self.assertIn(report_url, cell, row.workflow_status)
+            self.assertIn("report.docx", cell, row.workflow_status)
+            self.assertIn("bi-download", cell, row.workflow_status)
+
+        ensure_rework_after_remarks(step_entry)
+        revision = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report_v1.docx",
+            cloud_path="",
+            version=1,
+        )
+        _retire_ai_rework_entries(revision)
+        self.assertTrue(ReportReviewEntry.objects.filter(pk=appeal.pk).exists())
+        self.assertTrue(_return_rework_to_review(revision))
+        revision.refresh_from_db()
+        self.assertEqual(revision.review_step, "kp")
+
+    def test_review_file_with_passing_recount_marks_ai_passed(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import submit_report_review_file
+
+        upload = self._checked_upload(["ai", "kp"], threshold=2)
+        self._appeal(upload)
+        file_bytes = self._reviewer_file(["MRK-02 Ссылки"])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                submit_report_review_file(
+                    user=self.user,
+                    upload=upload,
+                    file_bytes=file_bytes,
+                    original_name="remarks.docx",
+                    local_folder_path=tmp,
+                )
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_finding_correction, {"MRK-01 Термины": 0, "MRK-02 Ссылки": 1})
+        self.assertEqual(ReportReviewEntry.objects.get(upload=upload, step="kp").comment_count, 1)
+        statuses = [row.workflow_status for row in self._rows(upload)]
+        self.assertEqual(statuses, ["Проверен КП", "Сдан ИИ*", "Проверен ИИ"])
+
+    def test_review_file_without_ai_comments_needs_confirmation(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import ReportAppealConfirmError, submit_report_review_file
+
+        upload = self._checked_upload(["ai", "kp"])
+        self._appeal(upload)
+        file_bytes = self._reviewer_file(["КП"])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                with self.assertRaises(ReportAppealConfirmError):
+                    submit_report_review_file(
+                        user=self.user,
+                        upload=upload,
+                        file_bytes=file_bytes,
+                        original_name="remarks.docx",
+                        local_folder_path=tmp,
+                    )
+                step_entry = ReportReviewEntry.objects.get(upload=upload, step="kp")
+                self.assertFalse(step_entry.review_file_name)
+                submit_report_review_file(
+                    user=self.user,
+                    upload=upload,
+                    file_bytes=file_bytes,
+                    original_name="remarks.docx",
+                    local_folder_path=tmp,
+                    confirm_no_ai=True,
+                )
+        upload.refresh_from_db()
+        self.assertEqual(upload.check_finding_correction, {"MRK-01 Термины": 0, "MRK-02 Ссылки": 0})
+        statuses = [row.workflow_status for row in self._rows(upload)]
+        self.assertEqual(statuses, ["Проверен КП", "Сдан ИИ*", "Проверен ИИ"])
+
+    def test_manual_correction_during_appeal_keeps_step_row(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import (
+            FindingCorrectionError,
+            accept_report_review_without_remarks,
+            apply_finding_correction,
+        )
+
+        upload = self._checked_upload(["ai", "kp", "rp"])
+        self._appeal(upload)
+        apply_finding_correction(upload, {"MRK-01 Термины": 1, "MRK-02 Ссылки": 1})
+        appeal = ReportReviewEntry.objects.get(upload=upload, step="ai")
+        self.assertFalse(appeal.settled)
+        self.assertTrue(ReportReviewEntry.objects.filter(upload=upload, step="kp", phase="review").exists())
+        self.assertEqual(
+            [row.workflow_status for row in self._rows(upload)],
+            ["На проверке КП", "В работе после ИИ", "Проверен ИИ"],
+        )
+
+        upload.refresh_from_db()
+        apply_finding_correction(upload, {"MRK-01 Термины": 0, "MRK-02 Ссылки": 0})
+        appeal.refresh_from_db()
+        self.assertTrue(appeal.settled)
+        self.assertEqual(
+            [row.workflow_status for row in self._rows(upload)],
+            ["На проверке КП", "Сдан ИИ*", "Проверен ИИ"],
+        )
+
+        accept_report_review_without_remarks(user=self.user, upload=upload)
+        upload.refresh_from_db()
+        with self.assertRaises(FindingCorrectionError):
+            apply_finding_correction(upload, {"MRK-01 Термины": 2, "MRK-02 Ссылки": 1})
+
+    def test_new_version_cancels_open_appeal(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import upload_report_file
+
+        upload = self._checked_upload(["ai", "kp"])
+        self._appeal(upload)
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                upload_report_file(
+                    user=self.user,
+                    project=self.project,
+                    executor=self.performer.executor,
+                    asset_name=self.performer.asset_name,
+                    performer=self.performer,
+                    is_all_sections=False,
+                    uploaded_file=SimpleUploadedFile("report.docx", _report_docx_bytes("Новая версия.")),
+                    local_folder_path=tmp,
+                )
+        self.assertFalse(ReportReviewEntry.objects.filter(upload=upload).exists())
+
+    def test_new_version_cancels_appeal_after_ai_threshold_is_met(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_review import latest_open_entry, user_can_submit_review
+        from projects_app.report_submission import apply_finding_correction, upload_report_file
+
+        upload = self._checked_upload(["ai", "kp"])
+        self._appeal(upload)
+        apply_finding_correction(upload, {"MRK-01 Термины": 0, "MRK-02 Ссылки": 0})
+        appeal = ReportReviewEntry.objects.get(upload=upload, step="ai", phase="rework")
+        self.assertTrue(appeal.settled)
+        step = ReportReviewEntry.objects.get(upload=upload, step="kp", phase="review")
+        self.assertFalse(step.settled)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                replacement = upload_report_file(
+                    user=self.user,
+                    project=self.project,
+                    executor=self.performer.executor,
+                    asset_name=self.performer.asset_name,
+                    performer=self.performer,
+                    is_all_sections=False,
+                    uploaded_file=SimpleUploadedFile("report.docx", _report_docx_bytes("Новая версия.")),
+                    local_folder_path=tmp,
+                )
+
+        self.assertFalse(ReportReviewEntry.objects.filter(pk=step.pk).exists())
+        appeal.refresh_from_db()
+        self.assertTrue(appeal.settled)
+        self.assertIsNone(latest_open_entry(replacement))
+        self.assertFalse(user_can_submit_review(self.user, replacement))
+        self.assertFalse(user_can_submit_review(self.user, upload))
 
 
 class ReportMacroTests(TestCase):
@@ -19392,7 +20160,27 @@ class TpgrPercentMacroTests(TestCase):
     def test_skips_percent_inside_angle_brackets(self):
         self.assertEqual(self._findings("шаблон <доля 10 %>"), [])
         self.assertEqual(self._findings("<a <b> доля 10 % текст>"), [])
+        self.assertEqual(self._findings("шаблон < 05 data \\ доля 10 % >"), [])
         self.assertEqual(len(self._findings("после > доля 10 %")), 1)
+
+    def test_skips_percent_inside_superscript_angles(self):
+        document = Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("шаблон ")
+        marked = paragraph.add_run("<доля 10 %>")
+        marked.font.superscript = True
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        text, _spans = extract_document_text(source)
+        offsets = extract_superscript_offsets(source)
+        self.assertIn(text.index("<"), offsets)
+        self.assertIn(text.index(">"), offsets)
+        findings = run_macro(
+            self.macro,
+            type("Ctx", (), {"text": text, "superscript_offsets": offsets})(),
+        )
+        self.assertEqual(findings, [])
 
     def test_flags_percent_after_comparison(self):
         text = "порог < 0,1 и доля >= 2, затем 10 % запасов"
@@ -21700,8 +22488,15 @@ class TmplUnclosedAnglesMacroTests(TestCase):
             code=tpgr_macro_code("TMPL-SS-00.00 Незакрытые"),
         )
 
-    def _findings(self, text, notes=None):
-        return run_macro(self.macro, type("Ctx", (), {"text": text, "notes": notes or []})())
+    def _findings(self, text, notes=None, superscript_offsets=()):
+        return run_macro(
+            self.macro,
+            type("Ctx", (), {
+                "text": text,
+                "notes": notes or [],
+                "superscript_offsets": superscript_offsets,
+            })(),
+        )
 
     def test_catalog_has_unclosed_angles_macro_without_course_link(self):
         spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SS-00.00"))
@@ -21825,6 +22620,60 @@ class TmplUnclosedAnglesMacroTests(TestCase):
             "стрелка –> направо",
         ):
             self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_numbered_folder_path_in_angles(self):
+        samples = (
+            "Устав ООО «Сахавольфрам» < 05 data \\ Тополиное \\ 1.Устав.pdf https://drive.google.com/file/d/abc/view?usp=drive_link >",
+            "Структура группы < 05 data \\ Тополиное \\ 6. Структура группы \\ схема.pdf https://drive.google.com/file/d/abc/view >",
+            "Прогноз< 05 data \\ Тополиное \\ file.pdf >",
+            "при pH < 7 раствор. Источник < 05 data \\ folder \\ file.pdf >",
+        )
+        for text in samples:
+            self.assertEqual(self._findings(text), [], repr(text))
+
+    def test_skips_numbered_folder_path_in_footnote(self):
+        note = (
+            " Устав ООО «Сахавольфрам» < 05 data \\ Тополиное \\ "
+            "1.Устав.pdf https://drive.google.com/file/d/abc/view?usp=drive_link >\n"
+        )
+        notes = [{"id": "6", "kind": "footnote", "text": note}]
+        self.assertEqual(self._findings("см. источник", notes=notes), [])
+
+    def test_superscript_angles_before_date_are_not_comparisons(self):
+        document = Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Лицензия Л037-00109-14/00620196")
+        marked = paragraph.add_run("<>")
+        marked.font.superscript = True
+        document.add_paragraph("05.10.2022")
+        buffer = BytesIO()
+        document.save(buffer)
+        source = buffer.getvalue()
+        text, _spans = extract_document_text(source)
+        offsets = extract_superscript_offsets(source)
+        self.assertEqual(self._findings(text, superscript_offsets=offsets), [])
+
+    def test_plain_angles_before_date_are_a_comparison(self):
+        source = _report_docx_bytes("Лицензия Л037-00109-14/00620196<>", "05.10.2022")
+        text, _spans = extract_document_text(source)
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+
+    def test_flags_unclosed_numbered_folder_path(self):
+        text = "Источник < 05 data \\ folder \\ file.pdf"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+
+    def test_footnote_treats_angle_signs_as_brackets(self):
+        notes = [{"id": "1", "kind": "footnote", "text": "содержание < 0,1 %\n"}]
+        findings = self._findings("см. источник", notes=notes)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_FN)
+        self.assertEqual(findings[0]["note_id"], "1")
 
     def test_hyphen_before_closing_is_a_template_bracket(self):
         lone = "стрелка -> направо"
@@ -22020,6 +22869,26 @@ class TmplPublicFootnoteBracketsMacroTests(TestCase):
             self._findings(notes, nextcloud_base_url="https://cloud.example.com"),
             [],
         )
+
+    def test_skips_google_drive_footnote_with_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://drive.google.com/file/d/abc",
+            wrap_brackets=True,
+        )
+        notes = extract_notes(source)
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertEqual(self._findings(notes), [])
+
+    def test_skips_google_docs_footnote_with_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://docs.google.com/document/d/abc",
+            wrap_brackets=True,
+        )
+        notes = extract_notes(source)
+        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertEqual(self._findings(notes), [])
 
 
 class TpgrListPeriodMacroTests(TestCase):
@@ -23005,6 +23874,44 @@ class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
             [],
         )
 
+    def test_flags_google_drive_footnote_without_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://drive.google.com/file/d/abc",
+            wrap_brackets=False,
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_WRAP)
+
+    def test_skips_google_drive_footnote_with_superscript_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://drive.google.com/file/d/abc",
+            wrap_brackets=True,
+            bracket_superscript=True,
+        )
+        self.assertEqual(self._findings(source), [])
+
+    def test_flags_google_docs_footnote_without_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://docs.google.com/document/d/abc",
+            wrap_brackets=False,
+        )
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_WRAP)
+
+    def test_skips_google_docs_footnote_with_superscript_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://docs.google.com/document/d/abc",
+            wrap_brackets=True,
+            bracket_superscript=True,
+        )
+        self.assertEqual(self._findings(source), [])
+
     def test_comment_has_no_course_hyperlink(self):
         source = _docx_with_footnote("см. облако", self.NC_TEXT)
         findings = self._findings(source)
@@ -23177,6 +24084,20 @@ class GrmmFootnotePeriodMacroTests(TestCase):
             [],
         )
         self.assertEqual(len(self._findings(source)), 1)
+
+    def test_skips_google_drive_footnote_without_period(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://drive.google.com/file/d/abc",
+        )
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_google_docs_footnote_without_period(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            "файл https://docs.google.com/document/d/abc",
+        )
+        self.assertEqual(self._findings(source), [])
 
     def test_comment_has_no_course_hyperlink(self):
         source = _docx_with_footnote("см. источник", "Иванов, 2020")

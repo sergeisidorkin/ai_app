@@ -436,7 +436,7 @@ def _sync_to_legal_entity_record(
 ):
     from classifiers_app.views import sync_autocomplete_registry_entry
 
-    sync_autocomplete_registry_entry(
+    return sync_autocomplete_registry_entry(
         short_name=short_name,
         country=country,
         identifier_type=identifier,
@@ -448,6 +448,77 @@ def _sync_to_legal_entity_record(
         selected_from_autocomplete=selected_from_autocomplete,
         business_entity_source=business_entity_source,
     )
+
+
+def _reuse_identifier_kwargs(identifier_record):
+    if identifier_record is None:
+        return {
+            "selected_identifier_record_id": None,
+            "selected_from_autocomplete": False,
+        }
+    return {
+        "selected_identifier_record_id": identifier_record.pk,
+        "selected_from_autocomplete": True,
+    }
+
+
+def _remember_proposal_party_links(proposal, request):
+    customer_identifier = _sync_to_legal_entity_record(
+        proposal.customer,
+        proposal.country,
+        proposal.identifier,
+        proposal.registration_number,
+        proposal.registration_date,
+        registration_region=proposal.registration_region,
+        user=request.user,
+        business_entity_source="[ТКП / Заказчик]",
+        **_sync_selection_kwargs(request, "customer_autocomplete"),
+    )
+    if proposal.asset_owner_matches_customer:
+        owner_identifier = customer_identifier
+    else:
+        owner_identifier = _sync_to_legal_entity_record(
+            proposal.asset_owner,
+            proposal.asset_owner_country,
+            proposal.asset_owner_identifier,
+            proposal.asset_owner_registration_number,
+            proposal.asset_owner_registration_date,
+            registration_region=proposal.asset_owner_region,
+            user=request.user,
+            business_entity_source="[ТКП / Владелец активов]",
+            **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
+        )
+    proposal.customer_identifier_record = customer_identifier
+    proposal.asset_owner_identifier_record = owner_identifier
+    proposal.save(update_fields=["customer_identifier_record", "asset_owner_identifier_record"])
+
+
+def _attach_related_registry_links(rows, user, business_entity_source):
+    for item in rows or []:
+        if not _should_sync_proposal_related_row(item):
+            item["identifier_record"] = None
+            continue
+        item["identifier_record"] = _sync_to_legal_entity_record(
+            item["short_name"],
+            item["country"],
+            item["identifier"],
+            item["registration_number"],
+            item["registration_date"],
+            user,
+            selected_identifier_record_id=item.get("selected_identifier_record_id"),
+            selected_from_autocomplete=item.get("selected_from_autocomplete", False),
+            business_entity_source=business_entity_source,
+        )
+
+
+def _autocomplete_link_state(form, prefix, stored_id):
+    if getattr(form, "is_bound", False):
+        raw_id = str(form.data.get(f"{prefix}_identifier_record_id") or "").strip()
+        raw_flag = str(form.data.get(f"{prefix}_selected_from_autocomplete") or "").strip().lower()
+        selected = raw_flag in {"1", "true", "yes", "on"} and bool(raw_id)
+        return raw_id, "1" if selected else "0"
+    stored = "" if stored_id in (None, "") else str(stored_id)
+    return stored, "1" if stored else "0"
 
 
 def _sync_dispatch_contact_to_person_registry(*, last_name, first_name="", middle_name=""):
@@ -2098,6 +2169,19 @@ def _proposal_product_autofill_data(product_ids=None, group_member=None):
 
 
 def _render_proposal_form(request, *, form, action, proposal=None):
+    customer_identifier_record_id, customer_identifier_selected = _autocomplete_link_state(
+        form,
+        "customer_autocomplete",
+        getattr(proposal, "customer_identifier_record_id", None),
+    )
+    owner_stored_id = getattr(proposal, "asset_owner_identifier_record_id", None)
+    if proposal is not None and proposal.asset_owner_matches_customer:
+        owner_stored_id = proposal.customer_identifier_record_id
+    asset_owner_identifier_record_id, asset_owner_identifier_selected = _autocomplete_link_state(
+        form,
+        "asset_owner_autocomplete",
+        owner_stored_id,
+    )
     return render(
         request,
         PROPOSAL_FORM_TEMPLATE,
@@ -2105,6 +2189,10 @@ def _render_proposal_form(request, *, form, action, proposal=None):
             "form": form,
             "action": action,
             "proposal": proposal,
+            "customer_identifier_record_id": customer_identifier_record_id,
+            "customer_identifier_selected": customer_identifier_selected,
+            "asset_owner_identifier_record_id": asset_owner_identifier_record_id,
+            "asset_owner_identifier_selected": asset_owner_identifier_selected,
             "proposal_type_meta_json": json.dumps(_proposal_product_catalog(), ensure_ascii=False),
             **_proposal_product_autofill_data(
                 group_member=getattr(proposal, "group_member", None),
@@ -2115,6 +2203,11 @@ def _render_proposal_form(request, *, form, action, proposal=None):
 
 def _render_dispatch_form(request, *, form, proposal):
     _attach_proposal_folder_urls([proposal], user=request.user, request=request)
+    recipient_identifier_record_id, recipient_identifier_selected = _autocomplete_link_state(
+        form,
+        "recipient_autocomplete",
+        getattr(proposal, "recipient_identifier_record_id", None),
+    )
     return render(
         request,
         PROPOSAL_DISPATCH_FORM_TEMPLATE,
@@ -2122,6 +2215,8 @@ def _render_dispatch_form(request, *, form, proposal):
             "form": form,
             "proposal": proposal,
             "docx_download_available": bool(proposal.docx_file_name),
+            "recipient_identifier_record_id": recipient_identifier_record_id,
+            "recipient_identifier_selected": recipient_identifier_selected,
         },
     )
 
@@ -2295,61 +2390,21 @@ def proposal_form_create(request):
         proposal.position = _next_position(ProposalRegistration)
     proposal.save()
     form._save_ranked_products(proposal)
+    _remember_proposal_party_links(proposal, request)
+    _attach_related_registry_links(
+        getattr(form, "cleaned_assets", []),
+        request.user,
+        "[ТКП / Объем услуг: активы]",
+    )
+    _attach_related_registry_links(
+        getattr(form, "cleaned_legal_entities", []),
+        request.user,
+        "[ТКП / Объем услуг: юрлица]",
+    )
     form.save_assets(proposal, request.user)
     form.save_legal_entities(proposal, request.user)
     form.save_objects(proposal, request.user)
     form.save_commercial_offers(proposal, request.user)
-    _sync_to_legal_entity_record(
-        proposal.customer,
-        proposal.country,
-        proposal.identifier,
-        proposal.registration_number,
-        proposal.registration_date,
-        registration_region=proposal.registration_region,
-        user=request.user,
-        business_entity_source="[ТКП / Заказчик]",
-        **_sync_selection_kwargs(request, "customer_autocomplete"),
-    )
-    if not proposal.asset_owner_matches_customer:
-        _sync_to_legal_entity_record(
-            proposal.asset_owner,
-            proposal.asset_owner_country,
-            proposal.asset_owner_identifier,
-            proposal.asset_owner_registration_number,
-            proposal.asset_owner_registration_date,
-            registration_region=proposal.asset_owner_region,
-            user=request.user,
-            business_entity_source="[ТКП / Владелец активов]",
-            **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
-        )
-    for asset in getattr(form, "cleaned_assets", []):
-        if not _should_sync_proposal_related_row(asset):
-            continue
-        _sync_to_legal_entity_record(
-            asset["short_name"],
-            asset["country"],
-            asset["identifier"],
-            asset["registration_number"],
-            asset["registration_date"],
-            request.user,
-            selected_identifier_record_id=asset.get("selected_identifier_record_id"),
-            selected_from_autocomplete=asset.get("selected_from_autocomplete", False),
-            business_entity_source="[ТКП / Объем услуг: активы]",
-        )
-    for legal_entity in getattr(form, "cleaned_legal_entities", []):
-        if not _should_sync_proposal_related_row(legal_entity):
-            continue
-        _sync_to_legal_entity_record(
-            legal_entity["short_name"],
-            legal_entity["country"],
-            legal_entity["identifier"],
-            legal_entity["registration_number"],
-            legal_entity["registration_date"],
-            request.user,
-            selected_identifier_record_id=legal_entity.get("selected_identifier_record_id"),
-            selected_from_autocomplete=legal_entity.get("selected_from_autocomplete", False),
-            business_entity_source="[ТКП / Объем услуг: юрлица]",
-        )
     _maybe_create_nextcloud_proposal_workspace(request, proposal)
     return _render_proposals_updated(request)
 
@@ -2443,61 +2498,21 @@ def proposal_form_edit(request, pk: int):
         return _render_proposal_form(request, form=form, action="edit", proposal=proposal)
 
     proposal = form.save()
+    _remember_proposal_party_links(proposal, request)
+    _attach_related_registry_links(
+        getattr(form, "cleaned_assets", []),
+        request.user,
+        "[ТКП / Объем услуг: активы]",
+    )
+    _attach_related_registry_links(
+        getattr(form, "cleaned_legal_entities", []),
+        request.user,
+        "[ТКП / Объем услуг: юрлица]",
+    )
     form.save_assets(proposal, request.user)
     form.save_legal_entities(proposal, request.user)
     form.save_objects(proposal, request.user)
     form.save_commercial_offers(proposal, request.user)
-    _sync_to_legal_entity_record(
-        proposal.customer,
-        proposal.country,
-        proposal.identifier,
-        proposal.registration_number,
-        proposal.registration_date,
-        registration_region=proposal.registration_region,
-        user=request.user,
-        business_entity_source="[ТКП / Заказчик]",
-        **_sync_selection_kwargs(request, "customer_autocomplete"),
-    )
-    if not proposal.asset_owner_matches_customer:
-        _sync_to_legal_entity_record(
-            proposal.asset_owner,
-            proposal.asset_owner_country,
-            proposal.asset_owner_identifier,
-            proposal.asset_owner_registration_number,
-            proposal.asset_owner_registration_date,
-            registration_region=proposal.asset_owner_region,
-            user=request.user,
-            business_entity_source="[ТКП / Владелец активов]",
-            **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
-        )
-    for asset in getattr(form, "cleaned_assets", []):
-        if not _should_sync_proposal_related_row(asset):
-            continue
-        _sync_to_legal_entity_record(
-            asset["short_name"],
-            asset["country"],
-            asset["identifier"],
-            asset["registration_number"],
-            asset["registration_date"],
-            request.user,
-            selected_identifier_record_id=asset.get("selected_identifier_record_id"),
-            selected_from_autocomplete=asset.get("selected_from_autocomplete", False),
-            business_entity_source="[ТКП / Объем услуг: активы]",
-        )
-    for legal_entity in getattr(form, "cleaned_legal_entities", []):
-        if not _should_sync_proposal_related_row(legal_entity):
-            continue
-        _sync_to_legal_entity_record(
-            legal_entity["short_name"],
-            legal_entity["country"],
-            legal_entity["identifier"],
-            legal_entity["registration_number"],
-            legal_entity["registration_date"],
-            request.user,
-            selected_identifier_record_id=legal_entity.get("selected_identifier_record_id"),
-            selected_from_autocomplete=legal_entity.get("selected_from_autocomplete", False),
-            business_entity_source="[ТКП / Объем услуг: юрлица]",
-        )
     return _render_proposals_updated(request)
 
 
@@ -2518,7 +2533,7 @@ def proposal_dispatch_form_edit(request, pk: int):
         return _render_dispatch_form(request, form=form, proposal=proposal)
 
     proposal = form.save()
-    _sync_to_legal_entity_record(
+    proposal.recipient_identifier_record = _sync_to_legal_entity_record(
         proposal.recipient,
         proposal.recipient_country,
         proposal.recipient_identifier,
@@ -2528,6 +2543,7 @@ def proposal_dispatch_form_edit(request, pk: int):
         business_entity_source="[ТКП / Отправка ТКП / Наименование организации]",
         **_sync_selection_kwargs(request, "recipient_autocomplete"),
     )
+    proposal.save(update_fields=["recipient_identifier_record"])
     _sync_dispatch_contact_to_person_registry(
         last_name=form.cleaned_data.get("contact_last_name", ""),
         first_name=form.cleaned_data.get("contact_first_name", ""),
@@ -2704,6 +2720,11 @@ def proposal_dispatch_transfer_to_contract(request):
             )
             was_created = project is None
             if was_created:
+                owner_identifier_id = (
+                    proposal.customer_identifier_record_id
+                    if proposal.asset_owner_matches_customer
+                    else proposal.asset_owner_identifier_record_id
+                )
                 project = ProjectRegistration.objects.create(
                     number=proposal.number,
                     sub_number=proposal.sub_number,
@@ -2721,6 +2742,8 @@ def proposal_dispatch_transfer_to_contract(request):
                     identifier=proposal.identifier,
                     registration_number=proposal.registration_number,
                     registration_date=proposal.registration_date,
+                    customer_identifier_record_id=proposal.customer_identifier_record_id,
+                    asset_owner_identifier_record_id=owner_identifier_id,
                 )
                 sync_project_products_from_proposal(project, proposal)
                 created += 1

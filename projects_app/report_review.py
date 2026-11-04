@@ -194,27 +194,18 @@ def upload_org_direction_ids(upload) -> set[int]:
 def user_matches_review_step(user, upload, step: str) -> bool:
     from .report_access import (
         _employee_of,
-        _normalize,
         is_admin_user,
         is_direction_head_user,
+        is_project_coordinator_of,
         is_project_manager_of,
     )
-    from .models import Performer
 
     if step in MANUAL_REVIEW_CODES and is_admin_user(user):
         return True
     if step == REVIEW_RP:
         return is_project_manager_of(user, getattr(upload, "registration", None))
     if step == REVIEW_KP:
-        employee = _employee_of(user)
-        registration = getattr(upload, "registration", None)
-        if not employee or not registration:
-            return False
-        prs = _normalize(getattr(employee, "formatted_prs_id", "") or "")
-        name = _normalize(Performer.employee_full_name(employee))
-        if prs and _normalize(getattr(registration, "project_coordinator_prs_id", "")) == prs:
-            return True
-        return bool(name) and _normalize(getattr(registration, "project_coordinator", "")) == name
+        return is_project_coordinator_of(user, getattr(upload, "registration", None))
     if step == REVIEW_RN:
         if not is_direction_head_user(user):
             return False
@@ -247,6 +238,10 @@ def entry_status(entry) -> str:
     ):
         label = REVIEW_STEP_LABELS.get(step, "")
         return f"Проверен {label}".strip()
+    if step == REVIEW_AI and phase == REVIEW_PHASE_REWORK and getattr(entry, "appealed_at", None):
+        from .report_submission import ai_appeal_status
+
+        return ai_appeal_status(entry.upload)
     return manual_status_label(step, phase)
 
 

@@ -180,7 +180,7 @@
   function updateSectionCode() {
     if (!sectionCodeEl) return;
     var info = getSelectedSectionInfo();
-    if (!info || info.accounting_type !== 'Разделы') {
+    if (!info || (info.accounting_type !== 'Разделы' && info.accounting_type !== 'Материалы')) {
       sectionCodeEl.value = '';
       return;
     }

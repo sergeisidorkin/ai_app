@@ -286,7 +286,8 @@
     return String(n).padStart(2, '0');
   }
   function performerRowIsSectionAccounting(tr) {
-    return !!(tr && String(tr.dataset.accountingType || '').trim() === 'Разделы');
+    const accounting = String((tr && tr.dataset.accountingType) || '').trim();
+    return accounting === 'Разделы' || accounting === 'Материалы';
   }
   function performerGroupSortKey(tr) {
     const number = parseInt(tr && tr.dataset ? tr.dataset.projectNumber : '0', 10) || 0;
@@ -2042,7 +2043,7 @@
       window.__participationProjectFilter = values.slice();
       const showAll = values.includes(FILTER_ALL) || !values.length;
       getParticipationRows().forEach((row) => {
-        const pid = row.dataset.projectId || '';
+        const pid = row.dataset.owningProjectId || row.dataset.projectId || '';
         const visible = showAll || values.includes(pid);
         row.classList.toggle('d-none', !visible);
         if (!visible) {
@@ -2361,7 +2362,8 @@
     btn.textContent = checked === cbs.length ? 'Все поля' : checked + ' из ' + cbs.length;
   }
 
-  var REPORT_FIXED_COLUMN_WIDTHS = { checkbox: 30, stage: 105 };
+  // 11-character stage id (333600010RU): 106px of Droid Sans Mono plus 8px table-sm padding.
+  var REPORT_FIXED_COLUMN_WIDTHS = { checkbox: 30, stage: 116 };
   // Columns whose file names may be truncated with an ellipsis when the
   // table does not fit. They shrink from their natural (full file name)
   // width down to REPORT_SHRINK_COLUMN_FLOOR_PX, but never below the width
@@ -2636,13 +2638,24 @@
     return 0;
   }
 
+  // clientWidth is rounded to an integer and may exceed the real content
+  // width at fractional zoom levels; a table sized to it overflows by a
+  // sub-pixel amount that scrollWidth does not report.
+  function reportSubmissionWrapAvailableWidth(wrap) {
+    var style = getComputedStyle(wrap);
+    var borderX = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+    return Math.min(wrap.clientWidth, Math.floor(wrap.getBoundingClientRect().width - borderX));
+  }
+
   function suppressReportSubmissionPhantomScroll(wrap, fitting) {
     if (!fitting) {
       wrap.style.overflowX = '';
       return;
     }
+    // Once clipped, a sub-pixel overflow no longer shows a scrollbar and reads
+    // as 0, so clipping must stay on for 0 too or it flips on every relayout.
     var overflow = reportSubmissionWrapOverflow(wrap);
-    wrap.style.overflowX = overflow > 0 && overflow <= REPORT_FIT_SLOP_PX ? 'hidden' : '';
+    wrap.style.overflowX = overflow <= REPORT_FIT_SLOP_PX ? 'hidden' : '';
   }
 
   function reportSubmissionLayoutSignature(table) {
@@ -2671,7 +2684,7 @@
     var wrap = table && table.closest('.report-submission-table-wrap');
     if (!table || !wrap) return;
     ensureReportSubmissionColumnLayoutObserver();
-    var available = wrap.clientWidth;
+    var available = reportSubmissionWrapAvailableWidth(wrap);
     if (available < 1) return;
     var signature = reportSubmissionLayoutSignature(table);
     var cache = reportColumnLayoutCache;
@@ -4855,6 +4868,21 @@
 
   function applyReviewDecisionResult(row, data) {
     if (!row || !data) return;
+    if (data.slot_rows_html) {
+      replaceReportSlotRows(getReportSubmissionSection(), data.version_group || '', data.slot_rows_html);
+      if (data.remarks_notice_pending && data.review_entry_id) {
+        var pendingRow = document.querySelector(
+          '#report-submission-table tr[data-review-entry-id="' + String(data.review_entry_id) + '"]'
+        );
+        var pendingBox = pendingRow && pendingRow.querySelector('input[name="report-select"]');
+        if (pendingBox) {
+          pendingBox.disabled = false;
+          pendingBox.checked = true;
+        }
+        updateReportSubmissionMasterState();
+      }
+      return;
+    }
     if (data.workflow_status) {
       updateReportWorkflowStatusCell(row, data);
       updateReportStatusDateCell(row, data);
@@ -4902,28 +4930,68 @@
     inputEl.value = '';
     if (!url || !file || !uploadId) return;
     var row = inputEl.closest('tr');
+    function submitReviewFile(confirmNoAi) {
+      var body = new FormData();
+      body.append('upload_id', uploadId);
+      body.append('file', file);
+      if (confirmNoAi) body.append('confirm_no_ai', '1');
+      var sourceSel = section.querySelector('#report-submission-source');
+      if (sourceSel && sourceSel.value === 'local') {
+        body.append('source_kind', 'local');
+        var pathInput = section.querySelector('#report-submission-local-path');
+        body.append('local_folder_path', pathInput ? pathInput.value.trim() : '');
+      }
+      fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+        body: body,
+      }).then(function(response) {
+        return response.json().then(function(data) {
+          if (!response.ok || !data.ok) {
+            var error = new Error((data && data.error) || 'Не удалось загрузить файл.');
+            error.confirmNoAi = !!(data && data.confirm_no_ai);
+            throw error;
+          }
+          return data;
+        });
+      }).then(function(data) {
+        applyReviewDecisionResult(row, data);
+      }).catch(function(err) {
+        if (err.confirmNoAi && !confirmNoAi) {
+          if (window.confirm(err.message + '\n\nЗагрузить файл всё равно?')) submitReviewFile(true);
+          return;
+        }
+        window.alert(err.message || 'Не удалось загрузить файл.');
+      });
+    }
+    submitReviewFile(false);
+  });
+
+  document.addEventListener('click', function(e) {
+    var appealBtn = e.target.closest('.js-report-ai-appeal');
+    var section = getReportSubmissionSection();
+    if (!appealBtn || !section || !section.contains(appealBtn)) return;
+    e.preventDefault();
+    var url = section.dataset.reportAiAppealUrl;
+    var uploadId = appealBtn.dataset.uploadId || '';
+    if (!url || !uploadId || appealBtn.disabled) return;
+    appealBtn.disabled = true;
     var body = new FormData();
     body.append('upload_id', uploadId);
-    body.append('file', file);
-    var sourceSel = section.querySelector('#report-submission-source');
-    if (sourceSel && sourceSel.value === 'local') {
-      body.append('source_kind', 'local');
-      var pathInput = section.querySelector('#report-submission-local-path');
-      body.append('local_folder_path', pathInput ? pathInput.value.trim() : '');
-    }
     fetch(url, {
       method: 'POST',
       headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
       body: body,
     }).then(function(response) {
       return response.json().then(function(data) {
-        if (!response.ok || !data.ok) throw new Error((data && data.error) || 'Не удалось загрузить файл.');
+        if (!response.ok || !data.ok) throw new Error((data && data.error) || 'Не удалось передать отчёт проверяющему.');
         return data;
       });
     }).then(function(data) {
-      applyReviewDecisionResult(row, data);
+      replaceReportSlotRows(section, data.version_group || '', data.slot_rows_html || '');
     }).catch(function(err) {
-      window.alert(err.message || 'Не удалось загрузить файл.');
+      appealBtn.disabled = false;
+      window.alert(err.message || 'Не удалось передать отчёт проверяющему.');
     });
   });
 
@@ -6723,7 +6791,7 @@
 
       if (!allProj || !allAsset) {
         perfRows.forEach(function(row) {
-          var mp = allProj || pf.indexOf(row.dataset.projectId || '') !== -1;
+          var mp = allProj || pf.indexOf(row.dataset.owningProjectId || row.dataset.projectId || '') !== -1;
           var ma = allAsset || af.indexOf(row.dataset.assetName || '') !== -1;
           if (!(mp && ma)) row.classList.add('d-none');
         });
