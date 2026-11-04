@@ -1121,7 +1121,7 @@ class DshBrandingTests(SimpleTestCase):
             self.repo_root / "deploy" / "dsh" / "docker-compose.ollama.yml"
         ).read_text(encoding="utf-8")
         self.assertEqual(sglang["baseURL"], "http://sglang:30000/v1")
-        self.assertEqual(sglang["compat"]["thinkingFormat"], "qwen")
+        self.assertEqual(sglang["compat"]["thinkingFormat"], "qwen-chat-template")
         self.assertEqual(model["id"], "qwen3.8-27b-local")
         self.assertEqual(model["name"], "Qwen3.8-27B (локально)")
         self.assertEqual(model["input"], ["text", "image"])
