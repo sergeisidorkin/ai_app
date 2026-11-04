@@ -1550,12 +1550,18 @@
                           </div>
                         </div>
                         <button type="button"
-                                id="ler-csv-upload-btn"
+                                id="ler-history-csv-download-btn"
+                                class="btn btn-primary btn-sm d-flex align-items-center"
+                                title="Скачать CSV">
+                          <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+                        </button>
+                        <button type="button"
+                                id="ler-history-csv-upload-btn"
                                 class="btn btn-primary btn-sm d-flex align-items-center"
                                 title="Загрузить CSV">
                           <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
                         </button>
-                        <input type="file" id="ler-csv-file-input" accept=".csv" style="display:none;">
+                        <input type="file" id="ler-history-csv-file-input" accept=".csv" style="display:none;">
                       </div>
                       {% endif %}
                     </div>

@@ -51,6 +51,13 @@ from .forms import (
     BusinessEntityRelationRecordForm,
     ProductionCalendarDayForm,
 )
+from .name_history_csv import (
+    NAME_HISTORY_CSV_FIELDS,
+    NameHistoryImportError,
+    find_identifier_for_registration_number,
+    import_name_history_rows,
+    iter_name_history_rows,
+)
 from .numcap_official_csv import process_numcap_official_sources
 from .production_calendar import (
     _calendar_for_country,
@@ -4737,6 +4744,82 @@ def ler_move_down(request, pk: int):
     return _render_ler_updated(request)
 
 
+def _sync_identifier_number(identifier_record, registration_number):
+    if identifier_record is None or not registration_number:
+        return
+    if identifier_record.number == registration_number:
+        return
+    identifier_record.number = registration_number
+    identifier_record.save()
+
+
+def _name_history_upload_response(request, raw):
+    reader = csv.DictReader(io.StringIO(raw), delimiter=";")
+    fieldnames = [name.strip() for name in (reader.fieldnames or []) if name]
+    if len(fieldnames) <= 1:
+        reader = csv.DictReader(io.StringIO(raw), delimiter=",")
+        fieldnames = [name.strip() for name in (reader.fieldnames or []) if name]
+    missing = [field for field in NAME_HISTORY_CSV_FIELDS if field not in fieldnames]
+    if missing:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "CSV не соответствует формату истории наименований.",
+                "warnings": [f"Отсутствуют колонки: {', '.join(missing)}"],
+            },
+            status=400,
+        )
+    try:
+        payload = import_name_history_rows(list(reader), user=request.user)
+    except NameHistoryImportError as exc:
+        warnings = list(exc.args[0]) if exc.args and isinstance(exc.args[0], list) else [str(exc)]
+        return JsonResponse(
+            {"ok": False, "error": "CSV содержит ошибки в данных.", "warnings": warnings[:50]},
+            status=400,
+        )
+    except Exception as exc:
+        logger.exception("Name history CSV import failed")
+        return JsonResponse({"ok": False, "error": f"Не удалось импортировать CSV: {exc}"}, status=400)
+    return JsonResponse(payload)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def ler_history_csv_download(request):
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=NAME_HISTORY_CSV_FIELDS, delimiter=";", lineterminator="\n")
+    writer.writeheader()
+    for row in iter_name_history_rows():
+        writer.writerow({field: row.get(field, "") for field in NAME_HISTORY_CSV_FIELDS})
+    response = HttpResponse("\ufeff" + output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="name-history.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def ler_history_csv_upload(request):
+    csv_file = request.FILES.get("csv_file")
+    if not csv_file:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    if not csv_file.name.lower().endswith(".csv"):
+        return JsonResponse({"ok": False, "error": "Допустимы только файлы CSV."}, status=400)
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return JsonResponse(
+                {"ok": False, "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251)."},
+                status=400,
+            )
+    return _name_history_upload_response(request, raw)
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_POST
@@ -4766,6 +4849,8 @@ def ler_csv_upload(request):
         rows = list(reader)
     if len(rows) < 2:
         return JsonResponse({"ok": False, "error": "Файл должен содержать заголовок и хотя бы одну строку данных."}, status=400)
+    if "ID-BSN" in {cell.strip() for cell in rows[0]}:
+        return _name_history_upload_response(request, raw)
 
     data_rows = rows[1:]
     created_count = 0
@@ -4875,6 +4960,7 @@ def ler_csv_upload(request):
                     existing.record_author = record_author_csv or author
                     existing.save()
                     _ensure_name_record_has_identifier_chain(existing, request.user)
+                    _sync_identifier_number(existing.identifier_record, registration_number)
                     conflicts.append(
                         f'Строка {i}: «{short_name}» — обновлено: {"; ".join(changed_fields)}.'
                     )
@@ -4886,6 +4972,7 @@ def ler_csv_upload(request):
                     )
                 continue
 
+            matched_identifier = find_identifier_for_registration_number(registration_number)
             created = LegalEntityRecord.objects.create(
                 attribute=LegalEntityRecord.ATTRIBUTE_NAME,
                 short_name=short_name,
@@ -4899,15 +4986,20 @@ def ler_csv_upload(request):
                 record_author=record_author_csv or author,
                 name_received_date=name_received_date,
                 name_changed_date=name_changed_date,
+                identifier_record=matched_identifier,
                 position=position,
             )
             _ensure_name_record_has_identifier_chain(created, request.user)
+            _sync_identifier_number(created.identifier_record, registration_number)
             position += 1
             created_count += 1
 
         except Exception as exc:
             logger.exception("LER CSV import row %d failed", i)
-            errors.append(f"Строка {i}: {exc}")
+            message = str(exc)
+            if "ler_name_no_overlap_per_identifier" in message:
+                message = "период наименования пересекается с уже существующим именем этого номера"
+            errors.append(f"Строка {i}: {message}")
 
     result = {
         "ok": True,

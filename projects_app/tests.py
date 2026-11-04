@@ -15901,7 +15901,7 @@ class ReportAiAppealTests(TestCase):
         request = RequestFactory().get("/")
         request.user = self.user
         button_html = _render_report_submission_row(request, rows[0])
-        self.assertIn("Остались ошибочные замечания", button_html)
+        self.assertIn("Остались только ошибочные замечания", button_html)
         self.assertIn("bi-exclamation-circle", button_html)
 
         response = self._appeal(upload)

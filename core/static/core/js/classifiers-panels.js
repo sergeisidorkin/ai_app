@@ -1181,6 +1181,11 @@
       window.location.href = '/classifiers/business-registry/csv-download/';
       return;
     }
+    var historyDownloadBtn = e.target.closest('#ler-history-csv-download-btn');
+    if (historyDownloadBtn) {
+      window.location.href = '/classifiers/ler/history-csv-download/';
+      return;
+    }
     var mapping = {
       'ber-csv-upload-btn': 'ber-csv-file-input',
       'oksm-csv-upload-btn': 'oksm-csv-file-input',
@@ -1189,7 +1194,7 @@
       'katd-csv-upload-btn': 'katd-csv-file-input',
       'rfs-csv-upload-btn': 'rfs-csv-file-input',
       'lw-csv-upload-btn': 'lw-csv-file-input',
-      'ler-csv-upload-btn': 'ler-csv-file-input',
+      'ler-history-csv-upload-btn': 'ler-history-csv-file-input',
     };
     for (var btnId in mapping) {
       var btn = e.target.closest('#' + btnId);
@@ -1210,7 +1215,7 @@
       'katd-csv-file-input': { url: '/classifiers/katd/csv-upload/', refresh: null },
       'rfs-csv-file-input':  { url: '/classifiers/rfs/csv-upload/',  refresh: 'rfs-select' },
       'lw-csv-file-input':   { url: '/classifiers/lw/csv-upload/',   refresh: 'lw-select' },
-      'ler-csv-file-input':  { url: '/classifiers/ler/csv-upload/',  refresh: 'ler-select' },
+      'ler-history-csv-file-input': { url: '/classifiers/ler/history-csv-upload/', refresh: 'ler-select', refreshAllBusinessRegistries: true },
     };
     var cfg = mapping[e.target.id];
     if (!cfg) return;

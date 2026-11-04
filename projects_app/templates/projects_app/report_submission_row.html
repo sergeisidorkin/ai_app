@@ -157,9 +157,9 @@
       <button type="button"
               class="report-review-accept-action js-report-ai-appeal"
               data-upload-id="{{ row.upload.pk }}"
-              title="Передать отчёт следующему проверяющему: часть замечаний ИИ ошибочна">
+              title="Передать отчёт следующему проверяющему: все оставшиеся замечания ИИ ошибочны">
         <i class="bi bi-exclamation-circle" aria-hidden="true"></i>
-        <span class="report-review-action-text">Остались ошибочные замечания</span>
+        <span class="report-review-action-text">Остались только ошибочные замечания</span>
       </button>
     {% endif %}
     {% if not row.review_entry and row.upload and row.upload.review_file_name %}
