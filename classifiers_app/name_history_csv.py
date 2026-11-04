@@ -36,16 +36,17 @@ NAME_HISTORY_CSV_FIELDS = [
     "Дата смены наименования",
 ]
 
-_ADDRESS_DETAIL_FIELDS = (
-    "postal_code",
-    "municipality",
-    "settlement",
-    "locality",
-    "district",
-    "street",
-    "building",
-    "premise",
-    "premise_part",
+_ADDRESS_COMPARE_FIELDS = (
+    ("registration_region", "регион"),
+    ("postal_code", "индекс"),
+    ("municipality", "муниципальное образование"),
+    ("settlement", "поселение"),
+    ("locality", "населенный пункт"),
+    ("district", "район"),
+    ("street", "улица"),
+    ("building", "здание"),
+    ("premise", "помещение"),
+    ("premise_part", "часть помещения"),
 )
 
 
@@ -351,6 +352,7 @@ def _build_plan(groups):
             final_from = valid_from if valid_from is not None else (keeper_identifier.valid_from if keeper_identifier else registration_date)
             final_to = valid_to if valid_to is not None else (keeper_identifier.valid_to if keeper_identifier else None)
             names = _planned_names(number_rows, candidates, name_cache, errors, where)
+            _append_address_conflicts(candidates, where, errors)
             number_plans.append(
                 {
                     "rows": number_rows,
@@ -367,6 +369,22 @@ def _build_plan(groups):
                     "names": names,
                 }
             )
+        if keeper_entity_id is None:
+            matched_entity_ids = sorted({
+                item.business_entity_id
+                for plan in number_plans
+                for item in plan["candidates"]
+                if item.business_entity_id
+            })
+            if matched_entity_ids:
+                keeper_entity_id = matched_entity_ids[0]
+                for plan in number_plans:
+                    current = plan["keeper_identifier"]
+                    if current is not None and current.business_entity_id == keeper_entity_id:
+                        continue
+                    on_entity = [item for item in plan["candidates"] if item.business_entity_id == keeper_entity_id]
+                    if on_entity:
+                        plan["keeper_identifier"] = min(on_entity, key=lambda item: item.pk)
         kept_identifier_ids = {item["keeper_identifier"].pk for item in number_plans if item["keeper_identifier"]}
         removed_identifier_ids = {
             item.pk
@@ -643,12 +661,62 @@ def _assign_identifier_fields(identifier, number_plan):
     identifier.valid_to = number_plan["valid_to"]
 
 
+def _append_address_conflicts(identifiers, where, errors):
+    if len(identifiers) < 2:
+        return
+    addresses = list(
+        LegalEntityRecord.objects.filter(
+            attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
+            identifier_record__in=identifiers,
+        ).select_related("registration_country").order_by("id")
+    )
+    for index, left in enumerate(addresses):
+        for right in addresses[index + 1:]:
+            if not _ranges_overlap(left.valid_from, left.valid_to, right.valid_from, right.valid_to, closed=True):
+                continue
+            conflicts = _address_conflicts(left, right)
+            if not conflicts:
+                continue
+            rendered = ", ".join(
+                f"{label} («{left_value}» и «{right_value}»)"
+                for label, left_value, right_value in conflicts
+            )
+            errors.append(
+                f"{where}: юридические адреса {left.pk:05d}-ATR и {right.pk:05d}-ATR пересекаются и различаются: {rendered}. "
+                "Файл истории наименований адреса не меняет — исправьте их в реестре и повторите загрузку."
+            )
+
+
+def _address_text(address, field):
+    if field == "registration_country":
+        if not address.registration_country_id:
+            return ""
+        return address.registration_country.short_name or ""
+    return (getattr(address, field) or "").strip()
+
+
+def _address_conflicts(left, right):
+    conflicts = []
+    for field, label in _ADDRESS_COMPARE_FIELDS:
+        left_value = _address_text(left, field)
+        right_value = _address_text(right, field)
+        if left_value and right_value and left_value != right_value:
+            conflicts.append((label, left_value, right_value))
+    if (
+        left.registration_country_id
+        and right.registration_country_id
+        and left.registration_country_id != right.registration_country_id
+    ):
+        conflicts.append(("страна", _address_text(left, "registration_country"), _address_text(right, "registration_country")))
+    return conflicts
+
+
 def _collapse_addresses(identifiers, keeper):
     addresses = list(
         LegalEntityRecord.objects.filter(
             attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
             identifier_record__in=identifiers,
-        ).order_by("id")
+        ).select_related("registration_country").order_by("id")
     )
     kept = []
     for address in sorted(addresses, key=lambda item: (-_address_score(item), item.pk)):
@@ -660,21 +728,43 @@ def _collapse_addresses(identifiers, keeper):
             ),
             None,
         )
-        if overlapping is not None:
-            if address.registration_region and not overlapping.registration_region:
-                overlapping.registration_region = address.registration_region
-                overlapping.save(update_fields=["registration_region", "updated_at"])
-            address.delete()
+        if overlapping is None:
+            kept.append(address)
             continue
-        kept.append(address)
+        conflicts = _address_conflicts(overlapping, address)
+        if conflicts:
+            rendered = ", ".join(
+                f"{label} («{left_value}» и «{right_value}»)"
+                for label, left_value, right_value in conflicts
+            )
+            raise NameHistoryImportError([
+                f"Юридические адреса {overlapping.pk:05d}-ATR и {address.pk:05d}-ATR пересекаются и различаются: {rendered}. "
+                "Файл истории наименований адреса не меняет — исправьте их в реестре и повторите загрузку."
+            ])
+        _copy_missing_address_fields(overlapping, address)
+        address.delete()
     for address in kept:
         if address.identifier_record_id != keeper.pk:
             address.identifier_record = keeper
             address.save()
 
 
+def _copy_missing_address_fields(target, source):
+    update_fields = []
+    for field, _label in _ADDRESS_COMPARE_FIELDS:
+        if _address_text(target, field) or not _address_text(source, field):
+            continue
+        setattr(target, field, getattr(source, field))
+        update_fields.append(field)
+    if not target.registration_country_id and source.registration_country_id:
+        target.registration_country = source.registration_country
+        update_fields.append("registration_country")
+    if update_fields:
+        target.save(update_fields=[*update_fields, "updated_at"])
+
+
 def _address_score(address):
-    return sum(1 for field in _ADDRESS_DETAIL_FIELDS if getattr(address, field)) + (1 if address.registration_region else 0)
+    return sum(1 for field, _label in _ADDRESS_COMPARE_FIELDS if _address_text(address, field))
 
 
 def _move_names(source, target):

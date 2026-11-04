@@ -2652,3 +2652,140 @@ class NameHistoryCsvTests(TestCase):
         self.assertEqual(LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).count(), 2)
         entity.refresh_from_db()
         self.assertEqual(entity.name, "Амуруголь")
+
+    def test_blank_business_entity_ref_reuses_matched_entity(self):
+        entity, identifier = self._make_company(
+            name="Амуруголь",
+            number="1022800000123",
+            short_name="АО «Амуруголь»",
+            received="2002-01-15",
+        )
+        entity.source = "карточка"
+        entity.comment = "не трогать"
+        entity.save(update_fields=["source", "comment"])
+        row = self._row(
+            entity=entity,
+            identifier=identifier,
+            short_name="АО «Амуруголь»",
+            received="2002-01-15",
+        )
+        row["ID-BSN"] = ""
+        row["ID-IDN"] = ""
+        row["Наименование бизнес-сущности"] = ""
+
+        first = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": self._history_file([row])})
+        self.assertEqual(first.status_code, 200, first.content)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        entity.refresh_from_db()
+        self.assertEqual(entity.source, "карточка")
+        self.assertEqual(entity.comment, "не трогать")
+        self.assertEqual(entity.name, "Амуруголь")
+
+        second = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": self._history_file([row])})
+        self.assertEqual(second.status_code, 200, second.content)
+        self.assertEqual(BusinessEntityRecord.objects.get().pk, entity.pk)
+        entity.refresh_from_db()
+        self.assertEqual(entity.source, "карточка")
+        self.assertEqual(entity.comment, "не трогать")
+        self.assertEqual(entity.name, "Амуруголь")
+
+    def test_conflicting_addresses_reject_import(self):
+        number = "1022800000123"
+        older, older_identifier = self._make_company(
+            name="Амуруголь",
+            number=number,
+            short_name="АО «Амуруголь»",
+            received="2002-01-15",
+            changed=date(2015, 1, 1),
+        )
+        newer, newer_identifier = self._make_company(
+            name="Амуруголь новое",
+            number=number,
+            short_name="ПАО «Амуруголь»",
+            received="2015-01-01",
+        )
+        older_address = older_identifier.legal_entity_records.get(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        newer_address = newer_identifier.legal_entity_records.get(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        older_address.street = "Ленина"
+        older_address.building = "1"
+        older_address.save(update_fields=["street", "building", "updated_at"])
+        newer_address.street = "Мира"
+        newer_address.building = "1"
+        newer_address.save(update_fields=["street", "building", "updated_at"])
+        upload = self._history_file(
+            [
+                self._row(
+                    entity=older,
+                    identifier=older_identifier,
+                    short_name="АО «Амуруголь»",
+                    received="2002-01-15",
+                    changed="2015-01-01",
+                    entity_name="Амуруголь",
+                ),
+                self._row(
+                    entity=newer,
+                    identifier=newer_identifier,
+                    short_name="ПАО «Амуруголь»",
+                    received="2015-01-01",
+                    registration="2002-01-15",
+                    entity_name="Амуруголь",
+                ),
+            ]
+        )
+        response = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("улица", response.json()["warnings"][0])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 2)
+        self.assertTrue(LegalEntityRecord.objects.filter(pk=older_address.pk, street="Ленина").exists())
+        self.assertTrue(LegalEntityRecord.objects.filter(pk=newer_address.pk, street="Мира").exists())
+
+    def test_complementary_addresses_are_preserved(self):
+        number = "1022800000456"
+        older, older_identifier = self._make_company(
+            name="Масловское",
+            number=number,
+            short_name="ООО «Масловское»",
+            received="2008-03-01",
+            changed=date(2016, 3, 1),
+        )
+        newer, newer_identifier = self._make_company(
+            name="Масловское новое",
+            number=number,
+            short_name="АО «Масловское»",
+            received="2016-03-01",
+        )
+        older_address = older_identifier.legal_entity_records.get(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        newer_address = newer_identifier.legal_entity_records.get(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        older_address.street = "Ленина"
+        older_address.save(update_fields=["street", "updated_at"])
+        newer_address.postal_code = "101000"
+        newer_address.save(update_fields=["postal_code", "updated_at"])
+        upload = self._history_file(
+            [
+                self._row(
+                    entity=older,
+                    identifier=older_identifier,
+                    short_name="ООО «Масловское»",
+                    received="2008-03-01",
+                    changed="2016-03-01",
+                    entity_name="Масловское",
+                ),
+                self._row(
+                    entity=newer,
+                    identifier=newer_identifier,
+                    short_name="АО «Масловское»",
+                    received="2016-03-01",
+                    registration="2008-03-01",
+                    entity_name="Масловское",
+                ),
+            ]
+        )
+        response = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        addresses = LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        self.assertEqual(addresses.count(), 1)
+        address = addresses.get()
+        self.assertEqual(address.street, "Ленина")
+        self.assertEqual(address.postal_code, "101000")
