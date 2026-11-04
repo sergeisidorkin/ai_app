@@ -997,25 +997,26 @@ def start_ai_appeal(*, user, upload):
 
 
 def _cancel_open_ai_appeal(upload) -> None:
-    """Новая версия до решения проверяющего снимает апелляцию вместе с пустой строкой шага."""
-    from .models import ReportReviewEntry
-    from .report_review import REVIEW_AI, REVIEW_PHASE_REWORK, _slot_upload_ids
+    """Новая версия до решения проверяющего снимает пустую строку шага апелляции.
 
-    appeals = ReportReviewEntry.objects.filter(
-        upload_id__in=_slot_upload_ids(upload),
-        step=REVIEW_AI,
-        phase=REVIEW_PHASE_REWORK,
-        settled=False,
-        appealed_at__isnull=False,
+    Порог мог уже закрыть строку ИИ и выставить ей settled, оставив ручной шаг
+    открытым. Отмена смотрит на этот шаг, а не на флаг settled автопроверки.
+    """
+    from .models import ReportReviewEntry
+    from .report_review import REVIEW_PHASE_REVIEW, _slot_upload_ids
+
+    pending = list(
+        ReportReviewEntry.objects.filter(
+            upload_id__in=_slot_upload_ids(upload),
+            phase=REVIEW_PHASE_REVIEW,
+            settled=False,
+            review_file_name="",
+            review_cloud_path="",
+        )
     )
-    for appeal in appeals:
-        target = appeal_review_entry(appeal)
-        if (
-            target is not None
-            and not target.settled
-            and not (target.review_file_name or target.review_cloud_path)
-        ):
-            target.delete()
+    for entry in pending:
+        if appeal_for_review_entry(entry) is not None:
+            entry.delete()
 
 
 def upload_is_latest_version(upload) -> bool:

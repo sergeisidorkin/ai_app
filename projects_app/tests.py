@@ -16156,6 +16156,42 @@ class ReportAiAppealTests(TestCase):
                 )
         self.assertFalse(ReportReviewEntry.objects.filter(upload=upload).exists())
 
+    def test_new_version_cancels_appeal_after_ai_threshold_is_met(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_review import latest_open_entry, user_can_submit_review
+        from projects_app.report_submission import apply_finding_correction, upload_report_file
+
+        upload = self._checked_upload(["ai", "kp"])
+        self._appeal(upload)
+        apply_finding_correction(upload, {"MRK-01 Термины": 0, "MRK-02 Ссылки": 0})
+        appeal = ReportReviewEntry.objects.get(upload=upload, step="ai", phase="rework")
+        self.assertTrue(appeal.settled)
+        step = ReportReviewEntry.objects.get(upload=upload, step="kp", phase="review")
+        self.assertFalse(step.settled)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(
+                REPORT_CHECK_ALLOW_LOCAL_FOLDER=True,
+                REPORT_CHECK_LOCAL_ROOTS=[str(Path(tmp).resolve())],
+            ):
+                replacement = upload_report_file(
+                    user=self.user,
+                    project=self.project,
+                    executor=self.performer.executor,
+                    asset_name=self.performer.asset_name,
+                    performer=self.performer,
+                    is_all_sections=False,
+                    uploaded_file=SimpleUploadedFile("report.docx", _report_docx_bytes("Новая версия.")),
+                    local_folder_path=tmp,
+                )
+
+        self.assertFalse(ReportReviewEntry.objects.filter(pk=step.pk).exists())
+        appeal.refresh_from_db()
+        self.assertTrue(appeal.settled)
+        self.assertIsNone(latest_open_entry(replacement))
+        self.assertFalse(user_can_submit_review(self.user, replacement))
+        self.assertFalse(user_can_submit_review(self.user, upload))
+
 
 class ReportMacroTests(TestCase):
     def setUp(self):
