@@ -391,12 +391,12 @@
                         <input type="hidden"
                                name="customer_autocomplete_identifier_record_id"
                                class="registration-customer-selected-id"
-                               value=""
+                               value="{{ row.selected_identifier_record_id }}"
                                {% if forloop.first %}id="reg-customer-autocomplete-identifier-record-id"{% endif %}>
                         <input type="hidden"
                                name="customer_autocomplete_selected_from_autocomplete"
                                class="registration-customer-selected-flag"
-                               value="0"
+                               value="{% if row.selected_from_autocomplete %}1{% else %}0{% endif %}"
                                {% if forloop.first %}id="reg-customer-autocomplete-selected"{% endif %}>
                         <input type="hidden"
                                name="identifier"
@@ -505,12 +505,12 @@
                         <input type="hidden"
                                name="asset_owner_autocomplete_identifier_record_id"
                                class="registration-owner-selected-id"
-                               value=""
+                               value="{{ row.selected_identifier_record_id }}"
                                {% if forloop.first %}id="reg-asset-owner-autocomplete-identifier-record-id"{% endif %}>
                         <input type="hidden"
                                name="asset_owner_autocomplete_selected_from_autocomplete"
                                class="registration-owner-selected-flag"
-                               value="0"
+                               value="{% if row.selected_from_autocomplete %}1{% else %}0{% endif %}"
                                {% if forloop.first %}id="reg-asset-owner-autocomplete-selected"{% endif %}>
                         <input type="hidden"
                                name="asset_owner_identifier"
@@ -3460,6 +3460,8 @@
       registration_number: row.querySelector(".registration-customer-number")?.value || "",
       registration_region: row.querySelector(".registration-customer-region")?.value || "",
       registration_date: row.querySelector(".registration-customer-date")?.value || "",
+      customer_identifier_record_id: row.querySelector(".registration-customer-selected-id")?.value || "",
+      selected_identifier_record_id: row.querySelector(".registration-customer-selected-id")?.value || "",
     });
 
     const assignProduct = (row, product) => {
@@ -3493,6 +3495,11 @@
       if (identifier) identifier.value = party.identifier || "";
       if (number) number.value = party.registration_number || "";
       if (date) date.value = party.registration_date || "";
+      const selectedId = row.querySelector(".registration-customer-selected-id");
+      const selectedFlag = row.querySelector(".registration-customer-selected-flag");
+      const linkedId = party.customer_identifier_record_id || party.selected_identifier_record_id || "";
+      if (selectedId) selectedId.value = linkedId;
+      if (selectedFlag) selectedFlag.value = linkedId ? "1" : "0";
       if (region) {
         const regionName = party.registration_region || "";
         region.dataset.pendingSelectedRegion = regionName;

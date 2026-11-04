@@ -68,13 +68,219 @@
     return window.TypicalServiceTermGantt || null;
   }
 
+  // ---------------------------------------------------------------------
+  // «Призрак» диаграммы на время перерисовки #projects-pane.
+  //
+  // Любое сохранение в разделе (а также обновление самого графика) целиком
+  // перерисовывает #projects-pane через htmx. Новая разметка приходит с
+  // пустым скрытым редактором, после чего диаграмма заново запрашивается
+  // fetch'ем и монтируется — между этими моментами пользователь видел, как
+  // область графика схлопывается, показывает «Загрузка диаграммы…» и спустя
+  // ~0,5 с появляется снова. Чтобы этого не было, перед swap снимаем
+  // статическую копию видимой диаграммы (inert, без id/name/hx-атрибутов),
+  // сразу после swap кладём её поверх нового контейнера, фиксируя его высоту,
+  // и убираем копию, когда новая диаграмма отрисована (или по тайм-ауту).
+  // Живой редактор и экземпляр Gantt при этом живут ровно так же, как и
+  // раньше — копия чисто визуальная.
+  // ---------------------------------------------------------------------
+  const GHOST_CLASS = 'project-schedule-gantt-ghost';
+  const WRAP_PENDING_CLASS = 'project-schedule-gantt-wrap--pending';
+  const GHOST_MAX_LIFETIME_MS = 10000;
+  let pendingGhost = null;   // снято в htmx:beforeSwap, ждёт вставки
+  let activeGhost = null;    // вставлено в новый wrap, ждёт готовности графика
+
+  function ganttIsBusy() {
+    // Во время drag'n'drop или открытого lightbox статическая копия была бы
+    // неточной — в этих случаях работаем как раньше, без призрака.
+    return document.body.classList.contains('typical-service-term-gantt-row-dragging')
+      || !!document.querySelector('.gantt_cal_light, .gantt_cal_cover, .gantt_drag_marker');
+  }
+
+  function captureGanttGhost(oldRoot) {
+    if (!oldRoot || getCurrentView(oldRoot) !== VIEW_GANTT) return null;
+    const wrap = oldRoot.querySelector('#project-schedule-gantt-wrap');
+    if (!wrap || wrap.classList.contains('d-none')) return null;
+    if (ganttIsBusy()) return null;
+
+    // Если предыдущая перерисовка ещё не завершилась, повторно используем
+    // уже существующую копию — не клонируем wrap вместе с призраком внутри.
+    const existingGhost = wrap.querySelector(':scope > .' + GHOST_CLASS);
+    if (existingGhost) {
+      const keptScrolls = [];
+      existingGhost.querySelectorAll('*').forEach(function (el) {
+        if (el.scrollLeft || el.scrollTop) keptScrolls.push({ el: el, left: el.scrollLeft, top: el.scrollTop });
+      });
+      existingGhost.remove();
+      return { ghost: existingGhost, height: parseFloat(existingGhost.style.height) || 0, scrolls: keptScrolls };
+    }
+
+    const editor = wrap.querySelector('#typical-service-term-gantt-editor');
+    const chart = editor && editor.querySelector('#typical-service-term-gantt');
+    if (!editor || editor.classList.contains('d-none')) return null;
+    if (editor.classList.contains('typical-service-term-gantt-editor--fullscreen')) return null;
+    if (!chart || !chart.querySelector('.gantt_container')) return null;
+    const height = wrap.getBoundingClientRect().height;
+    if (!(height > 40)) return null;
+
+    const ghost = wrap.cloneNode(true);
+
+    // Пары «оригинал → копия» снимаем до любых удалений, пока структуры
+    // деревьев совпадают: позиции прокрутки и значения полей cloneNode не
+    // переносит, а без них копия визуально «прыгнула» бы к началу шкалы.
+    const sourceNodes = wrap.querySelectorAll('*');
+    const ghostNodes = ghost.querySelectorAll('*');
+    const scrolls = [];
+    for (let i = 0; i < sourceNodes.length && i < ghostNodes.length; i += 1) {
+      const src = sourceNodes[i];
+      const dst = ghostNodes[i];
+      if (src.scrollLeft || src.scrollTop) {
+        scrolls.push({ el: dst, left: src.scrollLeft, top: src.scrollTop });
+      }
+      if ((src.tagName === 'INPUT' || src.tagName === 'TEXTAREA' || src.tagName === 'SELECT')
+          && 'value' in dst && src.type !== 'checkbox' && src.type !== 'radio') {
+        try { dst.value = src.value; } catch (_) { /* noop */ }
+      }
+    }
+
+    // Копия не должна быть видна ни одному селектору приложения и htmx:
+    // убираем id/name/for, hx-* и data-*-атрибуты, поведенческие js-* классы,
+    // скрипты и служебные узлы Gantt.
+    ghost.querySelectorAll('script, .gantt_cal_light, .gantt_cal_cover, .gantt_drag_marker, .modal')
+      .forEach(function (node) { node.remove(); });
+    const all = [ghost].concat(Array.prototype.slice.call(ghost.querySelectorAll('*')));
+    all.forEach(function (node) {
+      Array.prototype.slice.call(node.attributes).forEach(function (attr) {
+        const name = attr.name;
+        if (name === 'id' || name === 'name' || name === 'for' || name === 'tabindex'
+            || name.indexOf('hx-') === 0 || name.indexOf('data-') === 0
+            || name.indexOf('on') === 0) {
+          node.removeAttribute(name);
+        }
+      });
+      if (node.classList && node.classList.length) {
+        Array.prototype.slice.call(node.classList).forEach(function (cls) {
+          if (cls.indexOf('js-') === 0) node.classList.remove(cls);
+        });
+      }
+    });
+    ghost.classList.remove('d-none', 'project-schedule-gantt-wrap');
+    ghost.classList.add(GHOST_CLASS);
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.setAttribute('inert', '');
+    ghost.style.height = Math.round(height) + 'px';
+    return { ghost: ghost, height: height, scrolls: scrolls };
+  }
+
+  function finishGanttGhost() {
+    const state = activeGhost;
+    activeGhost = null;
+    if (!state) return;
+    if (state.timer) window.clearTimeout(state.timer);
+    if (state.ghost && state.ghost.parentNode) state.ghost.parentNode.removeChild(state.ghost);
+    const wrap = state.wrap;
+    if (wrap) {
+      wrap.classList.remove(WRAP_PENDING_CLASS);
+      wrap.style.minHeight = '';
+    }
+  }
+
+  function restoreGanttScrollFromGhost(state) {
+    // Новая диаграмма монтируется с прокруткой в начало шкалы; переносим на
+    // неё положение полос прокрутки с копии, чтобы картинка не «прыгала».
+    // Предпочтительно через gantt.scrollTo(); запасной путь — скроллбары
+    // dhtmlx, данные тогда синхронизирует его штатный обработчик scroll.
+    if (!state || !state.wrap || !state.scrolls) return;
+    const chart = state.wrap.querySelector('#typical-service-term-gantt');
+    if (!chart || !chart.querySelector('.gantt_container')) return;
+    let x = null;
+    let y = null;
+    state.scrolls.forEach(function (item) {
+      const cls = item.el && item.el.classList;
+      if (!cls) return;
+      if (cls.contains('gantt_hor_scroll') && item.left) x = item.left;
+      if (cls.contains('gantt_ver_scroll') && item.top) y = item.top;
+    });
+    if (x === null && y === null) return;
+    const api = ganttApi();
+    const gantt = api && typeof api.getInstance === 'function' ? api.getInstance() : null;
+    if (gantt && typeof gantt.scrollTo === 'function') {
+      // Штатный API: синхронно обновляет и внутреннее состояние dhtmlx, и
+      // DOM — позиция переживает последующие gantt.render() (календарь,
+      // маркеры), которые редактор запускает отложенно.
+      gantt.scrollTo(x, y);
+      return;
+    }
+    const hor = x !== null ? chart.querySelector('.gantt_hor_scroll') : null;
+    const ver = y !== null ? chart.querySelector('.gantt_ver_scroll') : null;
+    if (hor) hor.scrollLeft = x;
+    if (ver) ver.scrollTop = y;
+  }
+
+  function finishGanttGhostAfterFrame() {
+    // Даём один кадр пост-монтажным rAF-коллбэкам редактора (выравнивание
+    // линий связей, маркеры) выполниться до снятия копии; сам rAF отрабатывает
+    // до отрисовки, так что промежуточного кадра пользователь не увидит.
+    if (!activeGhost) return;
+    try { restoreGanttScrollFromGhost(activeGhost); } catch (_) { /* noop */ }
+    window.requestAnimationFrame(finishGanttGhost);
+  }
+
+  function mountGanttGhost(newRoot) {
+    const state = pendingGhost;
+    pendingGhost = null;
+    if (!state || !newRoot) return;
+    const wrap = newRoot.querySelector('#project-schedule-gantt-wrap');
+    if (!wrap) return;
+    finishGanttGhost();
+
+    // Переключаем вид синхронно, в той же задаче, что и swap: таблица не
+    // успеет мелькнуть даже если requestAnimationFrame(init) задержится.
+    const tableWrap = newRoot.querySelector('.project-schedule-table-wrap');
+    if (tableWrap) tableWrap.classList.add('d-none');
+    wrap.classList.remove('d-none');
+    const label = newRoot.querySelector('.js-project-schedule-view-label');
+    if (label) label.textContent = 'График';
+    const titleIcon = newRoot.querySelector('.js-project-schedule-title-icon');
+    if (titleIcon) {
+      titleIcon.classList.remove('bi-table');
+      titleIcon.classList.add('bi-calendar-week');
+    }
+
+    wrap.classList.add(WRAP_PENDING_CLASS);
+    wrap.style.minHeight = Math.round(state.height) + 'px';
+    wrap.insertBefore(state.ghost, wrap.firstChild);
+    // Позиции прокрутки применяем микрозадачей: в момент afterSettle секция
+    // «Определение границ» ещё может быть скрыта (её показывает другой
+    // обработчик afterSettle), а у элемента без layout scrollLeft обнуляется.
+    // Микрозадача выполнится до конца текущей задачи — до отрисовки кадра.
+    const scrolls = state.scrolls;
+    Promise.resolve().then(function () {
+      scrolls.forEach(function (item) {
+        try {
+          item.el.scrollLeft = item.left;
+          item.el.scrollTop = item.top;
+        } catch (_) { /* noop */ }
+      });
+    });
+    activeGhost = {
+      ghost: state.ghost,
+      wrap: wrap,
+      scrolls: scrolls,
+      timer: window.setTimeout(finishGanttGhost, GHOST_MAX_LIFETIME_MS),
+    };
+  }
+
   function openGanttForSelected(root) {
     const api = ganttApi();
-    if (!api) return;
+    if (!api) {
+      finishGanttGhost();
+      return;
+    }
     const config = getSelectedConfig(root);
     if (!config || !config.ganttUrl) {
       api.close();
       showEmptyHint(root, true);
+      finishGanttGhost();
       return;
     }
     showEmptyHint(root, false);
@@ -88,7 +294,7 @@
     }
     if (editor) editor.dataset.scheduleGanttPendingUrl = config.ganttUrl;
     try {
-      api.open({
+      const opening = api.open({
         ganttUrl: config.ganttUrl,
         termId: config.projectId,
         productLabel: config.productLabel,
@@ -97,7 +303,16 @@
         // scrollIntoView behaviour to jerk the page down.
         noScroll: true,
       });
-    } catch (_) { /* surfaced inside the editor's own message bar */ }
+      // open() — async-функция: промис резолвится после отрисовки новой
+      // диаграммы (или после вывода ошибки в message bar). В обоих случаях
+      // копия больше не нужна.
+      if (activeGhost) {
+        Promise.resolve(opening).then(finishGanttGhostAfterFrame, finishGanttGhostAfterFrame);
+      }
+    } catch (_) {
+      finishGanttGhost();
+      /* surfaced inside the editor's own message bar */
+    }
     // Clear the pending tag on the next macro-task — by then api.open()'s
     // own async fetch has already kicked off and any duplicate calls
     // arriving in this same animation frame have been suppressed.
@@ -136,6 +351,7 @@
     if (isGantt) {
       window.requestAnimationFrame(function () { openGanttForSelected(root); });
     } else {
+      finishGanttGhost();
       closeGantt();
     }
   }
@@ -192,6 +408,29 @@
   }
 
   document.addEventListener('DOMContentLoaded', init);
+
+  // Снимок видимой диаграммы — пока старая разметка ещё в документе.
+  document.body.addEventListener('htmx:beforeSwap', function (event) {
+    const target = event.detail && event.detail.target;
+    if (!(target instanceof Element) || target.id !== 'projects-pane') return;
+    if (event.detail && event.detail.shouldSwap === false) return;
+    pendingGhost = null;
+    try { pendingGhost = captureGanttGhost(target); } catch (_) { pendingGhost = null; }
+  });
+
+  // Вставляем копию в afterSettle (фаза capture — раньше остальных
+  // обработчиков). Именно в settle, а не в afterSwap: htmx на этапе settle
+  // восстанавливает атрибуты новых узлов с id (handleAttributes), и классы /
+  // min-height, выставленные на #project-schedule-gantt-wrap раньше, были бы
+  // стёрты. С defaultSettleDelay = 0 settle идёт в той же задаче, что и swap,
+  // так что кадра с пустой областью графика не возникает.
+  document.body.addEventListener('htmx:afterSettle', function (event) {
+    if (!(event.target instanceof Element) || event.target.id !== 'projects-pane') {
+      return;
+    }
+    try { mountGanttGhost(event.target); } catch (_) { pendingGhost = null; finishGanttGhost(); }
+  }, true);
+
   document.body.addEventListener('htmx:afterSettle', function (event) {
     if (event.target && event.target.id === 'projects-pane') {
       // The editor markup was just re-rendered; reset our wiring.

@@ -100,6 +100,14 @@ class ProposalRegistration(models.Model):
     identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    customer_identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор заказчика",
+        on_delete=models.SET_NULL,
+        related_name="proposal_customer_registrations",
+        null=True,
+        blank=True,
+    )
     asset_owner = models.CharField("Владелец активов", max_length=255, blank=True, default="")
     asset_owner_matches_customer = models.BooleanField("Совпадает с Заказчиком", default=True)
     asset_owner_country = models.ForeignKey(
@@ -116,6 +124,14 @@ class ProposalRegistration(models.Model):
         "Регистрационный номер владельца активов", max_length=100, blank=True, default=""
     )
     asset_owner_registration_date = models.DateField("Дата регистрации владельца активов", null=True, blank=True)
+    asset_owner_identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор владельца активов",
+        on_delete=models.SET_NULL,
+        related_name="proposal_asset_owner_registrations",
+        null=True,
+        blank=True,
+    )
     proposal_project_name = models.TextField("Наименование ТКП (проекта)", blank=True, default="")
     service_sections_json = models.JSONField("Состав услуг: разделы", default=list, blank=True)
     service_sections_editor_state = models.JSONField("Состав услуг: состояние редактора", default=list, blank=True)
@@ -267,6 +283,14 @@ class ProposalRegistration(models.Model):
     recipient_identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
     recipient_registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True, default="")
     recipient_registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    recipient_identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор получателя",
+        on_delete=models.SET_NULL,
+        related_name="proposal_recipient_registrations",
+        null=True,
+        blank=True,
+    )
     recipient_job_title = models.CharField("Должность", max_length=255, blank=True, default="")
     contact_full_name = models.CharField("ФИО", max_length=255, blank=True, default="")
     contact_email = models.CharField("Эл. почта", max_length=255, blank=True, default="")
@@ -494,6 +518,14 @@ class ProposalAsset(models.Model):
     identifier = models.CharField("Идентификатор", max_length=255, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=255, blank=True, default="")
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор бизнес-сущности",
+        on_delete=models.SET_NULL,
+        related_name="proposal_asset_identifier_links",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         app_label = "proposals_app"
@@ -526,6 +558,14 @@ class ProposalLegalEntity(models.Model):
     identifier = models.CharField("Идентификатор", max_length=255, blank=True, default="")
     registration_number = models.CharField("Регистрационный номер", max_length=255, blank=True, default="")
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор бизнес-сущности",
+        on_delete=models.SET_NULL,
+        related_name="proposal_legal_entity_identifier_links",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         app_label = "proposals_app"

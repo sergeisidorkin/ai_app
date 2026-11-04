@@ -79,6 +79,7 @@ from .local_contract_storage import (
     resolve_local_contract_folder,
 )
 from .report_submission import (
+    ReportAppealConfirmError,
     ReportUploadError,
     annotate_performers_report_section_lock,
     annotate_performers_section_codes,
@@ -121,10 +122,12 @@ from .report_submission import (
     recover_abandoned_report_checks,
     report_check_error_reason,
     pending_report_check_payload,
+    report_table_performer_q,
     resolve_report_upload_source,
     accept_report_review_without_remarks,
     resume_report_check,
     send_report_upload,
+    start_ai_appeal,
     submit_report_review_file,
     withdraw_pending_report_remarks,
     upload_report_file,
@@ -1539,6 +1542,7 @@ def _save_registration_group_edit(request, form, block, specs, source_ids):
     block_ids = [item.pk for item in block]
     posted_ids = {spec["registration_id"] for spec in specs if spec["registration_id"]}
     delete_ids = [pk for pk in source_ids if pk in set(block_ids) and pk not in posted_ids]
+    saved_registrations = []
     with transaction.atomic():
         locked_rows = list(
             ProjectRegistration.objects.select_for_update()
@@ -1598,6 +1602,7 @@ def _save_registration_group_edit(request, form, block, specs, source_ids):
             if first_saved is None:
                 first_saved = target
             _persist_registration_group_row(target, is_new=not spec["registration_id"])
+            saved_registrations.append(target)
             _save_ranked_registration_products(target, [spec["product_id"]])
             if spec["registration_id"]:
                 for work_item in target.work_items.select_related("project").all():
@@ -1639,11 +1644,27 @@ def _save_registration_group_edit(request, form, block, specs, source_ids):
                 parent = None
             else:
                 parent.save()
+                saved_registrations.append(parent)
         numbers = {item.number for item in locked_rows}
         numbers.add(base.number)
         ProjectRegistration.refresh_number_sequences(numbers)
-    _sync_posted_customer_parties(request, customer_rows, base)
-    _sync_posted_owner_parties(request, owner_rows, base)
+    customer_identifiers = _sync_posted_customer_parties(request, customer_rows, base)
+    owner_identifiers = _sync_posted_owner_parties(
+        request,
+        owner_rows,
+        base,
+        customer_rows=customer_rows,
+        customer_identifiers=customer_identifiers,
+    )
+    _store_registration_party_links(
+        saved_registrations,
+        customer_rows=customer_rows,
+        owner_rows=owner_rows,
+        customer_identifiers=customer_identifiers,
+        owner_identifiers=owner_identifiers,
+        matches=bool(getattr(base, "asset_owner_matches_customer", False)),
+        fallback_product_id=specs[0]["product_id"] if specs else None,
+    )
     return None
 
 
@@ -1744,7 +1765,7 @@ def _sync_to_legal_entity_record(
     """Create or update autocomplete registry chain from project data."""
     from classifiers_app.views import sync_autocomplete_registry_entry
 
-    sync_autocomplete_registry_entry(
+    return sync_autocomplete_registry_entry(
         short_name=short_name,
         country=country,
         identifier_type=identifier,
@@ -1756,6 +1777,18 @@ def _sync_to_legal_entity_record(
         selected_from_autocomplete=selected_from_autocomplete,
         business_entity_source=business_entity_source,
     )
+
+
+def _reuse_identifier_kwargs(identifier_record):
+    if identifier_record is None:
+        return {
+            "selected_identifier_record_id": None,
+            "selected_from_autocomplete": False,
+        }
+    return {
+        "selected_identifier_record_id": identifier_record.pk,
+        "selected_from_autocomplete": True,
+    }
 
 
 def _sync_selection_kwargs(request, prefix):
@@ -2542,18 +2575,30 @@ def _save_registration_csv_row(request, instance, values):
         obj.save()
         _apply_registration_csv_status_date(obj, previous_status, values.get("status_date"))
         _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
-        _sync_to_legal_entity_record(
+        customer_identifier = _sync_to_legal_entity_record(
             obj.customer, obj.country, obj.identifier,
             obj.registration_number, obj.registration_date, request.user,
             business_entity_source="[Проекты / Заказчик]",
             registration_region=obj.registration_region,
         )
-        _sync_to_legal_entity_record(
-            obj.asset_owner, obj.asset_owner_country, obj.asset_owner_identifier,
-            obj.asset_owner_registration_number, obj.asset_owner_registration_date, request.user,
-            business_entity_source="[Проекты / Владелец активов]",
-            registration_region=obj.asset_owner_region,
-        )
+        if obj.asset_owner_matches_customer:
+            owner_identifier = _sync_to_legal_entity_record(
+                obj.asset_owner, obj.asset_owner_country, obj.asset_owner_identifier,
+                obj.asset_owner_registration_number, obj.asset_owner_registration_date, request.user,
+                business_entity_source="[Проекты / Владелец активов]",
+                registration_region=obj.asset_owner_region,
+                **_reuse_identifier_kwargs(customer_identifier),
+            )
+        else:
+            owner_identifier = _sync_to_legal_entity_record(
+                obj.asset_owner, obj.asset_owner_country, obj.asset_owner_identifier,
+                obj.asset_owner_registration_number, obj.asset_owner_registration_date, request.user,
+                business_entity_source="[Проекты / Владелец активов]",
+                registration_region=obj.asset_owner_region,
+            )
+        obj.customer_identifier_record = customer_identifier
+        obj.asset_owner_identifier_record = owner_identifier
+        obj.save(update_fields=["customer_identifier_record", "asset_owner_identifier_record"])
     return obj
 
 
@@ -2877,6 +2922,7 @@ def registration_form_create(request):
         create_contract_ids,
     ) if posted_stages else []
     contracts_by_pk = _contracts_by_pk(create_contract_ids) if posted_contract_ids is not None else {}
+    saved_registrations = []
     with transaction.atomic():
         start_position = _next_position(ProjectRegistration)
         parent = _copy_registration_form_values(base_obj)
@@ -2901,6 +2947,7 @@ def registration_form_create(request):
                     contract_end_flags,
                 )
         parent.save()
+        saved_registrations.append(parent)
         for offset, product_id in enumerate(product_ids):
             obj = base_obj if offset == 0 else _copy_registration_form_values(base_obj)
             if customer_rows:
@@ -2933,10 +2980,26 @@ def registration_form_create(request):
                     obj.stage2_weeks = stage2_value
             obj.position = start_position + offset + 1
             obj.save()
+            saved_registrations.append(obj)
             _save_ranked_registration_products(obj, [product_id])
         ProjectRegistration.refresh_number_sequences([parent.number])
-    _sync_posted_customer_parties(request, customer_rows, base_obj)
-    _sync_posted_owner_parties(request, owner_rows, base_obj)
+    customer_identifiers = _sync_posted_customer_parties(request, customer_rows, base_obj)
+    owner_identifiers = _sync_posted_owner_parties(
+        request,
+        owner_rows,
+        base_obj,
+        customer_rows=customer_rows,
+        customer_identifiers=customer_identifiers,
+    )
+    _store_registration_party_links(
+        saved_registrations,
+        customer_rows=customer_rows,
+        owner_rows=owner_rows,
+        customer_identifiers=customer_identifiers,
+        owner_identifiers=owner_identifiers,
+        matches=bool(getattr(base_obj, "asset_owner_matches_customer", False)),
+        fallback_product_id=product_ids[0] if product_ids else None,
+    )
     return _render_projects_updated(request)
 
 @login_required
@@ -4091,6 +4154,8 @@ def _customer_party_from_registration(registration, scope, product_label="", pro
         "registration_date": registration.registration_date.isoformat() if registration.registration_date else "",
         "product_label": product_label or "",
         "product_code": product_code or "",
+        "selected_identifier_record_id": str(registration.customer_identifier_record_id or ""),
+        "selected_from_autocomplete": bool(registration.customer_identifier_record_id),
     })
     return party
 
@@ -4226,6 +4291,8 @@ def _blank_owner_party():
         "registration_date": "",
         "product_label": "",
         "product_code": "",
+        "selected_identifier_record_id": "",
+        "selected_from_autocomplete": False,
     }
 
 
@@ -4248,6 +4315,8 @@ def _owner_row_from_customer_row(row):
         "registration_date": row.get("registration_date") or "",
         "product_label": row.get("product_label") or "",
         "product_code": row.get("product_code") or "",
+        "selected_identifier_record_id": row.get("selected_identifier_record_id") or "",
+        "selected_from_autocomplete": bool(row.get("selected_from_autocomplete")),
     }
 
 
@@ -4331,6 +4400,8 @@ def _owner_party_from_registration(registration, scope, product_label="", produc
         ),
         "product_label": product_label or "",
         "product_code": product_code or "",
+        "selected_identifier_record_id": str(registration.asset_owner_identifier_record_id or ""),
+        "selected_from_autocomplete": bool(registration.asset_owner_identifier_record_id),
     })
     return party
 
@@ -4447,36 +4518,81 @@ def _apply_posted_owner_party(target, owner_rows, countries, product_id):
     )
 
 
-def _sync_posted_owner_parties(request, rows, fallback):
+def _sync_posted_owner_parties(
+    request,
+    rows,
+    fallback,
+    customer_rows=None,
+    customer_identifiers=None,
+):
+    customer_identifiers = list(customer_identifiers or [])
     if getattr(fallback, "asset_owner_matches_customer", False):
-        return
+        source_rows = customer_rows
+        if not source_rows:
+            identifier = customer_identifiers[0] if customer_identifiers else None
+            return [
+                _sync_to_legal_entity_record(
+                    fallback.asset_owner,
+                    fallback.asset_owner_country,
+                    fallback.asset_owner_identifier,
+                    fallback.asset_owner_registration_number,
+                    fallback.asset_owner_registration_date,
+                    request.user,
+                    business_entity_source="[Проекты / Владелец активов]",
+                    registration_region=fallback.asset_owner_region,
+                    **_reuse_identifier_kwargs(identifier),
+                )
+            ]
+        countries = _customer_country_map(source_rows)
+        synced = []
+        for index, row in enumerate(source_rows):
+            identifier = customer_identifiers[index] if index < len(customer_identifiers) else None
+            synced.append(
+                _sync_to_legal_entity_record(
+                    row.get("customer") or "",
+                    countries.get(str(row.get("country_id") or "")),
+                    row.get("identifier") or "",
+                    row.get("registration_number") or "",
+                    _parse_project_form_date(row.get("registration_date")),
+                    request.user,
+                    business_entity_source="[Проекты / Владелец активов]",
+                    registration_region=row.get("registration_region") or "",
+                    **_reuse_identifier_kwargs(identifier),
+                )
+            )
+        return synced
     if not rows:
-        _sync_to_legal_entity_record(
-            fallback.asset_owner,
-            fallback.asset_owner_country,
-            fallback.asset_owner_identifier,
-            fallback.asset_owner_registration_number,
-            fallback.asset_owner_registration_date,
-            request.user,
-            business_entity_source="[Проекты / Владелец активов]",
-            registration_region=fallback.asset_owner_region,
-            **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
-        )
-        return
+        return [
+            _sync_to_legal_entity_record(
+                fallback.asset_owner,
+                fallback.asset_owner_country,
+                fallback.asset_owner_identifier,
+                fallback.asset_owner_registration_number,
+                fallback.asset_owner_registration_date,
+                request.user,
+                business_entity_source="[Проекты / Владелец активов]",
+                registration_region=fallback.asset_owner_region,
+                **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
+            )
+        ]
     countries = _customer_country_map(rows)
+    synced = []
     for row in rows:
-        _sync_to_legal_entity_record(
-            row.get("asset_owner") or "",
-            countries.get(str(row.get("country_id") or "")),
-            row.get("identifier") or "",
-            row.get("registration_number") or "",
-            _parse_project_form_date(row.get("registration_date")),
-            request.user,
-            selected_identifier_record_id=row.get("selected_identifier_record_id") or "",
-            selected_from_autocomplete=bool(row.get("selected_from_autocomplete")),
-            business_entity_source="[Проекты / Владелец активов]",
-            registration_region=row.get("registration_region") or "",
+        synced.append(
+            _sync_to_legal_entity_record(
+                row.get("asset_owner") or "",
+                countries.get(str(row.get("country_id") or "")),
+                row.get("identifier") or "",
+                row.get("registration_number") or "",
+                _parse_project_form_date(row.get("registration_date")),
+                request.user,
+                selected_identifier_record_id=row.get("selected_identifier_record_id") or "",
+                selected_from_autocomplete=bool(row.get("selected_from_autocomplete")),
+                business_entity_source="[Проекты / Владелец активов]",
+                registration_region=row.get("registration_region") or "",
+            )
         )
+    return synced
 
 
 _CUSTOMER_PARTY_SAVE_FIELDS = [
@@ -4497,20 +4613,23 @@ _CUSTOMER_PARTY_SAVE_FIELDS = [
 
 def _sync_posted_customer_parties(request, rows, fallback):
     if not rows:
-        _sync_to_legal_entity_record(
-            fallback.customer,
-            fallback.country,
-            fallback.identifier,
-            fallback.registration_number,
-            fallback.registration_date,
-            request.user,
-            business_entity_source="[Проекты / Заказчик]",
-            registration_region=fallback.registration_region,
-            **_sync_selection_kwargs(request, "customer_autocomplete"),
-        )
-    else:
-        countries = _customer_country_map(rows)
-        for row in rows:
+        return [
+            _sync_to_legal_entity_record(
+                fallback.customer,
+                fallback.country,
+                fallback.identifier,
+                fallback.registration_number,
+                fallback.registration_date,
+                request.user,
+                business_entity_source="[Проекты / Заказчик]",
+                registration_region=fallback.registration_region,
+                **_sync_selection_kwargs(request, "customer_autocomplete"),
+            )
+        ]
+    countries = _customer_country_map(rows)
+    synced = []
+    for row in rows:
+        synced.append(
             _sync_to_legal_entity_record(
                 row.get("customer") or "",
                 countries.get(str(row.get("country_id") or "")),
@@ -4523,32 +4642,52 @@ def _sync_posted_customer_parties(request, rows, fallback):
                 business_entity_source="[Проекты / Заказчик]",
                 registration_region=row.get("registration_region") or "",
             )
-    if rows and getattr(fallback, "asset_owner_matches_customer", False):
-        countries = _customer_country_map(rows)
-        for row in rows:
-            country = countries.get(str(row.get("country_id") or ""))
-            _sync_to_legal_entity_record(
-                row.get("customer") or "",
-                country,
-                row.get("identifier") or "",
-                row.get("registration_number") or "",
-                _parse_project_form_date(row.get("registration_date")),
-                request.user,
-                business_entity_source="[Проекты / Владелец активов]",
-                registration_region=row.get("registration_region") or "",
-            )
-        return
-    _sync_to_legal_entity_record(
-        fallback.asset_owner,
-        fallback.asset_owner_country,
-        fallback.asset_owner_identifier,
-        fallback.asset_owner_registration_number,
-        fallback.asset_owner_registration_date,
-        request.user,
-        business_entity_source="[Проекты / Владелец активов]",
-        registration_region=fallback.asset_owner_region,
-        **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
-    )
+        )
+    return synced
+
+
+def _identifier_for_party_scope(rows, identifiers, product_id):
+    identifiers = list(identifiers or [])
+    if not identifiers:
+        return None
+    if not rows:
+        return identifiers[0]
+    party = _customer_party_for_product(rows, product_id) if product_id else None
+    if party is None:
+        party = next((row for row in rows if row.get("scope") == "all"), rows[0])
+    try:
+        index = rows.index(party)
+    except ValueError:
+        index = 0
+    if index < len(identifiers):
+        return identifiers[index]
+    return identifiers[0]
+
+
+def _store_registration_party_links(
+    registrations,
+    *,
+    customer_rows,
+    owner_rows,
+    customer_identifiers,
+    owner_identifiers,
+    matches,
+    fallback_product_id=None,
+):
+    for registration in registrations:
+        if not getattr(registration, "pk", None):
+            continue
+        product = _customer_product_for_registration(registration)
+        product_id = product.pk if product is not None else fallback_product_id
+        customer_identifier = _identifier_for_party_scope(customer_rows, customer_identifiers, product_id)
+        if matches:
+            owner_identifier = customer_identifier
+        else:
+            owner_identifier = _identifier_for_party_scope(owner_rows, owner_identifiers, product_id)
+        ProjectRegistration.objects.filter(pk=registration.pk).update(
+            customer_identifier_record=customer_identifier,
+            asset_owner_identifier_record=owner_identifier,
+        )
 
 
 def _registration_contract_meta(form):
@@ -4575,6 +4714,7 @@ def _registration_contract_meta(form):
             "registration_number": contract.registration_number or "",
             "registration_region": contract.registration_region or "",
             "registration_date": contract.registration_date.isoformat() if contract.registration_date else "",
+            "customer_identifier_record_id": str(contract.customer_identifier_record_id or ""),
             "status": contract.status or "",
             "short_uid": contract.short_uid or "",
             "signed": contract_is_signed(contract.status),
@@ -4794,19 +4934,30 @@ def registration_form_edit(request, pk: int):
         _copy_project_start_date(block, obj.project_start_date, skip_pk=obj.pk)
     for work_item in obj.work_items.select_related("project").all():
         _ensure_performer_rows_for_work_item(work_item)
-    _sync_to_legal_entity_record(
+    customer_identifier = _sync_to_legal_entity_record(
         obj.customer, obj.country, obj.identifier,
         obj.registration_number, obj.registration_date, request.user,
         business_entity_source="[Проекты / Заказчик]",
         registration_region=obj.registration_region,
         **_sync_selection_kwargs(request, "customer_autocomplete"),
     )
-    _sync_to_legal_entity_record(
+    if obj.asset_owner_matches_customer:
+        owner_kwargs = _reuse_identifier_kwargs(customer_identifier)
+    else:
+        owner_kwargs = _sync_selection_kwargs(request, "asset_owner_autocomplete")
+    owner_identifier = _sync_to_legal_entity_record(
         obj.asset_owner, obj.asset_owner_country, obj.asset_owner_identifier,
         obj.asset_owner_registration_number, obj.asset_owner_registration_date, request.user,
         business_entity_source="[Проекты / Владелец активов]",
         registration_region=obj.asset_owner_region,
-        **_sync_selection_kwargs(request, "asset_owner_autocomplete"),
+        **owner_kwargs,
+    )
+    link_ids = [obj.pk]
+    if obj.stage_project_id:
+        link_ids.append(obj.stage_project_id)
+    ProjectRegistration.objects.filter(pk__in=link_ids).update(
+        customer_identifier_record=customer_identifier,
+        asset_owner_identifier_record=owner_identifier,
     )
     return _render_projects_updated(request)
 
@@ -5761,7 +5912,7 @@ def _performers_context(user=None, request=None):
         )
         .prefetch_related(registration_products_prefetch)
         .annotate(executor_trim=Trim("executor"))
-        .filter(registration__status__in=active_participation_statuses)
+        .filter(report_table_performer_q(), registration__status__in=active_participation_statuses)
         .exclude(executor_trim="")
         .order_by("registration_id", "executor", "asset_name", "position", "id")
     )
@@ -8056,7 +8207,7 @@ def report_file_upload(request):
             )
             has_asset_rows = (
                 Performer.objects.annotate(executor_trim=Trim("executor"))
-                .filter(registration_id=registration_id, asset_name=asset_name)
+                .filter(report_table_performer_q(), registration_id=registration_id, asset_name=asset_name)
                 .exclude(executor_trim="")
                 .exists()
             )
@@ -8093,6 +8244,7 @@ def report_file_upload(request):
                 Performer.objects.select_related("registration", "typical_section")
                 .annotate(executor_trim=Trim("executor"))
                 .filter(
+                    report_table_performer_q(),
                     registration_id=registration_id,
                     executor=executor,
                     asset_name=asset_name,
@@ -8138,7 +8290,7 @@ def report_file_upload(request):
                     "employee__expert_profile__expertise_direction",
                 )
                 .annotate(executor_trim=Trim("executor"))
-                .filter(registration__status__in=active_statuses)
+                .filter(report_table_performer_q(), registration__status__in=active_statuses)
                 .exclude(executor_trim=""),
                 pk=performer_id,
             )
@@ -8229,9 +8381,11 @@ def report_review_file_upload(request):
     forbidden = _forbid_report_file_access(request, upload)
     if forbidden:
         return forbidden
-    if (request.POST.get("accept_without_remarks") or "") == "1":
-        from .report_review import latest_open_entry
+    from .report_review import latest_open_entry
+    from .report_submission import appeal_for_review_entry
 
+    appeal = appeal_for_review_entry(latest_open_entry(upload))
+    if (request.POST.get("accept_without_remarks") or "") == "1":
         closed = latest_open_entry(upload)
         if closed is None:
             return JsonResponse({"ok": False, "error": "Нет шага, который можно принять."}, status=400)
@@ -8240,7 +8394,10 @@ def report_review_file_upload(request):
         except ReportUploadError as exc:
             return JsonResponse({"ok": False, "error": str(exc)}, status=400)
         closed.refresh_from_db()
-        return JsonResponse(_review_accept_payload(request, upload, closed))
+        payload = _review_accept_payload(request, upload, closed)
+        if appeal is not None:
+            payload.update(_report_slot_rows_payload(request, upload))
+        return JsonResponse(payload)
     try:
         uploaded_file, local_folder_path = resolve_report_upload_source(request)
         uploaded_file.seek(0)
@@ -8251,10 +8408,56 @@ def report_review_file_upload(request):
             file_bytes=file_bytes,
             original_name=getattr(uploaded_file, "name", "") or "",
             local_folder_path=local_folder_path,
+            confirm_no_ai=(request.POST.get("confirm_no_ai") or "") == "1",
         )
+    except ReportAppealConfirmError as exc:
+        return JsonResponse({"ok": False, "confirm_no_ai": True, "error": str(exc)}, status=409)
     except ReportUploadError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
     payload = _review_file_upload_payload(request, upload)
+    if appeal is not None:
+        payload.update(_report_slot_rows_payload(request, upload))
+    return JsonResponse(payload)
+
+
+def _report_slot_rows_payload(request, upload):
+    """Все строки слота заново: решение по апелляции меняет и строку «В работе после ИИ»."""
+    upload.refresh_from_db()
+    rows = annotate_report_submission_rows(request.user, build_report_slot_rows(upload))
+    return {
+        "slot_rows_html": "".join(_render_report_submission_row(request, row) for row in rows),
+        "version_group": report_slot_row_id(upload),
+    }
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def report_ai_appeal(request):
+    try:
+        upload_id = int(request.POST.get("upload_id") or "")
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректный отчёт."}, status=400)
+    upload = get_object_or_404(
+        PerformerReportUpload.objects.select_related(
+            "registration",
+            "registration__type",
+            "performer",
+            "performer__typical_section",
+        ),
+        pk=upload_id,
+    )
+    forbidden = _forbid_report_file_access(request, upload)
+    if forbidden:
+        return forbidden
+    if not can_mutate_report_upload(request.user, upload):
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    try:
+        upload = start_ai_appeal(user=request.user, upload=upload)
+    except ReportUploadError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    payload = {"ok": True}
+    payload.update(_report_slot_rows_payload(request, upload))
     return JsonResponse(payload)
 
 

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from policy_app.models import ADMIN_GROUP, DEPARTMENT_HEAD_GROUP, EXPERT_GROUP, LAWYER_GROUP
+from policy_app.models import (
+    ADMIN_GROUP,
+    DEPARTMENT_HEAD_GROUP,
+    EXPERT_GROUP,
+    LAWYER_GROUP,
+    PROJECTS_COORDINATOR_GROUP,
+)
 
 from .models import Performer, ProjectRegistration
 
@@ -74,6 +80,43 @@ def is_project_manager_of(user, registration) -> bool:
     if prs and _normalize(getattr(registration, "project_manager_prs_id", "")) == prs:
         return True
     return bool(name) and _normalize(getattr(registration, "project_manager", "")) == name
+
+
+def is_projects_coordinator_user(user) -> bool:
+    if not _staff_user(user):
+        return False
+    return (
+        _user_role(user) == PROJECTS_COORDINATOR_GROUP
+        or user.groups.filter(name=PROJECTS_COORDINATOR_GROUP).exists()
+    )
+
+
+def is_project_coordinator_of(user, registration) -> bool:
+    employee = _employee_of(user)
+    if not employee or not registration:
+        return False
+    prs = _normalize(getattr(employee, "formatted_prs_id", "") or "")
+    name = _normalize(Performer.employee_full_name(employee))
+    if prs and _normalize(getattr(registration, "project_coordinator_prs_id", "")) == prs:
+        return True
+    return bool(name) and _normalize(getattr(registration, "project_coordinator", "")) == name
+
+
+def _coordinated_registration_ids(employee) -> set[int]:
+    prs = _normalize(getattr(employee, "formatted_prs_id", "") or "")
+    name = _normalize(Performer.employee_full_name(employee))
+    qs = None
+    if prs:
+        qs = ProjectRegistration.objects.filter(project_coordinator_prs_id=prs)
+    if name:
+        by_name = ProjectRegistration.objects.filter(project_coordinator=name)
+        qs = by_name if qs is None else qs | by_name
+    return set(qs.values_list("pk", flat=True)) if qs is not None else set()
+
+
+def _section_without_expertise(performer) -> bool:
+    section = getattr(performer, "typical_section", None)
+    return section is None or not getattr(section, "expertise_dir_id", None)
 
 
 def _is_own_assignment(employee, performer) -> bool:
@@ -154,6 +197,7 @@ def _slot_performers(*, performer=None, performers=None, performer_ids=None):
         items = list(
             Performer.objects
             .select_related(
+                "typical_section__service_block",
                 "employee",
                 "employee__user",
                 "employee__expert_profile",
@@ -178,8 +222,9 @@ def can_mutate_report_slot(
         return True
     if not _staff_user(user) or is_lawyer_user(user):
         return False
+    coordinator = is_projects_coordinator_user(user) and is_project_coordinator_of(user, project)
     if is_full_report:
-        return is_project_manager_of(user, project)
+        return is_project_manager_of(user, project) or coordinator
     items = _slot_performers(
         performer=performer,
         performers=performers,
@@ -187,7 +232,10 @@ def can_mutate_report_slot(
     )
     if not items:
         return False
-    return all(_can_act_on_performer(user, item) for item in items)
+    return all(
+        _can_act_on_performer(user, item) or (coordinator and _section_without_expertise(item))
+        for item in items
+    )
 
 
 def can_mutate_report_upload(user, upload) -> bool:
@@ -198,6 +246,7 @@ def can_mutate_report_upload(user, upload) -> bool:
         performers = list(
             Performer.objects
             .select_related(
+                "typical_section__service_block",
                 "employee",
                 "employee__user",
                 "employee__expert_profile",
@@ -248,6 +297,8 @@ def report_visible_registration_ids(user):
             pm_q = name_pm if pm_q is None else pm_q | name_pm
         if pm_q is not None:
             ids.update(pm_q.values_list("pk", flat=True))
+        if is_projects_coordinator_user(user):
+            ids.update(_coordinated_registration_ids(employee))
     return ids
 
 
@@ -347,9 +398,15 @@ def annotate_report_submission_rows(user, rows):
             manual_status_label,
             user_matches_review_step,
         )
-        from .report_submission import report_workflow_status_class
+        from .report_submission import (
+            appeal_for_review_entry,
+            ai_appeal_available,
+            report_workflow_status_class,
+        )
 
         row.conceal_pending_remarks = False
+        row.can_appeal_ai = bool(allowed and current and entry is not None and ai_appeal_available(entry))
+        row.ai_appeal_review = False
         if entry is not None:
             if entry.remarks_notice_pending and not entry.settled:
                 if user_matches_review_step(user, entry.upload, entry.step):
@@ -371,6 +428,7 @@ def annotate_report_submission_rows(user, rows):
                 and not (entry.review_file_name or entry.review_cloud_path)
                 and user_matches_review_step(user, entry.upload, entry.step)
             )
+            row.ai_appeal_review = bool(row.can_review_upload and appeal_for_review_entry(entry) is not None)
             row.can_discard_remarks = bool(
                 current
                 and entry.remarks_notice_pending
@@ -389,6 +447,9 @@ def annotate_report_submission_rows(user, rows):
         else:
             row.finding_adjustment_visible = False
         row.can_correct_findings = bool(
-            row.finding_adjustment_visible and getattr(row, "show_finding_info", False) and upload
+            row.finding_adjustment_visible
+            and getattr(row, "show_finding_info", False)
+            and getattr(row, "finding_correction_editable", True)
+            and upload
         )
     return rows

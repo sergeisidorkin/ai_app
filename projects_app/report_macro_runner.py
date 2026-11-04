@@ -23,6 +23,7 @@ from .docx_comments import (
     extract_paragraphs,
     extract_ref_fields,
     extract_sections,
+    extract_superscript_offsets,
     extract_tab_offsets,
     extract_table_cells,
     insert_comments,
@@ -324,6 +325,12 @@ def apply_report_macro_checks(
         char_runs = []
 
     try:
+        superscript_offsets = extract_superscript_offsets(file_bytes)
+    except Exception:
+        log.exception("Failed to read superscript angles for upload %s", upload.pk)
+        superscript_offsets = frozenset()
+
+    try:
         table_cells = extract_table_cells(file_bytes)
     except Exception:
         log.exception("Failed to read table cells for upload %s", upload.pk)
@@ -348,7 +355,7 @@ def apply_report_macro_checks(
         if not store_report_macro_progress(upload, index, total, label):
             raise ReportCheckAborted()
         try:
-            for item in run_macro(macro, _build_ctx(upload, text, macro, line_end_spaces, notes, paragraphs, table_cells, ref_fields, sections, tab_offsets, char_runs)):
+            for item in run_macro(macro, _build_ctx(upload, text, macro, line_end_spaces, notes, paragraphs, table_cells, ref_fields, sections, tab_offsets, char_runs, superscript_offsets)):
                 item["author"] = label
                 findings.append(item)
         except Exception as exc:
@@ -396,8 +403,26 @@ def apply_report_macro_checks(
     return result
 
 
+def _superscript_maps(ctx) -> list[tuple[str, frozenset[int]]]:
+    maps = []
+    text = getattr(ctx, "text", None) or ""
+    body_marks = frozenset(getattr(ctx, "superscript_offsets", ()) or ())
+    if text and body_marks:
+        maps.append((text, body_marks))
+    for note in getattr(ctx, "notes", None) or ():
+        body = note.get("text") or ""
+        marks = frozenset(note.get("superscript_offsets") or ())
+        if body and marks:
+            maps.append((body, marks))
+    return maps
+
+
 def run_macro(macro: ReportMacro, ctx) -> list[dict]:
-    namespace = {"__builtins__": SAFE_BUILTINS, "re": re}
+    namespace = {
+        "__builtins__": SAFE_BUILTINS,
+        "re": re,
+        "_superscript_maps": _superscript_maps(ctx),
+    }
     try:
         exec(macro.code or "", namespace, namespace)
     except Exception as exc:
@@ -468,7 +493,7 @@ def _normalize_links(item: dict) -> list[dict]:
     return links
 
 
-def _build_ctx(upload: PerformerReportUpload, text: str, macro: ReportMacro, line_end_spaces=(), notes=None, paragraphs=None, table_cells=None, ref_fields=None, sections=None, tab_offsets=None, char_runs=None):
+def _build_ctx(upload: PerformerReportUpload, text: str, macro: ReportMacro, line_end_spaces=(), notes=None, paragraphs=None, table_cells=None, ref_fields=None, sections=None, tab_offsets=None, char_runs=None, superscript_offsets=None):
     from django.conf import settings
 
     registration = getattr(upload, "registration", None)
@@ -481,6 +506,7 @@ def _build_ctx(upload: PerformerReportUpload, text: str, macro: ReportMacro, lin
         notes=list(notes or ()),
         paragraphs=list(paragraphs or ()),
         char_runs=list(char_runs or ()),
+        superscript_offsets=frozenset(superscript_offsets or ()),
         table_cells=list(table_cells or ()),
         ref_fields=list(ref_fields or ()),
         sections=list(sections or ()),

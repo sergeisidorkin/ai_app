@@ -19,8 +19,20 @@ TPGR_COURSE_SN_URL = "https://learn.imcmontanai.ru/course/section.php?id=13"
 TPGR_COURSE_LINK_TEXT = "Ссылка на страницу курса TPGR"
 
 _HELPERS = """
+def _is_superscript_angle(text, i):
+    # Надстрочные «<» и «>» никогда не знаки сравнения.
+    # _superscript_maps задаёт запуск проверки: список пар (текст, смещения).
+    for stored, marks in _superscript_maps:
+        if text is stored and i in marks:
+            return True
+    return False
+
 def _is_lt_op(text, i):
     # Сравнение, не скобка шаблона: <=, <-, <~, <–, <— и «< 0,1».
+    # «< 05 data \\ ... >» — скобки пути: после пробела цифра, но дальше «\\» и «>».
+    # Надстрочный знак — всегда скобка.
+    if _is_superscript_angle(text, i):
+        return False
     n = len(text)
     nxt = text[i + 1] if i + 1 < n else ""
     if nxt in "=-~\u2013\u2014":
@@ -28,10 +40,15 @@ def _is_lt_op(text, i):
     j = i + 1
     while j < n and text[j] in " \\t\\r\\n\\xa0":
         j += 1
-    return j > i + 1 and j < n and (text[j].isdigit() or text[j] in "+.")
+    if not (j > i + 1 and j < n and (text[j].isdigit() or text[j] in "+.")):
+        return False
+    return not _is_backslash_path_bracket(text, i)
 
 def _is_gt_op(text, i):
     # Сравнение или стрелка «–>», не скобка шаблона. Дефис «->» скобку закрывает.
+    # Надстрочный знак — всегда скобка.
+    if _is_superscript_angle(text, i):
+        return False
     n = len(text)
     prev = text[i - 1] if i else ""
     nxt = text[i + 1] if i + 1 < n else ""
@@ -47,6 +64,22 @@ def _is_gt_op(text, i):
     while j < n and text[j] in " \\t\\r\\n\\xa0":
         j += 1
     return j > i + 1 and j < n and (text[j].isdigit() or text[j] in "+.")
+
+def _is_backslash_path_bracket(text, i):
+    # От «<» до ближайшей «>» есть «\\», и раньше неё нет другой «<».
+    n = len(text)
+    saw_backslash = False
+    k = i + 1
+    while k < n:
+        ch = text[k]
+        if ch == "\\u005c":
+            saw_backslash = True
+        elif ch == "<" and not saw_backslash:
+            return False
+        elif ch == ">" and not _is_gt_op(text, k):
+            return saw_backslash
+        k += 1
+    return saw_backslash
 
 def _angle_mask(text):
     # Внутри только закрытой пары «<...>». Незакрытая «<» не прячет хвост документа.
@@ -633,9 +666,12 @@ def check(ctx):
     # Стек «<»/«>» по всему тексту: очистка удаляет всё между скобками, в том числе несколько абзацев.
     # Незакрытая «<» и лишняя «>» (пропуск парной скобки) — ошибка.
     # Сравнения (< 0,1, <=, <-, > 0,1, >=) и стрелка «–>» (короткое тире) не скобки шаблона.
+    # «< 05 data \ ... >» — скобки пути: после пробела цифра, но дальше «\» и «>».
     # Дефис и «>» (->) — закрывающая скобка шаблона.
     # Ёлочки «» только цитируют символ скобки («<», «>»), это не << / >>.
     # Сноски: одно примечание на знак сноски в основном тексте.
+    # В тексте сноски сравнений «<»/«>» не бывает: оба знака всегда скобки.
+    # Надстрочные «<» и «>» в теле документа тоже не сравнения.
     text = ctx.text or ""
     findings = []
     msg_close = "TMPL-SS-00.00: Отсутствует закрывающая угловая скобка (>)"
@@ -647,6 +683,8 @@ def check(ctx):
     en_dash = "–"
 
     def is_lt_op(s, i):
+        if _is_superscript_angle(s, i):
+            return False
         n = len(s)
         nxt = s[i + 1] if i + 1 < n else ""
         if nxt in lt_ops:
@@ -654,9 +692,13 @@ def check(ctx):
         j = i + 1
         while j < n and s[j] in spaces:
             j += 1
-        return j > i + 1 and j < n and (s[j].isdigit() or s[j] in "+.")
+        if not (j > i + 1 and j < n and (s[j].isdigit() or s[j] in "+.")):
+            return False
+        return not is_path_bracket(s, i)
 
     def is_gt_op(s, i):
+        if _is_superscript_angle(s, i):
+            return False
         n = len(s)
         prev = s[i - 1] if i else ""
         nxt = s[i + 1] if i + 1 < n else ""
@@ -673,16 +715,31 @@ def check(ctx):
             j += 1
         return j > i + 1 and j < n and (s[j].isdigit() or s[j] in "+.")
 
-    def scan(s):
+    def is_path_bracket(s, i):
+        n = len(s)
+        saw_backslash = False
+        k = i + 1
+        while k < n:
+            ch = s[k]
+            if ch == "\\":
+                saw_backslash = True
+            elif ch == "<" and not saw_backslash:
+                return False
+            elif ch == ">" and not is_gt_op(s, k):
+                return saw_backslash
+            k += 1
+        return saw_backslash
+
+    def scan(s, comparisons=True):
         stack = []
         extra = []
         for i, ch in enumerate(s):
             if ch == "<":
-                if is_lt_op(s, i):
+                if comparisons and is_lt_op(s, i):
                     continue
                 stack.append(i)
             elif ch == ">":
-                if is_gt_op(s, i):
+                if comparisons and is_gt_op(s, i):
                     continue
                 if stack:
                     stack.pop()
@@ -715,7 +772,7 @@ def check(ctx):
         if not nid:
             continue
         body = note.get("text") or ""
-        opened, extra = scan(body)
+        opened, extra = scan(body, comparisons=False)
         if not opened and not extra:
             continue
         msg = msg_close_fn if opened else msg_open_fn
@@ -740,7 +797,7 @@ def check(ctx):
         "code": _code(
             r'''
 def check(ctx):
-    # VBA блок 9 (публичные источники): если сноска не на NextCloud, знак не в <>.
+    # VBA блок 9 (публичные источники): если сноска не на NextCloud, Google Drive или Google Docs, знак не в <>.
     findings = []
     msg = "TMPL-SS-00.00: Для сносок на публичные источники знак сноски ставится без угловых скобок"
     nc = (getattr(ctx, "nextcloud_base_url", "") or "").strip().lower()
@@ -748,6 +805,8 @@ def check(ctx):
     if nc:
         needles.append(nc)
     needles.append("cloud.imcmontanai.ru")
+    needles.append("https://drive.google.com/")
+    needles.append("https://docs.google.com")
     for note in getattr(ctx, "notes", None) or ():
         nid = str(note.get("id") or "")
         if not nid:
@@ -1846,7 +1905,7 @@ def check(ctx):
         "code": _code(
             r'''
 def check(ctx):
-    # VBA блок 9 (NextCloud): знак сноски в <> , скобки надстрочные.
+    # VBA блок 9 (NextCloud, Google Drive и Google Docs): знак сноски в <> , скобки надстрочные.
     findings = []
     msg_wrap = "TMPL-SN-00.00: В угловые скобки (<>) должен заключаться знак сноски, содержащий ссылку на облачное хранилище проекта NextCloud"
     msg_super = "TMPL-SN-00.00: Угловые скобки (<>), в которые заключается знак сноски, содержащий ссылку на облачное хранилище проекта NextCloud, должны быть в надстрочном регистре"
@@ -1855,6 +1914,8 @@ def check(ctx):
     if nc:
         needles.append(nc)
     needles.append("cloud.imcmontanai.ru")
+    needles.append("https://drive.google.com/")
+    needles.append("https://docs.google.com")
     for note in getattr(ctx, "notes", None) or ():
         if str(note.get("kind") or "footnote") != "footnote":
             continue
@@ -1931,7 +1992,7 @@ def check(ctx):
         "code": _code(
             r'''
 def check(ctx):
-    # VBA блок 14: непустая сноска без точки в конце; NextCloud пропускается.
+    # VBA блок 14: непустая сноска без точки в конце; NextCloud, Google Drive и Google Docs пропускаются.
     findings = []
     msg = "GRMM-PN-00.00: В конце предложения (текста сноски) ставится точка"
     nc = (getattr(ctx, "nextcloud_base_url", "") or "").strip().lower()
@@ -1939,6 +2000,8 @@ def check(ctx):
     if nc:
         needles.append(nc)
     needles.append("cloud.imcmontanai.ru")
+    needles.append("https://drive.google.com/")
+    needles.append("https://docs.google.com")
     for note in getattr(ctx, "notes", None) or ():
         if str(note.get("kind") or "footnote") != "footnote":
             continue

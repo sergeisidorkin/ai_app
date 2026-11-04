@@ -193,6 +193,14 @@ class ProjectRegistration(models.Model):
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
     registration_region = models.CharField("Регион", max_length=255, blank=True, default="")
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    customer_identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор заказчика",
+        on_delete=models.SET_NULL,
+        related_name="project_customer_registrations",
+        null=True,
+        blank=True,
+    )
     asset_owner = models.CharField("Владелец активов", max_length=255, blank=True, default="")
     asset_owner_matches_customer = models.BooleanField("Совпадает с Заказчиком", default=True)
     asset_owner_country = models.ForeignKey(
@@ -212,6 +220,14 @@ class ProjectRegistration(models.Model):
     )
     asset_owner_region = models.CharField("Регион владельца активов", max_length=255, blank=True, default="")
     asset_owner_registration_date = models.DateField("Дата регистрации владельца активов", null=True, blank=True)
+    asset_owner_identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор владельца активов",
+        on_delete=models.SET_NULL,
+        related_name="project_asset_owner_registrations",
+        null=True,
+        blank=True,
+    )
     project_manager = models.CharField("Руководитель проекта", max_length=255, blank=True)
     project_manager_prs_id = models.CharField("ID-PRS руководителя проекта", max_length=32, blank=True, default="")
     project_coordinator = models.CharField("Координатор проекта", max_length=255, blank=True, default="")
@@ -2156,6 +2172,7 @@ class ReportReviewEntry(models.Model):
     review_cloud_path = models.CharField("Путь файла замечаний", max_length=2048, blank=True, default="")
     comment_count = models.PositiveIntegerField("Примечаний", default=0)
     remarks_notice_pending = models.BooleanField("Замечания ещё не отправлены", default=False)
+    appealed_at = models.DateTimeField("Апелляция замечаний ИИ", null=True, blank=True)
     created_at = models.DateTimeField("Дата статуса", auto_now_add=True)
 
     class Meta:

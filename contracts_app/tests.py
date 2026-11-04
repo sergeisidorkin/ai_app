@@ -3219,6 +3219,134 @@ class ContractsCloudLabelTests(TestCase):
         self.assertContains(response, 'hx-post="%s"' % reverse("contracts_project_registration_create"), html=False)
         self.assertContains(response, 'data-header-current-label="Новый договор"', html=False)
 
+    def test_prefill_from_proposal_renders_stored_customer_identifier(self):
+        from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntityRecord
+
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        entity = BusinessEntityRecord.objects.create(name="ООО Заказчик prefill", position=1)
+        identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=entity,
+            identifier_type="ОГРН",
+            registration_country=country,
+            number="1234567890",
+            valid_from=date(2026, 1, 1),
+            position=1,
+        )
+        self.proposal.customer = "ООО Заказчик prefill"
+        self.proposal.customer_identifier_record = identifier
+        self.proposal.asset_owner_matches_customer = True
+        self.proposal.save(
+            update_fields=[
+                "customer",
+                "customer_identifier_record",
+                "asset_owner_matches_customer",
+            ]
+        )
+
+        response = self.client.get(
+            reverse("contracts_project_registration_prefill_from_proposal", args=[self.proposal.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            f'name="customer_autocomplete_identifier_record_id" id="reg-customer-autocomplete-identifier-record-id" value="{identifier.pk}"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'name="customer_autocomplete_selected_from_autocomplete" id="reg-customer-autocomplete-selected" value="1"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            f'name="asset_owner_autocomplete_identifier_record_id" id="reg-asset-owner-autocomplete-identifier-record-id" value="{identifier.pk}"',
+            html=False,
+        )
+
+    def test_contract_save_reuses_selected_customer_and_skips_manual_owner(self):
+        from classifiers_app.models import BusinessEntityIdentifierRecord, BusinessEntityRecord
+
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            alpha2="RU",
+            alpha3="RUS",
+        )
+        entity = BusinessEntityRecord.objects.create(name='ООО "Договорный"', position=1)
+        identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=entity,
+            identifier_type="ОГРН",
+            registration_country=country,
+            number="1234567890",
+            valid_from=date(2026, 1, 1),
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("contracts_project_registration_create"),
+            {
+                "number": 7911,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Договор со ссылкой",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "customer": 'ООО "Договорный"',
+                "country": str(country.pk),
+                "identifier": "ОГРН",
+                "registration_number": "1234567890",
+                "customer_autocomplete_identifier_record_id": str(identifier.pk),
+                "customer_autocomplete_selected_from_autocomplete": "1",
+                "asset_owner": 'ООО "Другой владелец"',
+                "asset_owner_country": str(country.pk),
+                "asset_owner_identifier": "ОГРН",
+                "asset_owner_registration_number": "555",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:800])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        created = ContractProjectRegistration.objects.get(number=7911)
+        self.assertEqual(created.customer_identifier_record_id, identifier.pk)
+        self.assertIsNone(created.asset_owner_identifier_record_id)
+
+        updated = self.client.post(
+            reverse("contracts_project_registration_edit", args=[created.pk]),
+            {
+                "number": 7911,
+                "sub_number": 0,
+                "group_member": self.group_member.pk,
+                "agreement_type": "MAIN",
+                "type_id": [str(self.product.pk)],
+                "name": "Договор со ссылкой обновлен",
+                "status": "Разрабатывается проект договора",
+                "year": 2026,
+                "customer": 'ООО "Договорный"',
+                "country": str(country.pk),
+                "identifier": "ОГРН",
+                "registration_number": "1234567890",
+                "customer_autocomplete_identifier_record_id": str(identifier.pk),
+                "customer_autocomplete_selected_from_autocomplete": "1",
+                "asset_owner_matches_customer": "on",
+            },
+        )
+        self.assertEqual(updated.status_code, 200, updated.content.decode()[:800])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        created.refresh_from_db()
+        self.assertEqual(created.name, "Договор со ссылкой обновлен")
+        self.assertEqual(created.customer_identifier_record_id, identifier.pk)
+        self.assertEqual(created.asset_owner_identifier_record_id, identifier.pk)
+
     def test_contracts_project_registration_prefill_from_proposal_edit_preserves_contract_identity(self):
         contract_project = ContractProjectRegistration.objects.create(
             number=8101,

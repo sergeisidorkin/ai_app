@@ -241,6 +241,14 @@ class ContractProjectRegistration(models.Model):
     registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True)
     registration_region = models.CharField("Регион", max_length=255, blank=True, default="")
     registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    customer_identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор заказчика",
+        on_delete=models.SET_NULL,
+        related_name="contract_customer_registrations",
+        null=True,
+        blank=True,
+    )
     asset_owner = models.CharField("Владелец активов", max_length=255, blank=True, default="")
     asset_owner_matches_customer = models.BooleanField("Совпадает с Заказчиком", default=True)
     proposal_project_name = models.TextField("Наименование ТКП (проекта)", blank=True, default="")
@@ -272,6 +280,14 @@ class ContractProjectRegistration(models.Model):
     )
     asset_owner_region = models.CharField("Регион владельца активов", max_length=255, blank=True, default="")
     asset_owner_registration_date = models.DateField("Дата регистрации владельца активов", null=True, blank=True)
+    asset_owner_identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор владельца активов",
+        on_delete=models.SET_NULL,
+        related_name="contract_asset_owner_registrations",
+        null=True,
+        blank=True,
+    )
     project_manager = models.CharField("Руководитель проекта", max_length=255, blank=True)
     project_manager_prs_id = models.CharField("ID-PRS руководителя проекта", max_length=32, blank=True, default="")
 

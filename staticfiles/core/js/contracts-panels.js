@@ -141,6 +141,26 @@
   window.addEventListener('resize', scheduleTableScrollGapsUpdate);
   window.addEventListener('load', scheduleTableScrollGapsUpdate);
   window.addEventListener('contracts:section-shown', scheduleTableScrollGapsUpdate);
+
+  // htmx does not swap error responses, so a failed load would leave the
+  // section blank (only the hidden spinner remains). Show the server message
+  // (or a generic one) in the pane instead, but keep already loaded tables
+  // when a background refresh fails.
+  document.body.addEventListener('htmx:responseError', function(e) {
+    var root = pane();
+    if (!root || e.target !== root) return;
+    if (root.querySelector('table')) return;
+    var xhr = e.detail && e.detail.xhr;
+    var text = xhr && xhr.responseText ? String(xhr.responseText).trim() : '';
+    if (!text || text.length > 300 || /<[a-z!]/i.test(text)) {
+      text = 'Не удалось загрузить договоры. Обновите страницу или повторите попытку позже.';
+    }
+    var note = document.createElement('div');
+    note.className = 'alert alert-warning py-2 px-3 mb-0 small';
+    note.setAttribute('role', 'alert');
+    note.textContent = text;
+    root.replaceChildren(note);
+  });
 })();
 
 
@@ -539,12 +559,71 @@
     });
   }
 
+  function openDraftPage(url) {
+    if (!url || !window.htmx) return Promise.resolve();
+
+    var currentPane = pane();
+    if (!currentPane) return Promise.resolve();
+
+    var staging = document.createElement('div');
+    staging.style.display = 'none';
+    staging.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(staging);
+
+    return htmx.ajax('GET', url, { target: staging, swap: 'innerHTML' }).then(function() {
+      var nextPane = staging.querySelector('#contracts-drafts-pane');
+      if (!nextPane) throw new Error('Не удалось загрузить форму договора.');
+
+      var fragment = document.createDocumentFragment();
+      Array.from(staging.childNodes).forEach(function(node) {
+        fragment.appendChild(node);
+      });
+      currentPane.replaceWith(fragment);
+
+      nextPane = document.getElementById('contracts-drafts-pane');
+      if (window.htmx && typeof window.htmx.process === 'function' && nextPane) {
+        window.htmx.process(nextPane);
+      }
+      if (typeof window.initContractProjectFormPage === 'function' && nextPane) {
+        window.initContractProjectFormPage(nextPane);
+      } else if (nextPane && nextPane.matches('[data-contract-project-form-page]')) {
+        nextPane.classList.remove('contracts-project-form-page--pending');
+        nextPane.style.visibility = '';
+        nextPane.removeAttribute('aria-busy');
+      }
+      if (typeof window.updateContractsProjectFormHeader === 'function') {
+        window.updateContractsProjectFormHeader();
+      }
+    }).finally(function() {
+      staging.remove();
+    });
+  }
+
+  function setDraftCreateButtonLoading(button, isLoading) {
+    if (!(button instanceof HTMLButtonElement)) return;
+
+    if (isLoading) {
+      if (button.dataset.loading === '1') return;
+      button.dataset.loading = '1';
+      button.dataset.originalHtml = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Создание договора...';
+      return;
+    }
+
+    if (button.dataset.originalHtml) {
+      button.innerHTML = button.dataset.originalHtml;
+    }
+    button.disabled = false;
+    delete button.dataset.loading;
+  }
+
   function refreshDraftsPane() {
     var root = pane();
     if (!root) return Promise.resolve();
     var refreshUrl = root.getAttribute('hx-get') || root.dataset.refreshUrl;
     if (!refreshUrl) return Promise.resolve();
-    return htmx.ajax('GET', refreshUrl, { target: '#contracts-drafts-pane', swap: 'innerHTML' });
+    return htmx.ajax('GET', refreshUrl, { target: '#contracts-drafts-pane', swap: 'outerHTML' });
   }
 
   function postSequential(urls) {
@@ -594,17 +673,26 @@
     var rows = qa('#contracts-drafts-table tbody tr[data-project-id]', root);
     rows.forEach(function(row, index) {
       var number = String(row.dataset.number || '');
+      var tkpId = String(row.dataset.tkpId || '');
+      var contractId = String(row.dataset.contractId || '');
       var previous = rows[index - 1] || null;
       var next = rows[index + 1] || null;
-      var isContinuation = !!previous && String(previous.dataset.number || '') === number;
+      var isNumberContinuation = !!previous && String(previous.dataset.number || '') === number;
+      var isTkpContinuation = isNumberContinuation
+        && String(previous.dataset.tkpId || '') === tkpId;
       var hasNext = !!next && String(next.dataset.number || '') === number;
+      var hasNextDifferentContract = hasNext
+        && String(next.dataset.contractId || '') !== contractId;
+      var hasNextDifferentTkp = hasNext
+        && String(next.dataset.tkpId || '') !== tkpId;
       var numberCell = row.querySelector('td[data-col="number"]');
       var tkpCell = row.querySelector('td[data-col="tkp-id"]');
-      if (numberCell) numberCell.textContent = isContinuation ? '' : number;
-      setDroidMonoCellValue(tkpCell, isContinuation ? '' : String(row.dataset.tkpId || ''));
-      row.classList.toggle('contracts-drafts-number-continuation', isContinuation);
+      if (numberCell) numberCell.textContent = isNumberContinuation ? '' : number;
+      setDroidMonoCellValue(tkpCell, isTkpContinuation ? '' : tkpId);
+      row.classList.toggle('contracts-drafts-number-continuation', isNumberContinuation);
       row.classList.toggle('contracts-drafts-number-has-next', hasNext);
-      row.classList.toggle('contracts-drafts-number-contract-has-next', hasNext);
+      row.classList.toggle('contracts-drafts-tkp-separator-has-next', hasNextDifferentTkp);
+      row.classList.toggle('contracts-drafts-number-contract-has-next', hasNextDifferentContract);
     });
   }
 
@@ -636,13 +724,19 @@
       var next = rows[index + 1] || null;
       var isFirstForRegistration = !previous || String(previous.dataset.projectId || '') !== projectId;
       var hasNextForRegistration = !!next && String(next.dataset.projectId || '') === projectId;
+      var tkpId = String(row.dataset.tkpId || '');
       var isNumberContinuation = !!previous && String(previous.dataset.number || '') === number;
+      var isTkpContinuation = isNumberContinuation
+        && String(previous.dataset.tkpId || '') === tkpId;
       var hasNextForNumber = !!next && String(next.dataset.number || '') === number;
+      var hasNextDifferentTkp = hasNextForNumber
+        && String(next.dataset.tkpId || '') !== tkpId;
       var numberCell = row.querySelector('td[data-col="number"]');
       var tkpCell = row.querySelector('td[data-col="tkp-id"]');
       if (numberCell) numberCell.textContent = isNumberContinuation ? '' : number;
-      setDroidMonoCellValue(tkpCell, isNumberContinuation ? '' : String(row.dataset.tkpId || ''));
+      setDroidMonoCellValue(tkpCell, isTkpContinuation ? '' : tkpId);
       row.classList.toggle('contracts-payment-number-has-next', hasNextForNumber);
+      row.classList.toggle('contracts-payment-tkp-separator-has-next', hasNextDifferentTkp);
       row.classList.toggle('contracts-payment-number-contract-has-next', hasNextForNumber && !hasNextForRegistration);
       row.classList.toggle('contracts-payment-stage-has-next', hasNextForRegistration);
       row.classList.toggle('contracts-payment-stage-continuation', !isFirstForRegistration || isNumberContinuation);
@@ -717,14 +811,20 @@
 
     var createBtn = e.target.closest('#contracts-drafts-create-btn');
     if (createBtn && root.contains(createBtn)) {
-      openModal(createBtn.dataset.url);
+      if (createBtn.disabled) return;
+      setDraftCreateButtonLoading(createBtn, true);
+      openDraftPage(createBtn.dataset.url)
+        .catch(function(err) {
+          alert(err.message || 'Не удалось загрузить форму договора.');
+          setDraftCreateButtonLoading(createBtn, false);
+        });
       return;
     }
 
     var paymentQuickEdit = e.target.closest('.contracts-payment-quick-edit');
     if (paymentQuickEdit && root.contains(paymentQuickEdit)) {
       var paymentRow = paymentQuickEdit.closest('tr');
-      openModal(paymentRow && paymentRow.dataset.editUrl);
+      openDraftPage(paymentRow && paymentRow.dataset.editUrl);
       return;
     }
 
@@ -738,7 +838,7 @@
     var action = panelBtn.dataset.panelAction;
     if (action === 'edit') {
       var tr = checked[0].closest('tr');
-      openModal(tr && tr.dataset.editUrl);
+      openDraftPage(tr && tr.dataset.editUrl);
       return;
     }
 
@@ -748,9 +848,11 @@
         var tr = box.closest('tr');
         return tr && tr.dataset.deleteUrl;
       }).filter(Boolean);
+      var progress = window.TableActionProgress ? window.TableActionProgress.begin(checked) : null;
       postSequential(urls)
         .then(function() { return refreshDraftsPane(); })
-        .catch(function(err) { alert(err.message || 'Не удалось удалить строки.'); });
+        .catch(function(err) { alert(err.message || 'Не удалось удалить строки.'); })
+        .finally(function() { if (progress) progress.end(); });
       return;
     }
 
@@ -775,6 +877,7 @@
     var detail = e.detail || {};
     var table = detail.table;
     if (!root || !table || !root.contains(table)) return;
+    if (detail.generic) return; // generic tables refresh themselves
     window.__contractsDraftSel = getChecked().map(function(box) { return String(box.value); });
     refreshDraftsPane().catch(function() {});
   });
@@ -804,13 +907,14 @@
   });
 
   document.addEventListener('input', function(e) {
-    if (!e.target.matches('#contracts-modal [name="advance_percent"], #contracts-modal [name="preliminary_report_percent"]')) return;
+    if (!e.target.matches('[data-contract-project-form] [name="advance_percent"], [data-contract-project-form] [name="preliminary_report_percent"]')) return;
     updateContractFinalReportPercent(e.target.closest('form'));
   });
 
   document.body.addEventListener('htmx:afterSettle', function(e) {
     if (!(e.target && e.target.id === 'contracts-drafts-pane')) return;
     initColumnPickers();
+    syncDraftRelatedTablesOrder();
     var ids = window.__contractsDraftSel || [];
     restoreSelection(ids);
     window.__contractsDraftSel = [];
@@ -819,8 +923,11 @@
 
   document.body.addEventListener('htmx:afterSwap', function(e) {
     if (!(e.target instanceof Element)) return;
-    if (!e.target.closest('#contracts-modal .modal-content')) return;
-    updateContractFinalReportPercent(e.target.querySelector('form'));
+    var form = e.target.matches('[data-contract-project-form]')
+      ? e.target
+      : e.target.querySelector('[data-contract-project-form]');
+    if (!form) return;
+    updateContractFinalReportPercent(form);
   });
 
   document.addEventListener('DOMContentLoaded', function() {
@@ -1510,6 +1617,10 @@
       var tr = first.closest('tr');
       var url = tr && tr.dataset.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__ctTableSel[name]; } catch (_) { window.__ctTableSel[name] = []; }
+      if (window.TableSelection) window.TableSelection.clearOnModalHide(config.modalId, name, root);
       htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
       ensureActionsVisibility(name);
       return;
@@ -1534,6 +1645,13 @@
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder && window.__queuedRowOrder.handleMoveAction({
+        checked: checked,
+        action: action,
+        refresh: function() { htmx.trigger(document.body, 'contract-templates-updated'); },
+      })) {
+        return;
+      }
       var moveUrls = checked
         .map(function(ch) {
           var t = ch.closest('tr');
@@ -1715,6 +1833,10 @@
       var tr = first.closest('tr');
       var url = tr && tr.dataset.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__fpTableSel[name]; } catch (_) { window.__fpTableSel[name] = []; }
+      if (window.TableSelection) window.TableSelection.clearOnModalHide(config.modalId, name, root);
       htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' }).then(function() {
         var modalEl = document.getElementById(config.modalId);
         if (modalEl && window.bootstrap) {
@@ -1744,6 +1866,13 @@
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder && window.__queuedRowOrder.handleMoveAction({
+        checked: checked,
+        action: action,
+        refresh: function() { htmx.trigger(document.body, 'field-params-updated'); },
+      })) {
+        return;
+      }
       var moveUrls = checked
         .map(function(ch) {
           var t = ch.closest('tr');

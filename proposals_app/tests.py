@@ -2122,6 +2122,45 @@ class ProposalDispatchSendTests(TestCase):
         )
         self.assertTrue(self.successful_proposal.transfer_to_contract_date)
 
+    def test_dispatch_transfer_copies_customer_identifier_without_creating_registry_row(self):
+        entity = BusinessEntityRecord.objects.create(name='ООО "Приморское"', position=1)
+        identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=entity,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            number="1174910001683",
+            valid_from=date(2017, 11, 1),
+            position=1,
+        )
+        self.successful_proposal.customer = 'ООО "Приморское"'
+        self.successful_proposal.customer_identifier_record = identifier
+        self.successful_proposal.asset_owner_matches_customer = True
+        self.successful_proposal.save(
+            update_fields=[
+                "customer",
+                "customer_identifier_record",
+                "asset_owner_matches_customer",
+            ]
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_transfer_to_contract"),
+            {"proposal_ids[]": [self.successful_proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        project = ProjectRegistration.objects.get(proposal_registration=self.successful_proposal)
+        self.assertEqual(project.customer_identifier_record_id, identifier.pk)
+        self.assertEqual(project.asset_owner_identifier_record_id, identifier.pk)
+
+        self.successful_proposal.refresh_from_db()
+        self.assertEqual(
+            self.successful_proposal.status,
+            ProposalRegistration.ProposalStatus.COMPLETED,
+        )
+        self.assertTrue(self.successful_proposal.transfer_to_contract_date)
+
     def test_dispatch_transfer_to_contract_creates_separate_projects_for_sub_numbers(self):
         second_proposal = ProposalRegistration.objects.create(
             number=self.successful_proposal.number,
@@ -2918,6 +2957,60 @@ class ProposalDispatchFormTests(TestCase):
         person = PersonRecord.objects.get(last_name="Петров")
         self.assertEqual(person.first_name, "Петр")
         self.assertEqual(person.middle_name, "Петрович")
+
+    @override_settings(ROOT_URLCONF="urls")
+    def test_dispatch_recipient_resave_reuses_stored_identifier(self):
+        payload = {
+            "docx_file_name": "",
+            "docx_file_link": "",
+            "pdf_file_name": "",
+            "pdf_file_link": "",
+            "sent_date": "08.04.2026 12:00",
+            "recipient": 'ООО "Альфа"',
+            "recipient_country": str(self.country.pk),
+            "recipient_identifier": "ОГРН",
+            "recipient_registration_number": "1234567890123",
+            "recipient_registration_date": "10.04.2026",
+            "recipient_job_title": "Генеральный директор",
+            "contact_last_name": "Сидоров",
+            "contact_first_name": "Сидор",
+            "contact_middle_name": "Сидорович",
+            "contact_email": "contact@example.com",
+        }
+        created = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            payload,
+        )
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        self.proposal.refresh_from_db()
+        stored_id = self.proposal.recipient_identifier_record_id
+        self.assertIsNotNone(stored_id)
+
+        opened = self.client.get(reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]))
+        self.assertContains(
+            opened,
+            f'name="recipient_autocomplete_identifier_record_id"',
+            html=False,
+        )
+        self.assertContains(opened, f'value="{stored_id}"', html=False)
+        self.assertRegex(
+            opened.content.decode(),
+            r'id="proposal-dispatch-recipient-autocomplete-selected"\s+value="1"',
+        )
+
+        payload["recipient_job_title"] = "Директор"
+        payload["recipient_autocomplete_identifier_record_id"] = str(stored_id)
+        payload["recipient_autocomplete_selected_from_autocomplete"] = "1"
+        updated = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            payload,
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.recipient_job_title, "Директор")
+        self.assertEqual(self.proposal.recipient_identifier_record_id, stored_id)
 
     def test_dispatch_form_defaults_recipient_country_to_russia(self):
         form = ProposalDispatchForm()
@@ -8249,6 +8342,137 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         entity = BusinessEntityRecord.objects.get()
         self.assertEqual(entity.name, 'ООО "Заказчик"')
         self.assertEqual(entity.source, "[ТКП / Заказчик]")
+        proposal = ProposalRegistration.objects.get()
+        identifier = BusinessEntityIdentifierRecord.objects.get()
+        self.assertEqual(proposal.customer_identifier_record_id, identifier.pk)
+        self.assertEqual(proposal.asset_owner_identifier_record_id, identifier.pk)
+
+    def test_edit_reuses_stored_customer_link_and_related_rows(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        created = self.client.post(
+            reverse("proposal_form_create"),
+            self._payload(
+                customer='ООО "Заказчик"',
+                country=str(country.pk),
+                identifier="ОГРН",
+                registration_number="1234567890",
+                registration_date="01.04.2026",
+                asset_owner_matches_customer="on",
+                assets_payload=json.dumps(
+                    [
+                        {
+                            "short_name": 'ООО "Актив"',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "111",
+                            "registration_date": "01.04.2026",
+                            "selected_identifier_record_id": "",
+                            "selected_from_autocomplete": False,
+                            "user_edited": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                legal_entities_payload=json.dumps(
+                    [
+                        {
+                            "asset_short_name": "Актив",
+                            "short_name": 'ООО "Юрлицо"',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "222",
+                            "registration_date": "01.04.2026",
+                            "selected_identifier_record_id": "",
+                            "selected_from_autocomplete": False,
+                            "user_edited": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+        self.assertEqual(created.status_code, 200, created.content.decode()[:500])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 3)
+        proposal = ProposalRegistration.objects.get()
+        customer_id = proposal.customer_identifier_record_id
+        asset = proposal.assets.get()
+        legal_entity = proposal.legal_entities.get()
+        self.assertEqual(proposal.asset_owner_identifier_record_id, customer_id)
+        self.assertIsNotNone(asset.identifier_record_id)
+        self.assertIsNotNone(legal_entity.identifier_record_id)
+        self.assertNotEqual(asset.identifier_record_id, customer_id)
+
+        opened = self.client.get(reverse("proposal_form_edit", args=[proposal.pk]))
+        self.assertContains(
+            opened,
+            f'name="customer_autocomplete_identifier_record_id" id="proposal-customer-autocomplete-identifier-record-id" value="{customer_id}"',
+            html=False,
+        )
+        self.assertContains(
+            opened,
+            'name="customer_autocomplete_selected_from_autocomplete" id="proposal-customer-autocomplete-selected" value="1"',
+            html=False,
+        )
+
+        updated = self.client.post(
+            reverse("proposal_form_edit", args=[proposal.pk]),
+            self._payload(
+                customer='ООО "Заказчик"',
+                country=str(country.pk),
+                identifier="ОГРН",
+                registration_number="1234567890",
+                registration_date="01.04.2026",
+                asset_owner_matches_customer="on",
+                customer_autocomplete_identifier_record_id=str(customer_id),
+                customer_autocomplete_selected_from_autocomplete="1",
+                assets_payload=json.dumps(
+                    [
+                        {
+                            "short_name": 'ООО "Актив изменен"',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "111",
+                            "registration_date": "01.04.2026",
+                            "selected_identifier_record_id": str(asset.identifier_record_id),
+                            "selected_from_autocomplete": True,
+                            "user_edited": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                legal_entities_payload=json.dumps(
+                    [
+                        {
+                            "asset_short_name": "Актив",
+                            "short_name": 'ООО "Юрлицо"',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "222",
+                            "registration_date": "01.04.2026",
+                            "selected_identifier_record_id": str(legal_entity.identifier_record_id),
+                            "selected_from_autocomplete": True,
+                            "user_edited": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+        self.assertEqual(updated.status_code, 200, updated.content.decode()[:500])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 3)
+        proposal.refresh_from_db()
+        self.assertEqual(proposal.customer_identifier_record_id, customer_id)
+        self.assertEqual(proposal.assets.get().short_name, 'ООО "Актив изменен"')
+        self.assertEqual(proposal.assets.get().identifier_record_id, asset.identifier_record_id)
+        self.assertEqual(proposal.legal_entities.get().identifier_record_id, legal_entity.identifier_record_id)
 
     def test_create_view_syncs_customer_region_into_registry_chain(self):
         country = OKSMCountry.objects.create(

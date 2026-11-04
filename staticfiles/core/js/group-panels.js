@@ -26,6 +26,12 @@
       modalId: 'org-structure-modal',
       deleteLabel: 'строк(у/и)',
     },
+    'em-actions': {
+      name: 'em-select',
+      modal: '#expertise-mode-modal .modal-content',
+      modalId: 'expertise-mode-modal',
+      deleteLabel: 'строк(у/и)',
+    },
   };
 
   function getMasterForPanel(panel) {
@@ -105,6 +111,10 @@
       const tr = first.closest('tr');
       const url = tr?.dataset?.editUrl;
       if (!url) return;
+      // После закрытия модалки выделение снимается (table-selection.js);
+      // кэш забываем, чтобы afterSettle после «Сохранить» его не восстановил.
+      try { delete window.__grTableSel[name]; } catch (_) { window.__grTableSel[name] = []; }
+      window.TableSelection?.clearOnModalHide(config.modalId, name, root);
       await htmx.ajax('GET', url, { target: config.modal, swap: 'innerHTML' });
       const modalEl = document.getElementById(config.modalId);
       if (modalEl && window.bootstrap) {
@@ -117,18 +127,35 @@
     if (action === 'delete') {
       if (!confirm(`Удалить ${checked.length} ${config.deleteLabel}?`)) return;
       const urls = checked.map(ch => ch.closest('tr')?.dataset?.deleteUrl).filter(Boolean);
-      for (let i = 0; i < urls.length; i++) {
-        const isLast = i === urls.length - 1;
-        if (isLast) {
-          await htmx.ajax('POST', urls[i], { target: '#group-pane', swap: 'outerHTML' });
-        } else {
-          await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+      const progress = window.TableActionProgress?.begin(checked);
+      try {
+        for (let i = 0; i < urls.length; i++) {
+          const isLast = i === urls.length - 1;
+          if (isLast) {
+            await htmx.ajax('POST', urls[i], { target: '#group-pane', swap: 'outerHTML' });
+          } else {
+            await fetch(urls[i], { method: 'POST', headers: { 'X-CSRFToken': csrftoken } }).catch(() => {});
+          }
         }
+      } finally {
+        progress?.end();
       }
       return;
     }
 
     if (action === 'up' || action === 'down') {
+      if (window.__queuedRowOrder?.handleMoveAction({
+        checked,
+        action,
+        refreshAfterSave: name === 'gm-select',
+        refresh: () => {
+          window.__grTableSel[name] = getCheckedByName(name).map(ch => String(ch.value));
+          return htmx.ajax('GET', '/group/partial/', { target: '#group-pane', swap: 'outerHTML' });
+        },
+      })) {
+        ensureActionsVisibility(name);
+        return;
+      }
       let urls = checked
         .map(ch => ch.closest('tr')?.dataset?.[action === 'up' ? 'moveUpUrl' : 'moveDownUrl'])
         .filter(Boolean);

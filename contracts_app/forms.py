@@ -2325,6 +2325,11 @@ def build_contract_project_form_from_proposal(proposal, *, registration=None):
     form.stage_rows = form._build_contract_stage_rows_from_proposal(proposal)
     form._refresh_contract_terms_display()
     form.prefill_ranked_products = _ranked_products_from_proposal(proposal)
+    form.linked_customer_identifier_record_id = proposal.customer_identifier_record_id or ""
+    if proposal.asset_owner_matches_customer:
+        form.linked_asset_owner_identifier_record_id = proposal.customer_identifier_record_id or ""
+    else:
+        form.linked_asset_owner_identifier_record_id = proposal.asset_owner_identifier_record_id or ""
     return form
 
 

@@ -32,6 +32,14 @@
         node.textContent = String(value);
         node.classList.toggle("d-none", value <= 0);
       });
+
+      const subsections = data.subsections || {};
+      document.querySelectorAll("[data-notification-counter-subsection]").forEach((node) => {
+        const key = node.dataset.notificationCounterSubsection || "";
+        const value = Number(subsections[key] || 0);
+        node.textContent = String(value);
+        node.classList.toggle("d-none", value <= 0);
+      });
     } catch (_err) {
       // keep the last rendered counters if refresh fails
     }

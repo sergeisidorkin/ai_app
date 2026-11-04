@@ -65,6 +65,10 @@ class ReportUploadError(Exception):
     """Controlled error shown to the user when a report cannot be uploaded."""
 
 
+class ReportAppealConfirmError(ReportUploadError):
+    """В файле апелляции нет замечаний ИИ: нужно подтверждение, что это не чужой файл."""
+
+
 def _plural_count(n: int, one: str, few: str, many: str) -> str:
     mod10 = n % 10
     mod100 = n % 100
@@ -171,7 +175,7 @@ FULL_REPORT_LABEL = "Весь отчет"
 LOCAL_REPORT_PATH_PREFIX = "local:"
 REPORT_ASSET_FOLDER_NAME_MAX_LEN = 50
 EMPTY_REPORT_ASSET_FOLDER_LABEL = "без_актива"
-REPORT_SECTION_ACCOUNTING_TYPE = "Разделы"
+REPORT_SECTION_ACCOUNTING_TYPES = ("Разделы", "Материалы")
 _ASSET_FOLDER_IN_PATH_RE = re.compile(r"(?:^|/)A[1-9]\d* ")
 _ASSET_CODE_IN_FILENAME_RE = re.compile(r"_A[1-9]\d*_")
 
@@ -555,7 +559,7 @@ def locked_report_section_sequences(items) -> dict[tuple[int, str], list[int]]:
     sequences = {}
     for item in items:
         accounting = str(item.get("accounting_type") or "").strip()
-        if accounting != REPORT_SECTION_ACCOUNTING_TYPE:
+        if accounting not in REPORT_SECTION_ACCOUNTING_TYPES:
             continue
         key = (item.get("registration_id"), item.get("asset_name") or "")
         if key not in locked and item.get("registration_id") not in workspace_ids:
@@ -698,7 +702,9 @@ def report_workflow_status(upload, threshold=None, check_rules=None) -> str:
     check_status = getattr(upload, "check_status", "") or ""
     if check_status == PerformerReportUpload.CheckStatus.DONE:
         findings = getattr(upload, "check_finding_count", 0)
-        if getattr(upload, "pk", None):
+        if getattr(upload, "pk", None) and upload_ai_appeal(upload) is not None:
+            accepted = report_launches_accepted(upload, check_rules)
+        elif getattr(upload, "pk", None):
             accepted = report_acceptance_for_status(upload, check_rules)
         else:
             if threshold is None:
@@ -816,14 +822,21 @@ def effective_finding_map(upload, *, use_correction: bool) -> dict[str, int]:
     return result
 
 
-def report_public_finding_count_value(upload):
-    """Число в «Число замеч.» и «Корр.»: расчёт, пока правки нет."""
+def corrected_finding_count_value(upload):
+    """Число с учётом корректировки: расчёт, пока правки нет."""
     calculated = report_finding_count_value(upload)
     if calculated is None:
         return None
     if not finding_correction_active(upload):
         return calculated
     return sum(effective_finding_map(upload, use_correction=True).values())
+
+
+def report_public_finding_count_value(upload):
+    """Число в «Число замеч.» и «Корр.» строки файла. При апелляции правка живёт на строке «В работе после ИИ»."""
+    if upload_ai_appeal(upload) is not None:
+        return report_finding_count_value(upload)
+    return corrected_finding_count_value(upload)
 
 
 def format_report_public_finding_count(upload) -> str:
@@ -839,7 +852,170 @@ _CORRECTION_MARK_STATUSES = {"Проверен ИИ", "Сдан ИИ", "Согл
 def mark_corrected_workflow_status(upload, status: str) -> str:
     if status not in _CORRECTION_MARK_STATUSES or not finding_correction_active(upload):
         return status
+    if upload_ai_appeal(upload) is not None:
+        return status
     return f"{status}*"
+
+
+def upload_ai_appeal(upload):
+    """Строка «В работе после ИИ» этой версии, по которой эксперт заявил об ошибочных замечаниях."""
+    if upload is None or not getattr(upload, "pk", None):
+        return None
+    if hasattr(upload, "_ai_appeal_entry"):
+        return upload._ai_appeal_entry
+    from .models import ReportReviewEntry
+    from .report_review import REVIEW_AI, REVIEW_PHASE_REWORK
+
+    return (
+        ReportReviewEntry.objects
+        .filter(
+            upload_id=upload.pk,
+            step=REVIEW_AI,
+            phase=REVIEW_PHASE_REWORK,
+            appealed_at__isnull=False,
+        )
+        .order_by("-id")
+        .first()
+    )
+
+
+def ai_appeal_accepted(upload, check_rules=None) -> bool:
+    counts = effective_finding_map(upload, use_correction=True)
+    return report_launches_accepted(
+        upload,
+        check_rules,
+        finding_counts=counts,
+        finding_total=sum(counts.values()),
+    )
+
+
+def ai_appeal_status(upload, check_rules=None) -> str:
+    from .report_review import (
+        REVIEW_AI,
+        REVIEW_PHASE_REWORK,
+        manual_status_label,
+        passed_step_status,
+        review_chain_for_upload,
+    )
+
+    if ai_appeal_accepted(upload, check_rules):
+        return f"{passed_step_status(REVIEW_AI, review_chain_for_upload(upload))}*"
+    return manual_status_label(REVIEW_AI, REVIEW_PHASE_REWORK)
+
+
+def ai_appeal_available(entry) -> bool:
+    """Эксперт может оспорить замечания ИИ: открыта «В работе после ИИ» актуальной версии и есть ручной шаг."""
+    from .report_review import REVIEW_AI, REVIEW_PHASE_REWORK, manual_steps, review_chain_for_upload
+
+    if entry is None or entry.step != REVIEW_AI or entry.phase != REVIEW_PHASE_REWORK:
+        return False
+    if entry.settled or entry.appealed_at:
+        return False
+    upload = entry.upload
+    if (getattr(upload, "check_status", "") or "") != PerformerReportUpload.CheckStatus.DONE:
+        return False
+    if not upload_is_latest_version(upload):
+        return False
+    return bool(manual_steps(review_chain_for_upload(upload)))
+
+
+def appeal_review_entry(appeal):
+    """Строка проверяющего, открытая апелляцией: первая запись после неё в той же версии."""
+    from .models import ReportReviewEntry
+
+    if appeal is None:
+        return None
+    return (
+        ReportReviewEntry.objects
+        .filter(upload_id=appeal.upload_id, pk__gt=appeal.pk)
+        .order_by("pk")
+        .first()
+    )
+
+
+def appeal_for_review_entry(entry):
+    """Апелляция, которую решает эта строка проверяющего, пока решение не принято."""
+    from .report_review import REVIEW_PHASE_REVIEW
+
+    if entry is None or entry.phase != REVIEW_PHASE_REVIEW or entry.settled:
+        return None
+    if entry.review_file_name or entry.review_cloud_path:
+        return None
+    appeal = upload_ai_appeal(entry.upload)
+    target = appeal_review_entry(appeal)
+    if target is None or target.pk != entry.pk:
+        return None
+    return appeal
+
+
+def _sync_ai_appeal_settled(upload, *, force_settled=False) -> None:
+    appeal = upload_ai_appeal(upload)
+    if appeal is None:
+        return
+    settled = bool(force_settled or ai_appeal_accepted(upload))
+    if appeal.settled != settled:
+        appeal.settled = settled
+        appeal.save(update_fields=["settled"])
+
+
+def apply_appeal_correction(upload, counts, *, force_settled=False) -> None:
+    """Итог апелляции: замечания ИИ по подписям, не выше расчёта. Пройденный порог закрывает «В работе после ИИ»."""
+    calculated = calculated_finding_map(upload)
+    cleaned = {}
+    for label, original in calculated.items():
+        try:
+            value = int((counts or {}).get(label) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        cleaned[label] = min(max(value, 0), original)
+    if all(cleaned[label] == calculated[label] for label in calculated):
+        upload.check_finding_correction = None
+    else:
+        upload.check_finding_correction = cleaned
+    upload.save(update_fields=["check_finding_correction"])
+    _sync_ai_appeal_settled(upload, force_settled=force_settled)
+
+
+def start_ai_appeal(*, user, upload):
+    """«Остались ошибочные замечания»: открыть первый ручной шаг, «В работе после ИИ» остаётся."""
+    from .models import ReportReviewEntry
+    from .report_review import REVIEW_PHASE_REVIEW, latest_open_entry, manual_steps, review_chain_for_upload
+
+    entry = latest_open_entry(upload)
+    if not ai_appeal_available(entry):
+        raise ReportUploadError("Апелляция для этой строки недоступна.")
+    target = entry.upload
+    steps = manual_steps(review_chain_for_upload(target))
+    entry.appealed_at = timezone.now()
+    entry.save(update_fields=["appealed_at"])
+    ReportReviewEntry.objects.create(
+        upload=target,
+        step=steps[0],
+        phase=REVIEW_PHASE_REVIEW,
+    )
+    return target
+
+
+def _cancel_open_ai_appeal(upload) -> None:
+    """Новая версия до решения проверяющего снимает апелляцию вместе с пустой строкой шага."""
+    from .models import ReportReviewEntry
+    from .report_review import REVIEW_AI, REVIEW_PHASE_REWORK, _slot_upload_ids
+
+    appeals = ReportReviewEntry.objects.filter(
+        upload_id__in=_slot_upload_ids(upload),
+        step=REVIEW_AI,
+        phase=REVIEW_PHASE_REWORK,
+        settled=False,
+        appealed_at__isnull=False,
+    )
+    for appeal in appeals:
+        target = appeal_review_entry(appeal)
+        if (
+            target is not None
+            and not target.settled
+            and not (target.review_file_name or target.review_cloud_path)
+        ):
+            target.delete()
 
 
 def upload_is_latest_version(upload) -> bool:
@@ -894,7 +1070,9 @@ def review_chain_is_adjustable(upload) -> bool:
     entries = ReportReviewEntry.objects.filter(upload_id__in=_slot_upload_ids(upload))
     manual_open = 0
     for entry in entries:
-        if entry.step == REVIEW_AI and entry.phase == REVIEW_PHASE_REWORK and not entry.settled:
+        if entry.step == REVIEW_AI and entry.phase == REVIEW_PHASE_REWORK and (
+            not entry.settled or entry.appealed_at
+        ):
             continue
         empty_file = not (entry.review_file_name or entry.review_cloud_path)
         if (
@@ -989,6 +1167,8 @@ def apply_finding_correction(upload, submitted) -> None:
     calculated = calculated_finding_map(upload)
     if not calculated:
         raise FindingCorrectionError("Нет рассчитанных замечаний.", [])
+    if upload_ai_appeal(upload) is not None and not review_chain_is_adjustable(upload):
+        raise FindingCorrectionError("Апелляция уже рассмотрена проверяющим.", [])
     if not isinstance(submitted, dict):
         raise FindingCorrectionError("Некорректные данные.", [])
     increased = []
@@ -1042,6 +1222,9 @@ def reconcile_review_after_correction(upload) -> None:
     if not upload or (getattr(upload, "check_status", "") or "") != PerformerReportUpload.CheckStatus.DONE:
         return
     if not upload_is_latest_version(upload) or not review_chain_is_adjustable(upload):
+        return
+    if upload_ai_appeal(upload) is not None:
+        _sync_ai_appeal_settled(upload)
         return
     if finding_correction_active(upload):
         counts = effective_finding_map(upload, use_correction=True)
@@ -1426,7 +1609,12 @@ def _section_accounting_type(section) -> str:
 
 
 def is_report_section_accounting(section) -> bool:
-    return _section_accounting_type(section) == REPORT_SECTION_ACCOUNTING_TYPE
+    return _section_accounting_type(section) in REPORT_SECTION_ACCOUNTING_TYPES
+
+
+def report_table_performer_q() -> Q:
+    """Строки таблицы «Отчеты» и общей нумерации: блоки услуг с типом учета «Разделы» или «Материалы»."""
+    return Q(typical_section__service_block__accounting_type__in=REPORT_SECTION_ACCOUNTING_TYPES)
 
 
 def _performer_section_code(performer) -> str:
@@ -1439,6 +1627,7 @@ def grouped_report_performers(project, executor, asset_name="") -> list:
         return []
     return list(
         Performer.objects.filter(
+            report_table_performer_q(),
             registration=project,
             executor=executor or "",
             asset_name=asset_name or "",
@@ -1453,9 +1642,9 @@ def asset_report_section_performers(project, asset_name="") -> list:
         return []
     return list(
         Performer.objects.filter(
+            report_table_performer_q(),
             registration=project,
             asset_name=asset_name or "",
-            typical_section__service_block__accounting_type=REPORT_SECTION_ACCOUNTING_TYPE,
         )
         .select_related("typical_section")
         .order_by("position", "id")
@@ -1717,7 +1906,32 @@ def _make_report_row(
         version_display,
     )
     finding_groups["context"] = finding_context
-    if review_entry is not None and (
+    appeal_row = bool(
+        review_entry is not None
+        and getattr(review_entry, "appealed_at", None)
+        and review_entry.step == "ai"
+        and review_entry.phase == "rework"
+    )
+    appealed_upload = review_entry is None and upload_ai_appeal(upload) is not None
+    finding_correction_editable = not appealed_upload
+    appeal_resolved = False
+    appeal_accepted_report = False
+    if appeal_row:
+        step_entry = appeal_review_entry(review_entry)
+        step_has_file = bool(
+            step_entry is not None and (step_entry.review_file_name or step_entry.review_cloud_path)
+        )
+        appeal_resolved = bool(step_entry is not None and (step_entry.settled or step_has_file))
+        appeal_accepted_report = bool(appeal_resolved and step_entry.settled and not step_has_file)
+    if appeal_row:
+        finding_count_value = corrected_finding_count_value(upload)
+        calculated_value = report_finding_count_value(upload)
+        finding_count_display = "—" if finding_count_value is None else format_grouped_count(finding_count_value)
+        calculated_count_display = "—" if calculated_value is None else format_grouped_count(calculated_value)
+        corrected_count_display = finding_count_display
+        show_finding_info = bool(calculated_value)
+        finding_correction_editable = upload_is_latest_version(upload) and review_chain_is_adjustable(upload)
+    elif review_entry is not None and (
         review_entry.review_file_name
         or review_entry.review_cloud_path
         or getattr(review_entry, "settled", False)
@@ -1734,10 +1948,10 @@ def _make_report_row(
         calculated_value = report_finding_count_value(upload)
         finding_count_display = "—" if finding_count_value is None else format_grouped_count(finding_count_value)
         calculated_count_display = "—" if calculated_value is None else format_grouped_count(calculated_value)
-        corrected_count_display = finding_count_display
+        corrected_count_display = "—" if appealed_upload else finding_count_display
         show_finding_info = bool(calculated_value)
     if show_finding_info:
-        if finding_correction_active(upload):
+        if finding_correction_active(upload) and not appealed_upload:
             public_groups = report_finding_groups(upload, catalog, check_rules, source="corrected")
             public_groups["context"] = finding_context
         else:
@@ -1805,12 +2019,16 @@ def _make_report_row(
         calculated_groups_json=json.dumps(finding_groups, ensure_ascii=False),
         edit_groups_json=json.dumps(edit_groups, ensure_ascii=False) if edit_groups else "",
         show_finding_info=show_finding_info,
+        finding_correction_editable=finding_correction_editable,
+        appeal_resolved=appeal_resolved,
+        appeal_accepted_report=appeal_accepted_report,
         finding_info_disabled=finding_count_display != "—" and not show_finding_info,
         show_version_download=bool(
             upload
             and (getattr(upload, "file_name", "") or "")
             and (
                 (workflow_status or "").startswith(("Проверен", "Сдан", "Согласован"))
+                or appeal_resolved
                 or (
                     review_entry is not None
                     and (getattr(review_entry, "phase", "") or "") == "review"
@@ -1867,6 +2085,14 @@ def _append_slot_rows(rows, *, row_id, uploads, entries=None, **kwargs):
         entries = list(
             ReportReviewEntry.objects.filter(upload_id__in=upload_ids).select_related("basis_entry", "upload")
         ) if upload_ids else []
+    appeals = {}
+    for entry in entries:
+        if entry.step == "ai" and entry.phase == "rework" and entry.appealed_at:
+            if entry.upload_id not in appeals or entry.pk > appeals[entry.upload_id].pk:
+                appeals[entry.upload_id] = entry
+    for item in uploads or []:
+        if getattr(item, "pk", None):
+            item._ai_appeal_entry = appeals.get(item.pk)
     entries = _without_rework_waiting_for_remarks(entries)
     entries = _without_pending_result_entries(uploads, entries)
     timeline = _slot_timeline(uploads, entries)
@@ -2214,6 +2440,7 @@ def _report_slot_row_parts(upload):
     if upload.is_full_report:
         performer_ids = list(
             Performer.objects.filter(
+                report_table_performer_q(),
                 registration_id=upload.registration_id,
                 asset_name=asset_name,
             ).values_list("pk", flat=True)
@@ -2223,6 +2450,7 @@ def _report_slot_row_parts(upload):
     elif upload.is_all_sections:
         performer_ids = list(
             Performer.objects.filter(
+                report_table_performer_q(),
                 registration_id=upload.registration_id,
                 executor=upload.executor or "",
                 asset_name=asset_name,
@@ -2710,6 +2938,7 @@ def upload_report_file(
                 folder_path=folder_path,
                 cloud_user=cloud_user,
             )
+            _cancel_open_ai_appeal(stored)
             _retire_ai_rework_entries(stored)
             return stored
         except Exception:
@@ -3340,9 +3569,17 @@ def _save_report_check_copy(*, upload, processed_bytes, filename, local_dest, fo
     _save_check_fields(["check_file_name", "check_cloud_path", "check_file_link"])
 
 
-def submit_report_review_file(*, user, upload, file_bytes, original_name, local_folder_path=""):
-    """Файл замечаний ручного шага. Комментарии возвращают отчёт, пустой файл закрывает шаг."""
-    from .docx_comments import DocxCommentError, count_comments
+def submit_report_review_file(
+    *,
+    user,
+    upload,
+    file_bytes,
+    original_name,
+    local_folder_path="",
+    confirm_no_ai=False,
+):
+    """Файл замечаний ручного шага. Открытые цепочки возвращают отчёт, пустой файл закрывает шаг."""
+    from .docx_comments import DocxCommentError, count_open_comment_threads_by_author
     from .report_review import (
         REVIEW_PHASE_REVIEW,
         latest_open_entry,
@@ -3358,13 +3595,24 @@ def submit_report_review_file(*, user, upload, file_bytes, original_name, local_
     if not file_bytes:
         raise ReportUploadError("Файл пуст.")
     try:
-        comment_count = count_comments(file_bytes)
+        open_threads = count_open_comment_threads_by_author(file_bytes)
     except DocxCommentError as exc:
         raise ReportUploadError(str(exc)) from exc
+    comment_count = sum(open_threads.values())
 
     open_entry = latest_open_entry(upload)
     if open_entry is None:
         raise ReportUploadError("Нет шага, который принимает файл.")
+    appeal = appeal_for_review_entry(open_entry)
+    appeal_counts = None
+    if appeal is not None:
+        calculated = calculated_finding_map(appeal.upload)
+        appeal_counts = {label: int(open_threads.get(label) or 0) for label in calculated}
+        if calculated and not any(appeal_counts.values()) and not confirm_no_ai:
+            raise ReportAppealConfirmError(
+                "В файле нет ни одного замечания ИИ. Все замечания ИИ будут признаны ошибочными. "
+                "Проверьте, что загружен файл результата проверки ИИ."
+            )
     step = open_entry.step
     review_name = build_review_filename(
         upload.file_name or original_name,
@@ -3466,6 +3714,10 @@ def submit_report_review_file(*, user, upload, file_bytes, original_name, local_
                 step=nxt,
                 phase=REVIEW_PHASE_REVIEW,
             )
+    if appeal is not None:
+        apply_appeal_correction(appeal.upload, appeal_counts, force_settled=True)
+        if upload.pk == appeal.upload_id:
+            upload.check_finding_correction = appeal.upload.check_finding_correction
     return upload
 
 
@@ -3501,6 +3753,10 @@ def withdraw_pending_report_remarks(*, user, entry):
         "comment_count",
         "remarks_notice_pending",
     ])
+    appeal = upload_ai_appeal(entry.upload)
+    target = appeal_review_entry(appeal)
+    if target is not None and target.pk == entry.pk:
+        _sync_ai_appeal_settled(entry.upload)
     return entry
 
 
@@ -3539,6 +3795,9 @@ def accept_report_review_without_remarks(*, user, upload):
     entry = latest_open_entry(upload)
     if entry is None:
         raise ReportUploadError("Нет шага, который можно принять.")
+    appeal = appeal_for_review_entry(entry)
+    if appeal is not None:
+        apply_appeal_correction(appeal.upload, {}, force_settled=True)
     entry.settled = True
     entry.comment_count = 0
     entry.created_at = timezone.now()
