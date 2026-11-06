@@ -30,6 +30,7 @@
             <div class="form-check">
               <input class="form-check-input js-report-submission-filter" type="checkbox"
                      value="{{ project.id }}" id="report-submission-filter-{{ project.id }}"
+                     data-owning-project-id="{{ project.owning_project_id }}"
                      data-summary-label="{{ project.short_uid }}"
                      data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="report-submission-filter-{{ project.id }}">

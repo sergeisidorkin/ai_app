@@ -544,7 +544,7 @@ def test_product_workspace_opens_from_products_table_pencil(live_server, django_
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-WS",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
 
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator("#policy-pane #policy-products-section table").wait_for()
@@ -664,7 +664,7 @@ def test_product_workspace_inline_edit_save_and_cancel(live_server, django_user_
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-IN",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
 
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator('#policy-products-section[data-policy-inline="1"] table').wait_for()
@@ -844,7 +844,7 @@ def test_product_workspace_service_goal_inline_edit_saves(live_server, django_us
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-GOAL",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-service-goal-reports-section[data-policy-inline="1"] table'
@@ -1019,7 +1019,7 @@ def test_product_workspace_typical_section_inline_edit_saves(live_server, django
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-SEC",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-typical-sections-section[data-policy-inline="1"] table'
@@ -1288,7 +1288,7 @@ def test_product_workspace_typical_section_row_insert_saves(live_server, django_
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-INS",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-typical-sections-section[data-policy-inline="1"] table'
@@ -1621,7 +1621,7 @@ def test_product_workspace_related_table_row_insert_saves(live_server, django_us
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-REL",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator('#policy-section-structures-section[data-policy-row-insert-bound="1"]').wait_for()
         page.locator('#policy-typical-service-compositions-section[data-policy-row-insert-bound="1"]').wait_for()
@@ -1775,7 +1775,7 @@ def test_product_workspace_typical_section_delete_can_be_cancelled(live_server, 
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-DEL",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-typical-sections-section[data-policy-inline="1"] table'
@@ -1905,7 +1905,7 @@ def test_product_workspace_section_structure_inline_edit_saves(live_server, djan
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-STR",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-section-structures-section[data-policy-inline="1"] table'
@@ -2144,7 +2144,7 @@ def test_product_workspace_report_structure_inline_edit_saves(live_server, djang
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-RPT",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-report-structures-section[data-policy-inline="1"] table'
@@ -2300,7 +2300,7 @@ def test_product_workspace_tariff_inline_edit_saves(live_server, django_user_mod
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-TAR",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-tariffs-section[data-policy-inline="1"] table'
@@ -2800,7 +2800,7 @@ def test_product_workspace_typical_service_term_inline_edit_saves(live_server, d
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-TERM",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-typical-service-terms-section[data-policy-inline="1"] table'
@@ -3067,7 +3067,7 @@ def test_product_workspace_select_dismisses_without_halo_or_jump(live_server, dj
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-SEL",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
 
         service_cell = page.locator(
@@ -3235,7 +3235,7 @@ def test_product_workspace_composition_inline_edit_opens_rich_toolbar(live_serve
         page.locator(
             '#policy-products-section tbody tr[data-workspace-url]',
             has_text="BR-CMP",
-        ).locator(".product-quick-edit").click()
+        ).locator(".product-name-link").click()
         page.locator('#policy-pane[data-policy-workspace="1"]').wait_for()
         page.locator(
             '#policy-typical-service-compositions-section[data-policy-inline="1"] table'

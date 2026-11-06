@@ -7,6 +7,7 @@ class ProjectsAppConfig(AppConfig):
     verbose_name = "Проекты"
 
     def ready(self):
+        from . import product_usage  # noqa: F401
         from .report_submission import start_report_check_recovery
 
         start_report_check_recovery()

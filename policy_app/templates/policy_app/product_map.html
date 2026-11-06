@@ -54,6 +54,32 @@
                       <div data-product-map-filter-list></div>
                     </div>
                   </div>
+                  <button type="button" class="product-map-toggle" data-product-map-projects-toggle aria-pressed="false" title="Показать/скрыть проекты">
+                    <i class="bi bi-eye-slash" aria-hidden="true"></i>
+                    <span>Показать проекты</span>
+                  </button>
+                  <button type="button" class="product-map-toggle" data-product-map-collapse-empty aria-pressed="false" title="Свернуть/развернуть ветки без проектов за выбранный период">
+                    <i class="bi bi-dash-circle" aria-hidden="true"></i>
+                    <span data-product-map-collapse-empty-label>Свернуть пустые</span>
+                  </button>
+                  <div class="dropdown" data-product-map-period>
+                    <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false">
+                      Период: <span data-product-map-period-label>Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" value="__all__" id="product-map-period-filter-all" data-product-map-filter-all checked>
+                        <label class="form-check-label" for="product-map-period-filter-all">Все годы</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      {% for year in product_map_years %}
+                        <div class="form-check">
+                          <input class="form-check-input" type="checkbox" value="{{ year }}" id="product-map-period-filter-{{ year }}" data-product-map-filter-value>
+                          <label class="form-check-label" for="product-map-period-filter-{{ year }}">{{ year }}</label>
+                        </div>
+                      {% endfor %}
+                    </div>
+                  </div>
                 </div>
                 <div class="product-map-zoom" role="group" aria-label="Масштаб">
                   <span class="product-map-zoom-value" data-product-map-zoom-value>100%</span>

@@ -495,6 +495,7 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         self.allow_multiple_products = kwargs.pop("allow_multiple_products", True)
+        self.allow_missing_products = kwargs.pop("allow_missing_products", False)
         self.lock_project_roles = kwargs.pop("lock_project_roles", False)
         project_role_source = kwargs.pop("project_role_source", None)
         summary_status_choices = kwargs.pop("summary_status_choices", None)
@@ -780,7 +781,8 @@ class ProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         valid_set = set(valid_ids)
         ordered_valid_ids = [product_id for product_id in product_ids if product_id in valid_set]
         if not ordered_valid_ids:
-            self.add_error("type_ids", "Укажите хотя бы один продукт.")
+            if not self.allow_missing_products:
+                self.add_error("type_ids", "Укажите хотя бы один продукт.")
         elif not self.allow_multiple_products and len(ordered_valid_ids) > 1:
             self.add_error("type_ids", "Для строки проекта можно выбрать только один продукт.")
         self.cleaned_type_ids = ordered_valid_ids

@@ -455,6 +455,36 @@
                       <div id="master-filter-projects-list"></div>
                     </div>
                   </div>
+                  <div class="dropdown pt-1" id="master-year-filter-dropdown" style="transform: translateY(3px);">
+                    <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
+                            id="master-year-filter-toggle" data-bs-toggle="dropdown" data-bs-display="static" data-bs-auto-close="outside" aria-expanded="false">
+                      Год: <span class="js-master-year-filter-label">Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="master-year-filter-toggle"
+                         style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input js-master-year-filter" type="checkbox" value="__all__" id="master-year-filter-all" checked>
+                        <label class="form-check-label" for="master-year-filter-all">Все годы</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      <div id="master-filter-years-list"></div>
+                    </div>
+                  </div>
+                  <div class="dropdown pt-1" id="master-status-filter-dropdown" style="transform: translateY(3px);">
+                    <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
+                            id="master-status-filter-toggle" data-bs-toggle="dropdown" data-bs-display="static" data-bs-auto-close="outside" aria-expanded="false">
+                      Статус: <span class="js-master-status-filter-label">Все</span>
+                    </button>
+                    <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="master-status-filter-toggle"
+                         style="max-height: 240px; overflow-y: auto;">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input js-master-status-filter" type="checkbox" value="__all__" id="master-status-filter-all" checked>
+                        <label class="form-check-label" for="master-status-filter-all">Все статусы</label>
+                      </div>
+                      <hr class="dropdown-divider">
+                      <div id="master-filter-statuses-list"></div>
+                    </div>
+                  </div>
                 </div>
                 <div class="d-flex align-items-center gap-2">
                   <div id="registration-form-actions" class="d-none align-items-center gap-2">

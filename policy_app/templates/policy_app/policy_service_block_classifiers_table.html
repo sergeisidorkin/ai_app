@@ -33,13 +33,14 @@
                 {% endif %}
             </th>
             <th class="sbc-col-code">Код</th>
-            <th class="sbc-col-short">Краткое имя EN</th>
-            <th class="sbc-col-short">Краткое имя RU</th>
-            <th class="sbc-col-name">Наименование раздела (услуги) EN</th>
-            <th class="sbc-col-name">Наименование раздела (услуги) RU</th>
+            <th class="sbc-col-short-en">Краткое имя EN</th>
+            <th class="sbc-col-short-ru">Краткое имя RU</th>
+            <th class="sbc-col-name-en">Наименование раздела (услуги) EN</th>
+            <th class="sbc-col-name-ru">Наименование раздела (услуги) RU</th>
             <th class="sbc-col-accounting">Тип учета</th>
             <th class="sbc-col-expertise">Экспертиза</th>
             <th class="sbc-col-executor">Исполнитель</th>
+            <th class="sbc-col-usage" aria-hidden="true">Частота использования</th>
         </tr>
         </thead>
         <tbody>
@@ -63,10 +64,10 @@
                     {% endif %}
                 </td>
                 <td class="sbc-col-code">{{ sbc.code }}</td>
-                <td class="sbc-col-short">{{ sbc.short_name }}</td>
-                <td class="sbc-col-short">{{ sbc.short_name_ru }}</td>
-                <td class="sbc-col-name"{% if policy_inline_edit %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ sbc.name_en }}"{% endif %}>{{ sbc.name_en }}</td>
-                <td class="sbc-col-name"{% if policy_inline_edit %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ sbc.name_ru }}"{% endif %}>{{ sbc.name_ru }}</td>
+                <td class="sbc-col-short-en">{{ sbc.short_name }}</td>
+                <td class="sbc-col-short-ru">{{ sbc.short_name_ru }}</td>
+                <td class="sbc-col-name-en"{% if policy_inline_edit %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ sbc.name_en }}"{% endif %}>{{ sbc.name_en }}</td>
+                <td class="sbc-col-name-ru"{% if policy_inline_edit %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ sbc.name_ru }}"{% endif %}>{{ sbc.name_ru }}</td>
                 <td class="sbc-col-accounting">{{ sbc.accounting_type }}</td>
                 <td class="sbc-col-expertise">{% if sbc.expertise_dir %}{{ sbc.expertise_dir.short_name }}{% endif %}</td>
                 <td class="sbc-col-executor typical-section-executor-col{% if policy_inline_edit %} inline-specialties-cell{% endif %}"{% if policy_inline_edit %} data-inline-field="specialty_ids" data-inline-type="specialties" data-inline-value="[{% for rs in sbc.ranked_specialties.all %}{% if not forloop.first %},{% endif %}{{ rs.specialty_id }}{% endfor %}]"{% endif %}>
@@ -102,9 +103,10 @@
                         {% for rs in sbc.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}
                     {% endif %}
                 </td>
+                <td class="sbc-col-usage" aria-hidden="true">{{ sbc.usage_count }}</td>
             </tr>
         {% empty %}
-            <tr><td colspan="9" class="text-muted">Пока нет данных.</td></tr>
+            <tr><td colspan="10" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}
         </tbody>
     </table>

@@ -233,11 +233,150 @@
     });
   }
 
+  const PROJECTS_FILTER_ALL = '__all__';
+
+  function projectsMasterValues() {
+    const values = window.__masterProjectFilter;
+    if (!Array.isArray(values) || !values.length || values.indexOf(PROJECTS_FILTER_ALL) !== -1) return null;
+    return values.map(String);
+  }
+
+  function projectOptionOwningId(input) {
+    return (input && (input.dataset.owningProjectId || input.value)) || '';
+  }
+
+  window.__projectsMasterAllows = function (projectId) {
+    const values = projectsMasterValues();
+    return !values || values.indexOf(String(projectId || '')) !== -1;
+  };
+
+  window.__projectsMasterAllowsRow = function (row) {
+    const data = (row && row.dataset) || {};
+    return window.__projectsMasterAllows(data.owningProjectId || data.projectId || '');
+  };
+
+  window.__hideProjectOptionsOutsideMaster = function (inputs) {
+    Array.from(inputs || []).forEach(function (input) {
+      if (!input.value || input.value === PROJECTS_FILTER_ALL) return;
+      const wrap = input.closest('.form-check');
+      if (wrap) wrap.classList.toggle('d-none', !window.__projectsMasterAllows(projectOptionOwningId(input)));
+    });
+  };
+
+  // Значения для запроса к серверу: выбор фильтра таблицы, суженный верхними фильтрами.
+  window.__projectsMasterScopedValues = function (localValues, inputs) {
+    const local = Array.isArray(localValues) && localValues.length && localValues.indexOf(PROJECTS_FILTER_ALL) === -1
+      ? localValues.map(String)
+      : null;
+    const master = projectsMasterValues();
+    if (!master) return local || [PROJECTS_FILTER_ALL];
+    const options = inputs ? Array.from(inputs) : null;
+    function allowed(value) {
+      const input = options && options.find(function (item) { return item.value === value; });
+      return window.__projectsMasterAllows(input ? projectOptionOwningId(input) : value);
+    }
+    let values;
+    if (local) {
+      values = local.filter(allowed);
+    } else if (options) {
+      values = options
+        .map(function (item) { return item.value; })
+        .filter(function (value) { return value && value !== PROJECTS_FILTER_ALL && allowed(value); });
+    } else {
+      values = master;
+    }
+    return values.length ? values : ['0'];
+  };
+
+  function readRegistryPaginationState() {
+    const section = document.getElementById('registration-registry-section');
+    if (section) {
+      const state = {
+        page: section.dataset.registryPage || '',
+        pageSize: section.dataset.registryPageSize || '25',
+        projects: section.dataset.registryProjects || '__all__',
+      };
+      try { sessionStorage.setItem('projects:registryPagination', JSON.stringify(state)); } catch (_) {}
+      return state;
+    }
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('projects:registryPagination') || '');
+      if (saved && typeof saved === 'object') return saved;
+    } catch (_) {}
+    return null;
+  }
+
+  function initRegistrationRegistryFooterSticky() {
+    const footer = document.querySelector('#registration-registry-section .policy-table-footer');
+    const section = footer && footer.closest('#registration-registry-section');
+    if (!footer || !section || footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    const spacer = document.createElement('div');
+    spacer.className = 'registration-registry-footer-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('beforebegin', spacer);
+
+    const marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    let intersectionObserver = null;
+
+    function release() {
+      if (intersectionObserver) intersectionObserver.disconnect();
+      window.removeEventListener('scroll', sync, true);
+      window.removeEventListener('resize', sync);
+    }
+
+    function sync() {
+      if (!footer.isConnected) {
+        release();
+        return;
+      }
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const sectionRect = section.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const sectionVisible = sectionRect.top < viewportHeight && sectionRect.bottom > 0;
+      const footerBelowFold = markerRect.top >= viewportHeight - 1;
+      const stuck = sectionVisible && footerBelowFold;
+      if (stuck) {
+        if (!footer.classList.contains('is-stuck')) {
+          const styles = window.getComputedStyle(footer);
+          const blockHeight = footer.offsetHeight
+            + (parseFloat(styles.marginTop) || 0)
+            + (parseFloat(styles.marginBottom) || 0);
+          spacer.style.height = blockHeight + 'px';
+          footer.classList.add('is-stuck');
+        }
+        const pinnedRect = section.getBoundingClientRect();
+        footer.style.left = pinnedRect.left + 'px';
+        footer.style.width = pinnedRect.width + 'px';
+      } else if (footer.classList.contains('is-stuck')) {
+        footer.classList.remove('is-stuck');
+        footer.style.left = '';
+        footer.style.width = '';
+        spacer.style.height = '0px';
+      }
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
+      intersectionObserver.observe(section);
+      intersectionObserver.observe(marker);
+    }
+    window.addEventListener('scroll', sync, true);
+    window.addEventListener('resize', sync);
+    window.requestAnimationFrame(sync);
+  }
+
   document.addEventListener('DOMContentLoaded', initProjectRegistryColPicker);
   document.addEventListener('DOMContentLoaded', function() {
     bindProjectScheduleScrollGaps();
     scheduleProjectScheduleScrollGapsUpdate();
     initProjectContractTermsSectionToggle();
+    initRegistrationRegistryFooterSticky();
   });
   window.addEventListener('resize', scheduleProjectScheduleScrollGapsUpdate);
   window.addEventListener('load', scheduleProjectScheduleScrollGapsUpdate);
@@ -1905,11 +2044,18 @@
 
   // Восстановление выбора после перерисовки HTMX (один-в-один)
   document.body.addEventListener('htmx:afterSettle', function (e) {
-    if (!(e.target && e.target.id === 'projects-pane')) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const isProjectsPane = target.id === 'projects-pane';
+    const hasRegistry = target.id === 'registration-registry-section'
+      || !!target.querySelector?.('#registration-registry-section');
+    if (!isProjectsPane && !hasRegistry) return;
     initProjectRegistryColPicker();
+    initRegistrationRegistryFooterSticky();
+    scheduleProjectScheduleScrollGapsUpdate();
+    if (!isProjectsPane) return;
     initProjectContractTermsSectionToggle(e.target);
     bindProjectScheduleScrollGaps(e.target);
-    scheduleProjectScheduleScrollGapsUpdate();
     const last = window.__tableSelLast;
     if (!last) return;
     const ids = (window.__tableSel && window.__tableSel[last]) || [];
@@ -2299,7 +2445,7 @@
   }
 
   function registrationCsvFilterQuery() {
-    var values = window.__regProjectFilter || [];
+    var values = window.__projectsMasterScopedValues(window.__regProjectFilter || []);
     if (!values.length || values.indexOf('__all__') !== -1) return '';
     var ids = values.map(String).filter(function (value) {
       return value && value !== '__all__';
@@ -2557,10 +2703,12 @@
 
   function updateRegistrationHeader() {
     const heading = document.getElementById('projects-section-title');
-    const filter = document.getElementById('master-project-filter-dropdown');
     const root = pane();
     const currentLabel = isRegistrationFormActive(root) ? (root.dataset.headerCurrentLabel || '') : '';
-    if (filter) filter.classList.toggle('d-none', !!currentLabel);
+    ['master-project-filter-dropdown', 'master-year-filter-dropdown', 'master-status-filter-dropdown'].forEach(function (id) {
+      const filter = document.getElementById(id);
+      if (filter) filter.classList.toggle('d-none', !!currentLabel);
+    });
     if (!heading) {
       syncRegistrationFormActions();
       return;
@@ -2678,6 +2826,71 @@
     if (cancelBtn) {
       event.preventDefault();
       await cancelRegistrationForm();
+    }
+  });
+
+  function projectsYearFilterValues() {
+    const saved = window.UIPref ? UIPref.get('projects:yearFilter', null) : null;
+    if (!Array.isArray(saved) || !saved.length || saved.indexOf('__all__') !== -1) return [];
+    return saved.map(String).filter(Boolean);
+  }
+
+  function projectsStatusFilterValues() {
+    const values = window.__projectsStatusFilter
+      || (window.UIPref ? UIPref.get('projects:statusFilter', null) : null);
+    if (!Array.isArray(values) || !values.length || values.indexOf('__all__') !== -1) return [];
+    return values.map(String).filter(Boolean);
+  }
+
+  function requestHasParam(detail, key) {
+    if (detail.parameters[key]) return true;
+    const path = detail.path || '';
+    const queryIndex = path.indexOf('?');
+    return queryIndex !== -1 && new URLSearchParams(path.slice(queryIndex + 1)).has(key);
+  }
+
+  function addProjectsScopeParams(detail, withStatus) {
+    const years = projectsYearFilterValues();
+    if (years.length && !requestHasParam(detail, 'projects_year')) {
+      detail.parameters.projects_year = years.join(',');
+    }
+    if (!withStatus) return;
+    const statuses = projectsStatusFilterValues();
+    if (statuses.length && !requestHasParam(detail, 'registry_status')) {
+      detail.parameters.registry_status = statuses.join(',');
+    }
+  }
+
+  document.body.addEventListener('htmx:configRequest', function (event) {
+    const detail = event.detail;
+    if (!detail || !detail.parameters) return;
+    const path = detail.path || '';
+    if (path.indexOf('/projects/performers/partial/') !== -1 || path.indexOf('/projects/reports/table/') !== -1) {
+      addProjectsScopeParams(detail, false);
+      return;
+    }
+    if (path.indexOf('/projects/registry/table/') !== -1) {
+      addProjectsScopeParams(detail, true);
+      return;
+    }
+    const target = detail.target;
+    const elt = detail.elt;
+    const targetsPane = (target && target.id === 'projects-pane')
+      || (elt && elt.getAttribute && elt.getAttribute('hx-target') === '#projects-pane')
+      || path.indexOf('projects/partial') !== -1
+      || path.indexOf('projects/registration') !== -1;
+    if (!targetsPane) return;
+    addProjectsScopeParams(detail, true);
+    const state = readRegistryPaginationState();
+    if (!state) return;
+    if (state.page && !detail.parameters.registry_page && !detail.parameters.page) {
+      detail.parameters.registry_page = state.page;
+    }
+    if (!detail.parameters.registry_page_size && !detail.parameters.page_size) {
+      detail.parameters.registry_page_size = state.pageSize || '25';
+    }
+    if (!detail.parameters.registry_project && state.projects && state.projects !== '__all__') {
+      detail.parameters.registry_project = state.projects;
     }
   });
 

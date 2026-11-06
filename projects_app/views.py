@@ -26,6 +26,7 @@ from .models import (
     Performer,
     PerformerParticipationSnapshot,
     PerformerReportUpload,
+    MAX_PROJECT_STAGES,
     ProjectRegistration,
     ProjectRegistrationProduct,
     RegistrationGroupSummaryState,
@@ -250,6 +251,7 @@ from contracts_app.services import (
 )
 
 PROJECTS_PARTIAL_TEMPLATE = "projects_app/projects_partial.html"
+REGISTRATION_REGISTRY_TEMPLATE = "projects_app/registration_registry_section.html"
 REG_FORM_TEMPLATE       = "projects_app/registration_form.html"
 CONTRACT_FORM_TEMPLATE  = "projects_app/contract_form.html"
 SCHEDULE_FORM_TEMPLATE  = "projects_app/project_schedule_form.html"
@@ -302,6 +304,8 @@ REPORT_MACRO_PAGE_SIZE_OPTIONS = (25, 50, 100)
 REPORT_SUBMISSION_TABLE_TEMPLATE = "projects_app/report_submission_table.html"
 REPORT_TABLE_PAGE_SIZE = 25
 REPORT_TABLE_PAGE_SIZE_OPTIONS = (25, 50, 100)
+REGISTRATION_TABLE_PAGE_SIZE = 25
+REGISTRATION_TABLE_PAGE_SIZE_OPTIONS = (25, 50, 100, 200)
 
 PERF_FORM_TEMPLATE    = "projects_app/performer_form.html"
 PERFORMERS_PARTIAL_TEMPLATE = "projects_app/performers_partial.html"
@@ -635,7 +639,255 @@ def _owning_project_ids(registration_ids):
     return ids
 
 
-def _projects_context(user=None):
+def _request_param(request, key):
+    if request is None:
+        return None
+    value = request.GET.get(key)
+    if value not in (None, ""):
+        return value
+    if request.method == "POST":
+        value = request.POST.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _request_param_list(request, key):
+    if request is None:
+        return []
+    values = list(request.GET.getlist(key))
+    if request.method == "POST":
+        values.extend(request.POST.getlist(key))
+    return values
+
+
+def _selected_registry_project_ids(request):
+    raw_values = []
+    for value in _request_param_list(request, "registry_project"):
+        raw_values.extend(part.strip() for part in str(value).split(",") if part.strip())
+    project_ids = []
+    seen = set()
+    for value in raw_values:
+        if value == "__all__":
+            continue
+        try:
+            project_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if project_id in seen:
+            continue
+        seen.add(project_id)
+        project_ids.append(project_id)
+    return project_ids
+
+
+PROJECT_YEAR_NONE = "none"
+
+
+def _split_request_values(request, key):
+    values = []
+    for value in _request_param_list(request, key):
+        values.extend(part.strip() for part in str(value).split(",") if part.strip())
+    return values
+
+
+def _selected_project_years(request):
+    years = []
+    for value in _split_request_values(request, "projects_year"):
+        if value == PROJECT_YEAR_NONE:
+            year = None
+        elif value.isdigit():
+            year = int(value)
+        else:
+            continue
+        if year not in years:
+            years.append(year)
+    return years
+
+
+def _selected_registry_statuses(request):
+    allowed = {value for value, _label in ProjectRegistration.STATUS_CHOICES}
+    statuses = []
+    for value in _split_request_values(request, "registry_status"):
+        if value in allowed and value not in statuses:
+            statuses.append(value)
+    return statuses
+
+
+def _project_filter_facets(expert_project_ids=None):
+    """Годы и статусы каждого проекта-владельца: проект подходит, если подходит любая его строка."""
+    rows = ProjectRegistration.objects.all()
+    if expert_project_ids is not None:
+        owning_ids = _owning_project_ids(expert_project_ids)
+        rows = rows.filter(
+            Q(pk__in=expert_project_ids) | Q(pk__in=owning_ids)
+        )
+    facets = {}
+    own_statuses = {}
+    for pk, parent_id, year, status in rows.values_list("pk", "stage_project_id", "year", "status"):
+        owning_id = parent_id or pk
+        facet = facets.setdefault(owning_id, {"years": set(), "statuses": set(), "has_stages": False})
+        if year is not None:
+            facet["years"].add(year)
+        if parent_id:
+            facet["has_stages"] = True
+            facet["statuses"].add(status)
+        else:
+            own_statuses[pk] = status
+    for owning_id, facet in facets.items():
+        if not facet["has_stages"] and owning_id in own_statuses:
+            facet["statuses"].add(own_statuses[owning_id])
+        if not facet["years"]:
+            facet["years"].add(None)
+    return facets
+
+
+def _facet_owning_ids(facets, years=None, statuses=None):
+    years = set(years or [])
+    statuses = set(statuses or [])
+    return {
+        owning_id
+        for owning_id, facet in facets.items()
+        if (not years or facet["years"] & years)
+        and (not statuses or facet["statuses"] & statuses)
+    }
+
+
+def _projects_filter_facets_payload(facets):
+    payload = []
+    for owning_id, facet in facets.items():
+        years = sorted(
+            (PROJECT_YEAR_NONE if year is None else str(year) for year in facet["years"]),
+        )
+        payload.append({
+            "id": str(owning_id),
+            "years": years,
+            "statuses": sorted(facet["statuses"]),
+        })
+    return payload
+
+
+def _projects_year_options(facets):
+    years = set()
+    has_none = False
+    for facet in facets.values():
+        for year in facet["years"]:
+            if year is None:
+                has_none = True
+            else:
+                years.add(year)
+    options = [{"value": str(year), "label": str(year)} for year in sorted(years, reverse=True)]
+    if has_none:
+        options.append({"value": PROJECT_YEAR_NONE, "label": "Без года"})
+    return options
+
+
+def _project_years_query_values(years):
+    return [PROJECT_YEAR_NONE if year is None else str(year) for year in years]
+
+
+def _year_scope_owning_ids(request, expert_project_ids=None, facets=None):
+    """None — год не выбран; иначе множество ID проектов-владельцев выбранных лет."""
+    years = _selected_project_years(request)
+    if not years:
+        return None
+    if facets is None:
+        facets = _project_filter_facets(expert_project_ids)
+    return _facet_owning_ids(facets, years=years)
+
+
+def _registry_page_params(request):
+    if request is None:
+        return REGISTRATION_TABLE_PAGE_SIZE, None
+    url_name = getattr(getattr(request, "resolver_match", None), "url_name", "")
+    if url_name == "registration_registry_table":
+        size_key, page_key = "page_size", "page"
+    else:
+        size_key, page_key = "registry_page_size", "registry_page"
+    try:
+        page_size = int(_request_param(request, size_key) or REGISTRATION_TABLE_PAGE_SIZE)
+    except (TypeError, ValueError):
+        page_size = REGISTRATION_TABLE_PAGE_SIZE
+    if page_size not in REGISTRATION_TABLE_PAGE_SIZE_OPTIONS:
+        page_size = REGISTRATION_TABLE_PAGE_SIZE
+    return page_size, _request_param(request, page_key)
+
+
+def _registry_focus_page(rows, page_size, focus_registration_ids):
+    focus_ids = set()
+    for raw_id in focus_registration_ids or []:
+        try:
+            focus_ids.add(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    if not focus_ids:
+        return None
+    for index, row in enumerate(rows):
+        if row.pk in focus_ids:
+            return index // page_size + 1
+    return None
+
+
+def _registration_registry_page(request, rows, focus_registration_ids=None, facets=None):
+    project_ids = _selected_registry_project_ids(request)
+    statuses = _selected_registry_statuses(request)
+    years = _selected_project_years(request)
+    if project_ids:
+        allowed = set(project_ids)
+        rows = [row for row in rows if (row.stage_project_id or row.pk) in allowed]
+    if statuses:
+        if facets is None:
+            facets = _project_filter_facets()
+        allowed = _facet_owning_ids(facets, statuses=statuses)
+        rows = [row for row in rows if (row.stage_project_id or row.pk) in allowed]
+    page_size, page_number = _registry_page_params(request)
+    show_all = bool(project_ids or statuses)
+    if show_all:
+        paginator = Paginator(rows, max(len(rows), 1))
+        page_number = 1
+    else:
+        focus_page = _registry_focus_page(rows, page_size, focus_registration_ids)
+        if focus_page:
+            page_number = focus_page
+        paginator = Paginator(rows, page_size)
+    if not page_number:
+        page_number = paginator.num_pages or 1
+    page_obj = paginator.get_page(page_number)
+    extra_params = [("registry_project", project_id) for project_id in project_ids]
+    extra_params += [("registry_status", status) for status in statuses]
+    extra_params += [("projects_year", value) for value in _project_years_query_values(years)]
+    urls = _catalog_pagination_urls(
+        reverse("registration_registry_table"),
+        page_size,
+        page_obj,
+        paginator,
+        extra_params,
+    )
+    # Смена числа строк не выбирает страницу: без page сервер снова открывает последнюю.
+    page_size_query = urlencode(extra_params)
+    urls["page_size_url"] = reverse("registration_registry_table")
+    if page_size_query:
+        urls["page_size_url"] += f"?{page_size_query}"
+    return {
+        "registrations": _annotate_registration_number_groups(list(page_obj.object_list)),
+        "registry_page_obj": page_obj,
+        "registry_paginator": paginator,
+        "registry_pagination_pages": urls["pages"],
+        "registry_pagination_previous_url": urls["previous_url"],
+        "registry_pagination_next_url": urls["next_url"],
+        "registry_pagination_start": page_obj.start_index(),
+        "registry_pagination_end": page_obj.end_index(),
+        "registry_page_size": page_size,
+        "registry_page_size_options": REGISTRATION_TABLE_PAGE_SIZE_OPTIONS,
+        "registry_page_size_url": urls["page_size_url"],
+        "registry_project_ids": project_ids,
+        "registry_statuses": statuses,
+        "registry_years": _project_years_query_values(years),
+        "registry_show_all": show_all,
+    }
+
+
+def _projects_context(user=None, request=None, focus_registration_ids=None):
     expert_project_ids = _confirmed_project_ids_for_expert(user)
     is_expert = expert_project_ids is not None
     product_prefetch = models.Prefetch(
@@ -667,6 +919,12 @@ def _projects_context(user=None):
     )
     if expert_project_ids is not None:
         registrations = registrations.filter(id__in=expert_project_ids)
+    filter_facets = _project_filter_facets(expert_project_ids)
+    year_owning_ids = _year_scope_owning_ids(request, expert_project_ids, facets=filter_facets)
+    if year_owning_ids is not None:
+        registrations = registrations.filter(
+            Q(pk__in=year_owning_ids) | Q(stage_project_id__in=year_owning_ids)
+        )
     work_items = (
         WorkVolume.objects
         .select_related("project", "project__group_member", "project__type", "country")
@@ -680,6 +938,10 @@ def _projects_context(user=None):
     )
     if expert_project_ids is not None:
         work_items = work_items.filter(project_id__in=expert_project_ids)
+    if year_owning_ids is not None:
+        work_items = work_items.filter(
+            Q(project_id__in=year_owning_ids) | Q(project__stage_project_id__in=year_owning_ids)
+        )
     work_items = work_items.select_related("project__stage_project").prefetch_related(
         models.Prefetch("project__stages", queryset=stage_prefetch.queryset),
         models.Prefetch("project__stage_project__stages", queryset=stage_prefetch.queryset),
@@ -710,6 +972,10 @@ def _projects_context(user=None):
     )
     if expert_project_ids is not None:
         legal_entities = legal_entities.filter(project_id__in=expert_project_ids)
+    if year_owning_ids is not None:
+        legal_entities = legal_entities.filter(
+            Q(project_id__in=year_owning_ids) | Q(project__stage_project_id__in=year_owning_ids)
+        )
     legal_entities = legal_entities.select_related("project__stage_project").prefetch_related(
         models.Prefetch("project__stages", queryset=stage_prefetch.queryset),
         models.Prefetch("project__stage_project__stages", queryset=stage_prefetch.queryset),
@@ -728,15 +994,40 @@ def _projects_context(user=None):
         filter_projects = filter_projects.filter(
             Q(pk__in=expert_project_ids) | Q(stages__pk__in=expert_project_ids)
         ).distinct()
+    if year_owning_ids is not None:
+        filter_projects = filter_projects.filter(pk__in=year_owning_ids)
     registration_rows = list(registrations)
     schedule_items = gantt_tasks.iter_schedule_rows(registration_rows)
+    registry_page = _registration_registry_page(
+        request,
+        registration_rows,
+        focus_registration_ids=focus_registration_ids,
+        facets=filter_facets,
+    )
     reg_filter_projects = filter_projects
     schedule_projects = filter_projects
     work_projects = filter_projects.filter(pk__in=_owning_project_ids(work_stage_ids))
     legal_projects = filter_projects.filter(pk__in=_owning_project_ids(legal_stage_ids))
     return {
-        "registrations": _annotate_registration_number_groups(registration_rows),
+        "registrations": registry_page["registrations"],
         "reg_filter_projects": reg_filter_projects,
+        "registry_page_obj": registry_page["registry_page_obj"],
+        "registry_paginator": registry_page["registry_paginator"],
+        "registry_pagination_pages": registry_page["registry_pagination_pages"],
+        "registry_pagination_previous_url": registry_page["registry_pagination_previous_url"],
+        "registry_pagination_next_url": registry_page["registry_pagination_next_url"],
+        "registry_pagination_start": registry_page["registry_pagination_start"],
+        "registry_pagination_end": registry_page["registry_pagination_end"],
+        "registry_page_size": registry_page["registry_page_size"],
+        "registry_page_size_options": registry_page["registry_page_size_options"],
+        "registry_page_size_url": registry_page["registry_page_size_url"],
+        "registry_project_ids": registry_page["registry_project_ids"],
+        "registry_statuses": registry_page["registry_statuses"],
+        "registry_years": registry_page["registry_years"],
+        "registry_show_all": registry_page["registry_show_all"],
+        "projects_filter_facets": _projects_filter_facets_payload(filter_facets),
+        "projects_year_options": _projects_year_options(filter_facets),
+        "projects_status_options": [value for value, _label in ProjectRegistration.STATUS_CHOICES],
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "schedule_items": schedule_items,
         "schedule_projects": schedule_projects,
@@ -1689,6 +1980,9 @@ def _save_ranked_registration_products(registration, product_ids):
         seen.add(product_id)
         normalized_ids.append(product_id)
 
+    previous_ids = set(
+        ProjectRegistrationProduct.objects.filter(registration=registration).values_list("product_id", flat=True)
+    )
     ProjectRegistrationProduct.objects.filter(registration=registration).delete()
     if normalized_ids:
         ProjectRegistrationProduct.objects.bulk_create(
@@ -1702,6 +1996,9 @@ def _save_ranked_registration_products(registration, product_ids):
             ]
         )
     _sync_project_registration_primary_product(registration.pk)
+    from projects_app.product_usage import sync_product_usage_counts
+
+    sync_product_usage_counts(previous_ids | set(normalized_ids))
 
 
 REGISTRATION_CLONE_FIELDS = [
@@ -1746,8 +2043,16 @@ def _copy_registration_form_values(source):
     return target
 
 
-def _render_projects_updated(request):
-    resp = render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+def _render_projects_updated(request, focus_registration_ids=None):
+    resp = render(
+        request,
+        PROJECTS_PARTIAL_TEMPLATE,
+        _projects_context(
+            request.user,
+            request,
+            focus_registration_ids=focus_registration_ids,
+        ),
+    )
     resp[HX_TRIGGER_HEADER] = HX_PROJECTS_UPDATED_EVENT
     return resp
 
@@ -1810,12 +2115,27 @@ def _sync_selection_kwargs(request, prefix):
 @login_required
 @require_http_methods(["GET"])
 def projects_partial(request):
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
+
+
+@login_required
+@require_GET
+def registration_registry_table(request):
+    return render(
+        request,
+        REGISTRATION_REGISTRY_TEMPLATE,
+        _projects_context(request.user, request),
+    )
 
 # --- Регистрация проекта ---
 
 REGISTRATION_CSV_ADMIN_ERROR = (
     "Загрузка и скачивание CSV доступны только пользователям с ролью Администратор."
+)
+REGISTRATION_CSV_UNKNOWN_ID_WARNING = (
+    "Коды Проект ID, которых нет в реестре, не использованы: такие строки записаны как новые проекты или этапы, "
+    "код назначила программа. Повторная загрузка обновит сводный проект с тем же номером, группой и названием, "
+    "а проект без сводной строки — ещё и с тем же типом и годом."
 )
 REGISTRATION_CSV_HEADERS = [
     "Номер",
@@ -2369,8 +2689,8 @@ def _registration_csv_form_data(instance, values):
     return data
 
 
-def _apply_registration_csv_status_date(obj, previous_status, status_date_value):
-    if _registration_csv_is_project_shell(obj):
+def _apply_registration_csv_status_date(obj, previous_status, status_date_value, *, as_project_shell=False):
+    if as_project_shell or _registration_csv_is_project_shell(obj):
         # Пустая ячейка у группы «Не начат» не стирает сохранённую дату: в файле её нет,
         # потому что реестр такую дату не показывает.
         if status_date_value is None and _registration_csv_summary_status_label(obj) == "Не начат":
@@ -2485,7 +2805,7 @@ def _registration_csv_share_common_evaluation_dates(registrations):
             ])
 
 
-def _apply_registration_csv_toggles(obj, toggles, evaluation_date):
+def _apply_registration_csv_toggles(obj, toggles, evaluation_date, *, as_project_shell=False):
     """Записывает переключатели сроков из CSV, не трогая свёрнутые столбцы."""
     from .stage_terms import (
         _blank_stage,
@@ -2504,7 +2824,7 @@ def _apply_registration_csv_toggles(obj, toggles, evaluation_date):
     }
     if "evaluation_date_common" in toggles:
         stage_updates["evaluation_date_common"] = bool(toggles["evaluation_date_common"])
-    if _registration_csv_is_project_shell(obj):
+    if as_project_shell or _registration_csv_is_project_shell(obj):
         if "evaluation_date_common" in toggles:
             for child in ProjectRegistration.objects.filter(stage_project_id=obj.pk).order_by("position", "id"):
                 _registration_csv_store_common_evaluation(child, toggles["evaluation_date_common"])
@@ -2569,6 +2889,7 @@ def _save_registration_csv_row(request, instance, values):
         _registration_csv_form_data(instance, values),
         instance=instance,
         allow_multiple_products=True,
+        allow_missing_products=bool(values.get("allow_missing_products")),
     )
     if not form.is_valid():
         raise forms.ValidationError(_registration_csv_form_error_text(form))
@@ -2578,10 +2899,27 @@ def _save_registration_csv_row(request, instance, values):
             for field_name, field_value in preserved_terms.items():
                 setattr(obj, field_name, field_value)
         if instance is None:
-            obj.position = _next_position(ProjectRegistration)
-        _apply_registration_csv_toggles(obj, values.get("toggles") or {}, values.get("evaluation_date"))
+            if values.get("position") is not None:
+                obj.position = values["position"]
+            else:
+                obj.position = _next_position(ProjectRegistration)
+        if "stage_project" in values:
+            obj.stage_project = values["stage_project"]
+        if "summary_deferred" in values:
+            obj.summary_deferred = bool(values["summary_deferred"])
+        _apply_registration_csv_toggles(
+            obj,
+            values.get("toggles") or {},
+            values.get("evaluation_date"),
+            as_project_shell=bool(values.get("as_project_shell")),
+        )
         obj.save()
-        _apply_registration_csv_status_date(obj, previous_status, values.get("status_date"))
+        _apply_registration_csv_status_date(
+            obj,
+            previous_status,
+            values.get("status_date"),
+            as_project_shell=bool(values.get("as_project_shell")),
+        )
         _save_ranked_registration_products(obj, getattr(form, "cleaned_type_ids", []))
         customer_identifier = _sync_to_legal_entity_record(
             obj.customer, obj.country, obj.identifier,
@@ -2624,6 +2962,656 @@ def registration_csv_download(request):
     response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = 'attachment; filename="project_registrations.csv"'
     return response
+
+
+def _registration_csv_result(created=0, updated=0, warnings=None, ignored_unknown_id=False):
+    return {
+        "created": created,
+        "updated": updated,
+        "warnings": list(warnings or []),
+        "ignored_unknown_id": ignored_unknown_id,
+    }
+
+
+def _registration_csv_known(project_id, existing_by_uid, original_ids):
+    if not project_id:
+        return None
+    key = project_id.casefold()
+    if key not in original_ids:
+        return None
+    return existing_by_uid.get(key)
+
+
+def _registration_csv_claim(project_id, seen_ids):
+    key = project_id.casefold()
+    if key in seen_ids:
+        return f"Проект ID «{project_id}» повторяется в файле."
+    seen_ids.add(key)
+    return ""
+
+
+def _registration_csv_type_label(products):
+    labels = []
+    seen = set()
+    for product in products:
+        label = (getattr(product, "short_name", "") or "").strip()
+        if label and label not in seen:
+            seen.add(label)
+            labels.append(label)
+    return "-".join(labels)
+
+
+def _registration_csv_parent_from_stage_ids(stages, existing_by_uid, original_ids, claimed_pks):
+    """Если коды этапов уже есть в реестре и указывают на один проект, это его сводная строка."""
+    parent_ids = []
+    for stage in stages:
+        instance = _registration_csv_known(stage["project_id"], existing_by_uid, original_ids)
+        if instance is None or not instance.stage_project_id:
+            continue
+        parent_ids.append(instance.stage_project_id)
+    unique_ids = {parent_id for parent_id in parent_ids if parent_id not in claimed_pks}
+    if len(unique_ids) != 1:
+        return None
+    return (
+        ProjectRegistration.objects.filter(pk=unique_ids.pop(), stage_project__isnull=True)
+        .first()
+    )
+
+
+def _registration_csv_find_shell(values, claimed_pks):
+    return (
+        ProjectRegistration.objects.filter(
+            stage_project__isnull=True,
+            number=values["number"],
+            group_member=values["group_member"],
+            name=values["name"],
+            stages__isnull=False,
+        )
+        .exclude(pk__in=claimed_pks)
+        .distinct()
+        .order_by("position", "id")
+        .first()
+    )
+
+
+def _registration_csv_find_flat(values, claimed_pks):
+    year_text = str(values.get("year") or "").strip()
+    year = int(year_text) if year_text.isdigit() else None
+    label = _registration_csv_type_label(values.get("products") or [])
+    candidates = (
+        ProjectRegistration.objects.filter(
+            stage_project__isnull=True,
+            number=values["number"],
+            group_member=values["group_member"],
+            name=values["name"],
+            year=year,
+        )
+        .exclude(pk__in=claimed_pks)
+        .order_by("position", "id")
+    )
+    for candidate in candidates:
+        if candidate.stages.exists():
+            continue
+        if candidate.type_short_display == label:
+            return candidate
+    return None
+
+
+def _registration_csv_next_stage_position(parent):
+    family = ProjectRegistration.objects.filter(Q(pk=parent.pk) | Q(stage_project_id=parent.pk))
+    last_position = family.aggregate(mx=Max("position")).get("mx") or 0
+    slot = int(last_position) + 1
+    (
+        ProjectRegistration.objects.filter(position__gte=slot)
+        .exclude(Q(pk=parent.pk) | Q(stage_project_id=parent.pk))
+        .update(position=models.F("position") + 1)
+    )
+    return slot
+
+
+def _registration_csv_try_save(request, instance, values, common_evaluation_rows):
+    if instance is not None:
+        instance.refresh_from_db()
+    try:
+        saved = _save_registration_csv_row(request, instance, values)
+    except forms.ValidationError as exc:
+        return None, (exc.messages[0] if exc.messages else str(exc))
+    except Exception as exc:
+        return None, f"ошибка сохранения — {exc}"
+    saved.refresh_from_db()
+    if (values.get("toggles") or {}).get("evaluation_date_common") is True:
+        common_evaluation_rows.append(saved)
+    return saved, ""
+
+
+def _registration_csv_describe_row(
+    row,
+    row_number,
+    indexes,
+    *,
+    products_by_key,
+    ambiguous_products,
+    groups_by_key,
+    ambiguous_groups,
+    contracts_by_key,
+    ambiguous_contracts,
+    countries_by_key,
+    ambiguous_countries,
+    existing_by_uid,
+):
+    project_id = _registration_csv_cell(row, indexes, "Проект ID")
+    instance = existing_by_uid.get(project_id.casefold()) if project_id else None
+    type_raw = _registration_csv_cell(row, indexes, "Тип")
+    is_summary = not type_raw
+    problems = []
+    number, number_error = _registration_csv_number(_registration_csv_cell(row, indexes, "Номер"))
+    if number_error:
+        problems.append(number_error)
+    contract, contract_error = _registration_csv_named_choice(
+        _registration_csv_cell(row, indexes, "Договор ID"),
+        contracts_by_key,
+        ambiguous_contracts,
+        empty_message="",
+        ambiguous_message="неоднозначный договор «{value}».",
+        unknown_message="неизвестный договор «{value}».",
+    )
+    if contract_error:
+        problems.append(contract_error)
+    agreement_type = _registration_csv_agreement_type(_registration_csv_cell(row, indexes, "Вид соглашения"))
+    if agreement_type is None:
+        agreement_raw = _registration_csv_cell(row, indexes, "Вид соглашения")
+        if agreement_raw:
+            problems.append(f"неизвестный вид соглашения «{agreement_raw}».")
+        else:
+            problems.append("не заполнено обязательное поле «Вид соглашения».")
+    group_member, group_error = _registration_csv_named_choice(
+        _registration_csv_cell(row, indexes, "Группа"),
+        groups_by_key,
+        ambiguous_groups,
+        empty_message="не заполнено обязательное поле «Группа».",
+        ambiguous_message="неоднозначная группа «{value}».",
+        unknown_message="неизвестная группа «{value}».",
+    )
+    if group_error:
+        problems.append(group_error)
+    if is_summary:
+        products = []
+    else:
+        products, product_error = _registration_csv_products(
+            type_raw,
+            products_by_key,
+            ambiguous_products,
+        )
+        if product_error:
+            problems.append(product_error)
+    name = _registration_csv_cell(row, indexes, "Название")
+    if not name:
+        problems.append("не заполнено обязательное поле «Название».")
+    year, year_error = _registration_csv_year(_registration_csv_cell(row, indexes, "Год"))
+    if year_error:
+        problems.append(year_error)
+    evaluation_date, _evaluation_date_value, evaluation_error = _registration_csv_optional_date(
+        _registration_csv_cell(row, indexes, "Дата оценки"),
+        "Дата оценки",
+    )
+    if evaluation_error:
+        problems.append(evaluation_error)
+    deadline, _deadline_value, deadline_error = _registration_csv_optional_date(
+        _registration_csv_cell(row, indexes, "Дедлайн"),
+        "Дедлайн",
+    )
+    if deadline_error:
+        problems.append(deadline_error)
+    status = _registration_csv_status(_registration_csv_cell(row, indexes, "Статус"))
+    if status is None:
+        status_raw = _registration_csv_cell(row, indexes, "Статус")
+        if status_raw:
+            problems.append(f"неизвестный статус «{status_raw}».")
+        else:
+            problems.append("не заполнено обязательное поле «Статус».")
+    _status_date_text, status_date_value, status_date_error = _registration_csv_optional_date(
+        _registration_csv_cell(row, indexes, "Дата статуса"),
+        "Дата статуса",
+    )
+    if status_date_error:
+        problems.append(status_date_error)
+    country, country_error = _registration_csv_country(
+        _registration_csv_cell(row, indexes, "Заказчик: страна"),
+        countries_by_key,
+        ambiguous_countries,
+        current=instance.country if instance else None,
+    )
+    if country_error:
+        problems.append(country_error)
+    registration_date, registration_date_value, registration_date_error = _registration_csv_optional_date(
+        _registration_csv_cell(row, indexes, "Заказчик: дата регистр."),
+        "Заказчик: дата регистр.",
+    )
+    if registration_date_error:
+        problems.append(registration_date_error)
+    asset_owner_country, asset_owner_country_error = _registration_csv_country(
+        _registration_csv_cell(row, indexes, "Владелец: страна"),
+        countries_by_key,
+        ambiguous_countries,
+        current=instance.asset_owner_country if instance else None,
+    )
+    if asset_owner_country_error:
+        problems.append(asset_owner_country_error)
+    asset_owner_date, asset_owner_date_value, asset_owner_date_error = _registration_csv_optional_date(
+        _registration_csv_cell(row, indexes, "Владелец: дата регистр."),
+        "Владелец: дата регистр.",
+    )
+    if asset_owner_date_error:
+        problems.append(asset_owner_date_error)
+    toggles, toggle_error = _registration_csv_toggles(row, indexes)
+    if toggle_error:
+        problems.append(toggle_error)
+    values = None
+    if not problems:
+        customer = _registration_csv_cell(row, indexes, "Заказчик: наименование")
+        identifier = _registration_csv_cell(row, indexes, "Заказчик: идент.")
+        registration_number = _registration_csv_cell(row, indexes, "Заказчик: регистр. номер")
+        registration_region = _registration_csv_cell(row, indexes, "Заказчик: регион")
+        asset_owner = _registration_csv_cell(row, indexes, "Владелец: наименование")
+        asset_owner_identifier = _registration_csv_cell(row, indexes, "Владелец: идент.")
+        asset_owner_registration_number = _registration_csv_cell(row, indexes, "Владелец: регистр. номер")
+        asset_owner_region = _registration_csv_cell(row, indexes, "Владелец: регион")
+        values = {
+            "number": number,
+            "contract": contract,
+            "group_member": group_member,
+            "agreement_type": agreement_type,
+            "products": products,
+            "name": name,
+            "year": year,
+            "evaluation_date": evaluation_date,
+            "deadline": deadline,
+            "status": status,
+            "status_date": status_date_value,
+            "country": country,
+            "customer": customer,
+            "identifier": identifier,
+            "registration_number": registration_number,
+            "registration_region": registration_region,
+            "registration_date": registration_date,
+            "asset_owner": asset_owner,
+            "asset_owner_country": asset_owner_country,
+            "asset_owner_identifier": asset_owner_identifier,
+            "asset_owner_registration_number": asset_owner_registration_number,
+            "asset_owner_region": asset_owner_region,
+            "asset_owner_registration_date": asset_owner_date,
+            "project_manager": _registration_csv_person_value(
+                _registration_csv_cell(row, indexes, "Руководитель проекта"),
+                stored_name=instance.project_manager if instance else "",
+                stored_prs=instance.project_manager_prs_id if instance else "",
+                resolver=_resolve_project_manager_choice,
+            ),
+            "project_coordinator": _registration_csv_person_value(
+                _registration_csv_cell(row, indexes, "Координатор проекта"),
+                stored_name=instance.project_coordinator if instance else "",
+                stored_prs=instance.project_coordinator_prs_id if instance else "",
+                resolver=_resolve_project_coordinator_choice,
+            ),
+            "toggles": toggles or {},
+            "matches_customer": _registration_parties_match(
+                customer, country, identifier, registration_number, registration_region, registration_date_value,
+                asset_owner, asset_owner_country, asset_owner_identifier, asset_owner_registration_number,
+                asset_owner_region, asset_owner_date_value,
+            ),
+        }
+        if is_summary:
+            values["allow_missing_products"] = True
+            values["as_project_shell"] = True
+            values["summary_deferred"] = status == "Отложен"
+    return {
+        "row_number": row_number,
+        "project_id": project_id,
+        "is_summary": is_summary,
+        "number": number,
+        "problems": problems,
+        "values": values,
+    }
+
+
+def _registration_csv_flat_identity(parsed):
+    values = parsed.get("values") or {}
+    member = values.get("group_member")
+    return (
+        parsed.get("number"),
+        values.get("name") or "",
+        getattr(member, "pk", None),
+    )
+
+
+def _registration_csv_stage_type_labels(stages):
+    labels = []
+    for stage in stages:
+        values = stage.get("values") or {}
+        labels.append(_registration_csv_type_label(values.get("products") or []))
+    return labels
+
+
+def _registration_csv_group_rows(parsed_rows):
+    """Пустой «Тип» открывает сводную строку. Следующие строки с тем же номером — её этапы.
+
+    Название этапа берётся из его строки. Новая сводная строка или другой номер начинают другой проект.
+    Подряд идущие строки без сводной, с одним номером, группой и названием, но разными типами —
+    тоже один проект: иначе у сводной строки в реестре не появляется код.
+    """
+    groups = []
+    current = None
+    for parsed in parsed_rows:
+        if parsed["is_summary"]:
+            if current is not None:
+                groups.append(current)
+            current = {"summary": parsed, "stages": []}
+            continue
+        summary_number = current["summary"].get("number") if current is not None else None
+        if (
+            current is not None
+            and parsed.get("number") is not None
+            and parsed["number"] == summary_number
+        ):
+            current["stages"].append(parsed)
+            continue
+        if current is not None:
+            groups.append(current)
+            current = None
+        if (
+            groups
+            and groups[-1]["summary"] is None
+            and _registration_csv_flat_identity(groups[-1]["stages"][0]) == _registration_csv_flat_identity(parsed)
+            and len(set(_registration_csv_stage_type_labels(groups[-1]["stages"] + [parsed]))) > 1
+        ):
+            groups[-1]["stages"].append(parsed)
+            continue
+        groups.append({"summary": None, "stages": [parsed]})
+    if current is not None:
+        groups.append(current)
+    return groups
+
+
+def _registration_csv_repeated_project_id(stages):
+    ids = [stage["project_id"].casefold() for stage in stages if stage.get("project_id")]
+    return len(ids) > 1 and len(set(ids)) == 1
+
+
+def _registration_csv_as_stage_group(group):
+    """Собирает сводную строку из подряд идущих этапов с общим названием."""
+    clear_id = _registration_csv_repeated_project_id(group["stages"])
+    stages = []
+    for stage in group["stages"]:
+        copied = dict(stage)
+        if clear_id:
+            copied["project_id"] = ""
+        stages.append(copied)
+    first = stages[0]
+    values = dict(first["values"])
+    values["products"] = []
+    values["allow_missing_products"] = True
+    values["as_project_shell"] = True
+    values["summary_deferred"] = values.get("status") == "Отложен"
+    return {
+        "summary": {
+            "row_number": first["row_number"],
+            "project_id": "",
+            "is_summary": True,
+            "number": first["number"],
+            "problems": [],
+            "values": values,
+        },
+        "stages": stages,
+    }
+
+
+def _registration_csv_matching_flats(values, claimed_pks):
+    rows = (
+        ProjectRegistration.objects.filter(
+            stage_project__isnull=True,
+            number=values["number"],
+            group_member=values["group_member"],
+            name=values["name"],
+        )
+        .exclude(pk__in=claimed_pks)
+        .order_by("position", "id")
+    )
+    return [row for row in rows if not row.stages.exists()]
+
+
+def _registration_csv_take_flat(flat_pool, stage, used):
+    label = _registration_csv_type_label((stage.get("values") or {}).get("products") or [])
+    for row in flat_pool:
+        if row.pk in used:
+            continue
+        if row.type_short_display == label:
+            used.add(row.pk)
+            return row
+    return None
+
+
+def _registration_csv_row_warning(parsed, text):
+    return f"Строка {parsed['row_number']}: {text}"
+
+
+def _registration_csv_skip_stages(stages, summary_row_number):
+    return [
+        _registration_csv_row_warning(
+            stage,
+            f"пропущена, сводная строка {summary_row_number} не загружена.",
+        )
+        for stage in stages
+    ]
+
+
+def _registration_csv_save_flat_row(
+    request, parsed, existing_by_uid, original_ids, seen_ids, claimed_pks, common_evaluation_rows,
+):
+    warnings = []
+    project_id = parsed["project_id"]
+    instance = _registration_csv_known(project_id, existing_by_uid, original_ids)
+    if instance is not None:
+        duplicate = _registration_csv_claim(project_id, seen_ids)
+        if duplicate or instance.pk in claimed_pks:
+            warnings.append(_registration_csv_row_warning(
+                parsed,
+                duplicate or f"Проект ID «{project_id}» повторяется в файле.",
+            ))
+            return _registration_csv_result(warnings=warnings)
+        if parsed["problems"]:
+            warnings.append(_registration_csv_row_warning(parsed, " ".join(parsed["problems"])))
+            return _registration_csv_result(warnings=warnings)
+        saved, error = _registration_csv_try_save(
+            request, instance, parsed["values"], common_evaluation_rows,
+        )
+        if error:
+            warnings.append(_registration_csv_row_warning(parsed, error))
+            return _registration_csv_result(warnings=warnings)
+        claimed_pks.add(saved.pk)
+        return _registration_csv_result(updated=1)
+    if parsed["problems"]:
+        warnings.append(_registration_csv_row_warning(parsed, " ".join(parsed["problems"])))
+        return _registration_csv_result(warnings=warnings)
+    match = _registration_csv_find_flat(parsed["values"], claimed_pks)
+    saved, error = _registration_csv_try_save(
+        request, match, parsed["values"], common_evaluation_rows,
+    )
+    if error:
+        warnings.append(_registration_csv_row_warning(parsed, error))
+        return _registration_csv_result(warnings=warnings)
+    claimed_pks.add(saved.pk)
+    ignored = bool(project_id)
+    if match is None:
+        return _registration_csv_result(created=1, ignored_unknown_id=ignored)
+    return _registration_csv_result(updated=1, ignored_unknown_id=ignored)
+
+
+def _registration_csv_save_summary_group(
+    request, group, existing_by_uid, original_ids, seen_ids, claimed_pks, common_evaluation_rows,
+):
+    summary = group["summary"]
+    stages = group["stages"]
+    warnings = []
+    if summary["problems"]:
+        warnings.append(_registration_csv_row_warning(summary, " ".join(summary["problems"])))
+        warnings.extend(_registration_csv_skip_stages(stages, summary["row_number"]))
+        return _registration_csv_result(warnings=warnings)
+    if not stages:
+        warnings.append(_registration_csv_row_warning(summary, "сводная строка без этапов."))
+        return _registration_csv_result(warnings=warnings)
+    valid_stages = []
+    for stage in stages:
+        if stage["problems"]:
+            warnings.append(_registration_csv_row_warning(stage, " ".join(stage["problems"])))
+            continue
+        valid_stages.append(stage)
+    if not valid_stages:
+        warnings.append(_registration_csv_row_warning(summary, "сводная строка без этапов."))
+        return _registration_csv_result(warnings=warnings)
+    if len(valid_stages) > MAX_PROJECT_STAGES:
+        for stage in valid_stages[MAX_PROJECT_STAGES:]:
+            warnings.append(_registration_csv_row_warning(
+                stage,
+                f"в одном проекте не больше {MAX_PROJECT_STAGES} этапов.",
+            ))
+        valid_stages = valid_stages[:MAX_PROJECT_STAGES]
+
+    summary_id = summary["project_id"]
+    parent = _registration_csv_known(summary_id, existing_by_uid, original_ids)
+    summary_id_is_unknown = bool(summary_id) and parent is None
+    if parent is not None:
+        duplicate = _registration_csv_claim(summary_id, seen_ids)
+        if duplicate or parent.pk in claimed_pks:
+            warnings.append(_registration_csv_row_warning(
+                summary,
+                duplicate or f"Проект ID «{summary_id}» повторяется в файле.",
+            ))
+            warnings.extend(_registration_csv_skip_stages(valid_stages, summary["row_number"]))
+            return _registration_csv_result(warnings=warnings)
+        if parent.stage_project_id:
+            warnings.append(_registration_csv_row_warning(
+                summary,
+                f"Проект ID «{summary_id}» указывает на этап, а не на сводную строку.",
+            ))
+            warnings.extend(_registration_csv_skip_stages(valid_stages, summary["row_number"]))
+            return _registration_csv_result(warnings=warnings)
+    else:
+        parent = _registration_csv_find_shell(summary["values"], claimed_pks)
+        if parent is None:
+            parent = _registration_csv_parent_from_stage_ids(
+                valid_stages, existing_by_uid, original_ids, claimed_pks,
+            )
+
+    linked = []
+    fresh = []
+    for stage in valid_stages:
+        stage_id = stage["project_id"]
+        instance = _registration_csv_known(stage_id, existing_by_uid, original_ids)
+        if instance is not None:
+            duplicate = _registration_csv_claim(stage_id, seen_ids)
+            if duplicate or instance.pk in claimed_pks:
+                warnings.append(_registration_csv_row_warning(
+                    stage,
+                    duplicate or f"Проект ID «{stage_id}» повторяется в файле.",
+                ))
+                continue
+            if parent is None or instance.stage_project_id != parent.pk:
+                warnings.append(_registration_csv_row_warning(
+                    stage,
+                    f"Проект ID «{stage_id}» принадлежит другому проекту.",
+                ))
+                continue
+            linked.append((stage, instance))
+            continue
+        fresh.append(stage)
+    if not linked and not fresh:
+        warnings.append(_registration_csv_row_warning(summary, "сводная строка без этапов."))
+        return _registration_csv_result(warnings=warnings)
+
+    unused = []
+    flat_pool = []
+    if parent is not None:
+        used_ids = {instance.pk for _stage, instance in linked}
+        unused = [
+            stage for stage in parent.stages.order_by("position", "id")
+            if stage.pk not in used_ids and stage.pk not in claimed_pks
+        ]
+    else:
+        flat_pool = _registration_csv_matching_flats(summary["values"], claimed_pks)
+    ordered = list(linked)
+    flat_used = set()
+    for stage in fresh:
+        if unused:
+            ordered.append((stage, unused.pop(0)))
+        else:
+            ordered.append((stage, _registration_csv_take_flat(flat_pool, stage, flat_used)))
+
+    created = 0
+    updated = 0
+    ignored = False
+    parent_is_new = parent is None
+    parent_values = dict(summary["values"])
+    saved_parent, error = _registration_csv_try_save(
+        request, parent, parent_values, common_evaluation_rows,
+    )
+    if error:
+        warnings.append(_registration_csv_row_warning(summary, error))
+        warnings.extend(_registration_csv_skip_stages(
+            [stage for stage, _instance in ordered],
+            summary["row_number"],
+        ))
+        return _registration_csv_result(warnings=warnings)
+    parent = saved_parent
+    claimed_pks.add(parent.pk)
+    if parent_is_new:
+        pass
+    else:
+        updated += 1
+    if summary_id_is_unknown:
+        ignored = True
+
+    saved_stages = 0
+    for stage, instance in ordered:
+        stage_values = dict(stage["values"])
+        stage_values["stage_project"] = parent
+        if instance is None:
+            stage_values["position"] = _registration_csv_next_stage_position(parent)
+        saved, error = _registration_csv_try_save(
+            request, instance, stage_values, common_evaluation_rows,
+        )
+        if error:
+            warnings.append(_registration_csv_row_warning(stage, error))
+            continue
+        claimed_pks.add(saved.pk)
+        saved_stages += 1
+        if instance is None:
+            created += 1
+        else:
+            updated += 1
+        if stage["project_id"] and _registration_csv_known(stage["project_id"], existing_by_uid, original_ids) is None:
+            ignored = True
+    if parent_is_new and saved_stages == 0:
+        parent.delete()
+        return _registration_csv_result(warnings=warnings)
+    if parent_is_new:
+        created += 1
+    if saved_stages:
+        ProjectRegistration.refresh_number_sequences([parent.number])
+        parent.refresh_from_db()
+    toggles = parent_values.get("toggles") or {}
+    if toggles:
+        parent.refresh_from_db()
+        _apply_registration_csv_toggles(
+            parent,
+            toggles,
+            parent_values.get("evaluation_date"),
+            as_project_shell=True,
+        )
+    return _registration_csv_result(
+        created=created,
+        updated=updated,
+        warnings=warnings,
+        ignored_unknown_id=ignored,
+    )
 
 
 @login_required
@@ -2676,197 +3664,70 @@ def registration_csv_upload(request):
         if uid:
             existing_by_uid[uid.casefold()] = registration
 
+    original_ids = set(existing_by_uid)
+    parsed_rows = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        if not any(str(cell or "").strip() for cell in row):
+            continue
+        parsed_rows.append(_registration_csv_describe_row(
+            row,
+            row_number,
+            indexes,
+            products_by_key=products_by_key,
+            ambiguous_products=ambiguous_products,
+            groups_by_key=groups_by_key,
+            ambiguous_groups=ambiguous_groups,
+            contracts_by_key=contracts_by_key,
+            ambiguous_contracts=ambiguous_contracts,
+            countries_by_key=countries_by_key,
+            ambiguous_countries=ambiguous_countries,
+            existing_by_uid=existing_by_uid,
+        ))
+
     created = 0
     updated = 0
     warnings = []
     seen_ids = set()
+    claimed_pks = set()
+    ignored_unknown_id = False
     common_evaluation_rows = []
-    for row_number, row in enumerate(rows[1:], start=2):
-        if not any(str(cell or "").strip() for cell in row):
-            continue
-        project_id = _registration_csv_cell(row, indexes, "Проект ID")
-        instance = None
-        if project_id:
-            uid_key = project_id.casefold()
-            if uid_key in seen_ids:
-                warnings.append(f"Строка {row_number}: Проект ID «{project_id}» повторяется в файле.")
-                continue
-            seen_ids.add(uid_key)
-            instance = existing_by_uid.get(uid_key)
-            if instance is None:
-                warnings.append(f"Строка {row_number}: проект «{project_id}» не найден.")
-                continue
-            instance.refresh_from_db()
-
-        problems = []
-        number, number_error = _registration_csv_number(_registration_csv_cell(row, indexes, "Номер"))
-        if number_error:
-            problems.append(number_error)
-        contract, contract_error = _registration_csv_named_choice(
-            _registration_csv_cell(row, indexes, "Договор ID"),
-            contracts_by_key,
-            ambiguous_contracts,
-            empty_message="",
-            ambiguous_message="неоднозначный договор «{value}».",
-            unknown_message="неизвестный договор «{value}».",
-        )
-        if contract_error:
-            problems.append(contract_error)
-        agreement_type = _registration_csv_agreement_type(_registration_csv_cell(row, indexes, "Вид соглашения"))
-        if agreement_type is None:
-            agreement_raw = _registration_csv_cell(row, indexes, "Вид соглашения")
-            if agreement_raw:
-                problems.append(f"неизвестный вид соглашения «{agreement_raw}».")
-            else:
-                problems.append("не заполнено обязательное поле «Вид соглашения».")
-        group_member, group_error = _registration_csv_named_choice(
-            _registration_csv_cell(row, indexes, "Группа"),
-            groups_by_key,
-            ambiguous_groups,
-            empty_message="не заполнено обязательное поле «Группа».",
-            ambiguous_message="неоднозначная группа «{value}».",
-            unknown_message="неизвестная группа «{value}».",
-        )
-        if group_error:
-            problems.append(group_error)
-        products, product_error = _registration_csv_products(
-            _registration_csv_cell(row, indexes, "Тип"),
-            products_by_key,
-            ambiguous_products,
-        )
-        if product_error:
-            problems.append(product_error)
-        name = _registration_csv_cell(row, indexes, "Название")
-        if not name:
-            problems.append("не заполнено обязательное поле «Название».")
-        year, year_error = _registration_csv_year(_registration_csv_cell(row, indexes, "Год"))
-        if year_error:
-            problems.append(year_error)
-        evaluation_date, _evaluation_date_value, evaluation_error = _registration_csv_optional_date(
-            _registration_csv_cell(row, indexes, "Дата оценки"),
-            "Дата оценки",
-        )
-        if evaluation_error:
-            problems.append(evaluation_error)
-        deadline, _deadline_value, deadline_error = _registration_csv_optional_date(
-            _registration_csv_cell(row, indexes, "Дедлайн"),
-            "Дедлайн",
-        )
-        if deadline_error:
-            problems.append(deadline_error)
-        status = _registration_csv_status(_registration_csv_cell(row, indexes, "Статус"))
-        if status is None:
-            status_raw = _registration_csv_cell(row, indexes, "Статус")
-            if status_raw:
-                problems.append(f"неизвестный статус «{status_raw}».")
-            else:
-                problems.append("не заполнено обязательное поле «Статус».")
-        _status_date_text, status_date_value, status_date_error = _registration_csv_optional_date(
-            _registration_csv_cell(row, indexes, "Дата статуса"),
-            "Дата статуса",
-        )
-        if status_date_error:
-            problems.append(status_date_error)
-        country, country_error = _registration_csv_country(
-            _registration_csv_cell(row, indexes, "Заказчик: страна"),
-            countries_by_key,
-            ambiguous_countries,
-            current=instance.country if instance else None,
-        )
-        if country_error:
-            problems.append(country_error)
-        registration_date, registration_date_value, registration_date_error = _registration_csv_optional_date(
-            _registration_csv_cell(row, indexes, "Заказчик: дата регистр."),
-            "Заказчик: дата регистр.",
-        )
-        if registration_date_error:
-            problems.append(registration_date_error)
-        asset_owner_country, asset_owner_country_error = _registration_csv_country(
-            _registration_csv_cell(row, indexes, "Владелец: страна"),
-            countries_by_key,
-            ambiguous_countries,
-            current=instance.asset_owner_country if instance else None,
-        )
-        if asset_owner_country_error:
-            problems.append(asset_owner_country_error)
-        asset_owner_date, asset_owner_date_value, asset_owner_date_error = _registration_csv_optional_date(
-            _registration_csv_cell(row, indexes, "Владелец: дата регистр."),
-            "Владелец: дата регистр.",
-        )
-        if asset_owner_date_error:
-            problems.append(asset_owner_date_error)
-        toggles, toggle_error = _registration_csv_toggles(row, indexes)
-        if toggle_error:
-            problems.append(toggle_error)
-        if problems:
-            warnings.append(f"Строка {row_number}: " + " ".join(problems))
-            continue
-
-        customer = _registration_csv_cell(row, indexes, "Заказчик: наименование")
-        identifier = _registration_csv_cell(row, indexes, "Заказчик: идент.")
-        registration_number = _registration_csv_cell(row, indexes, "Заказчик: регистр. номер")
-        registration_region = _registration_csv_cell(row, indexes, "Заказчик: регион")
-        asset_owner = _registration_csv_cell(row, indexes, "Владелец: наименование")
-        asset_owner_identifier = _registration_csv_cell(row, indexes, "Владелец: идент.")
-        asset_owner_registration_number = _registration_csv_cell(row, indexes, "Владелец: регистр. номер")
-        asset_owner_region = _registration_csv_cell(row, indexes, "Владелец: регион")
-        values = {
-            "number": number,
-            "contract": contract,
-            "group_member": group_member,
-            "agreement_type": agreement_type,
-            "products": products,
-            "name": name,
-            "year": year,
-            "evaluation_date": evaluation_date,
-            "deadline": deadline,
-            "status": status,
-            "status_date": status_date_value,
-            "country": country,
-            "customer": customer,
-            "identifier": identifier,
-            "registration_number": registration_number,
-            "registration_region": registration_region,
-            "registration_date": registration_date,
-            "asset_owner": asset_owner,
-            "asset_owner_country": asset_owner_country,
-            "asset_owner_identifier": asset_owner_identifier,
-            "asset_owner_registration_number": asset_owner_registration_number,
-            "asset_owner_region": asset_owner_region,
-            "asset_owner_registration_date": asset_owner_date,
-            "project_manager": _registration_csv_person_value(
-                _registration_csv_cell(row, indexes, "Руководитель проекта"),
-                stored_name=instance.project_manager if instance else "",
-                stored_prs=instance.project_manager_prs_id if instance else "",
-                resolver=_resolve_project_manager_choice,
-            ),
-            "project_coordinator": _registration_csv_person_value(
-                _registration_csv_cell(row, indexes, "Координатор проекта"),
-                stored_name=instance.project_coordinator if instance else "",
-                stored_prs=instance.project_coordinator_prs_id if instance else "",
-                resolver=_resolve_project_coordinator_choice,
-            ),
-            "toggles": toggles or {},
-            "matches_customer": _registration_parties_match(
-                customer, country, identifier, registration_number, registration_region, registration_date_value,
-                asset_owner, asset_owner_country, asset_owner_identifier, asset_owner_registration_number,
-                asset_owner_region, asset_owner_date_value,
-            ),
-        }
-        try:
-            saved = _save_registration_csv_row(request, instance, values)
-        except forms.ValidationError as exc:
-            warnings.append(f"Строка {row_number}: {exc.messages[0] if exc.messages else exc}")
-            continue
-        except Exception as exc:
-            warnings.append(f"Строка {row_number}: ошибка сохранения — {exc}")
-            continue
-        if (values.get("toggles") or {}).get("evaluation_date_common") is True:
-            common_evaluation_rows.append(saved)
-        if instance is None:
-            created += 1
+    for group in _registration_csv_group_rows(parsed_rows):
+        if group["summary"] is None and len(group["stages"]) > 1:
+            result = _registration_csv_save_summary_group(
+                request,
+                _registration_csv_as_stage_group(group),
+                existing_by_uid,
+                original_ids,
+                seen_ids,
+                claimed_pks,
+                common_evaluation_rows,
+            )
+        elif group["summary"] is None:
+            result = _registration_csv_save_flat_row(
+                request,
+                group["stages"][0],
+                existing_by_uid,
+                original_ids,
+                seen_ids,
+                claimed_pks,
+                common_evaluation_rows,
+            )
         else:
-            updated += 1
+            result = _registration_csv_save_summary_group(
+                request,
+                group,
+                existing_by_uid,
+                original_ids,
+                seen_ids,
+                claimed_pks,
+                common_evaluation_rows,
+            )
+        created += result["created"]
+        updated += result["updated"]
+        warnings.extend(result["warnings"])
+        ignored_unknown_id = ignored_unknown_id or result["ignored_unknown_id"]
+    if ignored_unknown_id:
+        warnings.append(REGISTRATION_CSV_UNKNOWN_ID_WARNING)
 
     _registration_csv_share_common_evaluation_dates(common_evaluation_rows)
     return JsonResponse({"ok": True, "created": created, "updated": updated, "warnings": warnings})
@@ -3008,7 +3869,10 @@ def registration_form_create(request):
         matches=bool(getattr(base_obj, "asset_owner_matches_customer", False)),
         fallback_product_id=product_ids[0] if product_ids else None,
     )
-    return _render_projects_updated(request)
+    return _render_projects_updated(
+        request,
+        focus_registration_ids=[item.pk for item in saved_registrations],
+    )
 
 @login_required
 @user_passes_test(staff_required)
@@ -3867,7 +4731,7 @@ def project_schedule_gantt(request, pk: int):
 def project_schedule_move_up(request, project_pk: int, task_id: str):
     reg = get_object_or_404(ProjectRegistration, pk=project_pk)
     gantt_tasks.move_task(reg, task_id, "up")
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
 
 
 @require_http_methods(["POST", "GET"])
@@ -3875,7 +4739,7 @@ def project_schedule_move_up(request, project_pk: int, task_id: str):
 def project_schedule_move_down(request, project_pk: int, task_id: str):
     reg = get_object_or_404(ProjectRegistration, pk=project_pk)
     gantt_tasks.move_task(reg, task_id, "down")
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
 
 
 # --- Объем работ ---
@@ -4901,7 +5765,10 @@ def registration_group_summary_edit(request):
                     mode = (request.POST.get("summary_status_mode") or "").strip()
                     if mode in {"auto", "deferred"}:
                         _store_summary_deferred(block, group_label, mode == "deferred")
-                    return _render_projects_updated(request)
+                    return _render_projects_updated(
+                        request,
+                        focus_registration_ids=[item.pk for item in block],
+                    )
     return render(
         request,
         REG_FORM_TEMPLATE,
@@ -4982,7 +5849,7 @@ def registration_form_edit(request, pk: int):
         customer_identifier_record=customer_identifier,
         asset_owner_identifier_record=owner_identifier,
     )
-    return _render_projects_updated(request)
+    return _render_projects_updated(request, focus_registration_ids=[obj.pk])
 
 class RegistrationChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
@@ -5120,7 +5987,7 @@ def work_delete(request, pk: int):
     item = get_object_or_404(WorkVolume, pk=pk)
     project_ids = delete_work_scope(item)
     if project_ids is None:
-        return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+        return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
     for pid in project_ids:
         _normalize_work_positions(pid)
         _normalize_legal_positions(pid)
@@ -5209,7 +6076,7 @@ def work_move_up(request, pk: int):
             mirror_work_positions(pid)
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
 
 @require_http_methods(["POST", "GET"])
 @login_required
@@ -5230,7 +6097,7 @@ def work_move_down(request, pk: int):
             mirror_work_positions(pid)
 
     # ВОЗВРАЩАЕМ ТОЛЬКО ФРАГМЕНТ БЕЗ HX-Trigger — чтобы не было двойной перерисовки
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
 
 @login_required
 @user_passes_test(staff_required)
@@ -5310,7 +6177,7 @@ def legal_entity_move_up(request, pk: int):
         _normalize_legal_positions(pid)
         mirror_legal_positions(pid)
 
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
 
 @require_http_methods(["POST", "GET"])
 @login_required
@@ -5333,7 +6200,7 @@ def legal_entity_move_down(request, pk: int):
         _normalize_legal_positions(pid)
         mirror_legal_positions(pid)
 
-    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user))
+    return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
 
 def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
     """
@@ -5681,6 +6548,14 @@ def _performers_context(user=None, request=None):
     )
     if expert_project_ids is not None:
         performers = performers.filter(registration_id__in=expert_project_ids)
+    year_owning_ids = _year_scope_owning_ids(request, expert_project_ids)
+    year_scope_q = None
+    if year_owning_ids is not None:
+        year_scope_q = (
+            Q(registration_id__in=year_owning_ids)
+            | Q(registration__stage_project_id__in=year_owning_ids)
+        )
+        performers = performers.filter(year_scope_q)
     participation_performers = (
         Performer.objects
         .select_related(
@@ -5701,6 +6576,8 @@ def _performers_context(user=None, request=None):
     )
     if expert_project_ids is not None:
         participation_performers = participation_performers.filter(registration_id__in=expert_project_ids)
+    if year_scope_q is not None:
+        participation_performers = participation_performers.filter(year_scope_q)
     participation_project_ids = participation_performers.values_list("registration_id", flat=True).distinct()
     participation_projects = (
         ProjectRegistration.objects
@@ -5731,6 +6608,8 @@ def _performers_context(user=None, request=None):
     )
     if expert_project_ids is not None:
         info_request_performers = info_request_performers.filter(registration_id__in=expert_project_ids)
+    if year_scope_q is not None:
+        info_request_performers = info_request_performers.filter(year_scope_q)
     info_request_project_ids = info_request_performers.values_list("registration_id", flat=True).distinct()
     info_request_projects = (
         ProjectRegistration.objects
@@ -5942,6 +6821,8 @@ def _performers_context(user=None, request=None):
     report_project_scope = report_visible_registration_ids(user)
     if report_project_scope is not None:
         report_performers_qs = report_performers_qs.filter(registration_id__in=report_project_scope)
+    if year_scope_q is not None:
+        report_performers_qs = report_performers_qs.filter(year_scope_q)
     report_registration_ids = list(report_performers_qs.values_list("registration_id", flat=True).distinct())
     report_submission_projects = (
         ProjectRegistration.objects

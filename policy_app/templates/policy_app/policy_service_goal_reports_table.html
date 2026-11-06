@@ -62,7 +62,7 @@
                         </div>
                     {% endif %}
                 </td>
-                <td class="text-nowrap policy-workspace-product-cell">{{ item.product.short_name }}</td>
+                <td class="text-nowrap policy-workspace-product-cell">{% include "policy_app/_policy_product_name_link.html" with product=item.product %}</td>
                 <td{% if policy_inline_edit %} data-inline-field="service_goal" data-inline-type="text" data-inline-value="{{ item.service_goal }}"{% endif %}>{{ item.service_goal }}</td>
                 <td{% if policy_inline_edit %} data-inline-field="service_goal_genitive" data-inline-type="text" data-inline-value="{{ item.service_goal_genitive }}"{% endif %}>{{ item.service_goal_genitive }}</td>
                 <td{% if policy_inline_edit %} data-inline-field="report_title" data-inline-type="text" data-inline-value="{{ item.report_title }}"{% endif %}>{{ item.report_title }}</td>

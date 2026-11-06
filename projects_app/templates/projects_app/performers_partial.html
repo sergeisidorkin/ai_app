@@ -545,6 +545,7 @@
               <input class="form-check-input js-info-request-filter" type="radio"
                      name="info-request-project-radio"
                      value="{{ project.id }}" id="info-request-filter-{{ project.id }}"
+                     data-owning-project-id="{{ project.owning_project_id }}"
                      data-summary-label="{{ project.short_uid }}"
                      data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label" for="info-request-filter-{{ project.id }}">
@@ -889,6 +890,7 @@
         var a = r.dataset.assetName || '';
         if (!a) return;
         if (!showAllProj && !projSet.has(r.dataset.owningProjectId || r.dataset.projectId || '')) return;
+        if (window.__projectsMasterAllowsRow && !window.__projectsMasterAllowsRow(r)) return;
         if (assetNames.indexOf(a) === -1) assetNames.push(a);
       });
 
@@ -987,8 +989,10 @@
       rows.forEach(function(row) {
         var matchProj = showAllProj || projSet.has(row.dataset.owningProjectId || row.dataset.projectId || '');
         var matchAsset = showAllAsset || assetSet.has(row.dataset.assetName || '');
-        row.classList.toggle('d-none', !(matchProj && matchAsset));
+        var matchMaster = !window.__projectsMasterAllowsRow || window.__projectsMasterAllowsRow(row);
+        row.classList.toggle('d-none', !(matchProj && matchAsset && matchMaster));
       });
+      if (window.__hideProjectOptionsOutsideMaster) window.__hideProjectOptionsOutsideMaster(projChecks);
       updateFilterLabel(projLabel, projChecks, pv, 'проект');
       updateFilterLabel(assetLabel, allAssetChecks, av, 'актив');
       updateTotals();
@@ -1013,7 +1017,9 @@
         if (e.target.value === FILTER_ALL && e.target.checked) {
           syncCbs(projChecks, [FILTER_ALL]);
         } else if (e.target.value === FILTER_ALL && !e.target.checked) {
-          var first = Array.from(projChecks).find(function(c) { return c.value !== FILTER_ALL; });
+          var first = Array.from(projChecks).find(function(c) {
+            return c.value !== FILTER_ALL && !c.closest('.form-check').classList.contains('d-none');
+          });
           if (first) first.checked = true;
         } else {
           var allCb = pane.querySelector("#perf-filter-all");
@@ -1064,7 +1070,12 @@
         if (pf.length === 1 && pf[0] !== FILTER_ALL) {
           sync(pf[0]);
         } else {
-          sync('');
+          var currentInfo = (window.__infoRequestProjectFilter || [])[0] || '';
+          var infoInput = currentInfo
+            ? pane.querySelector('.js-info-request-filter[value="' + CSS.escape(currentInfo) + '"]')
+            : null;
+          var infoOwning = (infoInput && infoInput.dataset.owningProjectId) || currentInfo;
+          sync(currentInfo && window.__projectsMasterAllows && window.__projectsMasterAllows(infoOwning) ? currentInfo : '');
         }
       }
       if (typeof window.__syncPaymentRequestFilter === 'function') {

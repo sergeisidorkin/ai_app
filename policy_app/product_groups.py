@@ -189,7 +189,7 @@ def product_short_name_is_group(short_name):
 def product_catalog_queryset():
     from django.db.models import Prefetch
 
-    return Product.objects.order_by("position", "id").prefetch_related(
+    return Product.objects.order_by("-usage_count", "position", "id").prefetch_related(
         Prefetch(
             "grouped_products",
             queryset=Product.objects.order_by("position", "id"),

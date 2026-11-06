@@ -183,9 +183,9 @@ class ProductForm(forms.ModelForm):
     class Meta:
         model = Product
         fields = [
+            "display_name",
             "short_name",
             "name_en",
-            "display_name",
             "name_ru",
             "consulting_type_ref",
             "service_category_ref",
@@ -193,7 +193,7 @@ class ProductForm(forms.ModelForm):
             "accuracy",
         ]
         widgets = {
-            "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя"}),
+            "short_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Продукт"}),
             "name_en": forms.TextInput(attrs={"class": "form-control", "placeholder": "English name"}),
             "display_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Отображаемое в системе имя"}),
             "name_ru": forms.TextInput(attrs={"class": "form-control", "placeholder": "Русское наименование"}),
@@ -314,9 +314,9 @@ class ProductForm(forms.ModelForm):
 
 class ProductGroupForm(forms.Form):
     short_name = forms.CharField(
-        label="Краткое имя",
+        label="Продукт",
         max_length=64,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Краткое имя"}),
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Продукт"}),
     )
     name_en = forms.CharField(
         label="Наименование на английском языке",

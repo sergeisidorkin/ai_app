@@ -1,0 +1,5 @@
+{% if request.user.is_authenticated and request.user.is_staff and product %}
+<button type="button" class="product-name-link" data-workspace-url="{% url 'product_workspace' product.pk %}"><span class="product-name-link-text">{{ product.short_name }}</span></button>
+{% else %}
+{{ product.short_name }}
+{% endif %}

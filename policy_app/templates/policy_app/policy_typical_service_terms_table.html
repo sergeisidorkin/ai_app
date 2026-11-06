@@ -71,7 +71,7 @@
                         </div>
                     {% endif %}
                 </td>
-                <td class="text-nowrap policy-workspace-product-cell">{{ item.product.short_name }}</td>
+                <td class="text-nowrap policy-workspace-product-cell">{% include "policy_app/_policy_product_name_link.html" with product=item.product %}</td>
                 {% if policy_inline_edit %}
                 <td class="text-nowrap typical-service-term-value-col" data-inline-field="source_data_weeks" data-inline-type="number" data-inline-step="{% if item.source_data_term_unit == 'days' %}1{% else %}0.1{% endif %}" data-inline-min="0" data-inline-value="{{ item.source_data_weeks }}">{{ item.source_data_value_display }}</td>
                 <td class="text-nowrap typical-service-term-unit-col" data-inline-field="source_data_term_unit" data-inline-type="select" data-inline-value="{{ item.source_data_term_unit }}">{{ item.get_source_data_term_unit_display }}</td>
