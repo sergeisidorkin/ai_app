@@ -25910,6 +25910,42 @@ class RegistrationRegistryPaginationTests(TestCase):
         self.assertIn("Отфильтровано строк: 1", filtered.content.decode())
 
         root = Path(__file__).resolve().parents[1]
+        self._assert_registry_page_assets(root)
+
+    def test_registry_page_keeps_project_stages_together(self):
+        for project in self.projects[24:]:
+            project.delete()
+        parent = ProjectRegistration.objects.create(number=8001, name="Проект этапов", year=2026)
+        first_stage = ProjectRegistration.objects.create(
+            number=8001, name="Этап А", year=2026, stage_project=parent
+        )
+        second_stage = ProjectRegistration.objects.create(
+            number=8001, name="Этап Б", year=2026, stage_project=parent
+        )
+        table_url = reverse("registration_registry_table")
+
+        first_page = self.client.get(table_url, {"page": 1, "page_size": 25})
+        first_table = self._table_html(first_page)
+        self.assertIn("Реестр 24", first_table)
+        self.assertNotIn("Этап А", first_table)
+        self.assertIn("1\u201324 из 26", first_page.content.decode())
+
+        second_page = self.client.get(table_url, {"page": 2, "page_size": 25})
+        second_html = second_page.content.decode()
+        second_table = self._table_html(second_page)
+        self.assertIn("Этап А", second_table)
+        self.assertIn("Этап Б", second_table)
+        self.assertIn('class="registration-group-summary"', second_table)
+        first_stage.refresh_from_db()
+        second_stage.refresh_from_db()
+        self.assertIn(first_stage.short_uid, second_table)
+        self.assertIn(second_stage.short_uid, second_table)
+        self.assertIn("25\u201326 из 26", second_html)
+
+        last_page = self.client.get(table_url, {"page_size": 25})
+        self.assertIn('data-registry-page="2"', last_page.content.decode())
+
+    def _assert_registry_page_assets(self, root):
         css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
         js = (root / "core" / "static" / "core" / "js" / "projects-panels.js").read_text()
         self.assertIn("#registration-registry-section .policy-table-footer {\n  position: sticky;", css)
@@ -26110,3 +26146,24 @@ class ProductUsageCountTests(TestCase):
         self.assertIn('class="product-usage-col"', html)
         self.assertIn("Частота использования", html)
         self.assertRegex(html, r'class="product-usage-col"[^>]*>4<')
+
+    def test_type_change_recounts_previous_product(self):
+        old = Product.objects.create(short_name="OLDTP", name_en="Old", name_ru="Старый", position=1)
+        new = Product.objects.create(short_name="NEWTP", name_en="New", name_ru="Новый", position=2)
+        registration = ProjectRegistration.objects.create(number=9201, name="Смена типа", year=2026, type=old)
+        old.refresh_from_db()
+        self.assertEqual(old.usage_count, 1)
+
+        registration.type = new
+        registration.save()
+        old.refresh_from_db()
+        new.refresh_from_db()
+        self.assertEqual(old.usage_count, 0)
+        self.assertEqual(new.usage_count, 1)
+
+        registration.type = old
+        registration.save(update_fields=["type"])
+        old.refresh_from_db()
+        new.refresh_from_db()
+        self.assertEqual(old.usage_count, 1)
+        self.assertEqual(new.usage_count, 0)

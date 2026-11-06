@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core import signing
-from django.core.paginator import Paginator
+from django.core.paginator import Page, Paginator
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse, QueryDict, StreamingHttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
@@ -813,7 +813,68 @@ def _registry_page_params(request):
     return page_size, _request_param(request, page_key)
 
 
-def _registry_focus_page(rows, page_size, focus_registration_ids):
+def _registry_rows_share_group(previous, row):
+    if previous.number == row.number:
+        return True
+    return bool(row.stage_project_id) and row.stage_project_id == previous.stage_project_id
+
+
+def _registry_page_bounds(rows, page_size):
+    """Границы страниц реестра: строки одного номера или проекта не делятся между страницами."""
+    groups = []
+    for index, row in enumerate(rows):
+        if groups and _registry_rows_share_group(rows[index - 1], row):
+            groups[-1][1] = index + 1
+        else:
+            groups.append([index, index + 1])
+    bounds = []
+    for start, end in groups:
+        if bounds and end - bounds[-1][0] <= page_size:
+            bounds[-1] = (bounds[-1][0], end)
+        else:
+            bounds.append((start, end))
+    return bounds
+
+
+class _RegistryGroupPage(Page):
+    def start_index(self):
+        if not self.object_list:
+            return 0
+        return self.paginator.bounds[self.number - 1][0] + 1
+
+    def end_index(self):
+        if not self.object_list:
+            return 0
+        return self.paginator.bounds[self.number - 1][1]
+
+
+class _RegistryGroupPaginator(Paginator):
+    def __init__(self, rows, per_page):
+        super().__init__(rows, per_page)
+        self.bounds = _registry_page_bounds(rows, per_page)
+
+    @property
+    def num_pages(self):
+        return len(self.bounds) or 1
+
+    def page(self, number):
+        number = self.validate_number(number)
+        if not self.bounds:
+            return self._get_page([], number, self)
+        start, end = self.bounds[number - 1]
+        return self._get_page(self.object_list[start:end], number, self)
+
+    def _get_page(self, *args, **kwargs):
+        return _RegistryGroupPage(*args, **kwargs)
+
+    def page_for_index(self, index):
+        for number, (start, end) in enumerate(self.bounds, start=1):
+            if start <= index < end:
+                return number
+        return None
+
+
+def _registry_focus_page(rows, paginator, focus_registration_ids):
     focus_ids = set()
     for raw_id in focus_registration_ids or []:
         try:
@@ -824,7 +885,7 @@ def _registry_focus_page(rows, page_size, focus_registration_ids):
         return None
     for index, row in enumerate(rows):
         if row.pk in focus_ids:
-            return index // page_size + 1
+            return paginator.page_for_index(index)
     return None
 
 
@@ -846,10 +907,10 @@ def _registration_registry_page(request, rows, focus_registration_ids=None, face
         paginator = Paginator(rows, max(len(rows), 1))
         page_number = 1
     else:
-        focus_page = _registry_focus_page(rows, page_size, focus_registration_ids)
+        paginator = _RegistryGroupPaginator(rows, page_size)
+        focus_page = _registry_focus_page(rows, paginator, focus_registration_ids)
         if focus_page:
             page_number = focus_page
-        paginator = Paginator(rows, page_size)
     if not page_number:
         page_number = paginator.num_pages or 1
     page_obj = paginator.get_page(page_number)

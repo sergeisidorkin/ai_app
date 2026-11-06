@@ -87,21 +87,24 @@ def remember_product_usage_stage(sender, instance, **kwargs):
         instance._skip_product_usage_recount = True
         return
     instance._skip_product_usage_recount = False
-    if not instance.pk:
-        instance._usage_previous_stage_project_id = None
-        return
-    instance._usage_previous_stage_project_id = (
-        sender.objects.filter(pk=instance.pk).values_list("stage_project_id", flat=True).first()
-    )
+    previous = (
+        sender.objects.filter(pk=instance.pk).values("stage_project_id", "type_id").first()
+        if instance.pk
+        else None
+    ) or {}
+    instance._usage_previous_stage_project_id = previous.get("stage_project_id")
+    instance._usage_previous_type_id = previous.get("type_id")
 
 
 @receiver(post_save, sender="projects_app.ProjectRegistration", dispatch_uid="projects_app.sync_product_usage_on_registration_save")
 def sync_product_usage_on_registration_save(sender, instance, **kwargs):
     if getattr(instance, "_skip_product_usage_recount", False):
         return
-    sync_product_usage_counts(
-        _family_product_ids(instance, getattr(instance, "_usage_previous_stage_project_id", None))
-    )
+    ids = _family_product_ids(instance, getattr(instance, "_usage_previous_stage_project_id", None))
+    previous_type_id = getattr(instance, "_usage_previous_type_id", None)
+    if previous_type_id:
+        ids.add(previous_type_id)
+    sync_product_usage_counts(ids)
 
 
 @receiver(pre_delete, sender="projects_app.ProjectRegistration", dispatch_uid="projects_app.remember_product_usage_on_registration_delete")
