@@ -5,10 +5,16 @@ from policy_app.models import (
     DEPARTMENT_HEAD_GROUP,
     EXPERT_GROUP,
     LAWYER_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
 )
 
-from .models import Performer, ProjectRegistration
+from experts_app.project_permissions import (
+    PERM_UPLOAD_FREE_SECTIONS,
+    PERM_UPLOAD_FULL_REPORT,
+    PERM_VIEW_REPORTS,
+)
+
+from .models import Performer
+from .project_roles import has_project_permission, registration_ids_with_permission
 
 
 def _staff_user(user) -> bool:
@@ -71,47 +77,10 @@ def is_report_readonly_user(user) -> bool:
     return is_lawyer_user(user)
 
 
-def is_project_manager_of(user, registration) -> bool:
-    employee = _employee_of(user)
-    if not employee or not registration:
+def has_staff_project_permission(user, registration, code) -> bool:
+    if not _staff_user(user) or not registration:
         return False
-    prs = _normalize(getattr(employee, "formatted_prs_id", "") or "")
-    name = _normalize(Performer.employee_full_name(employee))
-    if prs and _normalize(getattr(registration, "project_manager_prs_id", "")) == prs:
-        return True
-    return bool(name) and _normalize(getattr(registration, "project_manager", "")) == name
-
-
-def is_projects_coordinator_user(user) -> bool:
-    if not _staff_user(user):
-        return False
-    return (
-        _user_role(user) == PROJECTS_COORDINATOR_GROUP
-        or user.groups.filter(name=PROJECTS_COORDINATOR_GROUP).exists()
-    )
-
-
-def is_project_coordinator_of(user, registration) -> bool:
-    employee = _employee_of(user)
-    if not employee or not registration:
-        return False
-    prs = _normalize(getattr(employee, "formatted_prs_id", "") or "")
-    name = _normalize(Performer.employee_full_name(employee))
-    if prs and _normalize(getattr(registration, "project_coordinator_prs_id", "")) == prs:
-        return True
-    return bool(name) and _normalize(getattr(registration, "project_coordinator", "")) == name
-
-
-def _coordinated_registration_ids(employee) -> set[int]:
-    prs = _normalize(getattr(employee, "formatted_prs_id", "") or "")
-    name = _normalize(Performer.employee_full_name(employee))
-    qs = None
-    if prs:
-        qs = ProjectRegistration.objects.filter(project_coordinator_prs_id=prs)
-    if name:
-        by_name = ProjectRegistration.objects.filter(project_coordinator=name)
-        qs = by_name if qs is None else qs | by_name
-    return set(qs.values_list("pk", flat=True)) if qs is not None else set()
+    return has_project_permission(user, registration, code)
 
 
 def _section_without_expertise(performer) -> bool:
@@ -222,9 +191,8 @@ def can_mutate_report_slot(
         return True
     if not _staff_user(user) or is_lawyer_user(user):
         return False
-    coordinator = is_projects_coordinator_user(user) and is_project_coordinator_of(user, project)
     if is_full_report:
-        return is_project_manager_of(user, project) or coordinator
+        return has_project_permission(user, project, PERM_UPLOAD_FULL_REPORT)
     items = _slot_performers(
         performer=performer,
         performers=performers,
@@ -232,8 +200,9 @@ def can_mutate_report_slot(
     )
     if not items:
         return False
+    free_sections = has_project_permission(user, project, PERM_UPLOAD_FREE_SECTIONS)
     return all(
-        _can_act_on_performer(user, item) or (coordinator and _section_without_expertise(item))
+        _can_act_on_performer(user, item) or (free_sections and _section_without_expertise(item))
         for item in items
     )
 
@@ -288,17 +257,7 @@ def report_visible_registration_ids(user):
             ids.update(name_qs.values_list("registration_id", flat=True))
         if is_direction_head_user(user):
             ids.update(_direction_head_registration_ids(employee))
-        pm_q = None
-        prs = _normalize(getattr(employee, "formatted_prs_id", "") or "")
-        if prs:
-            pm_q = ProjectRegistration.objects.filter(project_manager_prs_id=prs)
-        if name:
-            name_pm = ProjectRegistration.objects.filter(project_manager=name)
-            pm_q = name_pm if pm_q is None else pm_q | name_pm
-        if pm_q is not None:
-            ids.update(pm_q.values_list("pk", flat=True))
-        if is_projects_coordinator_user(user):
-            ids.update(_coordinated_registration_ids(employee))
+        ids.update(registration_ids_with_permission(employee, PERM_VIEW_REPORTS))
     return ids
 
 

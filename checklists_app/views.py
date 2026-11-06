@@ -20,6 +20,8 @@ from django.views.decorators.http import require_GET, require_POST
 from core.cloud_storage import get_project_source_data_folder_url
 from policy_app.models import EXPERT_GROUP, TypicalSection
 from projects_app.models import LegalEntity, Performer, ProjectRegistration
+from experts_app.project_permissions import PERM_CHECKLIST_APPROVE, PERM_VIEW_PROJECT
+from projects_app.project_roles import has_project_permission, registration_ids_with_permission
 from requests_app.models import RequestItem, RequestTable
 
 from .models import (
@@ -373,8 +375,11 @@ def _project_options(user=None):
     employee = getattr(user, "employee_profile", None)
     if getattr(employee, "role", "") == EXPERT_GROUP:
         regs = regs.filter(
-            performers__employee=employee,
-            performers__participation_response=Performer.ParticipationResponse.CONFIRMED,
+            Q(
+                performers__employee=employee,
+                performers__participation_response=Performer.ParticipationResponse.CONFIRMED,
+            )
+            | Q(pk__in=registration_ids_with_permission(employee, PERM_VIEW_PROJECT))
         ).distinct()
     regs = regs.order_by("-number", "-id")
     options = []
@@ -1707,14 +1712,10 @@ def comment_modal(request):
 
 
 def _is_project_manager(user, project):
-    """Check if user is the designated project manager for this project."""
-    if not user.is_authenticated or not project.project_manager:
+    """Пользователь согласует запросы информации и правит все разделы чек-листа проекта."""
+    if not user.is_authenticated or not user.is_staff:
         return False
-    emp = getattr(user, "employee_profile", None)
-    if not emp:
-        return False
-    full_name = f"{user.last_name} {user.first_name} {emp.patronymic}".strip()
-    return full_name == project.project_manager.strip()
+    return has_project_permission(user, project, PERM_CHECKLIST_APPROVE)
 
 
 def _get_dh_expertise_section_ids(user, project):

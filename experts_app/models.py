@@ -10,11 +10,11 @@ from policy_app.models import (
     ADMIN_GROUP,
     DIRECTION_DIRECTOR_GROUP,
     DIRECTOR_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
-    PROJECTS_HEAD_GROUP,
     ExpertiseDirection,
 )
 from users_app.models import Employee
+
+from .project_permissions import PROJECT_COORDINATOR_SPECIALTY, PROJECT_MANAGER_SPECIALTY  # noqa: F401
 
 
 def expert_facsimile_upload_to(instance, filename):
@@ -62,6 +62,13 @@ class ExpertSpecialty(models.Model):
         verbose_name="Владельцы",
     )
     is_group_owner = models.BooleanField("Группа (все компании)", default=False)
+    grants_project_rights = models.BooleanField("Даёт права в проекте", default=False, db_default=False)
+    project_permissions = models.JSONField(
+        "Права и доступы в проекте",
+        default=list,
+        db_default=[],
+        blank=True,
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -156,8 +163,6 @@ EXCLUDED_ROLES = (
     DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
     ADMIN_GROUP,
-    PROJECTS_HEAD_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
 )
 
 

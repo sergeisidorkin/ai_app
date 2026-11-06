@@ -13,6 +13,7 @@ from policy_app.models import (
     Grade,
 )
 from .models import ExpertContractDetails, ExpertProfile, ExpertSpecialty
+from .project_permissions import PROJECT_PERMISSIONS, normalize_project_permissions
 
 OWNER_GROUP_VALUE = "__group__"
 SPECIALIZATION_AREA_PREFIX = "Специалист по"
@@ -102,11 +103,21 @@ class ExpertSpecialtyForm(forms.ModelForm):
         required=False,
         widget=forms.TextInput(attrs=locked_attrs(id="esp-organization")),
     )
+    project_permissions = forms.MultipleChoiceField(
+        label="Права и доступы в проекте",
+        choices=PROJECT_PERMISSIONS,
+        required=False,
+        widget=forms.CheckboxSelectMultiple(attrs={"class": "form-check-input"}),
+    )
 
     class Meta:
         model = ExpertSpecialty
-        fields = ["specialty", "specialty_en", "expertise_dir"]
+        fields = ["specialty", "specialty_en", "expertise_dir", "grants_project_rights", "project_permissions"]
         widgets = {
+            "grants_project_rights": forms.CheckboxInput(attrs={
+                "class": "form-check-input",
+                "id": "esp-grants-project-rights",
+            }),
             "specialty": forms.TextInput(attrs={
                 "class": "form-control",
                 "placeholder": "Специальность",
@@ -126,7 +137,15 @@ class ExpertSpecialtyForm(forms.ModelForm):
             },
         }
 
-    def __init__(self, *args, lock_expertise=False, locked_expertise_dir=None, allowed_expertise_dirs=None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        lock_expertise=False,
+        locked_expertise_dir=None,
+        allowed_expertise_dirs=None,
+        lock_project_rights=False,
+        **kwargs,
+    ):
         self.lock_expertise = lock_expertise
         self.locked_expertise_dir = locked_expertise_dir
         self.allowed_expertise_dirs = list(allowed_expertise_dirs or [])
@@ -135,6 +154,9 @@ class ExpertSpecialtyForm(forms.ModelForm):
         )
         super().__init__(*args, **kwargs)
         self.specialization_area_prefix = SPECIALIZATION_AREA_PREFIX
+        if lock_project_rights:
+            self.fields["grants_project_rights"].disabled = True
+            self.fields["project_permissions"].disabled = True
 
         current_specialization_area = ""
         if self.instance and self.instance.pk:
@@ -243,6 +265,10 @@ class ExpertSpecialtyForm(forms.ModelForm):
                     "expertise_dir",
                     "Можно выбрать только направление экспертизы своего подразделения.",
                 )
+        if cleaned.get("grants_project_rights"):
+            cleaned["project_permissions"] = normalize_project_permissions(cleaned.get("project_permissions"))
+        else:
+            cleaned["project_permissions"] = []
         return cleaned
 
     def save(self, commit=True):

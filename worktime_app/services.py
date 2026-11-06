@@ -216,20 +216,30 @@ def ensure_direction_head_request_assignments(performers):
         )
 
 
-def sync_project_manager_assignment(registration, previous_project_manager=""):
-    current_name = normalize_executor_name(getattr(registration, "project_manager", ""))
-    previous_name = normalize_executor_name(previous_project_manager)
+def sync_project_position_assignments(registration, previous_names=None):
+    """Строки «Рабочего времени» для держателей позиций проекта с правом автоматического добавления.
 
-    if previous_name and previous_name != current_name:
-        WorktimeAssignment.objects.filter(
-            registration=registration,
-            executor_name=previous_name,
-            source_type=WorktimeAssignment.SourceType.PROJECT_MANAGER,
-        ).delete()
+    previous_names: {имя поля позиции в Реестре: значение до сохранения}.
+    """
+    from experts_app.project_permissions import PERM_WORKTIME_AUTO
+    from projects_app.project_roles import PROJECT_SLOTS, registration_permission_holders
 
-    if current_name:
+    current_names = {
+        normalize_executor_name(getattr(registration, slot.name_field, ""))
+        for slot in PROJECT_SLOTS.values()
+    }
+    for previous in (previous_names or {}).values():
+        previous_name = normalize_executor_name(previous)
+        if previous_name and previous_name not in current_names:
+            WorktimeAssignment.objects.filter(
+                registration=registration,
+                executor_name=previous_name,
+                source_type=WorktimeAssignment.SourceType.PROJECT_MANAGER,
+            ).delete()
+
+    for employee in registration_permission_holders(registration, PERM_WORKTIME_AUTO):
         ensure_worktime_assignment(
             registration=registration,
-            executor_name=current_name,
+            employee=employee,
             source_type=WorktimeAssignment.SourceType.PROJECT_MANAGER,
         )

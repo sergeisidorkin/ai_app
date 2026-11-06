@@ -16,8 +16,6 @@ from policy_app.models import (
     DIRECTOR_GROUPS,
     EXPERT_GROUP,
     LAWYER_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
-    PROJECTS_HEAD_GROUP,
 )
 from users_app.models import Employee
 from worktime_app.services import is_worktime_eligible_employee
@@ -62,9 +60,7 @@ def home_entry(request):
         request.user.groups.filter(name=ADMIN_GROUP).exists()
         or employee_role == ADMIN_GROUP
     )
-    can_access_connections = (not is_expert) or (
-        employee_role in {PROJECTS_HEAD_GROUP, PROJECTS_COORDINATOR_GROUP, DEPARTMENT_HEAD_GROUP}
-    )
+    can_access_connections = (not is_expert) or is_department_head
     smtp_only_connections = is_department_head
     context = {
         "employee": employee,

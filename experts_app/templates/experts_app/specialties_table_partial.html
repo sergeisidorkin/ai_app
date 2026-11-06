@@ -49,7 +49,7 @@
                     </div>
                 {% endif %}
             </td>
-            <td data-col="specialty">{% if row.is_first %}{{ row.specialty.specialty }}{% endif %}</td>
+            <td data-col="specialty">{% if row.is_first %}{{ row.specialty.specialty }}{% if row.specialty.grants_project_rights %}<i class="bi bi-person ms-1 esp-project-rights-icon" title="Даёт права в проекте" aria-label="Даёт права в проекте"></i>{% endif %}{% endif %}</td>
             <td data-col="specialty-en">{% if row.is_first %}{{ row.specialty.specialty_en }}{% endif %}</td>
             <td data-col="specialization-area">{% if row.is_first %}{{ row.specialty.specialization_area|default:"—" }}{% endif %}</td>
             <td data-col="expertise-dir">{% if row.is_first %}{% if row.specialty.expertise_dir %}{{ row.specialty.expertise_dir.short_name }}{% else %}—{% endif %}{% endif %}</td>

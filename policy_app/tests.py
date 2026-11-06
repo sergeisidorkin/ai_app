@@ -37,7 +37,13 @@ from django.urls import reverse
 from redis.exceptions import RedisError
 
 from classifiers_app.models import OKVCurrency
-from experts_app.models import ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
+from experts_app.models import (
+    PROJECT_COORDINATOR_SPECIALTY,
+    PROJECT_MANAGER_SPECIALTY,
+    ExpertProfile,
+    ExpertProfileSpecialty,
+    ExpertSpecialty,
+)
 from group_app.models import GroupMember, OrgUnit
 from policy_app.forms import (
     ProductForm,
@@ -9812,6 +9818,9 @@ class TypicalServiceTermViewsTests(TestCase):
             final_report_weeks=2,
             position=1,
         )
+        ExpertSpecialty.objects.filter(
+            specialty__in=(PROJECT_COORDINATOR_SPECIALTY, PROJECT_MANAGER_SPECIALTY)
+        ).delete()
         geology = ExpertSpecialty.objects.create(specialty="Геология", position=1)
         mining = ExpertSpecialty.objects.create(specialty="Горное дело", position=2)
         section = TypicalSection.objects.create(
@@ -11054,6 +11063,10 @@ class SpecialtyTariffViewsTests(TestCase):
         self.assertNotContains(response, "<th style=\"vertical-align: top;\">Валюта</th>", html=False)
         self.assertContains(response, 'id="specialty-tariffs-actions"', html=False)
         self.assertContains(response, 'id="specialty-tariffs-specialties-toggle"', html=False)
+        self.assertContains(response, 'id="specialty-tariffs-csv-download-btn"', html=False)
+        self.assertContains(response, 'id="specialty-tariffs-csv-upload-btn"', html=False)
+        html = response.content.decode()
+        self.assertLess(html.find("Налоговые специалисты"), html.find('id="specialty-tariffs-csv-download-btn"'))
 
     def test_create_specialty_tariff_saves_row(self):
         response = self.client.post(
@@ -11096,6 +11109,129 @@ class SpecialtyTariffViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         item = SpecialtyTariff.objects.get(specialty_group="Налоги")
         self.assertEqual(item.expertise_direction_display, "TAX")
+
+    def test_specialty_tariff_csv_download_exports_table_columns(self):
+        item = SpecialtyTariff.objects.create(
+            specialty_group="Налоговые специалисты",
+            daily_rate_tkp_eur="1500.00",
+            daily_rate_ss="1250.50",
+            currency=self.currency,
+            created_by=self.user,
+            position=1,
+        )
+        item.specialties.set([self.specialty_1, self.specialty_2, self.specialty_3])
+
+        response = self.client.get(reverse("specialty_tariff_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("specialty_tariffs.csv", response["Content-Disposition"])
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(
+            rows[0],
+            [
+                "Группа специальностей",
+                "Специальности",
+                "Направления экспертизы",
+                "Дневная ставка оплаты в евро для ТКП",
+                "Дневная ставка оплаты для с/с",
+                "Руководитель направления",
+            ],
+        )
+        self.assertEqual(
+            rows[1],
+            [
+                "Налоговые специалисты",
+                "Налоговый due diligence, Трансфертное ценообразование, M&A",
+                "TAX, M&A",
+                "1500,00",
+                "1250,50 EUR",
+                "policy-admin-3",
+            ],
+        )
+
+    def test_specialty_tariff_csv_upload_creates_and_updates_rows(self):
+        existing = SpecialtyTariff.objects.create(
+            specialty_group="Налоги",
+            daily_rate_tkp_eur="100.00",
+            daily_rate_ss="90.00",
+            currency=self.currency,
+            created_by=self.user,
+            position=1,
+        )
+        existing.specialties.set([self.specialty_3])
+        csv_file = SimpleUploadedFile(
+            "specialty_tariffs.csv",
+            (
+                "Группа специальностей;Специальности;Направления экспертизы;"
+                "Дневная ставка оплаты в евро для ТКП;Дневная ставка оплаты для с/с;"
+                "Руководитель направления\n"
+                "Налоги;\"Налоговый due diligence, Трансфертное ценообразование\";Другое направление;"
+                "1 600,00;1 100,50 EUR;policy-admin-3\n"
+                "Сделки;M&A;M&A;900,00;800,00 EUR;policy-admin-3\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("specialty_tariff_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 1)
+        self.assertEqual(payload["updated"], 1)
+        self.assertTrue(any("Направления экспертизы" in item for item in payload["warnings"]))
+        existing.refresh_from_db()
+        self.assertEqual(str(existing.daily_rate_tkp_eur), "1600.00")
+        self.assertEqual(str(existing.daily_rate_ss), "1100.50")
+        self.assertEqual(existing.currency, self.currency)
+        self.assertIsNone(existing.expertise_direction_id)
+        self.assertCountEqual(
+            existing.specialties.values_list("specialty", flat=True),
+            ["Налоговый due diligence", "Трансфертное ценообразование"],
+        )
+        created = SpecialtyTariff.objects.get(specialty_group="Сделки")
+        self.assertEqual(created.created_by, self.user)
+        self.assertEqual(str(created.daily_rate_tkp_eur), "900.00")
+        self.assertEqual(created.specialties.get().specialty, "M&A")
+        self.assertEqual(created.expertise_direction_display, "M&A")
+
+    def test_specialty_tariff_csv_upload_skips_unknown_specialty_and_foreign_owner(self):
+        item = SpecialtyTariff.objects.create(
+            specialty_group="Налоги",
+            daily_rate_tkp_eur="100.00",
+            daily_rate_ss="90.00",
+            created_by=self.user,
+            position=1,
+        )
+        item.specialties.set([self.specialty_1])
+        header = (
+            "Группа специальностей;Специальности;Направления экспертизы;"
+            "Дневная ставка оплаты в евро для ТКП;Дневная ставка оплаты для с/с;"
+            "Руководитель направления\n"
+        )
+        unknown = SimpleUploadedFile(
+            "specialty_tariffs.csv",
+            (header + "Налоги;Несуществующая;TAX;200,00;180,00 EUR;policy-admin-3\n").encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("specialty_tariff_csv_upload"), {"csv_file": unknown})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertTrue(any("не найдены" in warning for warning in response.json()["warnings"]))
+
+        get_user_model().objects.create_user(username="other-head", password="secret123", is_staff=True)
+        foreign = SimpleUploadedFile(
+            "specialty_tariffs.csv",
+            (header + "Налоги;Налоговый due diligence;TAX;300,00;280,00 EUR;other-head\n").encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("specialty_tariff_csv_upload"), {"csv_file": foreign})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertTrue(any("недостаточно прав" in warning for warning in response.json()["warnings"]))
+        item.refresh_from_db()
+        self.assertEqual(str(item.daily_rate_tkp_eur), "100.00")
+        self.assertEqual(SpecialtyTariff.objects.count(), 1)
 
 
 class TariffViewsTests(TestCase):

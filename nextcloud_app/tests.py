@@ -14,7 +14,13 @@ from django.test import Client, SimpleTestCase, TestCase, override_settings
 from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
 from contracts_app.models import ContractProjectRegistration
-from experts_app.models import ExpertProfile
+from experts_app.models import ExpertProfile, ExpertProfileSpecialty
+from experts_app.project_permissions import (
+    DEFAULT_PROJECT_PERMISSIONS,
+    PERM_NEXTCLOUD_EDITOR,
+    PROJECT_COORDINATOR_SPECIALTY,
+)
+from experts_app.testing import grant_coordinator_specialty, grant_manager_specialty
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import DEPARTMENT_HEAD_GROUP, ExpertiseDirection, Product, TypicalSection
 from proposals_app.models import ProposalRegistration
@@ -954,8 +960,8 @@ class NextcloudWorkspaceTests(TestCase):
             user=self.manager,
             person_record=self.manager_person,
             patronymic="Иванович",
-            role="Руководитель проектов",
         )
+        grant_manager_specialty(self.manager_employee)
         NextcloudUserLink.objects.create(
             user=self.manager,
             nextcloud_user_id=f"ncstaff-{self.manager.pk}",
@@ -1074,6 +1080,67 @@ class NextcloudWorkspaceTests(TestCase):
         workspace = ProjectWorkspace.objects.get(project=self.project)
         self.assertEqual(workspace.disk_path, project_path)
         self.assertEqual(workspace.public_url, f"https://cloud.example.com/apps/files/files?dir={project_path}")
+
+    def _workspace_client(self):
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+        client.ensure_user_share.return_value = Mock()
+        client.build_files_url.return_value = "https://cloud.example.com/apps/files/files"
+        return client
+
+    def test_create_basic_project_workspace_requires_manager_specialty(self):
+        ExpertProfileSpecialty.objects.filter(profile__employee=self.manager_employee).delete()
+        client = self._workspace_client()
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertFalse(items[-1].ok)
+        self.assertIn("руководителя проекта", items[-1].message)
+        client.ensure_user_share.assert_not_called()
+
+    def test_create_basic_project_workspace_shares_with_positions_having_editor_right(self):
+        coordinator_user = User.objects.create_user(
+            username="coordinator@example.com",
+            email="coordinator@example.com",
+            password="Secret123!",
+            first_name="Ольга",
+            last_name="Координатова",
+            is_staff=True,
+            is_active=True,
+        )
+        coordinator_employee = Employee.objects.create(user=coordinator_user, patronymic="Олеговна")
+        NextcloudUserLink.objects.create(
+            user=coordinator_user,
+            nextcloud_user_id=f"ncstaff-{coordinator_user.pk}",
+            nextcloud_username=f"ncstaff-{coordinator_user.pk}",
+            nextcloud_email="coordinator@example.com",
+        )
+        grant_coordinator_specialty(coordinator_employee)
+        self.project.project_coordinator = "Координатова Ольга Олеговна"
+        self.project.save(update_fields=["project_coordinator"])
+        project_path = f"/Corporate Root/03 Проекты/2026/{_build_project_folder_name(self.project)}"
+
+        client = self._workspace_client()
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+        self.assertTrue(items[-1].ok)
+        shared_ids = [item.args[2] for item in client.ensure_user_share.call_args_list]
+        self.assertEqual(shared_ids, [f"ncstaff-{self.manager.pk}"])
+
+        grant_coordinator_specialty(
+            coordinator_employee,
+            permissions=DEFAULT_PROJECT_PERMISSIONS[PROJECT_COORDINATOR_SPECIALTY] + (PERM_NEXTCLOUD_EDITOR,),
+        )
+        client = self._workspace_client()
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+        self.assertTrue(items[-1].ok)
+        self.assertIn(
+            call("cloud-admin", project_path, f"ncstaff-{coordinator_user.pk}", permissions=15),
+            client.ensure_user_share.call_args_list,
+        )
 
     def test_create_basic_project_workspace_grants_access_to_confirmed_performer(self):
         direction, direction_head_user, _direction_head = self._create_direction_head()

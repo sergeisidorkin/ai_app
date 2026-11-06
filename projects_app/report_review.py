@@ -192,20 +192,22 @@ def upload_org_direction_ids(upload) -> set[int]:
 
 
 def user_matches_review_step(user, upload, step: str) -> bool:
-    from .report_access import (
-        _employee_of,
-        is_admin_user,
-        is_direction_head_user,
-        is_project_coordinator_of,
-        is_project_manager_of,
-    )
+    from .report_access import is_admin_user
 
     if step in MANUAL_REVIEW_CODES and is_admin_user(user):
         return True
-    if step == REVIEW_RP:
-        return is_project_manager_of(user, getattr(upload, "registration", None))
-    if step == REVIEW_KP:
-        return is_project_coordinator_of(user, getattr(upload, "registration", None))
+    return user_holds_review_step(user, upload, step)
+
+
+def user_holds_review_step(user, upload, step: str) -> bool:
+    """Пользователь проверяет шаг по своей позиции, а не как администратор."""
+    from experts_app.project_permissions import PERM_REVIEW_KP, PERM_REVIEW_RP
+
+    from .report_access import _employee_of, has_staff_project_permission, is_direction_head_user
+
+    step_permissions = {REVIEW_KP: PERM_REVIEW_KP, REVIEW_RP: PERM_REVIEW_RP}
+    if step in step_permissions:
+        return has_staff_project_permission(user, getattr(upload, "registration", None), step_permissions[step])
     if step == REVIEW_RN:
         if not is_direction_head_user(user):
             return False

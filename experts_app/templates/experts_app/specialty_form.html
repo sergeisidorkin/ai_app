@@ -49,6 +49,23 @@
         {% endif %}
       </div>
       <div class="col-12">
+        <div class="form-check">
+          {{ form.grants_project_rights }}
+          <label class="form-check-label" for="esp-grants-project-rights">
+            Специальность даёт права в проекте <i class="bi bi-person" aria-hidden="true"></i>
+          </label>
+        </div>
+      </div>
+      <div class="col-12" id="esp-project-permissions"{% if not form.grants_project_rights.value %} hidden{% endif %}>
+        <div class="form-label mb-2" style="padding-left: 1.5em;">Права и доступы в проекте:</div>
+        {% for choice in form.project_permissions %}
+          <div class="form-check">
+            {{ choice.tag }}
+            <label class="form-check-label" for="{{ choice.id_for_label }}">{{ choice.choice_label }}</label>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="col-12">
         <label class="form-label">Связи со структурными подразделениями</label>
         <div class="esp-pair-labels">
           <span aria-hidden="true"></span>
@@ -131,6 +148,15 @@
 </form>
 
 <script>
+(function() {
+  const rightsToggle = document.getElementById("esp-grants-project-rights");
+  const rightsBlock = document.getElementById("esp-project-permissions");
+  if (!rightsToggle || !rightsBlock) return;
+  rightsToggle.addEventListener("change", function() {
+    rightsBlock.hidden = !rightsToggle.checked;
+  });
+})();
+
 (function() {
   const GROUP_VAL = "__group__";
   const DIR_OWNERS = {{ form.dir_owners_json|safe }};

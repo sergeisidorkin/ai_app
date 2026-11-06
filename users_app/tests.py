@@ -9,8 +9,6 @@ from policy_app.models import (
     DIRECTION_DIRECTOR_GROUP,
     DIRECTOR_GROUP,
     LAWYER_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
-    PROJECTS_HEAD_GROUP,
     ROLE_GROUPS_ORDER,
 )
 
@@ -72,35 +70,14 @@ class UsersContactsSyncTests(TestCase):
 
         director_index = role_names.index(DIRECTOR_GROUP)
         self.assertEqual(role_names[director_index + 1], DIRECTION_DIRECTOR_GROUP)
-        head_index = role_names.index(PROJECTS_HEAD_GROUP)
-        self.assertEqual(role_names[head_index + 1], PROJECTS_COORDINATOR_GROUP)
+        self.assertNotIn("Координатор проектов", role_names)
+        self.assertNotIn("Руководитель проектов", role_names)
 
-    def test_employee_form_gives_projects_coordinator_same_access_flag_as_projects_head(self):
-        coordinator_group, _ = Group.objects.get_or_create(name=PROJECTS_COORDINATOR_GROUP)
-        head_group, _ = Group.objects.get_or_create(name=PROJECTS_HEAD_GROUP)
-        coordinator_form = EmployeeForm(
-            self._employee_payload(
-                email="projects-coordinator@example.com",
-                role=str(coordinator_group.pk),
-            )
-        )
-        head_form = EmployeeForm(
-            self._employee_payload(
-                email="projects-head@example.com",
-                role=str(head_group.pk),
-            )
-        )
+    def test_projects_coordinator_role_is_removed(self):
+        self.assertFalse(Group.objects.filter(name="Координатор проектов").exists())
 
-        self.assertTrue(coordinator_form.is_valid(), coordinator_form.errors)
-        self.assertTrue(head_form.is_valid(), head_form.errors)
-        coordinator = coordinator_form.save()
-        head = head_form.save()
-
-        self.assertEqual(coordinator.role, PROJECTS_COORDINATOR_GROUP)
-        self.assertEqual(head.role, PROJECTS_HEAD_GROUP)
-        self.assertEqual(coordinator.user.is_superuser, head.user.is_superuser)
-        self.assertEqual(coordinator.user.is_staff, head.user.is_staff)
-        self.assertFalse(coordinator.user.is_superuser)
+    def test_projects_head_role_is_removed(self):
+        self.assertFalse(Group.objects.filter(name="Руководитель проектов").exists())
 
     def test_employee_form_grants_direction_director_superuser_rights(self):
         group, _ = Group.objects.get_or_create(name=DIRECTION_DIRECTOR_GROUP)
@@ -534,3 +511,5 @@ class UsersContactsSyncTests(TestCase):
         self.assertContains(response, ">ID-PRS<", count=2, html=False)
         self.assertNotContains(response, ">Телефон<", html=False)
         self.assertContains(response, "-PRS")
+        self.assertContains(response, 'class="users-table-editor"', count=1)
+        self.assertContains(response, 'class="policy-table-footer"', count=1)
