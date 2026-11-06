@@ -16,6 +16,13 @@ from django.urls import reverse
 from django.utils import timezone
 
 from classifiers_app.models import OKSMCountry, ProductionCalendarDay
+from experts_app.models import ExpertProfileSpecialty
+from experts_app.project_permissions import (
+    DEFAULT_PROJECT_PERMISSIONS,
+    PERM_WORKTIME_AUTO,
+    PROJECT_COORDINATOR_SPECIALTY,
+)
+from experts_app.testing import grant_coordinator_specialty, grant_manager_specialty
 from group_app.models import GroupMember
 from notifications_app.models import Notification, NotificationPerformerLink
 from notifications_app.services import process_participation_notification
@@ -71,8 +78,8 @@ class WorktimeAppTests(TestCase):
         self.pm_employee = Employee.objects.create(
             user=self.pm_user,
             patronymic="Олеговна",
-            role="Руководитель проектов",
         )
+        grant_manager_specialty(self.pm_employee)
 
         self.direction_user = get_user_model().objects.create_user(
             username="direction-worktime-user",
@@ -140,6 +147,7 @@ class WorktimeAppTests(TestCase):
             user=self.nonstaff_user,
             patronymic="Ильич",
         )
+        grant_manager_specialty(self.nonstaff_employee)
 
     def _full_name(self, employee):
         return Performer.employee_full_name(employee)
@@ -284,8 +292,8 @@ class WorktimeAppTests(TestCase):
         new_pm_employee = Employee.objects.create(
             user=new_pm_user,
             patronymic="Сергеевна",
-            role="Руководитель проектов",
         )
+        grant_manager_specialty(new_pm_employee)
 
         registration.project_manager = self._full_name(new_pm_employee)
         registration.save()
@@ -303,6 +311,44 @@ class WorktimeAppTests(TestCase):
                 source_type=WorktimeAssignment.SourceType.PROJECT_MANAGER,
             ).exists()
         )
+
+    def test_project_manager_without_specialty_gets_no_assignment(self):
+        ExpertProfileSpecialty.objects.filter(profile__employee=self.pm_employee).delete()
+
+        registration = ProjectRegistration.objects.create(
+            number=4449,
+            type=self.product,
+            name="Проект без специальности",
+            deadline=date(2026, 4, 30),
+            project_manager=self._full_name(self.pm_employee),
+        )
+
+        self.assertFalse(WorktimeAssignment.objects.filter(registration=registration).exists())
+
+    def test_coordinator_gets_assignment_only_with_worktime_permission(self):
+        grant_coordinator_specialty(self.other_employee)
+        registration = ProjectRegistration.objects.create(
+            number=4450,
+            type=self.product,
+            name="Проект координатора",
+            deadline=date(2026, 4, 30),
+            project_coordinator=self._full_name(self.other_employee),
+        )
+        self.assertFalse(WorktimeAssignment.objects.filter(registration=registration).exists())
+
+        grant_coordinator_specialty(
+            self.other_employee,
+            permissions=DEFAULT_PROJECT_PERMISSIONS[PROJECT_COORDINATOR_SPECIALTY] + (PERM_WORKTIME_AUTO,),
+        )
+        registration.save()
+
+        assignment = WorktimeAssignment.objects.get(registration=registration)
+        self.assertEqual(assignment.employee, self.other_employee)
+        self.assertEqual(assignment.source_type, WorktimeAssignment.SourceType.PROJECT_MANAGER)
+
+        registration.project_coordinator = ""
+        registration.save()
+        self.assertFalse(WorktimeAssignment.objects.filter(registration=registration).exists())
 
     def test_project_manager_save_does_not_create_assignment_for_nonstaff_user(self):
         ProjectRegistration.objects.create(

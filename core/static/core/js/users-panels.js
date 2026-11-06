@@ -188,8 +188,72 @@
     ensureActionsVisibility(name);
   });
 
+  function attachUsersTableFooterStickyState(footer) {
+    const editor = footer?.closest('.users-table-editor');
+    if (!footer || !editor || !footer.closest('#users-pane')) return;
+    if (footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    const marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    let intersectionObserver = null;
+    let resizeObserver = null;
+
+    function release() {
+      intersectionObserver?.disconnect();
+      resizeObserver?.disconnect();
+      window.removeEventListener('scroll', syncStickyState, true);
+      window.removeEventListener('resize', syncStickyState);
+      document.removeEventListener('shown.bs.tab', syncStickyState);
+    }
+
+    function syncStickyState() {
+      if (!footer.isConnected) {
+        release();
+        return;
+      }
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const editorRect = editor.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const isStuck = (
+        editorRect.top < viewportHeight
+        && editorRect.bottom > 0
+        && markerRect.top >= viewportHeight
+      );
+      footer.classList.toggle('is-stuck', isStuck);
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(syncStickyState, {
+        threshold: [0, 1],
+      });
+      intersectionObserver.observe(editor);
+      intersectionObserver.observe(marker);
+    }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(syncStickyState);
+      resizeObserver.observe(editor);
+    }
+    window.addEventListener('scroll', syncStickyState, true);
+    window.addEventListener('resize', syncStickyState);
+    document.addEventListener('shown.bs.tab', syncStickyState);
+    window.requestAnimationFrame(syncStickyState);
+  }
+
+  function initUsersTableFooterStickyState(root) {
+    const scope = root && root.querySelector ? root : (pane() || document);
+    const footers = scope.matches?.('.policy-table-footer')
+      ? [scope]
+      : qa('.policy-table-footer', scope);
+    footers.forEach(attachUsersTableFooterStickyState);
+  }
+
   document.body.addEventListener('htmx:afterSettle', function (e) {
     if (!(e.target && e.target.id === 'users-pane')) return;
+    initUsersTableFooterStickyState(e.target);
     const sel = window.__usTableSel || {};
     Object.keys(sel).forEach(name => {
       const ids = sel[name] || [];
@@ -201,4 +265,6 @@
     });
     window.__usTableSel = {};
   });
+
+  initUsersTableFooterStickyState(pane());
 })();

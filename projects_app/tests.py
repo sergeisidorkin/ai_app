@@ -53,14 +53,19 @@ from policy_app.models import (
     DIRECTION_DIRECTOR_GROUP,
     EXPERT_GROUP,
     LAWYER_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
-    PROJECTS_HEAD_GROUP,
     ExpertiseDirection,
     Product,
     TypicalServiceTerm,
     TypicalSectionSpecialty,
 )
-from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
+from experts_app.models import (
+    PROJECT_COORDINATOR_SPECIALTY,
+    ExpertContractDetails,
+    ExpertProfile,
+    ExpertProfileSpecialty,
+    ExpertSpecialty,
+)
+from experts_app.testing import grant_coordinator_specialty, grant_manager_specialty
 from projects_app.models import (
     LegalEntity,
     PaymentRequestPerformer,
@@ -754,7 +759,7 @@ class ProjectRegistrationFormTests(TestCase):
                     self.assertEqual(widget.format, "%Y-%m-%d")
                     self.assertNotIn("js-date", widget.attrs.get("class", ""))
 
-    def test_project_manager_choices_include_direction_directors(self):
+    def test_project_manager_choices_include_only_manager_specialty(self):
         project_manager_user = get_user_model().objects.create_user(
             username="project-manager-choice",
             first_name="Иван",
@@ -776,26 +781,43 @@ class ProjectRegistrationFormTests(TestCase):
         Employee.objects.create(
             user=project_manager_user,
             patronymic="Иванович",
-            role=PROJECTS_HEAD_GROUP,
+            role="",
         )
         Employee.objects.create(
             user=direction_director_user,
             patronymic="Дмитриевна",
             role=DIRECTION_DIRECTOR_GROUP,
         )
-        Employee.objects.create(
+        expert_employee = Employee.objects.create(
             user=expert_user,
             patronymic="Егорович",
             role=EXPERT_GROUP,
         )
+        grant_manager_specialty(expert_employee)
 
         registration_choices = [label for _value, label in ProjectRegistrationForm().fields["project_manager"].choices]
         work_choices = [label for _value, label in WorkVolumeForm().fields["manager"].choices]
 
         for choices in (registration_choices, work_choices):
-            self.assertTrue(any(label.startswith("Проектов Иван Иванович") for label in choices))
-            self.assertTrue(any(label.startswith("Директорова Дарья Дмитриевна") for label in choices))
-            self.assertFalse(any(label.startswith("Экспертов Егор Егорович") for label in choices))
+            self.assertTrue(any(label.startswith("Экспертов Егор Егорович") for label in choices))
+            self.assertFalse(any(label.startswith("Проектов Иван Иванович") for label in choices))
+            self.assertFalse(any(label.startswith("Директорова Дарья Дмитриевна") for label in choices))
+
+    def test_project_manager_choices_require_specialty_flag(self):
+        user = get_user_model().objects.create_user(
+            username="project-manager-unflagged",
+            first_name="Нина",
+            last_name="Флажкова",
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=user, patronymic="Ниловна", role=EXPERT_GROUP)
+        specialty = grant_manager_specialty(employee)
+        specialty.grants_project_rights = False
+        specialty.save(update_fields=["grants_project_rights"])
+
+        manager_choices = [label for _value, label in ProjectRegistrationForm().fields["project_manager"].choices]
+
+        self.assertFalse(any(label.startswith("Флажкова Нина Ниловна") for label in manager_choices))
 
     def test_project_manager_form_saves_selected_prs_id(self):
         person = PersonRecord.objects.create(
@@ -810,12 +832,13 @@ class ProjectRegistrationFormTests(TestCase):
             last_name="Иванов",
             is_staff=True,
         )
-        Employee.objects.create(
+        employee = Employee.objects.create(
             user=user,
             person_record=person,
             patronymic="Иванович",
-            role=PROJECTS_HEAD_GROUP,
+            role="",
         )
+        grant_manager_specialty(employee)
         group_member = GroupMember.objects.create(
             short_name="IMCM",
             country_name="Россия",
@@ -875,7 +898,7 @@ class ProjectRegistrationFormTests(TestCase):
             user=user,
             person_record=person,
             patronymic="Петрович",
-            role=PROJECTS_HEAD_GROUP,
+            role="",
         )
         registration = ProjectRegistration(
             project_manager="Петров Петр Петрович",
@@ -886,7 +909,7 @@ class ProjectRegistrationFormTests(TestCase):
 
         self.assertEqual(form["project_manager"].value(), person.formatted_id)
 
-    def test_project_coordinator_choices_include_only_coordinators(self):
+    def test_project_coordinator_choices_include_only_coordinator_specialty(self):
         coordinator_user = get_user_model().objects.create_user(
             username="project-coordinator-choice",
             first_name="Кира",
@@ -899,16 +922,18 @@ class ProjectRegistrationFormTests(TestCase):
             last_name="Проектов",
             is_staff=True,
         )
-        Employee.objects.create(
+        coordinator_employee = Employee.objects.create(
             user=coordinator_user,
             patronymic="Кирилловна",
-            role=PROJECTS_COORDINATOR_GROUP,
+            role=EXPERT_GROUP,
         )
-        Employee.objects.create(
+        grant_coordinator_specialty(coordinator_employee)
+        project_manager_employee = Employee.objects.create(
             user=project_manager_user,
             patronymic="Иванович",
-            role=PROJECTS_HEAD_GROUP,
+            role="",
         )
+        grant_manager_specialty(project_manager_employee)
 
         coordinator_choices = [
             label for _value, label in ProjectRegistrationForm().fields["project_coordinator"].choices
@@ -921,6 +946,24 @@ class ProjectRegistrationFormTests(TestCase):
         self.assertFalse(any(label.startswith("Проектов Иван Иванович") for label in coordinator_choices))
         self.assertTrue(any(label.startswith("Проектов Иван Иванович") for label in manager_choices))
         self.assertFalse(any(label.startswith("Координаторова Кира Кирилловна") for label in manager_choices))
+
+    def test_project_coordinator_choices_require_specialty_flag(self):
+        user = get_user_model().objects.create_user(
+            username="project-coordinator-unflagged",
+            first_name="Нина",
+            last_name="Флажкова",
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=user, patronymic="Ниловна", role=EXPERT_GROUP)
+        specialty = grant_coordinator_specialty(employee)
+        specialty.grants_project_rights = False
+        specialty.save(update_fields=["grants_project_rights"])
+
+        coordinator_choices = [
+            label for _value, label in ProjectRegistrationForm().fields["project_coordinator"].choices
+        ]
+
+        self.assertFalse(any(label.startswith("Флажкова Нина Ниловна") for label in coordinator_choices))
 
     def test_project_coordinator_form_saves_selected_prs_id(self):
         person = PersonRecord.objects.create(
@@ -935,12 +978,13 @@ class ProjectRegistrationFormTests(TestCase):
             last_name="Соколова",
             is_staff=True,
         )
-        Employee.objects.create(
+        coordinator_employee = Employee.objects.create(
             user=user,
             person_record=person,
             patronymic="Сергеевна",
-            role=PROJECTS_COORDINATOR_GROUP,
+            role=EXPERT_GROUP,
         )
+        grant_coordinator_specialty(coordinator_employee)
         group_member = GroupMember.objects.create(
             short_name="IMCC",
             country_name="Россия",
@@ -3114,6 +3158,15 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertEqual(after_earlier.count("02.02.2026"), 1)
         self.assertEqual(after_earlier.count("12.12.2026"), 2)
 
+        new_manager_user = get_user_model().objects.create_user(
+            username="summary-new-project-manager",
+            first_name="Руководитель",
+            last_name="Новый",
+            is_staff=True,
+        )
+        grant_manager_specialty(
+            Employee.objects.create(user=new_manager_user, patronymic="Проекта", role=EXPERT_GROUP)
+        )
         people = self.client.post(
             reverse("registration_group_summary_manager"),
             {"number": first.number, "group": "RU", "project_manager": "Новый Руководитель Проекта"},
@@ -3343,6 +3396,20 @@ class ProjectRegistrationFormViewTests(TestCase):
         self.assertEqual(second.deadline, date(2026, 4, 4))
         self.assertEqual(parent.deadline, date(2026, 2, 2))
 
+        summary_manager_user = get_user_model().objects.create_user(
+            username="summary-project-manager",
+            first_name="Руководитель",
+            last_name="Сводный",
+            is_staff=True,
+        )
+        grant_manager_specialty(
+            Employee.objects.create(user=summary_manager_user, patronymic="Проекта", role=EXPERT_GROUP)
+        )
+        rejected = self.client.post(
+            reverse("registration_group_summary_manager"),
+            {"project": parent.pk, "project_manager": "Чужой Руководитель Проекта"},
+        )
+        self.assertEqual(rejected.status_code, 400)
         people = self.client.post(
             reverse("registration_group_summary_manager"),
             {"project": parent.pk, "project_manager": "Сводный Руководитель Проекта"},
@@ -5155,8 +5222,9 @@ class ProjectRegistrationFormViewTests(TestCase):
         manager_employee = Employee.objects.create(
             user=manager_user,
             patronymic="Иванович",
-            role=PROJECTS_HEAD_GROUP,
+            role="",
         )
+        grant_manager_specialty(manager_employee)
         registration = ProjectRegistration.objects.create(
             number=6205,
             group_member=self.group_member,
@@ -5185,6 +5253,34 @@ class ProjectRegistrationFormViewTests(TestCase):
         registration.refresh_from_db()
         self.assertEqual(registration.project_manager, "Иванов Иван Иванович")
         self.assertEqual(registration.project_manager_prs_id, manager_employee.formatted_prs_id)
+
+    def test_registration_manager_update_rejects_employee_without_specialty(self):
+        role_user = get_user_model().objects.create_user(
+            username="project.manager.role-only",
+            password="secret",
+            first_name="Пётр",
+            last_name="Ролевой",
+        )
+        Employee.objects.create(user=role_user, patronymic="Петрович", role="")
+        registration = ProjectRegistration.objects.create(
+            number=6207,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект без специальности руководителя",
+            status="Не начат",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("registration_manager_update", args=[registration.pk]),
+            {"project_manager": "Ролевой Пётр Петрович"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Руководитель проекта", response.json()["error"])
+        registration.refresh_from_db()
+        self.assertEqual(registration.project_manager, "")
 
     def test_registration_manager_update_allows_clearing_project_manager(self):
         registration = ProjectRegistration.objects.create(
@@ -5219,8 +5315,9 @@ class ProjectRegistrationFormViewTests(TestCase):
         coordinator_employee = Employee.objects.create(
             user=coordinator_user,
             patronymic="Сергеевна",
-            role=PROJECTS_COORDINATOR_GROUP,
+            role=EXPERT_GROUP,
         )
+        grant_coordinator_specialty(coordinator_employee)
         registration = ProjectRegistration.objects.create(
             number=6208,
             group_member=self.group_member,
@@ -5260,7 +5357,7 @@ class ProjectRegistrationFormViewTests(TestCase):
         Employee.objects.create(
             user=manager_user,
             patronymic="Иванович",
-            role=PROJECTS_HEAD_GROUP,
+            role="",
         )
         registration = ProjectRegistration.objects.create(
             number=6209,
@@ -5282,6 +5379,38 @@ class ProjectRegistrationFormViewTests(TestCase):
         registration.refresh_from_db()
         self.assertEqual(registration.project_coordinator, "")
         self.assertEqual(registration.project_coordinator_prs_id, "")
+
+    def test_registration_coordinator_update_rejects_employee_without_specialty(self):
+        role_user = get_user_model().objects.create_user(
+            username="project.coordinator.no.specialty",
+            password="secret",
+            first_name="Роман",
+            last_name="Ролевой",
+        )
+        Employee.objects.create(
+            user=role_user,
+            patronymic="Романович",
+            role="",
+        )
+        registration = ProjectRegistration.objects.create(
+            number=6210,
+            group_member=self.group_member,
+            agreement_type=ProjectRegistration.AgreementType.MAIN,
+            type=self.product,
+            name="Проект без специальности координатора",
+            status="Не начат",
+            year=2026,
+        )
+
+        response = self.client.post(
+            reverse("registration_coordinator_update", args=[registration.pk]),
+            {"project_coordinator": "Ролевой Роман Романович"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Выберите сотрудника со специальностью Координатор.")
+        registration.refresh_from_db()
+        self.assertEqual(registration.project_coordinator, "")
 
     def test_registration_deadline_update_changes_project_deadline(self):
         registration = ProjectRegistration.objects.create(
@@ -7891,7 +8020,7 @@ class InfoRequestApprovalRevokeTests(TestCase):
             password="secret",
             is_staff=True,
         )
-        Employee.objects.create(user=self.staff_user, role=PROJECTS_HEAD_GROUP)
+        Employee.objects.create(user=self.staff_user, role="")
         self.expert_user = get_user_model().objects.create_user(
             username="info-revoke-expert",
             password="secret",
@@ -12907,11 +13036,12 @@ class ReportSubmissionAccessTests(TestCase):
         )
         self.pm_user, self.pm_employee = self._make_staff(
             "report-access-pm",
-            PROJECTS_HEAD_GROUP,
+            "",
             last_name="Сидоров",
             first_name="Сидор",
             patronymic="Сидорович",
         )
+        grant_manager_specialty(self.pm_employee)
         self.own_project = ProjectRegistration.objects.create(
             number=9101,
             type=self.product,
@@ -13122,14 +13252,96 @@ class ReportSubmissionAccessTests(TestCase):
             )
         )
 
+    def test_checklist_approval_follows_project_permission(self):
+        from checklists_app.views import _is_project_manager
+        from experts_app.project_permissions import PERM_VIEW_PROJECT
+
+        coordinator_user, _free_row, _foreign = self._coordinator_setup()
+        self.assertTrue(_is_project_manager(self.pm_user, self.own_project))
+        self.assertFalse(_is_project_manager(self.pm_user, self.foreign_project))
+        self.assertFalse(_is_project_manager(coordinator_user, self.own_project))
+
+        grant_manager_specialty(self.pm_employee, permissions=[PERM_VIEW_PROJECT])
+        pm_user = get_user_model().objects.get(pk=self.pm_user.pk)
+        self.assertFalse(_is_project_manager(pm_user, self.own_project))
+
+    def test_assigned_project_manager_without_specialty_has_no_project_rights(self):
+        from projects_app.report_access import can_mutate_report_slot
+
+        ExpertProfileSpecialty.objects.filter(profile__employee=self.pm_employee).delete()
+        pm_user = get_user_model().objects.get(pk=self.pm_user.pk)
+        self.assertFalse(can_mutate_report_slot(pm_user, project=self.own_project, is_full_report=True))
+
+    def test_disabled_permission_revokes_project_manager_right(self):
+        from experts_app.project_permissions import PERM_VIEW_PROJECT, PERM_VIEW_REPORTS
+        from projects_app.project_roles import has_project_permission
+        from projects_app.report_access import can_mutate_report_slot
+
+        grant_manager_specialty(self.pm_employee, permissions=[PERM_VIEW_PROJECT, PERM_VIEW_REPORTS])
+        pm_user = get_user_model().objects.get(pk=self.pm_user.pk)
+        self.assertTrue(has_project_permission(pm_user, self.own_project, PERM_VIEW_REPORTS))
+        self.assertFalse(can_mutate_report_slot(pm_user, project=self.own_project, is_full_report=True))
+
+    def test_coordinator_and_manager_positions_union_rights(self):
+        from experts_app.project_permissions import (
+            PERM_CHECKLIST_APPROVE,
+            PERM_REVIEW_KP,
+            PERM_REVIEW_RP,
+            PERM_UPLOAD_FREE_SECTIONS,
+        )
+        from projects_app.project_roles import (
+            SLOT_COORDINATOR,
+            SLOT_MANAGER,
+            user_project_permissions,
+            user_project_slots,
+        )
+        from projects_app.report_access import can_mutate_report_slot
+
+        dual_user, dual_employee = self._make_staff(
+            "report-access-dual",
+            EXPERT_GROUP,
+            last_name="Двоев",
+            first_name="Денис",
+            patronymic="Денисович",
+        )
+        grant_coordinator_specialty(dual_employee)
+        grant_manager_specialty(dual_employee)
+        full_name = Performer.employee_full_name(dual_employee)
+        self.own_project.project_coordinator = full_name
+        self.own_project.project_manager = full_name
+        self.own_project.save(update_fields=["project_coordinator", "project_manager"])
+        free_section = self.product.sections.create(
+            code="DUO",
+            short_name="Dual",
+            short_name_ru="Общий",
+            name_en="Dual",
+            name_ru="Общий",
+            accounting_type="Раздел",
+            position=5,
+        )
+        free_row = Performer.objects.create(
+            registration=self.own_project,
+            executor="Исполнитель Общего Раздела",
+            asset_name="Карьер",
+            typical_section=free_section,
+        )
+
+        self.assertEqual(user_project_slots(dual_user, self.own_project), [SLOT_COORDINATOR, SLOT_MANAGER])
+        permissions = user_project_permissions(dual_user, self.own_project)
+        for code in (PERM_UPLOAD_FREE_SECTIONS, PERM_REVIEW_KP, PERM_REVIEW_RP, PERM_CHECKLIST_APPROVE):
+            self.assertIn(code, permissions)
+        self.assertTrue(can_mutate_report_slot(dual_user, project=self.own_project, performer=free_row))
+        self.assertEqual(user_project_permissions(dual_user, self.foreign_project), set())
+
     def _coordinator_setup(self):
         coordinator_user, coordinator_employee = self._make_staff(
             "report-access-coordinator",
-            PROJECTS_COORDINATOR_GROUP,
+            EXPERT_GROUP,
             last_name="Кординов",
             first_name="Карл",
             patronymic="Карлович",
         )
+        grant_coordinator_specialty(coordinator_employee)
         self.own_project.project_coordinator = Performer.employee_full_name(coordinator_employee)
         self.own_project.save(update_fields=["project_coordinator"])
         free_section = self.product.sections.create(
@@ -13201,17 +13413,100 @@ class ReportSubmissionAccessTests(TestCase):
             )
         )
 
-    def test_coordinator_role_required_for_project_coordinator_uploads(self):
-        from projects_app.report_access import can_mutate_report_slot
+    def test_coordinator_specialty_required_for_project_coordinator_uploads(self):
+        from projects_app.report_access import can_mutate_report_slot, report_visible_registration_ids
 
         coordinator_user, free_row, _foreign = self._coordinator_setup()
-        employee = coordinator_user.employee_profile
-        employee.role = EXPERT_GROUP
-        employee.save(update_fields=["role"])
+        ExpertProfileSpecialty.objects.filter(
+            profile__employee=coordinator_user.employee_profile,
+            specialty__specialty=PROJECT_COORDINATOR_SPECIALTY,
+        ).delete()
         coordinator_user = get_user_model().objects.get(pk=coordinator_user.pk)
         self.assertFalse(
             can_mutate_report_slot(coordinator_user, project=self.own_project, performer=free_row)
         )
+        self.assertFalse(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, is_full_report=True)
+        )
+        self.assertEqual(report_visible_registration_ids(coordinator_user), set())
+
+    def test_assigned_coordinator_without_specialty_has_no_project_rights(self):
+        from projects_app.report_access import can_mutate_report_slot
+
+        role_user, role_employee = self._make_staff(
+            "report-access-role-coordinator",
+            "",
+            last_name="Ролев",
+            first_name="Роман",
+            patronymic="Романович",
+        )
+        self.own_project.project_coordinator = Performer.employee_full_name(role_employee)
+        self.own_project.save(update_fields=["project_coordinator"])
+        self.assertFalse(
+            can_mutate_report_slot(role_user, project=self.own_project, is_full_report=True)
+        )
+
+    def test_assigned_coordinator_gets_project_manager_executor_lock(self):
+        from projects_app.views import _is_executor_locked
+
+        coordinator_user, coordinator_employee = self._make_staff(
+            "report-access-lock-coordinator",
+            "",
+            last_name="Замков",
+            first_name="Захар",
+            patronymic="Захарович",
+        )
+        grant_coordinator_specialty(coordinator_employee)
+        self.own_project.project_coordinator = Performer.employee_full_name(coordinator_employee)
+        self.own_project.save(update_fields=["project_coordinator"])
+        free_section = self.product.sections.create(
+            code="LCK",
+            short_name="Lock",
+            short_name_ru="Блок",
+            name_en="Lock",
+            name_ru="Блок",
+            accounting_type="Раздел",
+            position=4,
+        )
+        own_row = Performer.objects.create(
+            registration=self.own_project,
+            executor="Исполнитель Своего Проекта",
+            asset_name="Карьер",
+            typical_section=free_section,
+        )
+        foreign_row = Performer.objects.create(
+            registration=self.foreign_project,
+            executor="Исполнитель Чужого Проекта",
+            asset_name="Фабрика",
+            typical_section=free_section,
+            participation_request_sent_at=timezone.now(),
+        )
+
+        self.assertFalse(_is_executor_locked(coordinator_user, own_row))
+        own_row.participation_request_sent_at = timezone.now()
+        self.assertTrue(_is_executor_locked(coordinator_user, own_row))
+        self.assertFalse(_is_executor_locked(coordinator_user, foreign_row))
+
+        ExpertProfileSpecialty.objects.filter(profile__employee=coordinator_employee).delete()
+        coordinator_user = get_user_model().objects.get(pk=coordinator_user.pk)
+        self.assertFalse(_is_executor_locked(coordinator_user, own_row))
+
+    def test_assigned_coordinator_expert_sees_project_read_only(self):
+        coordinator_user, _free_row, _foreign = self._coordinator_setup()
+        self.client.force_login(coordinator_user)
+
+        registry = self.client.get(reverse("projects_partial"))
+        self.assertEqual(registry.status_code, 200)
+        registry_ids = {row.pk for row in registry.context["registrations"]}
+        self.assertIn(self.own_project.pk, registry_ids)
+        self.assertNotIn(self.foreign_project.pk, registry_ids)
+        self.assertTrue(registry.context["is_expert"])
+
+        from checklists_app.views import _project_options
+
+        option_ids = {item["id"] for item in _project_options(coordinator_user)}
+        self.assertIn(self.own_project.pk, option_ids)
+        self.assertNotIn(self.foreign_project.pk, option_ids)
 
     def test_project_coordinator_http_upload(self):
         coordinator_user, free_row, _foreign = self._coordinator_setup()
@@ -13905,6 +14200,89 @@ class ReportCheckTests(TestCase):
         self.assertEqual(followed["workflow_status"], "Сдан РН")
         self.assertIn("На проверке РП", followed["review_row_html"])
         self.assertIn("Загрузить замечания", followed["review_row_html"])
+
+    def _kp_rp_review_upload(self):
+        from projects_app.models import ReportReviewEntry
+
+        ReportCheckRule.objects.create(
+            position=1,
+            completion_mode=ReportCheckRule.CompletionMode.SUM,
+            review_order=["ai", "kp", "rp"],
+        )
+        performer = Performer.objects.get(registration=self.project)
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=performer,
+            executor=performer.executor,
+            asset_name=performer.asset_name,
+            file_name="report.docx",
+            cloud_path="x",
+            sent_at=timezone.now(),
+            check_status=PerformerReportUpload.CheckStatus.DONE,
+            check_finding_count=0,
+            review_step="kp",
+            review_phase="review",
+        )
+        entry = ReportReviewEntry.objects.create(upload=upload, step="kp", phase="review")
+        return upload, entry
+
+    def _coordinator_and_manager_user(self):
+        user = get_user_model().objects.create_user(
+            username="report-check-kp-rp",
+            password="secret",
+            is_staff=True,
+            first_name="Анна",
+            last_name="Двойнова",
+        )
+        employee = Employee.objects.create(user=user, role=EXPERT_GROUP, patronymic="Петровна")
+        grant_coordinator_specialty(employee)
+        grant_manager_specialty(employee)
+        full_name = Performer.employee_full_name(employee)
+        self.project.project_coordinator = full_name
+        self.project.project_manager = full_name
+        self.project.save(update_fields=["project_coordinator", "project_manager"])
+        return user
+
+    def test_same_holder_of_kp_and_rp_auto_accepts_rp_step(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import accept_report_review_without_remarks
+
+        user = self._coordinator_and_manager_user()
+        upload, kp_entry = self._kp_rp_review_upload()
+
+        accept_report_review_without_remarks(user=user, upload=upload)
+
+        entries = list(ReportReviewEntry.objects.filter(upload=upload).order_by("pk"))
+        self.assertEqual([(item.step, item.settled) for item in entries], [("kp", True), ("rp", True)])
+        self.assertEqual(entries[1].basis_entry_id, kp_entry.pk)
+        self.assertEqual(entries[1].comment_count, 0)
+
+    def test_admin_accepting_kp_does_not_skip_rp_step(self):
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_submission import accept_report_review_without_remarks
+
+        upload, _kp_entry = self._kp_rp_review_upload()
+
+        accept_report_review_without_remarks(user=self.user, upload=upload)
+
+        self.assertFalse(ReportReviewEntry.objects.get(upload=upload, step="rp").settled)
+
+    def test_disabled_rp_review_permission_leaves_rp_step_to_admin(self):
+        from experts_app.project_permissions import PERM_VIEW_PROJECT
+        from projects_app.models import ReportReviewEntry
+        from projects_app.report_review import user_matches_review_step
+        from projects_app.report_submission import accept_report_review_without_remarks
+
+        user = self._coordinator_and_manager_user()
+        grant_manager_specialty(user.employee_profile, permissions=[PERM_VIEW_PROJECT])
+        user = get_user_model().objects.get(pk=user.pk)
+        upload, _kp_entry = self._kp_rp_review_upload()
+
+        accept_report_review_without_remarks(user=user, upload=upload)
+
+        self.assertFalse(ReportReviewEntry.objects.get(upload=upload, step="rp").settled)
+        self.assertFalse(user_matches_review_step(user, upload, "rp"))
+        self.assertTrue(user_matches_review_step(self.user, upload, "rp"))
 
     def test_review_result_cycle_is_separate_for_each_reviewer(self):
         from projects_app.models import ReportReviewEntry

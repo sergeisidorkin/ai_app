@@ -116,6 +116,20 @@
           </button>
         </div>
       </div>
+      <a href="{% url 'specialty_tariff_csv_download' %}"
+         id="specialty-tariffs-csv-download-btn"
+         class="btn btn-primary btn-sm d-flex align-items-center"
+         title="Скачать CSV"
+         role="button">
+        <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+      </a>
+      <button type="button"
+              id="specialty-tariffs-csv-upload-btn"
+              class="btn btn-primary btn-sm d-flex align-items-center"
+              title="Загрузить CSV">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+      </button>
+      <input type="file" id="specialty-tariffs-csv-file-input" accept=".csv" class="d-none">
     </div>
     </div>
 </div>

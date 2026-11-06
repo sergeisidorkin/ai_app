@@ -4,26 +4,18 @@ from django.core.validators import MaxValueValidator, MinValueValidator, RegexVa
 from django.db import models, transaction
 
 DEPARTMENT_HEAD_GROUP = "Руководитель направления"
-PROJECTS_HEAD_GROUP = "Руководитель проектов"
-PROJECTS_COORDINATOR_GROUP = "Координатор проектов"
 ADMIN_GROUP = "Администратор"
 DIRECTOR_GROUP = "Директор"
 DIRECTION_DIRECTOR_GROUP = "Директор направления"
 EXPERT_GROUP = "Эксперт"
 LAWYER_GROUP = "Юрист"
-MANAGER_GROUPS = (
-    DEPARTMENT_HEAD_GROUP,
-    PROJECTS_HEAD_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
-)
+MANAGER_GROUPS = (DEPARTMENT_HEAD_GROUP,)
 DIRECTOR_GROUPS = (
     DIRECTOR_GROUP,
     DIRECTION_DIRECTOR_GROUP,
 )
 ROLE_GROUPS_ORDER = (
     DEPARTMENT_HEAD_GROUP,
-    PROJECTS_HEAD_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
     ADMIN_GROUP,
     EXPERT_GROUP,
     DIRECTOR_GROUP,

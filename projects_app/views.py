@@ -148,10 +148,13 @@ from .forms import (
     ReportMacroForm,
     _parse_project_form_date,
     _project_coordinator_choices,
+    _match_project_manager_choice,
     _project_manager_choices,
     _resolve_project_coordinator_choice,
     _resolve_project_manager_choice,
 )
+from experts_app.project_permissions import PERM_EXECUTOR_LOCK, PERM_VIEW_PROJECT
+from .project_roles import has_project_permission, registration_ids_with_permission
 from .service_scope import (
     align_project_service_scope,
     collapse_service_rows,
@@ -208,8 +211,6 @@ from policy_app.models import (
     EXPERT_GROUP,
     LAWYER_GROUP,
     Product,
-    PROJECTS_COORDINATOR_GROUP,
-    PROJECTS_HEAD_GROUP,
     ServiceGoalReport,
     SYSTEM_DSC_SECTION_CODE,
     TypicalSection,
@@ -317,6 +318,9 @@ CONTRACT_IMAGE_PLACEHOLDER_SPECS = (
     ("[[facsimile_imcm]]", "Подпись руководителя организации"),
 )
 
+PROJECT_MANAGER_CHOICE_ERROR = "Выберите сотрудника со специальностью Руководитель проекта."
+
+
 def staff_required(user):
     return user.is_authenticated and user.is_staff
 
@@ -350,7 +354,7 @@ def _confirmed_project_ids_for_expert(user):
         return None
     if not employee:
         return []
-    return list(
+    project_ids = list(
         Performer.objects
         .filter(
             employee=employee,
@@ -363,6 +367,10 @@ def _confirmed_project_ids_for_expert(user):
         .values_list("registration_id", flat=True)
         .distinct()
     )
+    seen = set(project_ids)
+    for registration_id in sorted(registration_ids_with_permission(employee, PERM_VIEW_PROJECT) - seen):
+        project_ids.append(registration_id)
+    return project_ids
 
 
 def _uniform_summary_text(block, getter):
@@ -3181,7 +3189,15 @@ def registration_group_summary_manager(request):
         return error_response
 
     manager_value = (request.POST.get("project_manager") or "").strip()
-    manager_name, manager_prs_id = _resolve_project_manager_choice(manager_value)
+    manager_name, manager_prs_id, matched = _match_project_manager_choice(manager_value)
+    source = block[0].stage_project if block[0].stage_project_id else block[0]
+    if manager_value and not matched:
+        stored_name = (source.project_manager or "").strip()
+        stored_prs_id = (source.project_manager_prs_id or "").strip()
+        if manager_value not in {stored_name, stored_prs_id}:
+            return JsonResponse({"ok": False, "error": PROJECT_MANAGER_CHOICE_ERROR}, status=400)
+        manager_name = stored_name
+        manager_prs_id = stored_prs_id
     _save_summary_person(block, "project_manager", "project_manager_prs_id", manager_name, manager_prs_id)
     return JsonResponse({
         "ok": True,
@@ -3207,7 +3223,7 @@ def registration_group_summary_coordinator(request):
         stored_prs_id = (source.project_coordinator_prs_id or "").strip()
         if coordinator_value not in {stored_name, stored_prs_id}:
             return JsonResponse(
-                {"ok": False, "error": "Выберите координатора проектов."},
+                {"ok": False, "error": "Выберите сотрудника со специальностью Координатор."},
                 status=400,
             )
         coordinator_name = stored_name
@@ -3338,12 +3354,19 @@ def registration_status_update(request, pk: int):
 @require_POST
 def registration_manager_update(request, pk: int):
     manager_value = (request.POST.get("project_manager") or "").strip()
-    manager_name, manager_prs_id = _resolve_project_manager_choice(manager_value)
+    manager_name, manager_prs_id, matched = _match_project_manager_choice(manager_value)
 
     reg = get_object_or_404(
         ProjectRegistration.objects.only("id", "project_manager", "project_manager_prs_id"),
         pk=pk,
     )
+    if manager_value and not matched:
+        stored_name = (reg.project_manager or "").strip()
+        stored_prs_id = (reg.project_manager_prs_id or "").strip()
+        if manager_value not in {stored_name, stored_prs_id}:
+            return JsonResponse({"ok": False, "error": PROJECT_MANAGER_CHOICE_ERROR}, status=400)
+        manager_name = stored_name
+        manager_prs_id = stored_prs_id
     if reg.project_manager != manager_name or reg.project_manager_prs_id != manager_prs_id:
         reg.project_manager = manager_name
         reg.project_manager_prs_id = manager_prs_id
@@ -3379,7 +3402,7 @@ def registration_coordinator_update(request, pk: int):
         stored_prs_id = (reg.project_coordinator_prs_id or "").strip()
         if coordinator_value not in {stored_name, stored_prs_id}:
             return JsonResponse(
-                {"ok": False, "error": "Выберите координатора проектов."},
+                {"ok": False, "error": "Выберите сотрудника со специальностью Координатор."},
                 status=400,
             )
         coordinator_name = stored_name
@@ -6282,24 +6305,33 @@ def _effective_direction_id(typical_section, group_member=None):
 
 def _is_executor_locked(user, performer):
     """Исполнитель заблокирован:
-    - проектный руководитель: если раздел привязан к (не-директорскому) направлению экспертизы.
+    - «Директор направления» (правила руководителя проекта): если раздел привязан к (не-директорскому)
+      направлению экспертизы или запрос подтверждения отправлен и эксперт ещё не отклонил.
     - «Руководитель направления»: если раздел НЕ относится к его направлению,
       или если запрос подтверждения отправлен и эксперт ещё не отклонил.
+    - держатель позиции проекта (Координатор или Руководитель проекта по специальности) с правом
+      «Смена исполнителя по правилам руководителя проекта»: по тем же правилам руководителя проекта,
+      если у него нет другой роли с собственными правилами и он не суперпользователь.
     Директорские направления (OrgUnit.level == 1) считаются отсутствующими.
     """
     try:
         emp = user.employee_profile
     except Exception:
         return False
-    group_member = getattr(getattr(performer, "registration", None), "group_member", None)
+    registration = getattr(performer, "registration", None)
+    group_member = getattr(registration, "group_member", None)
     ts_direction_id = _effective_direction_id(performer.typical_section, group_member)
-    if emp.role in (PROJECTS_HEAD_GROUP, PROJECTS_COORDINATOR_GROUP, DIRECTION_DIRECTOR_GROUP):
+
+    def project_manager_lock():
         if ts_direction_id:
             return True
-        if (performer.participation_request_sent_at
-                and performer.participation_response != Performer.ParticipationResponse.DECLINED):
-            return True
-        return False
+        return bool(
+            performer.participation_request_sent_at
+            and performer.participation_response != Performer.ParticipationResponse.DECLINED
+        )
+
+    if emp.role == DIRECTION_DIRECTOR_GROUP:
+        return project_manager_lock()
     if emp.role == DEPARTMENT_HEAD_GROUP:
         if not ts_direction_id:
             return True
@@ -6312,6 +6344,12 @@ def _is_executor_locked(user, performer):
                 and performer.participation_response != Performer.ParticipationResponse.DECLINED):
             return True
         return False
+    if (
+        not user.is_superuser
+        and user.is_staff
+        and has_project_permission(user, registration, PERM_EXECUTOR_LOCK)
+    ):
+        return project_manager_lock()
     return False
 
 

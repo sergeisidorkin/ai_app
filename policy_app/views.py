@@ -211,6 +211,22 @@ TARIFF_CSV_HEADERS = [
     "Объем услуг в днях для ТКП",
     "Руководитель направления",
 ]
+SPECIALTY_TARIFF_CSV_HEADERS = [
+    "Группа специальностей",
+    "Специальности",
+    "Направления экспертизы",
+    "Дневная ставка оплаты в евро для ТКП",
+    "Дневная ставка оплаты для с/с",
+    "Руководитель направления",
+]
+SPECIALTY_TARIFF_CSV_HEADERS = [
+    "Группа специальностей",
+    "Специальности",
+    "Направления экспертизы",
+    "Дневная ставка оплаты в евро для ТКП",
+    "Дневная ставка оплаты для с/с",
+    "Руководитель направления",
+]
 SECTION_CSV_HEADERS = [
     "Продукт",
     "Код",
@@ -1422,6 +1438,7 @@ POLICY_MUTATION_URL_ENTITY = {
         ),
         "specialty-tariff": (
             "specialty_tariff_form_create", "specialty_tariff_form_edit", "specialty_tariff_delete",
+            "specialty_tariff_csv_upload",
             "specialty_tariff_move_up", "specialty_tariff_move_down",
         ),
         "tariff": (
@@ -7541,6 +7558,321 @@ def specialty_tariff_move_down(request, pk: int):
         SpecialtyTariff.objects.filter(pk=obj.pk).update(position=obj.position)
         SpecialtyTariff.objects.filter(pk=nxt.pk).update(position=nxt.position)
     return _render_policy_updated(request)
+
+
+def _csv_decimal(value):
+    if value is None:
+        return ""
+    return f"{Decimal(value):.2f}".replace(".", ",")
+
+
+def _specialty_tariff_ss_csv(item):
+    amount = _csv_decimal(item.daily_rate_ss)
+    code = ""
+    if item.currency_id and getattr(item, "currency", None):
+        code = (item.currency.code_alpha or "").strip()
+    return f"{amount} {code}".strip()
+
+
+def _parse_csv_money(raw, *, with_currency=False):
+    text = str(raw or "").replace("\u00a0", " ").strip()
+    if not text or text in {"—", "-"}:
+        return None, "", None
+    currency = ""
+    if with_currency:
+        parts = text.split()
+        if parts and parts[-1].isalpha() and len(parts[-1]) == 3:
+            currency = parts[-1].upper()
+            text = " ".join(parts[:-1]).strip()
+    if not text:
+        return None, currency, None
+    try:
+        value = Decimal(text.replace(" ", "").replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return None, currency, "invalid"
+    if not value.is_finite():
+        return None, currency, "invalid"
+    try:
+        if value < 0:
+            return None, currency, "negative"
+        value = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return None, currency, "invalid"
+    return value, currency, None
+
+
+def _specialty_tariff_expertise_labels(specialties):
+    labels = []
+    seen = set()
+    for specialty in specialties:
+        label = (getattr(getattr(specialty, "expertise_dir", None), "short_name", "") or "").strip()
+        if label == "—":
+            label = ""
+        key = _csv_lookup_key(label)
+        if key and key not in seen:
+            seen.add(key)
+            labels.append(label)
+    return labels
+
+
+def _user_csv_lookup_keys(user):
+    if not user:
+        return set()
+    labels = [user.username, user.get_full_name(), _tariff_owner_label(user)]
+    return {_csv_lookup_key(label) for label in labels if _csv_lookup_key(label)}
+
+
+def _read_policy_csv_rows(csv_file):
+    if not csv_file:
+        return None, {"ok": False, "error": "Файл не выбран."}
+    if not csv_file.name.lower().endswith(".csv"):
+        return None, {"ok": False, "error": "Допустимы только файлы CSV."}
+    try:
+        raw = csv_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_file.seek(0)
+            raw = csv_file.read().decode("cp1251")
+        except Exception:
+            return None, {
+                "ok": False,
+                "error": "Не удалось прочитать файл. Проверьте кодировку (UTF-8 или Windows-1251).",
+            }
+    try:
+        reader = csv.reader(io.StringIO(raw), delimiter=";")
+        rows = list(reader)
+        if not rows:
+            return None, {"ok": False, "error": "Файл пуст."}
+        if len(rows[0]) <= 1:
+            reader = csv.reader(io.StringIO(raw), delimiter=",")
+            rows = list(reader)
+    except csv.Error as exc:
+        return None, {
+            "ok": False,
+            "error": f"Ошибка разбора CSV: {exc}. Проверьте формат и кодировку файла.",
+        }
+    if len(rows) < 2:
+        return None, {
+            "ok": False,
+            "error": "Файл должен содержать заголовок и хотя бы одну строку данных.",
+        }
+    return rows, None
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_http_methods(["GET"])
+def specialty_tariff_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(SPECIALTY_TARIFF_CSV_HEADERS)
+    for item in _get_specialty_tariffs_for_user(request.user):
+        specialties = ", ".join(
+            specialty.specialty for specialty in item.display_specialties if (specialty.specialty or "").strip()
+        )
+        writer.writerow(
+            [
+                item.specialty_group,
+                specialties,
+                item.expertise_direction_display,
+                _csv_decimal(item.daily_rate_tkp_eur),
+                _specialty_tariff_ss_csv(item),
+                _tariff_owner_label(item.created_by) if item.created_by_id else "",
+            ]
+        )
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="specialty_tariffs.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def specialty_tariff_csv_upload(request):
+    from classifiers_app.models import OKVCurrency
+
+    rows, error = _read_policy_csv_rows(request.FILES.get("csv_file"))
+    if error:
+        return JsonResponse(error, status=400)
+
+    headers = rows[0]
+    group_col = _csv_header_index(headers, "Группа специальностей")
+    specialties_col = _csv_header_index(headers, "Специальности")
+    expertise_col = _csv_header_index(headers, "Направления экспертизы")
+    tkp_col = _csv_header_index(headers, "Дневная ставка оплаты в евро для ТКП")
+    ss_col = _csv_header_index(headers, "Дневная ставка оплаты для с/с")
+    owner_col = _csv_header_index(headers, "Руководитель направления")
+    missing = []
+    if group_col is None:
+        missing.append("Группа специальностей")
+    if specialties_col is None:
+        missing.append("Специальности")
+    if tkp_col is None:
+        missing.append("Дневная ставка оплаты в евро для ТКП")
+    if ss_col is None:
+        missing.append("Дневная ставка оплаты для с/с")
+    if missing:
+        return JsonResponse(
+            {"ok": False, "error": "В файле нет столбцов: " + ", ".join(missing) + "."},
+            status=400,
+        )
+
+    specialties_by_name = {}
+    ambiguous_specialties = set()
+    for specialty in ExpertSpecialty.objects.exclude(specialty="").select_related("expertise_dir"):
+        key = _csv_lookup_key(specialty.specialty)
+        if key in specialties_by_name:
+            ambiguous_specialties.add(key)
+        else:
+            specialties_by_name[key] = specialty
+    currencies = {
+        (currency.code_alpha or "").strip().upper(): currency
+        for currency in OKVCurrency.objects.exclude(code_alpha="")
+        if (currency.code_alpha or "").strip()
+    }
+    owners_by_label = {}
+    if request.user.is_superuser:
+        for user in get_user_model().objects.select_related("employee_profile").all():
+            for key in _user_csv_lookup_keys(user):
+                owners_by_label.setdefault(key, user)
+
+    created = 0
+    updated = 0
+    warnings = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        if not any(str(cell or "").strip() for cell in row):
+            continue
+        if not _csv_required_columns_present(row, [group_col, specialties_col, tkp_col, ss_col]):
+            warnings.append(
+                f"Строка {row_number}: недостаточно столбцов ({len(row)}, ожидается {len(headers)})."
+            )
+            continue
+
+        specialty_group = _csv_row_value(row, group_col)
+        if not specialty_group:
+            warnings.append(f"Строка {row_number}: не заполнено обязательное поле «Группа специальностей».")
+            continue
+        if len(specialty_group) > 255:
+            warnings.append(f"Строка {row_number}: группа специальностей длиннее 255 символов.")
+            continue
+
+        owner = request.user
+        owner_name = _csv_row_value(row, owner_col)
+        if request.user.is_superuser and owner_name:
+            owner = owners_by_label.get(_csv_lookup_key(owner_name))
+            if owner is None:
+                warnings.append(f"Строка {row_number}: руководитель «{owner_name}» не найден.")
+                continue
+        elif owner_name and _csv_lookup_key(owner_name) not in _user_csv_lookup_keys(request.user):
+            warnings.append(
+                f"Строка {row_number}: недостаточно прав для изменения строк руководителя «{owner_name}»."
+            )
+            continue
+
+        specialty_names = _split_csv_list_value(_csv_row_value(row, specialties_col), specialties_by_name)
+        selected = []
+        seen_specialty_ids = set()
+        missing_specialties = []
+        ambiguous_names = []
+        for name in specialty_names:
+            key = _csv_lookup_key(name)
+            if key in ambiguous_specialties:
+                ambiguous_names.append(name)
+                continue
+            specialty = specialties_by_name.get(key)
+            if specialty is None:
+                missing_specialties.append(name)
+                continue
+            if specialty.pk not in seen_specialty_ids:
+                selected.append(specialty)
+                seen_specialty_ids.add(specialty.pk)
+        if ambiguous_names:
+            warnings.append(
+                f"Строка {row_number}: неоднозначные специальности: {', '.join(ambiguous_names)}."
+            )
+            continue
+        if missing_specialties:
+            warnings.append(
+                f"Строка {row_number}: специальности не найдены: {', '.join(missing_specialties)}."
+            )
+            continue
+
+        tkp_rate, _ignored_currency, tkp_error = _parse_csv_money(_csv_row_value(row, tkp_col))
+        if tkp_error == "invalid":
+            warnings.append(
+                f"Строка {row_number}: некорректная дневная ставка для ТКП «{_csv_row_value(row, tkp_col)}»."
+            )
+            continue
+        if tkp_error == "negative":
+            warnings.append(f"Строка {row_number}: дневная ставка для ТКП не может быть отрицательной.")
+            continue
+        ss_rate, currency_code, ss_error = _parse_csv_money(_csv_row_value(row, ss_col), with_currency=True)
+        if ss_error == "invalid":
+            warnings.append(
+                f"Строка {row_number}: некорректная дневная ставка для с/с «{_csv_row_value(row, ss_col)}»."
+            )
+            continue
+        if ss_error == "negative":
+            warnings.append(f"Строка {row_number}: дневная ставка для с/с не может быть отрицательной.")
+            continue
+        currency = None
+        if currency_code:
+            currency = currencies.get(currency_code)
+            if currency is None:
+                warnings.append(f"Строка {row_number}: валюта «{currency_code}» не найдена.")
+                continue
+
+        uploaded_expertise = _csv_row_value(row, expertise_col)
+        if expertise_col is not None and uploaded_expertise not in {"", "—", "-"}:
+            current_labels = {
+                _csv_lookup_key(label) for label in _specialty_tariff_expertise_labels(selected)
+            }
+            uploaded_labels = {
+                _csv_lookup_key(part)
+                for part in uploaded_expertise.split(",")
+                if _csv_lookup_key(part) and _csv_lookup_key(part) not in {"—", "-"}
+            }
+            if uploaded_labels != current_labels:
+                warnings.append(
+                    f"Строка {row_number}: столбец «Направления экспертизы» не изменяется при загрузке."
+                )
+
+        matches = list(
+            SpecialtyTariff.objects.filter(created_by=owner, specialty_group__iexact=specialty_group)
+            .order_by("position", "id")[:2]
+        )
+        if len(matches) > 1:
+            warnings.append(
+                f"Строка {row_number}: несколько тарифов с группой «{specialty_group}». Строка пропущена."
+            )
+            continue
+        try:
+            item = matches[0] if matches else None
+            was_created = item is None
+            if was_created:
+                item = SpecialtyTariff(
+                    specialty_group=specialty_group,
+                    created_by=owner,
+                    position=_next_position(SpecialtyTariff, {"created_by": owner}),
+                )
+            item.specialty_group = specialty_group
+            item.daily_rate_tkp_eur = tkp_rate
+            item.daily_rate_ss = ss_rate
+            item.currency = currency
+            item.expertise_direction = None
+            item.save()
+            item.specialties.set(selected)
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+        except Exception as exc:
+            warnings.append(f"Строка {row_number}: ошибка сохранения — {exc}")
+
+    return _policy_import_success_response(
+        request, ok=True, created=created, updated=updated, warnings=warnings
+    )
 
 
 # --- Тарифы ---

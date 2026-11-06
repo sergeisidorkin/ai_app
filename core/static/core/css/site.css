@@ -1690,17 +1690,20 @@ body .second-sidebar + .flex-grow-1 {
   padding-top: 0;
 }
 
-#policy-pane .policy-table-editor {
+#policy-pane .policy-table-editor,
+#users-pane .users-table-editor {
   overflow: visible;
   position: relative;
 }
 
-#policy-pane .policy-table-editor > .table-responsive {
+#policy-pane .policy-table-editor > .table-responsive,
+#users-pane .users-table-editor > .table-responsive {
   overflow-x: auto;
   overflow-y: visible;
 }
 
-#policy-pane .policy-table-editor > .table-responsive > .table {
+#policy-pane .policy-table-editor > .table-responsive > .table,
+#users-pane .users-table-editor > .table-responsive > .table {
   margin-bottom: 0;
 }
 
@@ -1743,7 +1746,8 @@ body .second-sidebar + .flex-grow-1 {
 }
 
 #policy-pane .policy-table-footer,
-#report-submission-section .policy-table-footer {
+#report-submission-section .policy-table-footer,
+#users-pane .policy-table-footer {
   position: sticky;
   bottom: 0;
   z-index: 20;
@@ -1754,13 +1758,15 @@ body .second-sidebar + .flex-grow-1 {
 }
 
 #policy-pane .policy-table-footer.is-stuck,
-#report-submission-section .policy-table-footer.is-stuck {
+#report-submission-section .policy-table-footer.is-stuck,
+#users-pane .policy-table-footer.is-stuck {
   background: #fff;
   border-top-color: #e9ecef;
 }
 
 #policy-pane .policy-sticky-actions-marker,
-#report-submission-section .policy-sticky-actions-marker {
+#report-submission-section .policy-sticky-actions-marker,
+#users-pane .policy-sticky-actions-marker {
   display: block;
   height: 1px;
   margin-top: -1px;

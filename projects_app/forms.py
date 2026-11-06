@@ -8,9 +8,6 @@ from classifiers_app.models import OKSMCountry, OKVCurrency, LegalEntityIdentifi
 from core.forms import lock_field, locked_attrs
 from group_app.models import GroupMember
 from policy_app.models import (
-    DIRECTION_DIRECTOR_GROUP,
-    PROJECTS_COORDINATOR_GROUP,
-    PROJECTS_HEAD_GROUP,
     ExpertiseDirection,
     Product,
     TypicalSection,
@@ -28,6 +25,7 @@ from .models import (
     ReportMacro,
     WorkVolume,
 )
+from .project_roles import SLOT_COORDINATOR, SLOT_MANAGER, slot_employees_queryset
 
 _common_input = {"class": "form-control form-control-sm"}
 _common_select = {"class": "form-select form-select-sm"}
@@ -110,10 +108,6 @@ def _project_region_choices_for_country(country_id, current_value="", as_of=None
         choices.append(current_region)
     return choices
 
-PROJECT_MANAGER_ROLES = (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP)
-PROJECT_COORDINATOR_ROLES = (PROJECTS_COORDINATOR_GROUP,)
-
-
 def _employee_full_name(employee):
     parts = [
         employee.user.last_name.strip(),
@@ -139,20 +133,11 @@ def _strip_prs_suffix(label):
 
 
 def _project_manager_queryset():
-    return _employees_for_roles(PROJECT_MANAGER_ROLES)
+    return slot_employees_queryset(SLOT_MANAGER)
 
 
 def _project_coordinator_queryset():
-    return _employees_for_roles(PROJECT_COORDINATOR_ROLES)
-
-
-def _employees_for_roles(roles):
-    return (
-        Employee.objects
-        .select_related("user", "person_record")
-        .filter(role__in=roles)
-        .order_by("user__last_name", "user__first_name", "patronymic", "position", "id")
-    )
+    return slot_employees_queryset(SLOT_COORDINATOR)
 
 
 def _employee_queryset():
@@ -220,8 +205,12 @@ def _match_employee_choice(value, employees):
 
 
 def _resolve_project_manager_choice(value):
-    name, prs_id, _matched = _match_employee_choice(value, list(_project_manager_queryset()))
+    name, prs_id, _matched = _match_project_manager_choice(value)
     return name, prs_id
+
+
+def _match_project_manager_choice(value):
+    return _match_employee_choice(value, list(_project_manager_queryset()))
 
 
 def _resolve_project_coordinator_choice(value):

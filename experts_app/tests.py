@@ -18,8 +18,22 @@ from django.urls import reverse
 
 from classifiers_app.models import OKSMCountry, TerritorialDivision
 from experts_app.forms import ExpertContractDetailsForm
+from experts_app.views import CONTRACT_DETAILS_CSV_HEADERS
 from contacts_app.models import CitizenshipRecord, EmailRecord, PersonRecord, PhoneRecord, SpecialtyRecord
-from experts_app.models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
+from experts_app.models import (
+    PROJECT_COORDINATOR_SPECIALTY,
+    ExpertContractDetails,
+    ExpertProfile,
+    ExpertProfileSpecialty,
+    ExpertSpecialty,
+)
+from experts_app.project_permissions import (
+    DEFAULT_PROJECT_PERMISSIONS,
+    PERM_REVIEW_KP,
+    PERM_REVIEW_RP,
+    PERM_UPLOAD_FREE_SECTIONS,
+    PROJECT_MANAGER_SPECIALTY,
+)
 from group_app.models import GroupMember, OrgUnit
 from policy_app.models import (
     ADMIN_GROUP,
@@ -30,6 +44,8 @@ from policy_app.models import (
     Grade,
 )
 from users_app.models import Employee
+
+SEEDED_PROJECT_SPECIALTIES = (PROJECT_COORDINATOR_SPECIALTY, PROJECT_MANAGER_SPECIALTY)
 
 
 class ExpertProfileUiTests(TestCase):
@@ -794,9 +810,179 @@ class ExpertContractDetailsTests(TestCase):
         self.assertNotContains(response, "654321")
         self.assertNotContains(response, ">ИНН<", html=False)
 
+    def _contract_details_csv_upload(self, **overrides):
+        response = self.client.get(reverse("epr_contract_details_csv_download"))
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        header, data = rows[0], rows[1]
+        values = dict(zip(header, data))
+        values.update(overrides)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=";", lineterminator="\n")
+        writer.writerow(header)
+        writer.writerow([values[column] for column in header])
+        return SimpleUploadedFile(
+            "contract_details.csv",
+            buffer.getvalue().encode("utf-8"),
+            content_type="text/csv",
+        )
+
+    def test_contract_requisites_partial_renders_csv_buttons_under_table(self):
+        response = self.client.get(reverse("contract_requisites_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertLess(html.find('id="ecd-table"'), html.find('id="ecd-csv-download-btn"'))
+        self.assertLess(html.find('id="ecd-csv-download-btn"'), html.find('id="ecd-csv-upload-btn"'))
+        self.assertContains(response, reverse("epr_contract_details_csv_download"), html=False)
+        self.assertContains(response, reverse("epr_contract_details_csv_upload"), html=False)
+        self.assertContains(response, "Скачать CSV")
+        self.assertContains(response, "Загрузить CSV")
+
+    def test_contract_details_csv_download_exports_table_columns_without_facsimile(self):
+        with self.settings(MEDIA_ROOT=self.media_root):
+            self.contract_detail.facsimile_file.save("facsimile.png", ContentFile(b"png-data"), save=True)
+            self.contract_detail.snils = "111-111-111 11"
+            self.contract_detail.tax_rate = 6
+            self.contract_detail.self_employed = date(2024, 3, 1)
+            self.contract_detail.bank_name = "Банк"
+            self.contract_detail.save()
+
+            response = self.client.get(reverse("epr_contract_details_csv_download"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("contract_details.csv", response["Content-Disposition"])
+        self.assertNotIn("Факсимиле", response.content.decode("utf-8-sig"))
+        self.assertNotIn("facsimile.png", response.content.decode("utf-8-sig"))
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+        self.assertEqual(rows[0], list(CONTRACT_DETAILS_CSV_HEADERS))
+        values = dict(zip(rows[0], rows[1]))
+        self.assertEqual(values["ФИО"], "Иванов Иван Иванович")
+        self.assertEqual(values["ФИО (полное) род. падеж"], "Иванова Ивана Ивановича")
+        self.assertEqual(values["Страна"], "Россия")
+        self.assertEqual(values["Статус"], "Гражданство")
+        self.assertEqual(values["Дата рожд."], "17.05.1990")
+        self.assertEqual(values["Пол"], "мужской")
+        self.assertEqual(values["Гражданство"], "гражданин России")
+        self.assertEqual(values["Идент."], "Паспорт")
+        self.assertEqual(values["Номер"], "123456")
+        self.assertEqual(values["СНИЛС"], "111-111-111 11")
+        self.assertEqual(values["Самозан."], "01.03.2024")
+        self.assertEqual(values["Налог"], "6")
+        self.assertEqual(values["Наименование банка"], "Банк")
+
+    def test_contract_details_csv_upload_updates_editable_fields_and_keeps_facsimile(self):
+        with self.settings(MEDIA_ROOT=self.media_root):
+            self.contract_detail.facsimile_file.save("facsimile.png", ContentFile(b"png-data"), save=True)
+            self.contract_detail.snils = "111-111-111 11"
+            self.contract_detail.registration_postal_code = "101000"
+            self.contract_detail.registration_locality = "Москва"
+            self.contract_detail.registration_street = "Тверская"
+            self.contract_detail.registration_building = "1"
+            self.contract_detail.save()
+            facsimile_name = self.contract_detail.facsimile_file.name
+            csv_file = self._contract_details_csv_upload(**{
+                "СНИЛС": "222-222-222 22",
+                "Самозан.": "02.04.2025",
+                "Налог": "13%",
+                "Паспорт: серия": "4510",
+                "Паспорт: номер": "333444",
+                "Паспорт: дата выдачи": "01.06.2015",
+                "Наименование банка": "Новый банк",
+                "Рас. счет": "40817810000000000001",
+                "Пол": "женский",
+                "адрес регистрации": "другой адрес",
+                "ФИО (полное) род. падеж": "Другого имени",
+            })
+            details_before = ExpertContractDetails.objects.count()
+
+            response = self.client.post(reverse("epr_contract_details_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["updated"], 1)
+        self.assertTrue(any("«Пол»" in item for item in payload["warnings"]))
+        self.assertTrue(any("«адрес регистрации»" in item for item in payload["warnings"]))
+        self.assertTrue(any("«ФИО (полное) род. падеж»" in item for item in payload["warnings"]))
+        self.contract_detail.refresh_from_db()
+        self.assertEqual(self.contract_detail.snils, "222-222-222 22")
+        self.assertEqual(self.contract_detail.self_employed, date(2025, 4, 2))
+        self.assertEqual(self.contract_detail.tax_rate, 13)
+        self.assertEqual(self.contract_detail.passport_series, "4510")
+        self.assertEqual(self.contract_detail.passport_number, "333444")
+        self.assertEqual(self.contract_detail.passport_issue_date, date(2015, 6, 1))
+        self.assertEqual(self.contract_detail.bank_name, "Новый банк")
+        self.assertEqual(self.contract_detail.settlement_account, "40817810000000000001")
+        self.assertEqual(self.contract_detail.gender, "male")
+        self.assertEqual(self.contract_detail.full_name_genitive, "Иванова Ивана Ивановича")
+        self.assertEqual(self.contract_detail.registration_address, "101000 Москва, Тверская, 1")
+        self.assertEqual(self.contract_detail.facsimile_file.name, facsimile_name)
+        self.assertEqual(ExpertContractDetails.objects.count(), details_before)
+
+    def test_contract_details_csv_upload_skips_unknown_row_and_invalid_date(self):
+        self.contract_detail.snils = "111-111-111 11"
+        self.contract_detail.bank_name = "Банк"
+        self.contract_detail.save()
+
+        unknown = self._contract_details_csv_upload(**{
+            "ФИО": "Неизвестный Человек",
+            "СНИЛС": "999-999-999 99",
+        })
+        details_before = ExpertContractDetails.objects.count()
+        response = self.client.post(reverse("epr_contract_details_csv_upload"), {"csv_file": unknown})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertTrue(any("не найдены" in item for item in response.json()["warnings"]))
+
+        invalid = self._contract_details_csv_upload(**{
+            "Самозан.": "99.99.2024",
+            "СНИЛС": "999-999-999 99",
+        })
+        response = self.client.post(reverse("epr_contract_details_csv_upload"), {"csv_file": invalid})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertTrue(any("некорректная дата" in item for item in response.json()["warnings"]))
+
+        broken = SimpleUploadedFile(
+            "contract_details.csv",
+            "ФИО;Страна\nИванов Иван Иванович;Россия\n".encode("utf-8"),
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("epr_contract_details_csv_upload"), {"csv_file": broken})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("нет столбцов", response.json()["error"])
+
+        self.contract_detail.refresh_from_db()
+        self.assertEqual(self.contract_detail.snils, "111-111-111 11")
+        self.assertEqual(self.contract_detail.bank_name, "Банк")
+        self.assertEqual(ExpertContractDetails.objects.count(), details_before)
+
+
+class ProjectCoordinatorSpecialtySeedTests(TestCase):
+    def test_coordinator_specialty_is_seeded_with_project_rights(self):
+        self.assertTrue(
+            ExpertSpecialty.objects.filter(
+                specialty=PROJECT_COORDINATOR_SPECIALTY,
+                grants_project_rights=True,
+            ).exists()
+        )
+
+    def test_project_specialties_are_seeded_with_default_permissions(self):
+        for name in SEEDED_PROJECT_SPECIALTIES:
+            specialty = ExpertSpecialty.objects.get(specialty=name)
+            self.assertTrue(specialty.grants_project_rights)
+            self.assertEqual(specialty.project_permissions, list(DEFAULT_PROJECT_PERMISSIONS[name]))
+        manager = ExpertSpecialty.objects.get(specialty=PROJECT_MANAGER_SPECIALTY)
+        coordinator = ExpertSpecialty.objects.get(specialty=PROJECT_COORDINATOR_SPECIALTY)
+        self.assertIn(PERM_REVIEW_RP, manager.project_permissions)
+        self.assertNotIn(PERM_REVIEW_KP, manager.project_permissions)
+        self.assertIn(PERM_REVIEW_KP, coordinator.project_permissions)
+        self.assertNotIn(PERM_REVIEW_RP, coordinator.project_permissions)
+
 
 class ExpertSpecialtyCsvTests(TestCase):
     def setUp(self):
+        ExpertSpecialty.objects.filter(specialty__in=SEEDED_PROJECT_SPECIALTIES).delete()
         self.user = get_user_model().objects.create_user(
             username="experts-csv-admin",
             password="secret123",
@@ -871,6 +1057,87 @@ class ExpertSpecialtyCsvTests(TestCase):
         self.assertContains(response, 'id="esp-csv-upload-btn"', html=False)
         self.assertContains(response, 'hx-target="#policy-modal .modal-content"', html=False)
         self.assertContains(response, 'id="policy-expert-specialties-section"', html=False)
+
+    def test_specialty_table_marks_project_rights_specialty_with_person_icon(self):
+        flagged = ExpertSpecialty.objects.create(
+            specialty="Координатор проекта ГЭ",
+            grants_project_rights=True,
+            position=1,
+        )
+        plain = ExpertSpecialty.objects.create(specialty="Геолог без прав", position=2)
+
+        html = self.client.get(reverse("policy_expert_specialties_table")).content.decode()
+
+        flagged_row = re.search(r'<tr[^>]*data-row-group="%s"[^>]*>.*?</tr>' % flagged.pk, html, flags=re.S).group(0)
+        plain_row = re.search(r'<tr[^>]*data-row-group="%s"[^>]*>.*?</tr>' % plain.pk, html, flags=re.S).group(0)
+        self.assertIn("Координатор проекта ГЭ<i class=\"bi bi-person", flagged_row)
+        self.assertNotIn("bi-person", plain_row)
+
+    def test_admin_saves_project_rights_flag(self):
+        specialty = ExpertSpecialty.objects.create(specialty="Аналитик", position=1)
+
+        response = self.client.post(
+            reverse("esp_form_edit", args=[specialty.pk]),
+            {
+                "specialty": "Аналитик",
+                "specialty_en": "",
+                "owner_ids": "__group__",
+                "expertise_dir": "",
+                "specialization_area_suffix": "",
+                "grants_project_rights": "on",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        specialty.refresh_from_db()
+        self.assertTrue(specialty.grants_project_rights)
+
+    def test_specialty_modal_shows_project_permissions_block(self):
+        flagged = ExpertSpecialty.objects.create(
+            specialty="Аналитик с правами",
+            grants_project_rights=True,
+            project_permissions=[PERM_REVIEW_KP],
+            position=1,
+        )
+        plain = ExpertSpecialty.objects.create(specialty="Аналитик без прав", position=2)
+
+        flagged_html = self.client.get(reverse("esp_form_edit", args=[flagged.pk])).content.decode()
+        plain_html = self.client.get(reverse("esp_form_edit", args=[plain.pk])).content.decode()
+
+        self.assertIn('id="esp-project-permissions">', flagged_html)
+        self.assertIn("Права и доступы в проекте", flagged_html)
+        self.assertIn("Проверка отчёта на шаге КП", flagged_html)
+        self.assertRegex(flagged_html, r'value="%s"[^>]*checked' % PERM_REVIEW_KP)
+        self.assertNotRegex(flagged_html, r'value="%s"[^>]*checked' % PERM_REVIEW_RP)
+        self.assertIn('id="esp-project-permissions" hidden', plain_html)
+
+    def test_admin_saves_project_permissions_and_clears_them_without_flag(self):
+        specialty = ExpertSpecialty.objects.create(specialty="Аналитик", position=1)
+        data = {
+            "specialty": "Аналитик",
+            "specialty_en": "",
+            "owner_ids": "__group__",
+            "expertise_dir": "",
+            "specialization_area_suffix": "",
+            "grants_project_rights": "on",
+            "project_permissions": [PERM_REVIEW_RP, PERM_UPLOAD_FREE_SECTIONS, "unknown"],
+        }
+
+        response = self.client.post(reverse("esp_form_edit", args=[specialty.pk]), data)
+        self.assertEqual(response.status_code, 200)
+        specialty.refresh_from_db()
+        self.assertEqual(specialty.project_permissions, [])
+
+        data["project_permissions"] = [PERM_REVIEW_RP, PERM_UPLOAD_FREE_SECTIONS]
+        self.client.post(reverse("esp_form_edit", args=[specialty.pk]), data)
+        specialty.refresh_from_db()
+        self.assertEqual(specialty.project_permissions, [PERM_UPLOAD_FREE_SECTIONS, PERM_REVIEW_RP])
+
+        data.pop("grants_project_rights")
+        self.client.post(reverse("esp_form_edit", args=[specialty.pk]), data)
+        specialty.refresh_from_db()
+        self.assertFalse(specialty.grants_project_rights)
+        self.assertEqual(specialty.project_permissions, [])
 
     def test_specialty_table_splits_department_pairs_into_grouped_rows(self):
         OrgUnit.objects.create(
@@ -1661,6 +1928,7 @@ class ExpertSpecialtyAdminTests(TestCase):
 
 class ExpertSpecialtyRoleAccessTests(TestCase):
     def setUp(self):
+        ExpertSpecialty.objects.filter(specialty__in=SEEDED_PROJECT_SPECIALTIES).delete()
         self.company = GroupMember.objects.create(
             short_name="IMC Montan",
             country_name="Россия",
@@ -1831,6 +2099,25 @@ class ExpertSpecialtyRoleAccessTests(TestCase):
         self.assertEqual(own_edit.status_code, 200)
         self.assertContains(own_edit, "disabled")
         self.assertContains(own_edit, "ГЭ Горная экспертиза")
+
+    def test_department_head_cannot_change_project_rights_flag(self):
+        self.client.force_login(self.head_user)
+        response = self.client.post(
+            reverse("esp_form_edit", args=[self.own.pk]),
+            {
+                "specialty": "Своя",
+                "specialty_en": "",
+                "owner_ids": "__group__",
+                "expertise_dir": str(self.direction.pk),
+                "specialization_area_suffix": "",
+                "grants_project_rights": "on",
+                "project_permissions": [PERM_REVIEW_KP],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.own.refresh_from_db()
+        self.assertFalse(self.own.grants_project_rights)
+        self.assertEqual(self.own.project_permissions, [])
 
     def test_director_create_locks_management_direction(self):
         self.director_user.is_superuser = True

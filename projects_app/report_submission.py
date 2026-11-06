@@ -3581,13 +3581,7 @@ def submit_report_review_file(
 ):
     """Файл замечаний ручного шага. Открытые цепочки возвращают отчёт, пустой файл закрывает шаг."""
     from .docx_comments import DocxCommentError, count_open_comment_threads_by_author
-    from .report_review import (
-        REVIEW_PHASE_REVIEW,
-        latest_open_entry,
-        next_manual_step,
-        review_chain_for_upload,
-        user_can_submit_review,
-    )
+    from .report_review import latest_open_entry, user_can_submit_review
 
     if not user_can_submit_review(user, upload):
         raise ReportUploadError("Недостаточно прав.")
@@ -3659,8 +3653,6 @@ def submit_report_review_file(
         upload.review_cloud_path = review_path
         upload.review_file_link = public_url
 
-    from .models import ReportReviewEntry
-
     entry = open_entry
     saved_name = upload.review_file_name
     saved_link = upload.review_file_link
@@ -3707,14 +3699,7 @@ def submit_report_review_file(
             "created_at",
             "remarks_notice_pending",
         ])
-        nxt = next_manual_step(review_chain_for_upload(entry.upload), entry.step)
-        if nxt:
-            ReportReviewEntry.objects.create(
-                upload=entry.upload,
-                basis_entry=entry,
-                step=nxt,
-                phase=REVIEW_PHASE_REVIEW,
-            )
+        open_next_review_steps(user=user, basis_entry=entry)
     if appeal is not None:
         apply_appeal_correction(appeal.upload, appeal_counts, force_settled=True)
         if upload.pk == appeal.upload_id:
@@ -3782,14 +3767,7 @@ def ensure_rework_after_remarks(entry):
 
 def accept_report_review_without_remarks(*, user, upload):
     """Принять шаг без файла: тот же исход, что у файла без примечаний."""
-    from .models import ReportReviewEntry
-    from .report_review import (
-        REVIEW_PHASE_REVIEW,
-        latest_open_entry,
-        next_manual_step,
-        review_chain_for_upload,
-        user_can_submit_review,
-    )
+    from .report_review import latest_open_entry, user_can_submit_review
 
     if not user_can_submit_review(user, upload):
         raise ReportUploadError("Недостаточно прав.")
@@ -3807,15 +3785,37 @@ def accept_report_review_without_remarks(*, user, upload):
     target.review_step = ""
     target.review_phase = ""
     target.save(update_fields=["review_step", "review_phase"])
-    nxt = next_manual_step(review_chain_for_upload(target), entry.step)
-    if nxt:
-        ReportReviewEntry.objects.create(
-            upload=target,
+    open_next_review_steps(user=user, basis_entry=entry)
+    return target
+
+
+def open_next_review_steps(*, user, basis_entry):
+    """Открыть следующий шаг проверки после принятого.
+
+    Если следующий шаг по своей позиции в проекте держит тот же пользователь (например, он и Координатор,
+    и Руководитель проекта), шаг сразу принимается без замечаний: в истории остаются обе строки.
+    """
+    from .models import ReportReviewEntry
+    from .report_review import REVIEW_PHASE_REVIEW, next_manual_step, review_chain_for_upload, user_holds_review_step
+
+    upload = basis_entry.upload
+    chain = review_chain_for_upload(upload)
+    entry = basis_entry
+    while True:
+        nxt = next_manual_step(chain, entry.step)
+        if not nxt:
+            return
+        entry = ReportReviewEntry.objects.create(
+            upload=upload,
             basis_entry=entry,
             step=nxt,
             phase=REVIEW_PHASE_REVIEW,
         )
-    return target
+        if not user_holds_review_step(user, upload, nxt):
+            return
+        entry.settled = True
+        entry.comment_count = 0
+        entry.save(update_fields=["settled", "comment_count"])
 
 
 def validate_workspace_folder_roles(rows):

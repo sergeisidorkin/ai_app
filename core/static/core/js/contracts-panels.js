@@ -228,9 +228,79 @@
     return htmx.ajax('GET', url, { target: '#contract-requisites-pane', swap: 'outerHTML' });
   }
 
+  function getCookie(name) {
+    var match = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return match ? match.pop() : '';
+  }
+
+  function escapeCsvHtml(value) {
+    return String(value || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function showContractRequisitesCsvResult(html) {
+    var body = document.getElementById('contract-requisites-csv-result-body');
+    var modalEl = document.getElementById('contract-requisites-csv-result-modal');
+    if (!body || !modalEl || !window.bootstrap) {
+      window.alert(String(html).replace(/<[^>]+>/g, ''));
+      return;
+    }
+    body.innerHTML = html;
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  async function uploadContractRequisitesCsv(fileInput) {
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    var uploadUrl = fileInput.getAttribute('data-upload-url');
+    if (!uploadUrl) return;
+    var formData = new FormData();
+    formData.append('csv_file', file);
+    try {
+      var resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        var html = '<div class="mb-2"><strong>Обновлено строк: ' + data.updated + '</strong></div>';
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="text-danger mb-1"><strong>Предупреждения (' + data.warnings.length + '):</strong></div>';
+          html += '<div class="text-danger">';
+          for (var i = 0; i < data.warnings.length; i++) {
+            html += '<div class="mb-1">' + escapeCsvHtml(data.warnings[i]) + '</div>';
+          }
+          html += '</div>';
+        }
+        showContractRequisitesCsvResult(html);
+        refreshPane().catch(function () {});
+      } else {
+        showContractRequisitesCsvResult(
+          '<div class="text-danger"><strong>Ошибка:</strong> ' +
+          escapeCsvHtml(data.error || 'Неизвестная ошибка') + '</div>'
+        );
+      }
+    } catch (err) {
+      showContractRequisitesCsvResult(
+        '<div class="text-danger"><strong>Ошибка загрузки:</strong> ' + escapeCsvHtml(err.message) + '</div>'
+      );
+    }
+  }
+
   document.addEventListener('click', function(e) {
     var root = pane();
     if (!root) return;
+
+    var uploadBtn = e.target.closest('#ecd-csv-upload-btn');
+    if (uploadBtn && root.contains(uploadBtn)) {
+      e.preventDefault();
+      var fileInput = root.querySelector('#ecd-csv-file-input');
+      if (fileInput) {
+        fileInput.value = '';
+        fileInput.click();
+      }
+      return;
+    }
 
     var editBtn = e.target.closest('#ecd-edit-btn');
     if (!editBtn || !root.contains(editBtn)) return;
@@ -256,6 +326,12 @@
   document.addEventListener('change', function(e) {
     var root = pane();
     if (!root) return;
+
+    if (e.target.id === 'ecd-csv-file-input' && root.contains(e.target)) {
+      uploadContractRequisitesCsv(e.target);
+      e.target.value = '';
+      return;
+    }
 
     var master = e.target.closest('input.form-check-input[data-target-name="ecd-select"]');
     if (master && root.contains(master)) {

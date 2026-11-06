@@ -130,5 +130,23 @@
     <i class="bi bi-pencil-square me-2"></i>Редактировать
   </button>
   <div id="ecd-actions" class="d-none"></div>
+  <a href="{% url 'epr_contract_details_csv_download' %}"
+     id="ecd-csv-download-btn"
+     class="btn btn-primary btn-sm d-flex align-items-center"
+     title="Скачать CSV"
+     role="button">
+    <i class="bi bi-cloud-arrow-down me-2"></i>Скачать CSV
+  </a>
+  <button type="button"
+          id="ecd-csv-upload-btn"
+          class="btn btn-primary btn-sm d-flex align-items-center"
+          title="Загрузить CSV">
+    <i class="bi bi-cloud-arrow-up me-2"></i>Загрузить CSV
+  </button>
+  <input type="file"
+         id="ecd-csv-file-input"
+         accept=".csv"
+         class="d-none"
+         data-upload-url="{% url 'epr_contract_details_csv_upload' %}">
 </div>
 {% endif %}

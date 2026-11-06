@@ -2,7 +2,7 @@ import csv
 import io
 import json
 import os
-from datetime import date as date_type
+from datetime import date as date_type, datetime
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import models
@@ -78,6 +78,43 @@ CONTRACT_DETAILS_COLUMN_PICKER = (
     ("32", "Кор. счет банка-корр."),
     ("33", "Факсимиле"),
 )
+# header, role, field. Role is identity, derived, text, date, or tax.
+# Факсимиле в обмен не входит: файл изображения остаётся только в карточке.
+CONTRACT_DETAILS_CSV_COLUMNS = (
+    ("ФИО", "identity", ""),
+    ("ФИО (полное) род. падеж", "derived", ""),
+    ("Страна", "identity", ""),
+    ("Статус", "identity", ""),
+    ("Дата рожд.", "derived", ""),
+    ("Пол", "derived", ""),
+    ("Гражданство", "derived", ""),
+    ("Идент.", "identity", ""),
+    ("Номер", "identity", ""),
+    ("СНИЛС", "text", "snils"),
+    ("Самозан.", "date", "self_employed"),
+    ("Налог", "tax", "tax_rate"),
+    ("Паспорт: серия", "text", "passport_series"),
+    ("Паспорт: номер", "text", "passport_number"),
+    ("Паспорт: кем выдан", "text", "passport_issued_by"),
+    ("Паспорт: дата выдачи", "date", "passport_issue_date"),
+    ("Паспорт: срок действия", "date", "passport_expiry_date"),
+    ("Паспорт: код подразд.", "text", "passport_division_code"),
+    ("адрес регистрации", "derived", ""),
+    ("Наименование банка", "text", "bank_name"),
+    ("SWIFT", "text", "bank_swift"),
+    ("ИНН банка", "text", "bank_inn"),
+    ("БИК", "text", "bank_bik"),
+    ("Рас. счет", "text", "settlement_account"),
+    ("Кор. счет", "text", "corr_account"),
+    ("Адрес банка", "text", "bank_address"),
+    ("Наим. банка-корр.", "text", "corr_bank_name"),
+    ("Адрес банка-корр.", "text", "corr_bank_address"),
+    ("БИК банка-корр.", "text", "corr_bank_bik"),
+    ("SWIFT банка-корр.", "text", "corr_bank_swift"),
+    ("Рас. счет банка-корр.", "text", "corr_bank_settlement_account"),
+    ("Кор. счет банка-корр.", "text", "corr_bank_corr_account"),
+)
+CONTRACT_DETAILS_CSV_HEADERS = [header for header, _role, _field in CONTRACT_DETAILS_CSV_COLUMNS]
 
 
 def _render_form_with_errors(request, template, context):
@@ -538,6 +575,7 @@ def _specialty_form(request, data=None, instance=None):
     if specialty_table_access(request.user) in SCOPED_SPECIALTY_ACCESS:
         directions = directions_for_user(request.user)
         kwargs["lock_expertise"] = True
+        kwargs["lock_project_rights"] = True
         if instance is not None and instance.expertise_dir_id:
             kwargs["locked_expertise_dir"] = instance.expertise_dir
         elif len(directions) == 1:
@@ -1386,6 +1424,235 @@ def contract_facsimile_download(request, pk: int):
     response = FileResponse(open(file_path, "rb"), content_type="application/octet-stream")
     response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(basename)}"
     return response
+
+
+def _format_csv_date(value):
+    if not value:
+        return ""
+    return value.strftime("%d.%m.%Y")
+
+
+def _parse_csv_date(raw):
+    text = (raw or "").strip()
+    if text.endswith("г."):
+        text = text[:-2].strip()
+    elif text.endswith(" г"):
+        text = text[:-2].strip()
+    if not text:
+        return None, None
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt).date(), None
+        except ValueError:
+            continue
+    return None, "invalid"
+
+
+def _parse_csv_tax_rate(raw):
+    text = (raw or "").strip().replace(" ", "").replace("%", "")
+    if text.endswith(",0") or text.endswith(".0"):
+        text = text[:-2]
+    text = text.replace(",", ".")
+    if not text:
+        return None, None
+    if not text.isdigit():
+        return None, "некорректная ставка налога"
+    value = int(text)
+    if value > 100:
+        return None, "ставка налога не может быть больше 100"
+    return value, None
+
+
+def _csv_text_value(raw, field_name, header):
+    value = (raw or "").strip()
+    max_length = ExpertContractDetails._meta.get_field(field_name).max_length
+    if max_length and len(value) > max_length:
+        return None, f"столбец «{header}» длиннее {max_length} символов"
+    return value, None
+
+
+def _contract_details_identity_value(item, header):
+    if header == "ФИО":
+        return item.full_name
+    if header == "Страна":
+        return item.citizenship_country
+    if header == "Статус":
+        return item.citizenship_status
+    if header == "Идент.":
+        return item.citizenship_identifier
+    if header == "Номер":
+        return item.citizenship_number
+    return ""
+
+
+def _contract_details_derived_value(item, header):
+    if header == "ФИО (полное) род. падеж":
+        return item.full_name_genitive or ""
+    if header == "Дата рожд.":
+        return item.birth_date
+    if header == "Пол":
+        return item.get_gender_display() if item.gender else ""
+    if header == "Гражданство":
+        return item.citizenship or ""
+    if header == "адрес регистрации":
+        return item.registration_address or ""
+    return ""
+
+
+def _contract_details_identity_key(item):
+    return tuple(
+        _csv_lookup_key(_contract_details_identity_value(item, header))
+        for header, role, _field in CONTRACT_DETAILS_CSV_COLUMNS
+        if role == "identity"
+    )
+
+
+def _contract_details_export_cell(item, header, role, field_name):
+    if role == "identity":
+        return _contract_details_identity_value(item, header) or ""
+    if role == "derived":
+        value = _contract_details_derived_value(item, header)
+        if header == "Дата рожд.":
+            return _format_csv_date(value)
+        return value or ""
+    if role == "date":
+        return _format_csv_date(getattr(item, field_name))
+    if role == "tax":
+        value = getattr(item, field_name)
+        return "" if value is None else str(value)
+    return getattr(item, field_name) or ""
+
+
+def _derived_csv_value_differs(item, header, raw):
+    current = _contract_details_derived_value(item, header)
+    if header == "Дата рожд.":
+        parsed, error = _parse_csv_date(raw)
+        if error:
+            return True
+        return parsed != current
+    return _csv_lookup_key(raw) != _csv_lookup_key(current)
+
+
+def _contract_details_rows():
+    return _contract_details_context()["contract_details"]
+
+
+@login_required
+@user_passes_test(contract_requisites_access_required)
+@require_http_methods(["GET"])
+def contract_details_csv_download(request):
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(CONTRACT_DETAILS_CSV_HEADERS)
+    for item in _contract_details_rows():
+        writer.writerow(
+            [
+                _contract_details_export_cell(item, header, role, field_name)
+                for header, role, field_name in CONTRACT_DETAILS_CSV_COLUMNS
+            ]
+        )
+    response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="contract_details.csv"'
+    return response
+
+
+@login_required
+@user_passes_test(contract_requisites_access_required)
+@require_POST
+def contract_details_csv_upload(request):
+    rows, error = _parse_experts_csv_rows(request.FILES.get("csv_file"))
+    if error:
+        return JsonResponse(error, status=400)
+
+    header = [cell.strip() for cell in rows[0]]
+    missing = [name for name in CONTRACT_DETAILS_CSV_HEADERS if name not in header]
+    if missing:
+        return JsonResponse(
+            {"ok": False, "error": "В файле нет столбцов: " + ", ".join(missing) + "."},
+            status=400,
+        )
+    index = {name: pos for pos, name in enumerate(header)}
+    grouped = {}
+    for item in _contract_details_rows():
+        grouped.setdefault(_contract_details_identity_key(item), []).append(item)
+
+    updated = 0
+    warnings = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        if not any(cell.strip() for cell in row):
+            continue
+        if len(row) < len(header):
+            warnings.append(
+                f"Строка {row_number}: недостаточно столбцов ({len(row)}, ожидается {len(header)})."
+            )
+            continue
+
+        identity_key = tuple(
+            _csv_lookup_key(_csv_cell(row, index[column]))
+            for column, role, _field in CONTRACT_DETAILS_CSV_COLUMNS
+            if role == "identity"
+        )
+        full_name = _csv_cell(row, index["ФИО"])
+        if not full_name:
+            warnings.append(f"Строка {row_number}: не заполнено обязательное поле «ФИО».")
+            continue
+
+        matches = grouped.get(identity_key, [])
+        if not matches:
+            warnings.append(
+                f"Строка {row_number}: реквизиты для «{full_name}» не найдены, строка пропущена."
+            )
+            continue
+        if len(matches) > 1:
+            warnings.append(
+                f"Строка {row_number}: найдено несколько строк с такими ФИО и гражданством, строка пропущена."
+            )
+            continue
+
+        item = matches[0]
+        for column, role, _field in CONTRACT_DETAILS_CSV_COLUMNS:
+            if role != "derived":
+                continue
+            raw = _csv_cell(row, index[column])
+            if _derived_csv_value_differs(item, column, raw):
+                warnings.append(f"Строка {row_number}: столбец «{column}» не изменяется при загрузке.")
+
+        parsed = {}
+        row_errors = []
+        for column, role, field_name in CONTRACT_DETAILS_CSV_COLUMNS:
+            if role not in {"text", "date", "tax"}:
+                continue
+            raw = _csv_cell(row, index[column])
+            if role == "text":
+                value, field_error = _csv_text_value(raw, field_name, column)
+            elif role == "date":
+                value, field_error = _parse_csv_date(raw)
+                if field_error:
+                    field_error = f"некорректная дата в столбце «{column}»: «{raw.strip()}»"
+            else:
+                value, field_error = _parse_csv_tax_rate(raw)
+                if field_error:
+                    field_error = f"столбец «{column}»: {field_error}"
+            if field_error:
+                row_errors.append(field_error)
+            else:
+                parsed[field_name] = value
+        if row_errors:
+            for field_error in row_errors:
+                warnings.append(f"Строка {row_number}: {field_error}.")
+            continue
+
+        for field_name, value in parsed.items():
+            setattr(item, field_name, value)
+        try:
+            item.save(update_fields=list(parsed))
+            updated += 1
+        except Exception as exc:
+            warnings.append(f"Строка {row_number}: ошибка сохранения — {exc}")
+            item.refresh_from_db()
+
+    return JsonResponse({"ok": True, "updated": updated, "warnings": warnings})
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ from core.cloud_paths import (
     normalize_cloud_path,
 )
 from core.cloud_storage import get_nextcloud_root_path, get_primary_cloud_storage_label, is_nextcloud_primary
-from policy_app.models import DEPARTMENT_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP, PROJECTS_HEAD_GROUP
+from policy_app.models import DEPARTMENT_HEAD_GROUP
 from users_app.models import Employee
 from yandexdisk_app.workspace import (
     DEFAULT_SOURCE_DATA_FOLDER,
@@ -43,7 +43,6 @@ _LINK_RETRY_WAIT_BASE = 30.0
 _LINK_RETRY_WAIT_MAX = 35.0
 
 _HEARTBEAT_INTERVAL = 2.0
-_PROJECT_MANAGER_ROLES = (PROJECTS_HEAD_GROUP, DIRECTION_DIRECTOR_GROUP)
 
 def _heartbeat_sleep(seconds, progress, total):
     """Sleep in small chunks, yielding heartbeat progress events to keep
@@ -183,15 +182,36 @@ def create_basic_project_workspace_stream(
     )
 
     confirmed_performer_users = _confirmed_project_performer_users(project)
-    total = 4 + len(folder_paths) + len(confirmed_performer_users)
+    manager_employee = _resolve_project_manager_employee(project)
+    editor_employees = _project_permission_editor_employees(project, manager_employee)
+    total = 3 + len(folder_paths) + len(editor_employees) + len(confirmed_performer_users)
     current = 0
     owner_user_id = client.username
 
     try:
-        manager_link = _resolve_project_manager_nextcloud_link(project, client=client)
+        manager_link = None
+        if manager_employee is not None:
+            manager_link = _ensure_nextcloud_link_for_user(
+                manager_employee.user,
+                client=client,
+                display_name=_employee_full_name(manager_employee),
+            )
         if manager_link is None:
             yield WorkspaceResult(False, "Не удалось определить Nextcloud-пользователя руководителя проекта.")
             return
+        editor_links = []
+        for employee in editor_employees:
+            if employee.pk == manager_employee.pk:
+                editor_links.append(manager_link)
+                continue
+            link = _ensure_nextcloud_link_for_user(
+                employee.user,
+                client=client,
+                display_name=_employee_full_name(employee),
+            )
+            if not link or not link.nextcloud_user_id:
+                raise NextcloudApiError("Не удалось определить Nextcloud-пользователя участника проекта.")
+            editor_links.append(link)
         projects_root_path = yield from _ensure_folder_with_heartbeat(
             client, owner_user_id, _join_path(base, _sanitize(PROJECTS_SECTION_FOLDER)), current, total,
         )
@@ -219,14 +239,15 @@ def create_basic_project_workspace_stream(
             current += 1
             yield {"current": current, "total": total}
 
-        client.ensure_user_share(
-            owner_user_id,
-            project_path,
-            manager_link.nextcloud_user_id,
-            permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
-        )
-        current += 1
-        yield {"current": current, "total": total}
+        for editor_link in editor_links:
+            client.ensure_user_share(
+                owner_user_id,
+                project_path,
+                editor_link.nextcloud_user_id,
+                permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
+            )
+            current += 1
+            yield {"current": current, "total": total}
 
         for performer_user in confirmed_performer_users:
             performer_link = _ensure_nextcloud_link_for_user(performer_user, client=client)
@@ -430,23 +451,16 @@ def create_source_data_workspace_stream(
     yield WorkspaceResult(True, f"Пространство исходных данных в облачном хранилище «{storage_label}» успешно создано.")
 
 
-def _resolve_project_manager_nextcloud_link(
-    project,
-    *,
-    client: NextcloudApiClient,
-) -> NextcloudUserLink | None:
+def _resolve_project_manager_employee(project) -> Employee | None:
     manager_prs_id = _normalize_person_lookup(getattr(project, "project_manager_prs_id", "") or "")
     manager_name = _normalize_person_lookup(getattr(project, "project_manager", "") or "")
     if not manager_prs_id and not manager_name:
         return None
 
+    from projects_app.project_roles import SLOT_MANAGER, slot_employees_queryset
+
     match = None
-    employees = (
-        Employee.objects
-        .select_related("user", "person_record")
-        .filter(user__is_active=True, user__is_staff=True, role__in=_PROJECT_MANAGER_ROLES)
-        .order_by("user__last_name", "user__first_name", "patronymic", "id")
-    )
+    employees = slot_employees_queryset(SLOT_MANAGER).filter(user__is_active=True, user__is_staff=True)
     if manager_prs_id:
         for employee in employees:
             if manager_prs_id == _normalize_person_lookup(_employee_prs_id(employee)):
@@ -458,10 +472,29 @@ def _resolve_project_manager_nextcloud_link(
             if manager_name in _employee_lookup_values(employee):
                 match = employee
                 break
-    if match is None:
-        return None
+    return match
 
-    return _ensure_nextcloud_link_for_user(match.user, client=client, display_name=_employee_full_name(match))
+
+def _project_permission_editor_employees(project, manager_employee=None) -> list:
+    """Держатели позиций проекта с правом «Редактор рабочей папки проекта в Nextcloud».
+
+    Руководитель проекта, найденный по сокращённому ФИО, тоже считается держателем своей позиции.
+    """
+    from experts_app.project_permissions import PERM_NEXTCLOUD_EDITOR
+    from projects_app.project_roles import SLOT_MANAGER, employee_slot_permissions, registration_permission_holders
+
+    holders = [
+        employee
+        for employee in registration_permission_holders(project, PERM_NEXTCLOUD_EDITOR)
+        if employee.user.is_active and employee.user.is_staff
+    ]
+    if (
+        manager_employee is not None
+        and all(employee.pk != manager_employee.pk for employee in holders)
+        and PERM_NEXTCLOUD_EDITOR in employee_slot_permissions(manager_employee).get(SLOT_MANAGER, ())
+    ):
+        holders.insert(0, manager_employee)
+    return holders
 
 
 def grant_project_workspace_editor_access_for_performers(

@@ -21,4 +21,6 @@ urlpatterns = [
     # Contract Details
     path("profile/<int:pk>/contract-details/", views.contract_details_form_edit, name="epr_contract_details_edit"),
     path("profile/<int:pk>/contract-details/facsimile/download/", views.contract_facsimile_download, name="epr_contract_facsimile_download"),
+    path("contract-details/csv-download/", views.contract_details_csv_download, name="epr_contract_details_csv_download"),
+    path("contract-details/csv-upload/", views.contract_details_csv_upload, name="epr_contract_details_csv_upload"),
 ]
