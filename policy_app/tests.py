@@ -1210,6 +1210,7 @@ class PolicyProductWorkspaceTests(TestCase):
         html = response.content.decode()
 
         self.assertContains(response, "product-quick-edit", html=False)
+        self.assertContains(response, "product-name-link", html=False)
         self.assertContains(response, "product-workspace-edit-cell", html=False)
         self.assertContains(
             response,
@@ -1218,11 +1219,13 @@ class PolicyProductWorkspaceTests(TestCase):
         )
         self.assertIn("bi-pencil-square", html)
         self.assertIn("Наименование на английском языке", html)
-        short_name_index = html.index("Краткое имя")
+        display_name_index = html.index("Отображаемое в системе имя")
+        short_name_index = html.index("Продукт")
         english_index = html.index("Наименование на английском языке")
         pencil_index = html.index("product-workspace-edit-cell")
-        self.assertLess(short_name_index, pencil_index)
-        self.assertLess(pencil_index, english_index)
+        self.assertLess(display_name_index, pencil_index)
+        self.assertLess(pencil_index, short_name_index)
+        self.assertLess(short_name_index, english_index)
 
         nonstaff = get_user_model().objects.create_user(
             username="policy-workspace-table-nonstaff",
@@ -1232,6 +1235,7 @@ class PolicyProductWorkspaceTests(TestCase):
         self.client.force_login(nonstaff)
         nonstaff_response = self.client.get(reverse("policy_products_table"))
         self.assertNotContains(nonstaff_response, "product-quick-edit")
+        self.assertNotContains(nonstaff_response, "product-name-link")
         self.assertContains(nonstaff_response, "product-workspace-edit-cell", html=False)
 
     def test_products_table_filter_keeps_single_product_page(self):
@@ -1263,7 +1267,9 @@ class PolicyProductWorkspaceTests(TestCase):
         self.assertIn("e.detail.parameters.workspace = '1'", source)
         self.assertIn("parsed.searchParams.set('workspace', '1')", source)
         self.assertIn("dataset.policyWorkspace === '1'", source)
+        self.assertIn("closest('.product-name-link')", source)
         self.assertIn("closest('.product-quick-edit')", source)
+        self.assertIn("function openProductEditModal(tr)", source)
         self.assertIn("tr?.dataset?.workspaceUrl", source)
         self.assertIn("leavingWorkspace", source)
         self.assertIn("params.set('workspace', '1')", source)
@@ -4329,13 +4335,86 @@ class ServiceBlockClassifierTableTests(TestCase):
         html = response.content.decode()
         self.assertLess(html.index("ABC"), html.index("DEF"))
         headers = re.findall(r"<th[^>]*>(.*?)</th>", html, flags=re.S)
-        self.assertEqual(
-            [re.sub(r"\s+", " ", h).strip() for h in headers][-2:],
-            ["Экспертиза", "Исполнитель"],
-        )
+        cleaned_headers = [re.sub(r"\s+", " ", h).strip() for h in headers]
+        self.assertEqual(cleaned_headers[-3:-1], ["Экспертиза", "Исполнитель"])
+        self.assertEqual(cleaned_headers[-1], "Частота использования")
+        self.assertIn('class="sbc-col-usage"', html)
         first_row = html[html.index("ABC"):html.index("DEF")]
         self.assertNotIn("SBC Co", first_row)
         self.assertNotIn("Горное направление", first_row)
+
+    def test_usage_count_follows_product_sections_and_orders_code_dropdown(self):
+        from policy_app.views import _typical_section_inline_options
+
+        products = [
+            Product.objects.create(
+                short_name=short_name,
+                name_en=short_name,
+                name_ru=short_name,
+                position=index,
+            )
+            for index, short_name in enumerate(("UA", "UB", "UC", "UD"), start=1)
+        ]
+        TypicalSection.objects.create(
+            product=products[0],
+            service_block=self.second,
+            code="DEF",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=products[1],
+            service_block=self.second,
+            code="DEF",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=products[2],
+            service_block=self.first,
+            code="ABC",
+            position=1,
+        )
+        self.first.refresh_from_db()
+        self.second.refresh_from_db()
+        self.assertEqual(self.first.usage_count, 1)
+        self.assertEqual(self.second.usage_count, 2)
+
+        section = TypicalSection.objects.get(product=products[2])
+        section.position = 5
+        section.save(update_fields=["position"])
+        self.first.refresh_from_db()
+        self.assertEqual(self.first.usage_count, 1)
+
+        TypicalSection.objects.filter(product=products[1]).delete()
+        self.second.refresh_from_db()
+        self.assertEqual(self.second.usage_count, 1)
+
+        moved = TypicalSection.objects.get(product=products[0])
+        moved.service_block = self.first
+        moved.save()
+        self.first.refresh_from_db()
+        self.second.refresh_from_db()
+        self.assertEqual(self.first.usage_count, 2)
+        self.assertEqual(self.second.usage_count, 0)
+
+        TypicalSection.objects.bulk_create([
+            TypicalSection(
+                product=products[3],
+                service_block=self.second,
+                code="DEF",
+                position=1,
+            ),
+        ])
+        self.second.refresh_from_db()
+        self.assertEqual(self.second.usage_count, 1)
+
+        codes = [item["code"] for item in _typical_section_inline_options()["service_blocks"]]
+        self.assertLess(codes.index("ABC"), codes.index("DEF"))
+        self.assertNotIn("DSC", codes)
+
+        table = self.client.get(reverse("policy_service_block_classifiers_table"))
+        html = table.content.decode()
+        self.assertIn('class="sbc-col-usage"', html)
+        self.assertRegex(html, r'class="sbc-col-usage"[^>]*>2<')
 
     def test_form_locks_department_and_organization_from_expertise(self):
         create = self.client.get(reverse("service_block_classifier_form_create"))
@@ -12266,7 +12345,13 @@ class PolicyProductMapTests(TestCase):
         self.assertLess(html.find('data-product-map-level="5"'), html.find("Вид консалтинга:"))
         self.assertLess(html.find("Вид консалтинга:"), html.find("Тип услуги:"))
         self.assertLess(html.find("Тип услуги:"), html.find("Подтип услуги:"))
-        self.assertLess(html.find("Подтип услуги:"), html.find('data-product-map-zoom="out"'))
+        self.assertLess(html.find("Подтип услуги:"), html.find("Показать проекты"))
+        self.assertLess(html.find("Показать проекты"), html.find("Свернуть пустые"))
+        self.assertLess(html.find("Свернуть пустые"), html.find("Период:"))
+        self.assertIn("data-product-map-collapse-empty", html)
+        self.assertLess(html.find("Период:"), html.find('data-product-map-zoom="out"'))
+        self.assertIn("data-product-map-projects-toggle", html)
+        self.assertIn("data-product-map-period", html)
         self.assertLess(
             html.find('data-product-map-zoom="in"'),
             html.find('data-product-map-fullscreen="1"'),
@@ -12425,6 +12510,47 @@ class PolicyProductMapTests(TestCase):
         member = _product_map_find(alpha, "MAP-A Участник А")
         self.assertEqual(member.get("accuracy"), "<10%")
         self.assertEqual(member.get("productGroupId"), label.pk)
+
+    def test_product_map_counts_registry_rows_by_year(self):
+        from projects_app.models import ProjectRegistration, ProjectRegistrationProduct
+
+        def registration(number, year, products, **extra):
+            row = ProjectRegistration.objects.create(number=number, name=f"MAP {number}", year=year, **extra)
+            for rank, product in enumerate(products, start=1):
+                ProjectRegistrationProduct.objects.create(registration=row, product=product, rank=rank)
+            return row
+
+        registration(9101, 2024, [self.shared_product, self.orphan])
+        registration(9102, 2025, [self.shared_product])
+        parent = registration(9103, 2023, [self.group_product])
+        registration(9103, 2026, [self.group_product], stage_project=parent)
+        registration(9103, 2025, [self.group_product], stage_project=parent)
+        registration(9104, None, [self.shared_product])
+
+        response = self.client.get(reverse("product_map"))
+        html = response.content.decode()
+        maps = self._maps(response)
+        group, alpha, beta, none = [item["mind"]["data"] for item in maps]
+
+        for root in (alpha, beta):
+            self.assertEqual(
+                _product_map_find(root, "BOTH Два").get("projectYears"),
+                {"2024": 1, "2025": 1},
+            )
+        self.assertEqual(
+            _product_map_find(group, "GRP Групповой").get("projectYears"),
+            {"2025": 1, "2026": 1},
+        )
+        self.assertEqual(_product_map_find(none, "ORPHAN Сирота").get("projectYears"), {"2024": 1})
+        self.assertEqual(response.context["product_map_years"], [2024, 2025, 2026])
+        for year in (2024, 2025, 2026):
+            self.assertIn(f'id="product-map-period-filter-{year}"', html)
+        self.assertNotIn('id="product-map-period-filter-2023"', html)
+
+    def test_product_map_omits_project_years_without_registry_rows(self):
+        maps = self._maps(self.client.get(reverse("product_map")))
+        alpha = maps[1]["mind"]["data"]
+        self.assertNotIn("projectYears", _product_map_find(alpha, "BOTH Два"))
 
     def test_group_owner_falls_back_when_management_company_is_missing(self):
         self.management.is_management_company = False

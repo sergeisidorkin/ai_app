@@ -65,7 +65,7 @@
                         </div>
                     {% endif %}
                 </td>
-                <td class="text-nowrap policy-workspace-product-cell">{{ st.product.short_name }}</td>
+                <td class="text-nowrap policy-workspace-product-cell">{% include "policy_app/_policy_product_name_link.html" with product=st.product %}</td>
                 <td class="text-nowrap typical-section-code-col"><span class="typical-section-dsc-code">{{ st.section.code }}</span></td>
                 <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="section" data-inline-type="select" data-inline-value="{{ st.section_id }}"{% endif %}>{{ st.section.name_ru|default:st.section.name_en }}</td>
                 <td{% if policy_inline_edit %} data-inline-field="subsections" data-inline-type="text" data-inline-value="{{ st.subsections }}"{% endif %}>{{ st.subsections }}</td>

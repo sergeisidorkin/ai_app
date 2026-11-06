@@ -68,7 +68,7 @@
                                aria-label="Выделить строку тарифа">
                     </div>
                 </td>
-                <td class="text-nowrap policy-workspace-product-cell">{{ t.product.short_name }}</td>
+                <td class="text-nowrap policy-workspace-product-cell">{% include "policy_app/_policy_product_name_link.html" with product=t.product %}</td>
                 <td class="text-nowrap typical-section-code-col"><span class="typical-section-dsc-code">{{ t.section.code }}</span></td>
                 <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="section" data-inline-type="select" data-inline-value="{{ t.section_id }}"{% endif %}>{{ t.section.name_ru|default:t.section.name_en }}</td>
                 <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="base_rate_vpm" data-inline-type="number" data-inline-step="0.01" data-inline-min="0" data-inline-value="{{ t.base_rate_vpm }}"{% endif %}>{{ t.base_rate_vpm|format_money }}</td>

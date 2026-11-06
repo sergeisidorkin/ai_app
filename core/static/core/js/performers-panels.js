@@ -76,6 +76,15 @@
   }
 
   function pane() { return document.getElementById('performers-pane'); }
+  function projectsMasterAllowsRow(row) {
+    return typeof window.__projectsMasterAllowsRow !== 'function' || window.__projectsMasterAllowsRow(row);
+  }
+  function hideProjectOptionsOutsideMaster(inputs) {
+    if (typeof window.__hideProjectOptionsOutsideMaster === 'function') window.__hideProjectOptionsOutsideMaster(inputs);
+  }
+  function isProjectsScopedSection(section) {
+    return !!section && !!section.closest('#performers-pane');
+  }
   function updatePaymentRequestScrollGaps() {
     qa(
       '#participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap, #report-submission-section .report-submission-table-wrap, #report-check-section .report-check-table-wrap, #report-macros-section .report-macros-table-wrap',
@@ -1233,8 +1242,8 @@
       }
       if (row.classList.contains('section-collapsed')) {
         row.classList.remove('section-collapsed');
-        var pid = row.dataset.projectId || '';
-        if (showAll || filterValues.indexOf(pid) !== -1) {
+        var pid = row.dataset.owningProjectId || row.dataset.projectId || '';
+        if ((showAll || filterValues.indexOf(pid) !== -1) && projectsMasterAllowsRow(row)) {
           row.classList.remove('d-none');
         }
       }
@@ -1426,8 +1435,8 @@
       }
       if (row.classList.contains('asset-collapsed')) {
         row.classList.remove('asset-collapsed');
-        var pid = row.dataset.projectId || '';
-        if (showAll || filterValues.indexOf(pid) !== -1) {
+        var pid = row.dataset.owningProjectId || row.dataset.projectId || '';
+        if ((showAll || filterValues.indexOf(pid) !== -1) && projectsMasterAllowsRow(row)) {
           row.classList.remove('d-none');
         }
       }
@@ -2049,9 +2058,10 @@
     function applyFilter(values) {
       window.__participationProjectFilter = values.slice();
       const showAll = values.includes(FILTER_ALL) || !values.length;
+      hideProjectOptionsOutsideMaster(checks);
       getParticipationRows().forEach((row) => {
         const pid = row.dataset.owningProjectId || row.dataset.projectId || '';
-        const visible = showAll || values.includes(pid);
+        const visible = (showAll || values.includes(pid)) && projectsMasterAllowsRow(row);
         row.classList.toggle('d-none', !visible);
         if (!visible) {
           const checkbox = row.querySelector('input[name="participation-select"]');
@@ -2091,7 +2101,9 @@
         }
 
         if (value === FILTER_ALL && !event.target.checked) {
-          const firstProject = Array.from(checks).find((item) => item.value !== FILTER_ALL);
+          const firstProject = Array.from(checks).find((item) => (
+            item.value !== FILTER_ALL && !item.closest('.form-check')?.classList.contains('d-none')
+          ));
           if (firstProject) firstProject.checked = true;
         } else {
           const allCheckbox = root.querySelector('#participation-filter-all');
@@ -2102,19 +2114,12 @@
       });
     });
 
-    window.__syncParticipationProjectFilter = function(values) {
-      var isAll = values[0] === FILTER_ALL;
-      var isSingle = !isAll && values.length === 1;
-      var set = new Set(values);
+    window.__syncParticipationProjectFilter = function() {
       checks.forEach(function(cb) {
-        if (isAll) { cb.checked = cb.value === FILTER_ALL; cb.disabled = false; }
-        else if (isSingle) { cb.checked = cb.value === values[0]; cb.disabled = true; }
-        else {
-          if (cb.value === FILTER_ALL) { cb.checked = true; cb.disabled = false; }
-          else { cb.checked = set.has(cb.value); cb.disabled = !set.has(cb.value); }
-        }
+        cb.checked = cb.value === FILTER_ALL;
+        cb.disabled = false;
       });
-      applyFilter(isAll ? [FILTER_ALL] : values.slice());
+      applyFilter([FILTER_ALL]);
     };
 
     const initialValues = window.__participationProjectFilter && window.__participationProjectFilter.length
@@ -2159,6 +2164,7 @@
       label.textContent = (selected && selected.value)
         ? window.getProjectFilterSummaryLabel(selected, '—')
         : 'Не выбран';
+      hideProjectOptionsOutsideMaster(radios);
       updateInfoRequestState();
       applyRowGrouping(root.querySelector('#info-request-approval-section'));
       reapplyInfoRequestCollapse();
@@ -2180,7 +2186,9 @@
     const saved = window.__infoRequestProjectFilter;
     if (saved && saved.length === 1 && saved[0] !== '__all__' && saved[0] !== '') {
       const target = Array.from(radios).find((r) => r.value === saved[0]);
-      if (target) {
+      const targetAllowed = !target || typeof window.__projectsMasterAllows !== 'function'
+        || window.__projectsMasterAllows(target.dataset.owningProjectId || target.value);
+      if (target && targetAllowed) {
         target.checked = true;
         applyFilter(saved[0]);
         return;
@@ -2242,9 +2250,11 @@
       const showAll = normalized.includes(FILTER_ALL) || !normalized.length;
       const selectedProjects = new Set(normalized);
       getPaymentRequestSections().forEach((paymentSection) => {
+        const scoped = isProjectsScopedSection(paymentSection);
+        if (scoped) hideProjectOptionsOutsideMaster(paymentSection.querySelectorAll('.js-payment-request-filter'));
         getPaymentRequestRows(paymentSection).forEach((row) => {
           const pid = row.dataset.projectId || '';
-          const visible = showAll || selectedProjects.has(pid);
+          const visible = (showAll || selectedProjects.has(pid)) && (!scoped || projectsMasterAllowsRow(row));
           row.classList.toggle('d-none', !visible);
           if (!visible) {
             const checkbox = row.querySelector('input[name="payment-request-select"]');
@@ -2309,7 +2319,9 @@
           return;
         }
         if (value === FILTER_ALL && !event.target.checked) {
-          const firstProject = Array.from(checks).find((item) => item.value !== FILTER_ALL);
+          const firstProject = Array.from(checks).find((item) => (
+            item.value !== FILTER_ALL && !item.closest('.form-check')?.classList.contains('d-none')
+          ));
           if (firstProject) firstProject.checked = true;
         } else {
           const allCheckbox = Array.from(checks).find((item) => item.value === FILTER_ALL);
@@ -2954,8 +2966,15 @@
       label.textContent = values.length + ' выбрано';
     }
 
-    function reportFilterIsSpecific(values) {
+    function scopedReportFilter(values) {
       const filter = values || window.__reportSubmissionProjectFilter || [FILTER_ALL];
+      return typeof window.__projectsMasterScopedValues === 'function'
+        ? window.__projectsMasterScopedValues(filter, checks)
+        : filter;
+    }
+
+    function reportFilterIsSpecific(values) {
+      const filter = scopedReportFilter(values);
       return filter.length > 0 && !filter.includes(FILTER_ALL);
     }
 
@@ -2976,7 +2995,7 @@
       const params = new URLSearchParams();
       params.set('page', String(page || '1'));
       params.set('page_size', reportPageSizeForRequest());
-      const filter = window.__reportSubmissionProjectFilter || [FILTER_ALL];
+      const filter = scopedReportFilter();
       if (reportFilterIsSpecific(filter)) {
         filter.forEach((id) => params.append('project', id));
       }
@@ -2996,9 +3015,10 @@
       const block = document.querySelector('#report-submission-table-block');
       if (!block) return true;
       const rendered = (block.dataset.reportsProjects || FILTER_ALL).split(',').filter(Boolean).sort();
-      const wanted = (!values.length || values.includes(FILTER_ALL))
+      const scoped = scopedReportFilter(values);
+      const wanted = (!scoped.length || scoped.includes(FILTER_ALL))
         ? [FILTER_ALL]
-        : values.map(String).slice().sort();
+        : scoped.map(String).slice().sort();
       return rendered.length === wanted.length && rendered.every((value, index) => value === wanted[index]);
     }
 
@@ -3011,6 +3031,7 @@
       }
       window.__reportSubmissionProjectFilter = values.slice();
       updateLabel(values);
+      hideProjectOptionsOutsideMaster(checks);
       if (options.reload) reloadReportSubmissionTable('1');
     }
 
@@ -3033,7 +3054,9 @@
           return;
         }
         if (value === FILTER_ALL && !event.target.checked) {
-          const firstProject = Array.from(checks).find((item) => item.value !== FILTER_ALL);
+          const firstProject = Array.from(checks).find((item) => (
+            item.value !== FILTER_ALL && !item.closest('.form-check')?.classList.contains('d-none')
+          ));
           if (firstProject) firstProject.checked = true;
         } else {
           const allCheckbox = root.querySelector('#report-submission-filter-all');
@@ -3043,19 +3066,12 @@
       });
     });
 
-    window.__syncReportSubmissionProjectFilter = function(values) {
-      var isAll = values[0] === FILTER_ALL;
-      var isSingle = !isAll && values.length === 1;
-      var set = new Set(values);
+    window.__syncReportSubmissionProjectFilter = function() {
       checks.forEach(function(cb) {
-        if (isAll) { cb.checked = cb.value === FILTER_ALL; cb.disabled = false; }
-        else if (isSingle) { cb.checked = cb.value === values[0]; cb.disabled = true; }
-        else {
-          if (cb.value === FILTER_ALL) { cb.checked = true; cb.disabled = false; }
-          else { cb.checked = set.has(cb.value); cb.disabled = !set.has(cb.value); }
-        }
+        cb.checked = cb.value === FILTER_ALL;
+        cb.disabled = false;
       });
-      applyFilter(isAll ? [FILTER_ALL] : values.slice(), { reload: true });
+      applyFilter([FILTER_ALL], { reload: !reportBlockMatchesFilter([FILTER_ALL]) });
     };
 
     const initialValues = window.__reportSubmissionProjectFilter && window.__reportSubmissionProjectFilter.length
@@ -7206,7 +7222,10 @@
     }
     const reports = document.querySelector('#report-submission-table-block');
     if (reports) {
-      const filter = window.__reportSubmissionProjectFilter || [];
+      const localFilter = window.__reportSubmissionProjectFilter || [];
+      const filter = typeof window.__projectsMasterScopedValues === 'function'
+        ? window.__projectsMasterScopedValues(localFilter, document.querySelectorAll('.js-report-submission-filter'))
+        : localFilter;
       const filtered = filter.length && filter.indexOf('__all__') === -1;
       const rendered = (reports.dataset.reportsProjects || '__all__').split(',').filter(Boolean).sort();
       const wanted = filtered ? filter.map(String).slice().sort() : ['__all__'];

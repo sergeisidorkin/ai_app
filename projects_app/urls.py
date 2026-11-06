@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path("projects/partial/", views.projects_partial, name="projects_partial"),
+    path("projects/registry/table/", views.registration_registry_table, name="registration_registry_table"),
 
     path("projects/registration/create/", views.registration_form_create, name="registration_form_create"),
     path("projects/registration/csv-download/", views.registration_csv_download, name="registration_csv_download"),

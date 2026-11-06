@@ -20,7 +20,7 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import IntegerField, Max, Prefetch, Q, Value
+from django.db.models import Count, IntegerField, Max, Prefetch, Q, Value
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse, QueryDict
 from django.shortcuts import render, redirect, get_object_or_404
@@ -836,7 +836,7 @@ def _typical_section_inline_options():
         ServiceBlockClassifier.objects.exclude(code="DSC")
         .select_related("expertise_dir")
         .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
-        .order_by("position", "id")
+        .order_by("-usage_count", "position", "id")
     )
     from group_app.expertise_management import attach_display_units
 
@@ -2265,7 +2265,25 @@ def _product_map_group_id(product):
     return product.group_id or None
 
 
-def _product_map_product_nodes(owner_key, products, **meta):
+def _product_map_project_counts():
+    from projects_app.models import ProjectRegistration, ProjectRegistrationProduct
+
+    rows = ProjectRegistration.objects.registry_rows().exclude(year=None)
+    counts = defaultdict(dict)
+    links = (
+        ProjectRegistrationProduct.objects.filter(registration__in=rows)
+        .values("product_id", "registration__year")
+        .annotate(total=Count("registration", distinct=True))
+        .order_by()
+    )
+    for link in links:
+        counts[link["product_id"]][str(link["registration__year"])] = link["total"]
+    years = sorted(rows.order_by().values_list("year", flat=True).distinct())
+    return dict(counts), years
+
+
+def _product_map_product_nodes(owner_key, products, project_counts=None, **meta):
+    project_counts = project_counts or {}
     return [
         _product_map_node(
             f"{owner_key}-product-{product.pk}",
@@ -2274,13 +2292,14 @@ def _product_map_product_nodes(owner_key, products, **meta):
             productId=product.pk,
             accuracy=None if product.is_product_group else (product.accuracy or None),
             productGroupId=_product_map_group_id(product),
+            projectYears=project_counts.get(product.pk),
             **meta,
         )
         for product in products
     ]
 
 
-def _product_map_tree(owner_key, label, products, catalog):
+def _product_map_tree(owner_key, label, products, catalog, project_counts=None):
     grouped = defaultdict(list)
     for product in products:
         grouped[_product_map_anchor(product, catalog)].append(product)
@@ -2294,6 +2313,7 @@ def _product_map_tree(owner_key, label, products, catalog):
                 children = _product_map_product_nodes(
                     owner_key,
                     grouped.get(("subtype", subtype.pk), []),
+                    project_counts,
                     consultingId=consulting_type.pk,
                     serviceId=service_type.pk,
                     subtypeId=subtype.pk,
@@ -2315,6 +2335,7 @@ def _product_map_tree(owner_key, label, products, catalog):
             service_children = subtype_nodes + _product_map_product_nodes(
                 owner_key,
                 grouped.get(("service", service_type.pk), []),
+                project_counts,
                 consultingId=consulting_type.pk,
                 serviceId=service_type.pk,
             )
@@ -2334,6 +2355,7 @@ def _product_map_tree(owner_key, label, products, catalog):
         type_children = service_nodes + _product_map_product_nodes(
             owner_key,
             grouped.get(("type", consulting_type.pk), []),
+            project_counts,
             consultingId=consulting_type.pk,
         )
         if not type_children:
@@ -2352,6 +2374,7 @@ def _product_map_tree(owner_key, label, products, catalog):
     unclassified = _product_map_product_nodes(
         owner_key,
         grouped.get(("unclassified", None), []),
+        project_counts,
     )
     if unclassified:
         type_nodes.append(
@@ -2384,7 +2407,7 @@ def _product_map_group_label():
     return label or PRODUCT_MAP_GROUP_LABEL
 
 
-def _product_map_trees():
+def _product_map_trees(project_counts=None):
     catalog = _product_map_catalog()
     group_products = []
     unowned = []
@@ -2403,7 +2426,13 @@ def _product_map_trees():
     maps = []
     if group_products:
         maps.append(
-            _product_map_tree("group", _product_map_group_label(), group_products, catalog)
+            _product_map_tree(
+                "group",
+                _product_map_group_label(),
+                group_products,
+                catalog,
+                project_counts,
+            )
         )
     if by_member:
         members = (
@@ -2418,11 +2447,18 @@ def _product_map_trees():
                     member.short_name,
                     by_member[member.pk],
                     catalog,
+                    project_counts,
                 )
             )
     if unowned:
         maps.append(
-            _product_map_tree("none", PRODUCT_MAP_NO_OWNER_LABEL, unowned, catalog)
+            _product_map_tree(
+                "none",
+                PRODUCT_MAP_NO_OWNER_LABEL,
+                unowned,
+                catalog,
+                project_counts,
+            )
         )
     return maps
 
@@ -2430,10 +2466,14 @@ def _product_map_trees():
 @login_required
 @require_http_methods(["GET"])
 def product_map(request):
+    project_counts, project_years = _product_map_project_counts()
     return render(
         request,
         "policy_app/product_map.html",
-        {"product_maps": _product_map_trees()},
+        {
+            "product_maps": _product_map_trees(project_counts),
+            "product_map_years": project_years,
+        },
     )
 
 

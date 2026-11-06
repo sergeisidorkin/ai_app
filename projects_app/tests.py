@@ -25207,11 +25207,14 @@ class ProjectRegistrationCsvTests(TestCase):
         ])
 
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(response.json()["created"], 1)
         self.assertEqual(response.json()["updated"], 0)
-        self.assertEqual(ProjectRegistration.objects.count(), before)
+        self.assertEqual(ProjectRegistration.objects.count(), before + 1)
+        created = ProjectRegistration.objects.get(name="Неизвестный проект")
+        self.assertNotEqual(created.short_uid, "НЕТ-ТАКОГО")
+        self.assertFalse(created.stage_project_id)
         warnings = " ".join(response.json()["warnings"])
-        self.assertIn("не найден", warnings)
+        self.assertIn("нет в реестре", warnings)
         self.assertIn("неизвестный тип", warnings)
         self.assertIn("неизвестный статус", warnings)
 
@@ -25248,6 +25251,301 @@ class ProjectRegistrationCsvTests(TestCase):
         self.assertEqual(uploaded.status_code, 403)
         self.assertEqual(uploaded.json()["error"], REGISTRATION_CSV_ADMIN_ERROR)
         self.assertFalse(ProjectRegistration.objects.filter(name="Чужая загрузка").exists())
+
+    def _summary_stage_rows(self):
+        return [
+            {
+                "Номер": "3479",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Название": "Гайский ГОК",
+                "Статус": "Завершён",
+                "Год": "2022",
+            },
+            {
+                "Номер": "3479",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Проект ID": "347900010RU",
+                "Тип": "DD",
+                "Название": "Гайский ГОК — контроль",
+                "Статус": "Завершён",
+                "Год": "2022",
+            },
+            {
+                "Номер": "3479",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Проект ID": "347900020RU",
+                "Тип": "DD",
+                "Название": "Гайский ГОК — отчёт",
+                "Статус": "В работе",
+                "Год": "2022",
+            },
+        ]
+
+    def test_csv_upload_creates_summary_and_stages_with_separate_names(self):
+        response = self._csv_upload(self._summary_stage_rows())
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["created"], 3)
+        self.assertEqual(response.json()["updated"], 0)
+        self.assertTrue(response.json()["warnings"])
+        parent = ProjectRegistration.objects.get(number=3479, stage_project__isnull=True)
+        stages = list(parent.stages.order_by("position", "id"))
+        self.assertEqual(parent.name, "Гайский ГОК")
+        self.assertIsNone(parent.type_id)
+        self.assertEqual(parent.short_uid, "34790000RU")
+        self.assertEqual([stage.name for stage in stages], ["Гайский ГОК — контроль", "Гайский ГОК — отчёт"])
+        self.assertEqual([stage.status for stage in stages], ["Завершён", "В работе"])
+        self.assertEqual(stages[0].short_uid, "347900010RU")
+        self.assertEqual(stages[1].short_uid, "347900020RU")
+        self.assertEqual(parent.stages.count(), 2)
+
+        again = self._csv_upload(self._summary_stage_rows())
+        self.assertEqual(again.status_code, 200, again.content)
+        self.assertEqual(again.json()["created"], 0, again.content)
+        self.assertEqual(again.json()["updated"], 3, again.content)
+        self.assertEqual(again.json()["warnings"], [])
+        self.assertEqual(ProjectRegistration.objects.filter(number=3479).count(), 3)
+        parent.refresh_from_db()
+        self.assertEqual(
+            list(parent.stages.order_by("position", "id").values_list("name", flat=True)),
+            ["Гайский ГОК — контроль", "Гайский ГОК — отчёт"],
+        )
+
+        renamed = self._summary_stage_rows()
+        renamed[2]["Название"] = "Гайский ГОК — финал"
+        renamed[0]["Название"] = "Гайский ГОК, свод"
+        updated = self._csv_upload(renamed)
+        self.assertEqual(updated.json()["created"], 0, updated.content)
+        self.assertEqual(updated.json()["warnings"], [])
+        parent.refresh_from_db()
+        self.assertEqual(parent.name, "Гайский ГОК, свод")
+        self.assertEqual(
+            list(parent.stages.order_by("position", "id").values_list("name", flat=True)),
+            ["Гайский ГОК — контроль", "Гайский ГОК — финал"],
+        )
+        self.assertEqual(ProjectRegistration.objects.filter(number=3479).count(), 3)
+
+    def test_csv_upload_same_number_opens_separate_summary_projects(self):
+        rows = []
+        for name in ("Восток", "Эльконский ГОК"):
+            rows.append({
+                "Номер": "3788",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Название": name,
+                "Статус": "Завершён",
+                "Год": "2026",
+            })
+            rows.append({
+                "Номер": "3788",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Проект ID": "378800010RU",
+                "Тип": "DD",
+                "Название": f"{name} — обзор",
+                "Статус": "Завершён",
+                "Год": "2026",
+            })
+            rows.append({
+                "Номер": "3788",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Проект ID": "378800020RU",
+                "Тип": "DD",
+                "Название": f"{name} — аудит",
+                "Статус": "В работе",
+                "Год": "2026",
+            })
+
+        response = self._csv_upload(rows)
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["created"], 6, response.content)
+        parents = list(
+            ProjectRegistration.objects.filter(number=3788, stage_project__isnull=True).order_by("position", "id")
+        )
+        self.assertEqual([parent.name for parent in parents], ["Восток", "Эльконский ГОК"])
+        self.assertEqual(
+            [list(parent.stages.order_by("position", "id").values_list("name", flat=True)) for parent in parents],
+            [["Восток — обзор", "Восток — аудит"], ["Эльконский ГОК — обзор", "Эльконский ГОК — аудит"]],
+        )
+        self.assertNotEqual(parents[0].short_uid, parents[1].short_uid)
+
+        again = self._csv_upload(rows)
+        self.assertEqual(again.json()["created"], 0, again.content)
+        self.assertEqual(ProjectRegistration.objects.filter(number=3788, stage_project__isnull=True).count(), 2)
+        self.assertEqual(ProjectRegistration.objects.filter(number=3788, stage_project__isnull=False).count(), 4)
+
+    def test_csv_upload_summary_without_stages_creates_nothing(self):
+        before = ProjectRegistration.objects.count()
+        response = self._csv_upload([{
+            "Номер": "3600",
+            "Вид соглашения": "Основной договор",
+            "Группа": "RU",
+            "Название": "Пустая сводка",
+            "Статус": "Не начат",
+        }])
+
+        self.assertEqual(response.json()["created"], 0)
+        self.assertEqual(ProjectRegistration.objects.count(), before)
+        self.assertIn("без этапов", " ".join(response.json()["warnings"]))
+
+    def test_csv_upload_repeated_existing_project_id_updates_once(self):
+        response = self._csv_upload([
+            {
+                "Номер": "4501",
+                "Проект ID": self.registration.short_uid,
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Тип": "DD",
+                "Название": "Первая правка",
+                "Статус": "Не начат",
+            },
+            {
+                "Номер": "4501",
+                "Проект ID": self.registration.short_uid,
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Тип": "DD",
+                "Название": "Вторая правка",
+                "Статус": "Не начат",
+            },
+        ])
+
+        self.assertEqual(response.json()["updated"], 1, response.content)
+        self.assertEqual(response.json()["created"], 0)
+        self.assertIn("повторяется", " ".join(response.json()["warnings"]))
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.name, "Первая правка")
+
+    def test_csv_upload_flat_unknown_id_updates_same_project_on_second_load(self):
+        payload = {
+            "Номер": "3536",
+            "Вид соглашения": "Основной договор",
+            "Группа": "RU",
+            "Проект ID": "35360000RU",
+            "Тип": "DD",
+            "Название": "Удокан",
+            "Статус": "Завершён",
+            "Год": "2022",
+        }
+        first = self._csv_upload([payload])
+        self.assertEqual(first.json()["created"], 1, first.content)
+        created = ProjectRegistration.objects.get(name="Удокан")
+        self.assertFalse(created.stage_project_id)
+        self.assertEqual(created.short_uid, "35360000RU")
+
+        payload["Название"] = "Удокан, правка"
+        second = self._csv_upload([payload])
+        self.assertEqual(second.json()["created"], 0, second.content)
+        self.assertEqual(second.json()["updated"], 1, second.content)
+        self.assertEqual(ProjectRegistration.objects.filter(number=3536).count(), 1)
+        created.refresh_from_db()
+        self.assertEqual(created.name, "Удокан, правка")
+
+    def _product(self, short_name, position):
+        return Product.objects.create(
+            short_name=short_name,
+            name_en=short_name,
+            name_ru=short_name,
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=position,
+        )
+
+    def test_csv_upload_same_name_and_different_types_show_project_code(self):
+        pfs = self._product("PFS", 20)
+        cpr = self._product("CPR", 21)
+        rows = [
+            {
+                "Номер": "3758",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Проект ID": "37580000RU",
+                "Тип": "PFS",
+                "Название": "К-Поташ",
+                "Статус": "Завершён",
+                "Год": "2025",
+            },
+            {
+                "Номер": "3758",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Проект ID": "37580000RU",
+                "Тип": "CPR",
+                "Название": "К-Поташ",
+                "Статус": "Завершён",
+                "Год": "2025",
+            },
+        ]
+        for product, name in ((pfs, "PFS"), (cpr, "CPR")):
+            registration = ProjectRegistration.objects.create(
+                number=3758,
+                group_member=self.group_member,
+                agreement_type=ProjectRegistration.AgreementType.MAIN,
+                type=product,
+                name="К-Поташ",
+                status="Завершён",
+                year=2025,
+            )
+            ProjectRegistrationProduct.objects.create(
+                registration=registration,
+                product=product,
+                rank=1,
+            )
+        ProjectRegistration.refresh_number_sequences([3758])
+
+        response = self._csv_upload(rows)
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["created"], 1, response.content)
+        self.assertEqual(response.json()["updated"], 2, response.content)
+        parent = ProjectRegistration.objects.get(number=3758, stage_project__isnull=True)
+        stages = list(parent.stages.order_by("position", "id"))
+        self.assertEqual(parent.short_uid, "37580000RU")
+        self.assertEqual([stage.short_uid for stage in stages], ["375800010RU", "375800020RU"])
+        self.assertEqual([stage.type_short_display for stage in stages], ["PFS", "CPR"])
+        self.assertEqual(ProjectRegistration.objects.filter(number=3758).count(), 3)
+        page = self.client.get(reverse("projects_partial"))
+        self.assertContains(
+            page,
+            f'data-reg-summary-cell="project-id"><span class="clf-id-droid-mono">{parent.short_uid}</span>',
+            html=False,
+        )
+
+        again = self._csv_upload(rows)
+        self.assertEqual(again.json()["created"], 0, again.content)
+        self.assertEqual(ProjectRegistration.objects.filter(number=3758).count(), 3)
+
+    def test_csv_upload_identical_rows_stay_separate_projects(self):
+        rows = [
+            {
+                "Номер": "3579",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Тип": "DD",
+                "Название": "Кумроч",
+                "Статус": "Завершён",
+                "Год": "2023",
+            },
+            {
+                "Номер": "3579",
+                "Вид соглашения": "Основной договор",
+                "Группа": "RU",
+                "Тип": "DD",
+                "Название": "Кумроч",
+                "Статус": "Завершён",
+                "Год": "2023",
+            },
+        ]
+        response = self._csv_upload(rows)
+        self.assertEqual(response.json()["created"], 2, response.content)
+        self.assertFalse(ProjectRegistration.objects.filter(number=3579, stage_project__isnull=False).exists())
+        self.assertEqual(ProjectRegistration.objects.filter(number=3579, stage_project__isnull=True).count(), 2)
 
 
 class ProjectServiceScopeTests(TestCase):
@@ -25532,3 +25830,340 @@ class ProjectServiceScopeTests(TestCase):
         self.assertEqual(positions[first_factory.pk], 2)
         self.assertEqual(positions[second_quarry.pk], 1)
         self.assertEqual(positions[second_factory.pk], 2)
+
+
+class RegistrationRegistryPaginationTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="registry-page-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.projects = [
+            ProjectRegistration.objects.create(
+                number=7000 + index,
+                name=f"Реестр {index:02d}",
+                year=2026,
+            )
+            for index in range(1, 27)
+        ]
+
+    def _table_html(self, response):
+        html = response.content.decode()
+        start = html.find('id="registration-registry-table"')
+        self.assertGreaterEqual(start, 0)
+        end = html.find('class="policy-table-footer"', start)
+        self.assertGreater(end, start)
+        return html[start:end]
+
+    def test_registry_footer_is_sticky_and_paginates_with_200_rows(self):
+        response = self.client.get(reverse("projects_partial"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn('id="registration-registry-section"', html)
+        self.assertIn('class="policy-table-footer"', html)
+        self.assertIn('id="policy-page-size-registration-registry"', html)
+        self.assertIn("Показано строк", html)
+        self.assertIn(">25</option>", html)
+        self.assertIn(">50</option>", html)
+        self.assertIn(">100</option>", html)
+        self.assertIn(">200</option>", html)
+        self.assertIn("26\u201326 из 26", html)
+        self.assertIn('data-registry-page="2"', html)
+        table = self._table_html(response)
+        self.assertIn("Реестр 26", table)
+        self.assertNotIn("Реестр 01", table)
+        self.assertEqual(table.count('data-project-id="'), 1)
+
+        table_url = reverse("registration_registry_table")
+        self.assertIn(f'hx-get="{table_url}?page_size=25&amp;page=1"', html)
+        self.assertIn('hx-target="#registration-registry-section"', html)
+
+        first = self.client.get(table_url, {"page": 1, "page_size": 25})
+        self.assertEqual(first.status_code, 200)
+        first_html = first.content.decode()
+        self.assertIn('id="registration-registry-section"', first_html)
+        self.assertNotIn("График проекта", first_html)
+        first_table = self._table_html(first)
+        self.assertIn("Реестр 01", first_table)
+        self.assertIn("Реестр 25", first_table)
+        self.assertNotIn("Реестр 26", first_table)
+        self.assertIn("1\u201325 из 26", first_html)
+        self.assertIn('data-registry-page="1"', first_html)
+        self.assertIn('data-registry-page-size="25"', first_html)
+
+        wide = self.client.get(table_url, {"page_size": 200})
+        wide_html = wide.content.decode()
+        self.assertIn("1\u201326 из 26", wide_html)
+        wide_table = self._table_html(wide)
+        self.assertIn("Реестр 01", wide_table)
+        self.assertIn("Реестр 26", wide_table)
+
+        invalid = self.client.get(table_url, {"page_size": "abc"})
+        self.assertIn("26\u201326 из 26", invalid.content.decode())
+
+        filtered = self.client.get(table_url, {"registry_project": self.projects[0].pk})
+        filtered_table = self._table_html(filtered)
+        self.assertIn("Реестр 01", filtered_table)
+        self.assertNotIn("Реестр 02", filtered_table)
+        self.assertIn("Отфильтровано строк: 1", filtered.content.decode())
+
+        root = Path(__file__).resolve().parents[1]
+        self._assert_registry_page_assets(root)
+
+    def test_registry_page_keeps_project_stages_together(self):
+        for project in self.projects[24:]:
+            project.delete()
+        parent = ProjectRegistration.objects.create(number=8001, name="Проект этапов", year=2026)
+        first_stage = ProjectRegistration.objects.create(
+            number=8001, name="Этап А", year=2026, stage_project=parent
+        )
+        second_stage = ProjectRegistration.objects.create(
+            number=8001, name="Этап Б", year=2026, stage_project=parent
+        )
+        table_url = reverse("registration_registry_table")
+
+        first_page = self.client.get(table_url, {"page": 1, "page_size": 25})
+        first_table = self._table_html(first_page)
+        self.assertIn("Реестр 24", first_table)
+        self.assertNotIn("Этап А", first_table)
+        self.assertIn("1\u201324 из 26", first_page.content.decode())
+
+        second_page = self.client.get(table_url, {"page": 2, "page_size": 25})
+        second_html = second_page.content.decode()
+        second_table = self._table_html(second_page)
+        self.assertIn("Этап А", second_table)
+        self.assertIn("Этап Б", second_table)
+        self.assertIn('class="registration-group-summary"', second_table)
+        first_stage.refresh_from_db()
+        second_stage.refresh_from_db()
+        self.assertIn(first_stage.short_uid, second_table)
+        self.assertIn(second_stage.short_uid, second_table)
+        self.assertIn("25\u201326 из 26", second_html)
+
+        last_page = self.client.get(table_url, {"page_size": 25})
+        self.assertIn('data-registry-page="2"', last_page.content.decode())
+
+    def _assert_registry_page_assets(self, root):
+        css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
+        js = (root / "core" / "static" / "core" / "js" / "projects-panels.js").read_text()
+        self.assertIn("#registration-registry-section .policy-table-footer {\n  position: sticky;", css)
+        self.assertIn("#projects-pane #registration-registry-section .policy-table-footer.is-stuck", css)
+        self.assertIn("function initRegistrationRegistryFooterSticky()", js)
+
+
+class ProjectsYearStatusFilterTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="projects-year-filter-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.old_project = ProjectRegistration.objects.create(
+            number=7101, name="Старый проект", year=2024, status="Завершён",
+        )
+        self.parent = ProjectRegistration.objects.create(number=7102, name="Сводный проект", year=2025)
+        self.stage_done = ProjectRegistration.objects.create(
+            number=7102, name="Этап готов", year=2025, status="Завершён", stage_project=self.parent,
+        )
+        self.stage_work = ProjectRegistration.objects.create(
+            number=7102, name="Этап в работе", year=2026, status="В работе", stage_project=self.parent,
+        )
+        self.no_year = ProjectRegistration.objects.create(number=7103, name="Проект без года")
+        self.paged = [
+            ProjectRegistration.objects.create(number=7200 + index, name=f"Страница {index:02d}", year=2023)
+            for index in range(1, 27)
+        ]
+
+    def _table_html(self, response):
+        html = response.content.decode()
+        start = html.find('id="registration-registry-table"')
+        self.assertGreaterEqual(start, 0)
+        end = html.find('class="policy-table-footer"', start)
+        return html[start:end]
+
+    def test_year_scope_keeps_whole_project_when_any_stage_matches(self):
+        response = self.client.get(reverse("projects_partial"), {"projects_year": "2026", "registry_page_size": 200})
+        self.assertEqual(response.status_code, 200)
+        table = self._table_html(response)
+        self.assertIn("Этап в работе", table)
+        self.assertIn("Этап готов", table)
+        self.assertNotIn("Старый проект", table)
+        self.assertNotIn("Проект без года", table)
+        self.assertNotIn("Страница 01", table)
+        html = response.content.decode()
+        self.assertIn('data-registry-years="2026"', html)
+        self.assertNotIn(f'id="reg-filter-{self.old_project.pk}"', html)
+        self.assertIn(f'id="reg-filter-{self.parent.pk}"', html)
+
+    def test_year_none_selects_projects_without_year(self):
+        response = self.client.get(reverse("registration_registry_table"), {"projects_year": "none"})
+        table = self._table_html(response)
+        self.assertIn("Проект без года", table)
+        self.assertNotIn("Старый проект", table)
+        self.assertNotIn("Этап в работе", table)
+
+    def test_status_filter_shows_whole_project_without_pagination(self):
+        response = self.client.get(reverse("registration_registry_table"), {"registry_status": "В работе"})
+        html = response.content.decode()
+        table = self._table_html(response)
+        self.assertIn("Этап в работе", table)
+        self.assertIn("Этап готов", table)
+        self.assertNotIn("Старый проект", table)
+        self.assertIn('data-registry-statuses="В работе"', html)
+        self.assertIn('data-registry-show-all="1"', html)
+        self.assertIn("Отфильтровано строк: 2", html)
+        self.assertNotIn('id="policy-page-size-registration-registry"', html)
+
+    def test_status_filter_returns_all_rows_beyond_page_size(self):
+        response = self.client.get(
+            reverse("registration_registry_table"),
+            {"registry_status": "Не начат", "page_size": 25},
+        )
+        table = self._table_html(response)
+        self.assertIn("Страница 01", table)
+        self.assertIn("Страница 26", table)
+        self.assertIn("Проект без года", table)
+        self.assertNotIn("Этап в работе", table)
+
+    def test_year_alone_keeps_pagination(self):
+        response = self.client.get(reverse("registration_registry_table"), {"projects_year": "2023", "page_size": 25})
+        html = response.content.decode()
+        self.assertIn('data-registry-show-all="0"', html)
+        self.assertIn('id="policy-page-size-registration-registry"', html)
+        self.assertIn("26\u201326 из 26", html)
+        self.assertIn("projects_year=2023", html)
+
+    def test_facets_cover_all_years_and_respect_expert_scope(self):
+        from projects_app.views import (
+            _project_filter_facets,
+            _projects_filter_facets_payload,
+            _projects_year_options,
+        )
+
+        response = self.client.get(reverse("projects_partial"), {"projects_year": "2026"})
+        html = response.content.decode()
+        self.assertIn('id="projects-filter-facets"', html)
+        self.assertIn('id="projects-year-options"', html)
+        self.assertIn('id="projects-status-options"', html)
+
+        facets = _project_filter_facets()
+        self.assertEqual(facets[self.parent.pk]["years"], {2025, 2026})
+        self.assertEqual(facets[self.parent.pk]["statuses"], {"Завершён", "В работе"})
+        self.assertEqual(facets[self.old_project.pk]["years"], {2024})
+        self.assertEqual(facets[self.no_year.pk]["years"], {None})
+        payload = {item["id"]: item for item in _projects_filter_facets_payload(facets)}
+        self.assertEqual(payload[str(self.no_year.pk)]["years"], ["none"])
+        options = [option["value"] for option in _projects_year_options(facets)]
+        self.assertEqual(options, ["2026", "2025", "2024", "2023", "none"])
+
+        expert_facets = _project_filter_facets([self.stage_work.pk])
+        self.assertEqual(set(expert_facets), {self.parent.pk})
+
+    def test_performers_partial_accepts_year_scope(self):
+        response = self.client.get(reverse("performers_partial"), {"projects_year": "2026"})
+        self.assertEqual(response.status_code, 200)
+
+
+class ProductUsageCountTests(TestCase):
+    def test_stage_frequency_is_stored_and_orders_product_fields(self):
+        from policy_app.product_groups import product_catalog_queryset
+        from projects_app.views import _registration_product_catalog, _save_ranked_registration_products
+        from proposals_app.views import _proposal_product_catalog
+
+        rare = Product.objects.create(short_name="RAREU", name_en="Rare", name_ru="Редкий", position=1)
+        common = Product.objects.create(short_name="COMONU", name_en="Common", name_ru="Частый", position=2)
+        lone = ProjectRegistration.objects.create(number=9101, name="Один этап", year=2026, type=rare)
+        rare.refresh_from_db()
+        self.assertEqual(rare.usage_count, 1)
+
+        lone.position = 9
+        lone.save(update_fields=["position"])
+        rare.refresh_from_db()
+        self.assertEqual(rare.usage_count, 1)
+
+        parent = ProjectRegistration.objects.create(number=9102, name="Сводный", year=2026, type=rare)
+        ProjectRegistration.objects.create(
+            number=9102,
+            name="Этап 1",
+            year=2026,
+            stage_project=parent,
+            type=common,
+        )
+        stage = ProjectRegistration.objects.create(
+            number=9102,
+            name="Этап 2",
+            year=2026,
+            stage_project=parent,
+            type=common,
+        )
+        rare.refresh_from_db()
+        common.refresh_from_db()
+        self.assertEqual(rare.usage_count, 1)
+        self.assertEqual(common.usage_count, 2)
+
+        stage.delete()
+        parent.stages.all().delete()
+        rare.refresh_from_db()
+        common.refresh_from_db()
+        self.assertEqual(rare.usage_count, 2)
+        self.assertEqual(common.usage_count, 0)
+
+        for number in (9103, 9104, 9105):
+            ProjectRegistration.objects.create(number=number, name=f"Этап {number}", year=2026, type=common)
+        common.refresh_from_db()
+        self.assertEqual(common.usage_count, 3)
+
+        ProjectRegistrationProduct.objects.create(registration=lone, product=rare, rank=1)
+        rare.refresh_from_db()
+        self.assertEqual(rare.usage_count, 2)
+
+        linked = ProjectRegistration.objects.create(number=9106, name="По ссылке", year=2026)
+        _save_ranked_registration_products(linked, [common.pk])
+        common.refresh_from_db()
+        self.assertEqual(common.usage_count, 4)
+
+        wanted = {rare.pk, common.pk}
+        catalog_ids = [
+            product.pk for product in product_catalog_queryset() if product.pk in wanted
+        ]
+        registration_ids = [
+            item["id"] for item in _registration_product_catalog()["options"] if item["id"] in wanted
+        ]
+        proposal_ids = [
+            item["id"] for item in _proposal_product_catalog()["products"] if item["id"] in wanted
+        ]
+        self.assertEqual(catalog_ids, [common.pk, rare.pk])
+        self.assertEqual(registration_ids, [common.pk, rare.pk])
+        self.assertEqual(proposal_ids, [common.pk, rare.pk])
+
+        user = get_user_model().objects.create_user(username="product-usage", password="secret123")
+        self.client.force_login(user)
+        table = self.client.get(reverse("policy_products_table"))
+        html = table.content.decode()
+        self.assertIn('class="product-usage-col"', html)
+        self.assertIn("Частота использования", html)
+        self.assertRegex(html, r'class="product-usage-col"[^>]*>4<')
+
+    def test_type_change_recounts_previous_product(self):
+        old = Product.objects.create(short_name="OLDTP", name_en="Old", name_ru="Старый", position=1)
+        new = Product.objects.create(short_name="NEWTP", name_en="New", name_ru="Новый", position=2)
+        registration = ProjectRegistration.objects.create(number=9201, name="Смена типа", year=2026, type=old)
+        old.refresh_from_db()
+        self.assertEqual(old.usage_count, 1)
+
+        registration.type = new
+        registration.save()
+        old.refresh_from_db()
+        new.refresh_from_db()
+        self.assertEqual(old.usage_count, 0)
+        self.assertEqual(new.usage_count, 1)
+
+        registration.type = old
+        registration.save(update_fields=["type"])
+        old.refresh_from_db()
+        new.refresh_from_db()
+        self.assertEqual(old.usage_count, 1)
+        self.assertEqual(new.usage_count, 0)

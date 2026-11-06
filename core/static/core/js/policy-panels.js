@@ -3326,6 +3326,24 @@
     if (window.__tableSelLast === name) window.__tableSelLast = null;
   }
 
+  async function openProductEditModal(tr) {
+    let url = tr?.dataset?.editUrl;
+    if (!url || !window.htmx) return;
+    const workspaceProduct = getPolicyWorkspaceProduct(policyPane());
+    if (workspaceProduct) {
+      try {
+        const parsed = new URL(url, window.location.origin);
+        parsed.searchParams.set('workspace', '1');
+        parsed.searchParams.set('product', String(workspaceProduct.id));
+        url = parsed.pathname + parsed.search;
+      } catch (err) {
+        // Keep the original edit URL if it cannot be rewritten.
+      }
+    }
+    markPolicyModalClearSelectionOnHide('product-select');
+    await htmx.ajax('GET', url, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
+  }
+
   function markPolicyModalClearSelectionOnHide(name) {
     if (!name) return;
     // Общий механизм (core/js/table-selection.js): после закрытия модалки
@@ -11238,6 +11256,8 @@
   }
 
   const PRODUCT_MAP_EXPANDER_SIZE = 16;
+  const PRODUCT_MAP_PROJECT_BADGE_MIN = 18;
+  const PRODUCT_MAP_PROJECT_BADGE_MAX = 216;
   const PRODUCT_MAP_ZOOM_MIN = 0.25;
   const PRODUCT_MAP_ZOOM_MAX = 2;
   const PRODUCT_MAP_ZOOM_STEP = 1.25;
@@ -11277,7 +11297,7 @@
     if (!inner || !nodes) return;
     let maxX = 0;
     let maxY = 0;
-    canvas.querySelectorAll('jmnode, jmexpander, .product-map-accuracy-header, .product-map-accuracy-band').forEach(function (element) {
+    canvas.querySelectorAll('jmnode, jmexpander, .product-map-accuracy-header, .product-map-accuracy-band, .product-map-project-badge').forEach(function (element) {
       if (element.style.display === 'none') return;
       const left = parseFloat(element.style.left);
       const top = parseFloat(element.style.top);
@@ -11339,7 +11359,7 @@
       maxX = Math.max(maxX, rect.right - origin.left);
       maxY = Math.max(maxY, rect.bottom - origin.top);
     }
-    canvas.querySelectorAll('jmnode, jmexpander, .product-map-accuracy-header, .product-map-accuracy-band').forEach(include);
+    canvas.querySelectorAll('jmnode, jmexpander, .product-map-accuracy-header, .product-map-accuracy-band, .product-map-project-badge').forEach(include);
     if (!isFinite(minX) || maxX <= minX || maxY <= minY) return null;
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   }
@@ -12362,6 +12382,248 @@
     })(root);
   }
 
+  function formatProductMapPeriodLabel(years) {
+    const sorted = Array.from(new Set((years || []).map(Number).filter(isFinite))).sort(function (a, b) {
+      return a - b;
+    });
+    if (!sorted.length) return 'Все';
+    const runs = [];
+    sorted.forEach(function (year) {
+      const last = runs[runs.length - 1];
+      if (last && year === last[1] + 1) last[1] = year;
+      else runs.push([year, year]);
+    });
+    const ranges = runs.filter(function (run) { return run[1] > run[0]; }).length;
+    const singles = runs.length - ranges;
+    const listed = ranges === 0 ? singles <= 3 : ranges === 1 && singles <= 1;
+    if (!listed) return sorted.length + ' выбрано';
+    return runs.map(function (run) {
+      return run[0] === run[1] ? String(run[0]) : run[0] + '\u2013' + run[1];
+    }).join(', ');
+  }
+
+  function readProductMapPeriod(field) {
+    const group = field && field.querySelector('[data-product-map-period]');
+    const all = group && group.querySelector('[data-product-map-filter-all]');
+    const years = new Set();
+    if (!group || !all || all.checked) return { all: true, years: years };
+    group.querySelectorAll('[data-product-map-filter-value]').forEach(function (box) {
+      if (box.checked) years.add(String(box.value));
+    });
+    return { all: !years.size, years: years };
+  }
+
+  function updateProductMapPeriodLabel(field) {
+    const label = field && field.querySelector('[data-product-map-period-label]');
+    if (!label) return;
+    const period = readProductMapPeriod(field);
+    label.textContent = period.all ? 'Все' : formatProductMapPeriodLabel(Array.from(period.years));
+  }
+
+  function productMapProjectCount(data, period) {
+    const counts = data && data.projectYears;
+    if (!counts) return 0;
+    let total = 0;
+    Object.keys(counts).forEach(function (year) {
+      if (period.all || period.years.has(year)) total += Number(counts[year]) || 0;
+    });
+    return total;
+  }
+
+  function productMapProjectMax(field, period) {
+    let max = 0;
+    (field.__productMapInstances || []).forEach(function (state) {
+      const root = state.jm && typeof state.jm.get_root === 'function' ? state.jm.get_root() : null;
+      (function walk(node) {
+        if (!node) return;
+        const data = node.data || {};
+        if (data.mapKind === 'product') max = Math.max(max, productMapProjectCount(data, period));
+        (node.children || []).forEach(walk);
+      })(root);
+    });
+    return max;
+  }
+
+  function syncProductMapProjectBadges(state) {
+    const jm = state && state.jm;
+    const canvas = state && state.canvas;
+    const inner = canvas && canvas.querySelector('.jsmind-inner');
+    if (!jm || !inner || typeof jm.get_root !== 'function') return;
+    let layer = inner.querySelector('.product-map-project-badges');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.className = 'product-map-project-badges';
+      inner.appendChild(layer);
+    }
+    layer.replaceChildren();
+    const field = canvas.closest('#product-map-field');
+    const toggle = field && field.querySelector('[data-product-map-projects-toggle]');
+    if (!toggle || toggle.getAttribute('aria-pressed') !== 'true') return;
+    const period = readProductMapPeriod(field);
+    const max = productMapProjectMax(field, period);
+    if (!max) return;
+    (function walk(node) {
+      if (!node) return;
+      const data = node.data || {};
+      const element = node._data && node._data.view && node._data.view.element;
+      if (data.mapKind === 'product' && element && element.style.display !== 'none') {
+        const count = productMapProjectCount(data, period);
+        const left = parseFloat(element.style.left);
+        const top = parseFloat(element.style.top);
+        if (count > 0 && isFinite(left) && isFinite(top)) {
+          const size = Math.round(
+            PRODUCT_MAP_PROJECT_BADGE_MIN
+            + (PRODUCT_MAP_PROJECT_BADGE_MAX - PRODUCT_MAP_PROJECT_BADGE_MIN) * Math.sqrt(count / max)
+          );
+          const badge = document.createElement('div');
+          badge.className = 'product-map-project-badge';
+          const value = document.createElement('span');
+          value.className = 'product-map-project-badge-count';
+          value.textContent = String(count);
+          const valueSize = 16 + 7 * String(count).length;
+          value.style.width = valueSize + 'px';
+          value.style.height = valueSize + 'px';
+          badge.appendChild(value);
+          badge.style.width = size + 'px';
+          badge.style.height = size + 'px';
+          badge.style.left = (left + element.offsetWidth - size / 2) + 'px';
+          badge.style.top = (top + element.offsetHeight / 2 - size / 2) + 'px';
+          layer.appendChild(badge);
+        }
+      }
+      (node.children || []).forEach(walk);
+    })(jm.get_root());
+  }
+
+  function productMapCollapseEmptyActive(field) {
+    const button = field && field.querySelector('[data-product-map-collapse-empty]');
+    return !!button && button.getAttribute('aria-pressed') === 'true';
+  }
+
+  function productMapBranchHasProjects(node, period) {
+    const data = node.data || {};
+    if (data.mapKind === 'product') return productMapProjectCount(data, period) > 0;
+    return (node.children || []).some(function (child) {
+      return productMapBranchHasProjects(child, period);
+    });
+  }
+
+  function collapseProductMapEmptyBranches(state, period) {
+    const jm = state.jm;
+    if (!state.collapsedEmpty) state.collapsedEmpty = new Set();
+    (function walk(node) {
+      (node.children || []).forEach(function (child) {
+        if (!child.children || !child.children.length) return;
+        if (productMapBranchHasProjects(child, period)) {
+          walk(child);
+          return;
+        }
+        if (!child.expanded) return;
+        jm.layout.collapse_node(child);
+        state.collapsedEmpty.add(child.id);
+      });
+    })(jm.get_root());
+  }
+
+  function restoreProductMapEmptyBranches(state) {
+    const jm = state.jm;
+    (state.collapsedEmpty || new Set()).forEach(function (id) {
+      const node = jm.get_node(id);
+      if (!node || node.expanded) return;
+      let parent = node.parent;
+      while (parent && parent.expanded) parent = parent.parent;
+      // Under a collapsed ancestor, expand_node would show the children anyway.
+      if (parent) node.expanded = true;
+      else jm.layout.expand_node(node);
+    });
+    state.collapsedEmpty = new Set();
+  }
+
+  function syncProductMapEmptyBranches(field, mode) {
+    const instances = field.__productMapInstances || [];
+    const period = readProductMapPeriod(field);
+    let depth = 1;
+    instances.forEach(function (state) {
+      const jm = state.jm;
+      if (!jm) return;
+      jm.__productMapDepthLock = true;
+      if (mode !== 'collapse') restoreProductMapEmptyBranches(state);
+      if (mode !== 'restore') collapseProductMapEmptyBranches(state, period);
+      jm.view.relayout();
+      refreshProductMap(state);
+      fitProductMapView(state);
+      depth = Math.max(depth, productMapVisibleDepth(jm.get_root()));
+    });
+    markProductMapLevel(field, depth);
+    window.setTimeout(function () {
+      instances.forEach(function (state) {
+        if (state.jm) state.jm.__productMapDepthLock = false;
+        syncProductMapExpanders(state.canvas);
+      });
+    }, 0);
+  }
+
+  function syncProductMapFieldBadges(field) {
+    (field.__productMapInstances || []).forEach(function (state) {
+      syncProductMapProjectBadges(state);
+      ensureProductMapSurface(state.canvas);
+      fitProductMapView(state);
+    });
+  }
+
+  function bindProductMapProjectControls() {
+    if (window.__productMapProjectsBound) return;
+    window.__productMapProjectsBound = true;
+    document.addEventListener('click', function (event) {
+      const button = event.target && event.target.closest
+        ? event.target.closest('[data-product-map-collapse-empty]')
+        : null;
+      const fieldNode = button && button.closest('#product-map-field');
+      if (!fieldNode || !policyPane()?.contains(fieldNode)) return;
+      const active = button.getAttribute('aria-pressed') !== 'true';
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      button.classList.toggle('is-active', active);
+      const icon = button.querySelector('.bi');
+      if (icon) {
+        icon.classList.toggle('bi-plus-circle', active);
+        icon.classList.toggle('bi-dash-circle', !active);
+      }
+      const label = button.querySelector('[data-product-map-collapse-empty-label]');
+      if (label) label.textContent = active ? 'Развернуть пустые' : 'Свернуть пустые';
+      syncProductMapEmptyBranches(fieldNode, active ? 'collapse' : 'restore');
+    });
+    document.addEventListener('click', function (event) {
+      const toggle = event.target && event.target.closest
+        ? event.target.closest('[data-product-map-projects-toggle]')
+        : null;
+      const fieldNode = toggle && toggle.closest('#product-map-field');
+      if (!fieldNode || !policyPane()?.contains(fieldNode)) return;
+      const active = toggle.getAttribute('aria-pressed') !== 'true';
+      toggle.setAttribute('aria-pressed', active ? 'true' : 'false');
+      toggle.classList.toggle('is-active', active);
+      const icon = toggle.querySelector('.bi');
+      if (icon) {
+        icon.classList.toggle('bi-eye', active);
+        icon.classList.toggle('bi-eye-slash', !active);
+      }
+      syncProductMapFieldBadges(fieldNode);
+    });
+    document.addEventListener('change', function (event) {
+      const changed = event.target;
+      if (!changed || !changed.closest) return;
+      const group = changed.closest('[data-product-map-period]');
+      const fieldNode = group && group.closest('#product-map-field');
+      if (!fieldNode || !policyPane()?.contains(fieldNode)) return;
+      if (!changed.hasAttribute('data-product-map-filter-all') && !changed.hasAttribute('data-product-map-filter-value')) {
+        return;
+      }
+      syncProductMapFilterGroup(group, changed);
+      updateProductMapPeriodLabel(fieldNode);
+      syncProductMapFieldBadges(fieldNode);
+      if (productMapCollapseEmptyActive(fieldNode)) syncProductMapEmptyBranches(fieldNode, 'reapply');
+    });
+  }
+
   function openProductMapProduct(canvas, productId) {
     const field = canvas && canvas.closest ? canvas.closest('#product-map-field') : null;
     const template = field && field.dataset.productWorkspaceTemplate;
@@ -12420,6 +12682,7 @@
       if (!canvas || !canvas.classList || !canvas.classList.contains('product-map-canvas')) return;
       syncProductMapAccuracyHeaders({ jm: jm, canvas: canvas });
       unifyProductMapRails(canvas);
+      syncProductMapProjectBadges({ jm: jm, canvas: canvas });
     };
   }
 
@@ -12432,6 +12695,7 @@
     jm.resize();
     syncProductMapAccuracyHeaders(state);
     unifyProductMapRails(canvas);
+    syncProductMapProjectBadges(state);
     ensureProductMapSurface(canvas);
     syncProductMapExpanders(canvas);
     setProductMapTransform(canvas, state.x || 0, state.y || 0, state.scale || 1);
@@ -12440,6 +12704,8 @@
   function setProductMapLevel(field, level) {
     markProductMapLevel(field, level);
     const maps = field.__productMapInstances || [];
+    const collapseEmpty = productMapCollapseEmptyActive(field);
+    const period = readProductMapPeriod(field);
     maps.forEach(function (item) {
       const jm = item.jm;
       const root = jm.get_root();
@@ -12450,6 +12716,11 @@
       } else {
         if (!root.expanded) jm.layout.expand_node(root);
         jm.expand_to_depth(level - 1);
+      }
+      item.collapsedEmpty = new Set();
+      if (collapseEmpty && level > 1) {
+        collapseProductMapEmptyBranches(item, period);
+        jm.view.relayout();
       }
       refreshProductMap(item);
       fitProductMapView(item);
@@ -12799,6 +13070,8 @@
     });
     field.__productMapInstances = instances;
     initProductMapFilters(field, maps);
+    updateProductMapPeriodLabel(field);
+    bindProductMapProjectControls();
     markProductMapLevel(field, 2);
     field.dataset.productMapState = 'ready';
     bindProductMapScreen(field);
@@ -12955,6 +13228,7 @@
       return;
     }
     const productQuickEdit = e.target.closest('.product-quick-edit');
+    const productNameLink = e.target.closest('.product-name-link');
     const policyRoot = policyPane();
     const workspaceSaveBtn = e.target.closest('[data-policy-workspace-save-btn]');
     if (workspaceSaveBtn) {
@@ -12968,20 +13242,23 @@
       cancelPolicyWorkspace();
       return;
     }
-    if (productQuickEdit && policyRoot?.contains(productQuickEdit)) {
+    if (productNameLink && policyRoot?.contains(productNameLink)) {
       e.preventDefault();
-      const tr = productQuickEdit.closest('tr');
-      if (tr?.dataset?.isProductGroup === '1') {
-        const editUrl = tr.dataset.editUrl;
-        if (!editUrl || !window.htmx) return;
-        markPolicyModalClearSelectionOnHide('product-select');
-        await htmx.ajax('GET', editUrl, { target: '#policy-modal .modal-content', swap: 'innerHTML' });
+      const tr = productNameLink.closest('tr');
+      const ownWorkspaceUrl = productNameLink.dataset.workspaceUrl;
+      if (!ownWorkspaceUrl && tr?.dataset?.isProductGroup === '1') {
+        await openProductEditModal(tr);
         return;
       }
-      const url = tr?.dataset?.workspaceUrl;
+      const url = ownWorkspaceUrl || tr?.dataset?.workspaceUrl;
       if (!url || !window.htmx) return;
       await htmx.ajax('GET', url, { target: '#policy-pane', swap: 'outerHTML' });
       scrollPolicyWorkspaceToTop(policyPane());
+      return;
+    }
+    if (productQuickEdit && policyRoot?.contains(productQuickEdit)) {
+      e.preventDefault();
+      await openProductEditModal(productQuickEdit.closest('tr'));
       return;
     }
     const mergeProductsBtn = e.target.closest('#products-merge-btn');

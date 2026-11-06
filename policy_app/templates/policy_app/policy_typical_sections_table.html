@@ -80,7 +80,7 @@
                         </div>
                     {% endif %}
                 </td>
-                <td class="text-nowrap policy-workspace-product-cell">{{ s.product.short_name }}</td>
+                <td class="text-nowrap policy-workspace-product-cell">{% include "policy_app/_policy_product_name_link.html" with product=s.product %}</td>
                 <td class="text-nowrap typical-section-code-col"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="service_block" data-inline-type="select" data-inline-value="{{ s.service_block_id|default_if_none:'' }}"{% endif %}>
                     {% if s.is_system_dsc %}
                         <span class="typical-section-dsc-code">{{ s.code }}</span>

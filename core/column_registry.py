@@ -84,10 +84,10 @@ COLUMN_REGISTRY = {
             "typical_products": {
                 "label": "Типовые продукты",
                 "columns": {
-                    "short_name": "Краткое имя",
+                    "display_name": "Отображаемое в системе имя",
+                    "short_name": "Продукт",
                     "name_en": "Наименование на английском языке",
                     "name_ru": "Наименование на русском языке",
-                    "display_name": "Отображаемое в системе имя",
                     "consulting_type": "Вид консалтинга",
                     "service_category": "Тип услуг",
                     "service_code": "Код",

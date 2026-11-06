@@ -19,7 +19,11 @@
     {% csrf_token %}
     <script type="application/json" id="product-service-meta">{{ product_service_meta_json|safe }}</script>
     <div class="mb-3">
-      <label class="form-label">Краткое имя</label>
+      <label class="form-label">Отображаемое в системе имя</label>
+      {{ form.display_name }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Продукт</label>
       {{ form.short_name }}
       {% if form.short_name.errors %}
         <div class="text-danger small mt-1">{{ form.short_name.errors.0 }}</div>
@@ -32,10 +36,6 @@
     <div class="mb-3">
       <label class="form-label">Наименование на русском языке</label>
       {{ form.name_ru }}
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Отображаемое в системе имя</label>
-      {{ form.display_name }}
     </div>
     <div class="mb-3">
       <label class="form-label">Вид консалтинга</label>

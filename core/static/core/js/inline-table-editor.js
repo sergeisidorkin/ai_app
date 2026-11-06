@@ -1935,11 +1935,18 @@
       return items.find(function (item) { return String(item.id) === String(id || ''); });
     }
 
+    function serviceBlockOptionLabel(item) {
+      const code = String((item && item.code) || '').trim();
+      const shortNameRu = String((item && item.short_name_ru) || '').trim();
+      if (code && shortNameRu) return code + ' ' + shortNameRu;
+      return code || shortNameRu;
+    }
+
     return {
       getSelectOptions: function (ref) {
         if (ref.field === 'service_block') {
           return [{ value: '', label: '—' }].concat(serviceBlocks.map(function (item) {
-            return { value: String(item.id), label: item.code };
+            return { value: String(item.id), label: serviceBlockOptionLabel(item) };
           }));
         }
         if (ref.field === 'accounting_type') {

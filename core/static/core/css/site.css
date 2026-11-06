@@ -713,15 +713,21 @@ body .second-sidebar + .flex-grow-1 {
   overflow: visible;
 }
 
-#master-project-filter-dropdown {
+#master-project-filter-dropdown,
+#master-year-filter-dropdown,
+#master-status-filter-dropdown {
   position: relative;
 }
 
-#master-project-filter-dropdown .dropdown-menu {
+#master-project-filter-dropdown .dropdown-menu,
+#master-year-filter-dropdown .dropdown-menu,
+#master-status-filter-dropdown .dropdown-menu {
   z-index: 7000;
 }
 
-#master-project-filter-dropdown .project-filter-menu.show {
+#master-project-filter-dropdown .project-filter-menu.show,
+#master-year-filter-dropdown .project-filter-menu.show,
+#master-status-filter-dropdown .project-filter-menu.show {
   position: absolute !important;
   inset: auto auto auto 0 !important;
   top: 100% !important;
@@ -752,6 +758,8 @@ body .second-sidebar + .flex-grow-1 {
 #master-proposal-kind-filter-dropdown > .btn,
 #master-proposal-status-filter-dropdown > .btn,
 #master-project-filter-dropdown > .btn,
+#master-year-filter-dropdown > .btn,
+#master-status-filter-dropdown > .btn,
 .policy-map-open-btn,
 .product-map-level {
   --bs-btn-color: #075D94;
@@ -1182,6 +1190,9 @@ body .second-sidebar + .flex-grow-1 {
   white-space: nowrap;
   text-align: left;
 }
+#policy-pane[data-policy-workspace="1"] #policy-typical-sections-section td.typical-section-code-col[data-inline-type="select"] {
+  padding-left: var(--bs-table-cell-padding-x, .25rem);
+}
 #policy-pane .typical-sections-table .typical-section-derived-col {
   display: none;
 }
@@ -1219,14 +1230,33 @@ body .second-sidebar + .flex-grow-1 {
   width: 6.625rem;
   white-space: nowrap;
 }
-#policy-pane .service-block-classifiers-table .sbc-col-name {
-  width: 30.4%;
+#policy-pane .service-block-classifiers-table .sbc-col-short-en {
+  width: 20%;
 }
-#policy-pane .service-block-classifiers-table .sbc-col-short {
-  width: 14.2%;
+#policy-pane .service-block-classifiers-table .sbc-col-short-ru {
+  width: 29%;
+}
+#policy-pane .service-block-classifiers-table .sbc-col-name-en {
+  width: 25.5%;
+}
+#policy-pane .service-block-classifiers-table .sbc-col-name-ru {
+  width: 25.5%;
+}
+#policy-pane .service-block-classifiers-table .sbc-col-usage {
+  width: 0;
+  max-width: 0;
+  padding: 0;
+  border: 0;
+  font-size: 0;
+  line-height: 0;
+  overflow: hidden;
+  visibility: collapse;
+}
+#policy-pane .service-block-classifiers-table > thead > tr > th:is(.sbc-col-name-en, .sbc-col-name-ru) {
+  white-space: normal;
 }
 #policy-pane .service-block-classifiers-table .sbc-col-executor {
-  width: 12%;
+  width: 17rem;
 }
 #policy-pane[data-policy-workspace="1"] #report-structures-table .report-structure-compact-col {
   width: 1%;
@@ -1791,6 +1821,50 @@ body .second-sidebar + .flex-grow-1 {
   box-sizing: border-box;
 }
 
+/* Реестр проектов лежит в .projects-outer-scroll с overflow-x, поэтому
+   position: sticky не держит панель у края экрана. Пока таблица на экране,
+   а её естественный низ ниже окна, панель фиксируется снизу. */
+#projects-content-launch,
+#projects-content-launch > .card,
+#projects-content-launch > .card > .card-body,
+#registration-registry-section {
+  overflow: visible;
+}
+
+#registration-registry-section .policy-table-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  margin-top: calc(30px - .75rem);
+  padding-top: .75rem;
+  padding-bottom: .75rem;
+  border-top: 1px solid transparent;
+}
+
+#projects-pane #registration-registry-section .policy-table-footer.is-stuck {
+  position: fixed;
+  bottom: 0;
+  z-index: 30;
+  margin: 0 !important;
+  box-sizing: border-box;
+  background: #fff;
+  border-top-color: #e9ecef;
+}
+
+#registration-registry-section .policy-sticky-actions-marker {
+  display: block;
+  height: 1px;
+  margin-top: -1px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#registration-registry-section .registration-registry-footer-spacer {
+  display: block;
+  height: 0;
+  pointer-events: none;
+}
+
 .policy-table-footer-actions {
   display: flex;
   align-items: center;
@@ -1799,6 +1873,16 @@ body .second-sidebar + .flex-grow-1 {
   gap: .5rem;
 }
 
+#policy-pane .product-usage-col {
+  width: 0;
+  max-width: 0;
+  padding: 0;
+  border: 0;
+  font-size: 0;
+  line-height: 0;
+  overflow: hidden;
+  visibility: collapse;
+}
 #policy-products-section {
   --product-group-toggle-size: 16px;
   --product-group-toggle-gap: 3px;
@@ -1820,6 +1904,35 @@ body .second-sidebar + .flex-grow-1 {
   display: inline-flex;
   align-items: center;
   min-width: 0;
+  color: #6c757d;
+}
+#policy-pane .product-name-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #6c757d;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: none;
+}
+#policy-pane .product-name-link-text {
+  color: inherit;
+  text-decoration: none;
+}
+#policy-pane .product-name-link:hover .product-name-link-text,
+#policy-pane .product-name-link:focus-visible .product-name-link-text {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+#policy-pane td.policy-workspace-product-cell {
+  color: #6c757d;
 }
 #policy-products-section .product-group-mark {
   margin-left: 2px;
@@ -2372,12 +2485,12 @@ section#templates .alert.alert-info .text-muted {
   margin-bottom: var(--project-schedule-table-margin-to-scroll) !important;
 }
 
-#projects-pane #projects-content-launch .registration-table-wrap + .products-actions-row {
-  margin-top: var(--project-schedule-table-action-gap) !important;
+#projects-pane #projects-content-launch .registration-table-wrap + .policy-table-footer {
+  margin-top: calc(var(--project-schedule-table-action-gap) - .75rem);
 }
 
-#projects-pane #projects-content-launch .registration-table-wrap.has-horizontal-scroll + .products-actions-row {
-  margin-top: var(--project-schedule-table-scroll-action-gap) !important;
+#projects-pane #projects-content-launch .registration-table-wrap.has-horizontal-scroll + .policy-table-footer {
+  margin-top: max(0px, calc(var(--project-schedule-table-scroll-action-gap) - .75rem));
 }
 
 #projects-pane .registration-table-wrap {
@@ -8605,6 +8718,83 @@ html.table-action-progress * {
 }
 
 .product-map-filters .btn {
+  white-space: nowrap;
+}
+
+.product-map-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  padding: .25rem .5rem;
+  border: 1px solid #dee2e6;
+  border-radius: .25rem;
+  background: #fff;
+  font-size: .875rem;
+  line-height: 1.5;
+  color: #212529;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity .15s ease, border-color .15s ease;
+}
+
+.product-map-toggle:hover {
+  border-color: #adb5bd;
+}
+
+.product-map-toggle .bi {
+  font-size: .875rem;
+}
+
+.product-map-toggle:not(.is-active) {
+  opacity: .5;
+  border-style: dashed;
+}
+
+.product-map-toggle.is-active {
+  border-color: #075D94;
+  background: #075D94;
+  color: #fff;
+}
+
+.product-map-toggle.is-active:hover {
+  border-color: #064f7e;
+  background: #064f7e;
+}
+
+.product-map-project-badges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.product-map-project-badge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: rgba(7, 93, 148, 0.35);
+}
+
+.product-map-project-badge-count {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #4f8db3;
+  color: #fff;
+  font-family: Verdana, Arial, Helvetica, sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 

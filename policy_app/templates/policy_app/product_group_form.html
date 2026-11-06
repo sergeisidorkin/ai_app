@@ -18,7 +18,14 @@
       <div class="alert alert-danger">{{ form.non_field_errors.0 }}</div>
     {% endif %}
     <div class="mb-3">
-      <label class="form-label" for="{{ form.short_name.id_for_label }}">Краткое имя</label>
+      <label class="form-label" for="{{ form.display_name.id_for_label }}">Отображаемое в системе имя</label>
+      {{ form.display_name }}
+      {% if form.display_name.errors %}
+        <div class="text-danger small mt-1">{{ form.display_name.errors.0 }}</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.short_name.id_for_label }}">Продукт</label>
       {{ form.short_name }}
       {% if form.short_name.errors %}
         <div class="text-danger small mt-1">{{ form.short_name.errors.0 }}</div>
@@ -36,13 +43,6 @@
       {{ form.name_ru }}
       {% if form.name_ru.errors %}
         <div class="text-danger small mt-1">{{ form.name_ru.errors.0 }}</div>
-      {% endif %}
-    </div>
-    <div class="mb-3">
-      <label class="form-label" for="{{ form.display_name.id_for_label }}">Отображаемое в системе имя</label>
-      {{ form.display_name }}
-      {% if form.display_name.errors %}
-        <div class="text-danger small mt-1">{{ form.display_name.errors.0 }}</div>
       {% endif %}
     </div>
   </div>

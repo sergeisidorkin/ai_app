@@ -24,6 +24,7 @@
             <div class="form-check">
               <input class="form-check-input js-payment-request-filter" type="checkbox"
                      value="{{ project.id }}" id="{{ uid }}-filter-{{ project.id }}"
+                     data-owning-project-id="{{ project.owning_project_id }}"
                      data-summary-label="{{ project.short_uid }}"
                      data-full-label="{{ project.short_uid }}{% if project.type_short_display %} {{ project.type_short_display }}{% endif %}{% if project.name %} {{ project.name }}{% endif %}">
               <label class="form-check-label text-nowrap" for="{{ uid }}-filter-{{ project.id }}">
@@ -99,6 +100,7 @@
       <tbody>
       {% for p in payment_request_performers %}
         <tr data-project-id="{{ p.registration_id }}"
+            data-owning-project-id="{{ p.registration.owning_project_id }}"
             data-performer-id="{{ p.id }}"
             data-executor="{{ p.executor }}"
             data-prepayment="{% if p.prepayment != None %}{{ p.prepayment|floatformat:'0' }}{% endif %}"

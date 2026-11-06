@@ -39,6 +39,15 @@
             </div>
         {% endif %}
     </td>
+    <td{% if policy_inline_edit %} data-inline-field="display_name" data-inline-type="text" data-inline-value="{{ p.display_name }}"{% endif %}>{{ p.display_name }}</td>
+    <td class="product-workspace-edit-cell text-nowrap">
+        {% if request.user.is_authenticated and request.user.is_staff %}
+            <i class="bi bi-pencil-square text-secondary product-quick-edit me-1"
+               role="button"
+               title="Редактировать"
+               aria-label="Редактировать продукт"></i>
+        {% endif %}
+    </td>
     <td class="text-nowrap product-workspace-short-name-cell"{% if policy_inline_edit %} data-inline-field="short_name" data-inline-type="text" data-inline-value="{{ p.short_name }}"{% endif %}>
         {% if p.is_product_group and p.grouped_members and not policy_workspace %}
             <button type="button"
@@ -50,28 +59,30 @@
             </button>
         {% endif %}
         <span class="product-group-short-name">
-            {% if p.is_product_group %}
+            {% if request.user.is_authenticated and request.user.is_staff and not policy_inline_edit %}
+                <button type="button" class="product-name-link">
+                    <span class="product-name-link-text">
+                        {% if p.is_product_group %}
+                            <span>{{ p.short_name|slice:":-1" }}</span><span class="product-group-mark">⧉</span>
+                        {% else %}
+                            {{ p.short_name }}
+                        {% endif %}
+                    </span>
+                </button>
+            {% elif p.is_product_group %}
                 <span>{{ p.short_name|slice:":-1" }}</span><span class="product-group-mark">⧉</span>
             {% else %}
                 {{ p.short_name }}
             {% endif %}
         </span>
     </td>
-    <td class="product-workspace-edit-cell text-nowrap">
-        {% if request.user.is_authenticated and request.user.is_staff %}
-            <i class="bi bi-pencil-square text-secondary product-quick-edit me-1"
-               role="button"
-               title="Редактировать"
-               aria-label="Редактировать продукт"></i>
-        {% endif %}
-    </td>
     <td{% if policy_inline_edit %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ p.name_en }}"{% endif %}>{{ p.name_en }}</td>
     <td{% if policy_inline_edit %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ p.name_ru }}"{% endif %}>{{ p.name_ru }}</td>
-    <td{% if policy_inline_edit %} data-inline-field="display_name" data-inline-type="text" data-inline-value="{{ p.display_name }}"{% endif %}>{{ p.display_name }}</td>
     <td class="text-nowrap"{% if policy_inline_edit and not p.classification_locked %} data-inline-field="consulting_type_ref" data-inline-type="select" data-inline-value="{{ p.consulting_type_ref_id|default_if_none:'' }}"{% endif %}>{{ p.consulting_type_display }}</td>
     <td class="text-nowrap"{% if policy_inline_edit and not p.classification_locked %} data-inline-field="service_category_ref" data-inline-type="select" data-inline-value="{{ p.service_category_ref_id|default_if_none:'' }}"{% endif %}>{{ p.service_category_display }}</td>
     <td class="text-nowrap"{% if policy_inline_edit and not p.classification_locked %} data-inline-field="service_code"{% endif %}>{{ p.service_code }}</td>
     <td{% if policy_inline_edit and not p.classification_locked %} data-inline-field="service_subtype_ref" data-inline-type="select" data-inline-value="{{ p.service_subtype_ref_id|default_if_none:'' }}"{% endif %}>{{ p.service_subtype_display }}</td>
     <td class="text-nowrap"{% if policy_inline_edit %} data-inline-field="accuracy" data-inline-type="select" data-inline-value="{{ p.accuracy }}"{% endif %}>{{ p.accuracy }}</td>
     <td class="text-nowrap"{% if policy_inline_edit and not p.classification_locked %} data-inline-field="owner_ids" data-inline-type="owners" data-inline-value="{{ p.inline_owner_ids_json }}"{% endif %}>{{ p.owner_display }}</td>
+    <td class="product-usage-col" aria-hidden="true">{{ p.usage_count }}</td>
 </tr>

@@ -455,6 +455,13 @@ class Product(models.Model):
         verbose_name="Групповой продукт",
     )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+    usage_count = models.PositiveIntegerField(
+        "Частота использования",
+        default=0,
+        db_index=True,
+        editable=False,
+        help_text="Сколько этапов реестра проектов используют продукт. Проект из одной строки тоже считается этапом.",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -542,6 +549,12 @@ class Product(models.Model):
         self._sync_catalog_refs_from_legacy_values()
         self._sync_legacy_values_from_catalog_refs()
         self.full_clean()
+        if self.pk and kwargs.get("update_fields") is None:
+            stored_usage = (
+                type(self).objects.filter(pk=self.pk).values_list("usage_count", flat=True).first()
+            )
+            if stored_usage is not None:
+                self.usage_count = stored_usage
         super().save(*args, **kwargs)
 
     @property
@@ -575,6 +588,15 @@ class Product(models.Model):
 class TypicalSectionManager(models.Manager):
     def create(self, **kwargs):
         return super().create(**prepare_typical_section_create_kwargs(kwargs))
+
+    def bulk_create(self, objs, *args, **kwargs):
+        created = super().bulk_create(objs, *args, **kwargs)
+        from policy_app.service_block_usage import sync_service_block_usage_counts
+
+        sync_service_block_usage_counts(
+            getattr(obj, "service_block_id", None) for obj in objs
+        )
+        return created
 
 
 class TypicalSection(models.Model):
@@ -637,7 +659,16 @@ class TypicalSection(models.Model):
         if self.service_block_id:
             self.code = self.service_block.code
             if kwargs.get("update_fields") is not None:
-                kwargs["update_fields"] = list(set(kwargs["update_fields"]) | {"service_block", "code"})
+                caller_fields = set(kwargs["update_fields"])
+                self._skip_usage_recount = (
+                    "service_block" not in caller_fields
+                    and "service_block_id" not in caller_fields
+                )
+                kwargs["update_fields"] = list(caller_fields | {"service_block", "code"})
+            else:
+                self._skip_usage_recount = False
+        else:
+            self._skip_usage_recount = False
         super().save(*args, **kwargs)
 
     def _block(self):
@@ -1283,6 +1314,13 @@ class ServiceBlockClassifier(models.Model):
         verbose_name="Подразделение",
     )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+    usage_count = models.PositiveIntegerField(
+        "Частота использования",
+        default=0,
+        db_index=True,
+        editable=False,
+        help_text="Сколько раз блок входит в состав продуктов: число строк таблицы «Типовые блоки услуг».",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
