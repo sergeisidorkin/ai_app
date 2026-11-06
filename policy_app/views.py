@@ -7590,9 +7590,15 @@ def _parse_csv_money(raw, *, with_currency=False):
         value = Decimal(text.replace(" ", "").replace(",", "."))
     except (InvalidOperation, ValueError):
         return None, currency, "invalid"
-    if value < 0:
-        return None, currency, "negative"
-    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), currency, None
+    if not value.is_finite():
+        return None, currency, "invalid"
+    try:
+        if value < 0:
+            return None, currency, "negative"
+        value = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return None, currency, "invalid"
+    return value, currency, None
 
 
 def _specialty_tariff_expertise_labels(specialties):
@@ -7654,6 +7660,7 @@ def _read_policy_csv_rows(csv_file):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_http_methods(["GET"])
 def specialty_tariff_csv_download(request):
     output = io.StringIO()
@@ -7680,6 +7687,7 @@ def specialty_tariff_csv_download(request):
 
 
 @login_required
+@user_passes_test(staff_required)
 @require_POST
 def specialty_tariff_csv_upload(request):
     from classifiers_app.models import OKVCurrency
@@ -7830,12 +7838,17 @@ def specialty_tariff_csv_upload(request):
                     f"Строка {row_number}: столбец «Направления экспертизы» не изменяется при загрузке."
                 )
 
-        try:
-            item = (
-                SpecialtyTariff.objects.filter(created_by=owner, specialty_group__iexact=specialty_group)
-                .order_by("position", "id")
-                .first()
+        matches = list(
+            SpecialtyTariff.objects.filter(created_by=owner, specialty_group__iexact=specialty_group)
+            .order_by("position", "id")[:2]
+        )
+        if len(matches) > 1:
+            warnings.append(
+                f"Строка {row_number}: несколько тарифов с группой «{specialty_group}». Строка пропущена."
             )
+            continue
+        try:
+            item = matches[0] if matches else None
             was_created = item is None
             if was_created:
                 item = SpecialtyTariff(

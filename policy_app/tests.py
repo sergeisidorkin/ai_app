@@ -6140,10 +6140,15 @@ class PolicyManagedTablePaginationTests(TestCase):
         root = Path(__file__).resolve().parents[1]
         css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
         js = (root / "core" / "static" / "core" / "js" / "policy-panels.js").read_text()
-        self.assertIn("#policy-pane .policy-table-editor {", css)
+        self.assertIn(
+            "#policy-pane .policy-table-editor,\n"
+            "#users-pane .users-table-editor {",
+            css,
+        )
         self.assertIn(
             "#policy-pane .policy-table-footer,\n"
-            "#report-submission-section .policy-table-footer {\n"
+            "#report-submission-section .policy-table-footer,\n"
+            "#users-pane .policy-table-footer {\n"
             "  position: sticky;",
             css,
         )
@@ -11232,6 +11237,125 @@ class SpecialtyTariffViewsTests(TestCase):
         item.refresh_from_db()
         self.assertEqual(str(item.daily_rate_tkp_eur), "100.00")
         self.assertEqual(SpecialtyTariff.objects.count(), 1)
+
+    def test_specialty_tariff_csv_endpoints_require_staff(self):
+        item = SpecialtyTariff.objects.create(
+            specialty_group="Налоги",
+            daily_rate_tkp_eur="100.00",
+            daily_rate_ss="90.00",
+            created_by=self.user,
+            position=1,
+        )
+        viewer = get_user_model().objects.create_user(
+            username="tariff-viewer",
+            password="secret123",
+            is_staff=False,
+        )
+        self.client.force_login(viewer)
+        csv_file = SimpleUploadedFile(
+            "specialty_tariffs.csv",
+            (
+                "Группа специальностей;Специальности;Направления экспертизы;"
+                "Дневная ставка оплаты в евро для ТКП;Дневная ставка оплаты для с/с;"
+                "Руководитель направления\n"
+                "Чужие;Налоговый due diligence;TAX;500,00;400,00 EUR;tariff-viewer\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        download = self.client.get(reverse("specialty_tariff_csv_download"))
+        upload = self.client.post(reverse("specialty_tariff_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(download.status_code, 302)
+        self.assertEqual(upload.status_code, 302)
+        self.assertEqual(SpecialtyTariff.objects.count(), 1)
+        item.refresh_from_db()
+        self.assertEqual(str(item.daily_rate_tkp_eur), "100.00")
+
+    def test_specialty_tariff_csv_reupload_skips_duplicate_group_names(self):
+        first = SpecialtyTariff.objects.create(
+            specialty_group="Налоги",
+            daily_rate_tkp_eur="100.00",
+            daily_rate_ss="90.00",
+            currency=self.currency,
+            created_by=self.user,
+            position=1,
+        )
+        second = SpecialtyTariff.objects.create(
+            specialty_group="Налоги",
+            daily_rate_tkp_eur="200.00",
+            daily_rate_ss="180.00",
+            currency=self.currency,
+            created_by=self.user,
+            position=2,
+        )
+        first.specialties.set([self.specialty_1])
+        second.specialties.set([self.specialty_3])
+
+        download = self.client.get(reverse("specialty_tariff_csv_download"))
+        uploaded = SimpleUploadedFile(
+            "specialty_tariffs.csv",
+            download.content,
+            content_type="text/csv",
+        )
+        response = self.client.post(reverse("specialty_tariff_csv_upload"), {"csv_file": uploaded})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 0)
+        self.assertEqual(payload["updated"], 0)
+        self.assertGreaterEqual(
+            sum("несколько тарифов" in warning for warning in payload["warnings"]),
+            2,
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(str(first.daily_rate_tkp_eur), "100.00")
+        self.assertEqual(str(second.daily_rate_tkp_eur), "200.00")
+        self.assertEqual(first.specialties.get().specialty, "Налоговый due diligence")
+        self.assertEqual(second.specialties.get().specialty, "M&A")
+
+    def test_specialty_tariff_csv_upload_rejects_non_finite_and_oversized_rates(self):
+        item = SpecialtyTariff.objects.create(
+            specialty_group="Налоги",
+            daily_rate_tkp_eur="100.00",
+            daily_rate_ss="90.00",
+            created_by=self.user,
+            position=1,
+        )
+        header = (
+            "Группа специальностей;Специальности;Направления экспертизы;"
+            "Дневная ставка оплаты в евро для ТКП;Дневная ставка оплаты для с/с;"
+            "Руководитель направления\n"
+        )
+        csv_file = SimpleUploadedFile(
+            "specialty_tariffs.csv",
+            (
+                header
+                + "Сделки;M&A;M&A;900,00;800,00 EUR;policy-admin-3\n"
+                + "Налоги;Налоговый due diligence;TAX;NaN;90,00 EUR;policy-admin-3\n"
+                + "Бесконечность;M&A;M&A;100,00;Infinity EUR;policy-admin-3\n"
+                + "Слишком много;M&A;M&A;1e30;80,00 EUR;policy-admin-3\n"
+            ).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("specialty_tariff_csv_upload"), {"csv_file": csv_file})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["created"], 1)
+        self.assertEqual(payload["updated"], 0)
+        self.assertGreaterEqual(
+            sum("некорректная дневная ставка" in warning for warning in payload["warnings"]),
+            3,
+        )
+        item.refresh_from_db()
+        self.assertEqual(str(item.daily_rate_tkp_eur), "100.00")
+        created = SpecialtyTariff.objects.get(specialty_group="Сделки")
+        self.assertEqual(str(created.daily_rate_tkp_eur), "900.00")
+        self.assertFalse(SpecialtyTariff.objects.filter(specialty_group="Бесконечность").exists())
+        self.assertFalse(SpecialtyTariff.objects.filter(specialty_group="Слишком много").exists())
 
 
 class TariffViewsTests(TestCase):
