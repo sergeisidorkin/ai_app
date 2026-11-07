@@ -6347,6 +6347,26 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertContains(response, 'data-row-order-payload-field="ordered_performer_ids"', html=False)
         self.assertContains(response, f'data-row-order-id="{performer.pk}"', html=False)
 
+    def test_performers_costs_toggle_is_hidden_by_default(self):
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode("utf-8")
+        self.assertLess(html.index('id="perf-asset-filter-dropdown"'), html.index('id="perf-toggle-costs"'))
+        button_start = html.rindex("<button", 0, html.index('id="perf-toggle-costs"'))
+        button = html[button_start:html.index("</button>", button_start)]
+        self.assertIn("perf-vis-toggle", button)
+        self.assertNotIn("perf-vis-toggle--active", button)
+        self.assertIn("bi-eye-slash", button)
+        self.assertNotIn("bi-eye ", button)
+        self.assertIn("Показать затраты", button)
+        self.assertNotIn("Скрыть затраты", button)
+        self.assertIn("perf-costs-hidden", html)
+        self.assertIn('class="perf-cost-value"', html)
+        self.assertIn("Скоррект. затраты", html)
+        self.assertIn("Расч. затраты", html)
+        self.assertIn("Согласовано", html)
+
     def test_work_volume_form_uses_project_manager_label(self):
         form = WorkVolumeForm()
 
@@ -6514,7 +6534,7 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertEqual(prd.executor, self.project_manager_name)
         self.assertEqual(prd.employee, self.project_manager_employee)
 
-    def test_different_manager_creates_prj_and_does_not_duplicate_prd_or_crd(self):
+    def test_different_manager_creates_prd_crd_and_prj_for_each_asset(self):
         first_work_item = WorkVolume.objects.create(
             project=self.project,
             name="Актив 1",
@@ -6528,6 +6548,9 @@ class WorkVolumePerformerCreationTests(TestCase):
         self.assertTrue(
             Performer.objects.filter(work_item=first_work_item, typical_section__code="PRJ").exists()
         )
+        self.assertTrue(
+            Performer.objects.filter(work_item=first_work_item, typical_section__code="CRD").exists()
+        )
 
         second_work_item = WorkVolume.objects.create(
             project=self.project,
@@ -6538,11 +6561,11 @@ class WorkVolumePerformerCreationTests(TestCase):
 
         self.assertEqual(
             Performer.objects.filter(registration=self.project, typical_section__code="PRD").count(),
-            1,
+            2,
         )
         self.assertEqual(
             Performer.objects.filter(registration=self.project, typical_section__code="CRD").count(),
-            1,
+            2,
         )
         self.assertEqual(
             Performer.objects.filter(registration=self.project, typical_section__code="PRJ").count(),
@@ -6551,14 +6574,19 @@ class WorkVolumePerformerCreationTests(TestCase):
 
         first_prj = Performer.objects.get(work_item=first_work_item, typical_section__code="PRJ")
         second_prj = Performer.objects.get(work_item=second_work_item, typical_section__code="PRJ")
-        prd = Performer.objects.get(registration=self.project, typical_section__code="PRD")
+        first_prd = Performer.objects.get(work_item=first_work_item, typical_section__code="PRD")
+        second_prd = Performer.objects.get(work_item=second_work_item, typical_section__code="PRD")
+        second_crd = Performer.objects.get(work_item=second_work_item, typical_section__code="CRD")
 
         self.assertEqual(first_prj.executor, self.first_manager_name)
         self.assertEqual(first_prj.employee, self.first_manager_employee)
         self.assertEqual(second_prj.executor, self.second_manager_name)
         self.assertEqual(second_prj.employee, self.second_manager_employee)
-        self.assertEqual(prd.executor, self.project_manager_name)
-        self.assertEqual(prd.employee, self.project_manager_employee)
+        self.assertEqual(first_prd.executor, self.project_manager_name)
+        self.assertEqual(first_prd.employee, self.project_manager_employee)
+        self.assertEqual(second_prd.executor, self.project_manager_name)
+        self.assertEqual(second_prd.employee, self.project_manager_employee)
+        self.assertEqual(second_crd.asset_name, "Актив 2")
 
     def test_multi_product_work_item_creates_sections_grouped_by_ranked_products(self):
         work_item = WorkVolume.objects.create(
@@ -8502,6 +8530,7 @@ class ExpertProjectVisibilityTests(TestCase):
         self.assertNotContains(response, "Скоррект. затраты")
         self.assertNotContains(response, "Расч. затраты")
         self.assertNotContains(response, "Согласовано")
+        self.assertNotContains(response, 'id="perf-toggle-costs"', html=False)
         self.assertNotContains(response, 'id="perf-total-actual"', html=False)
         content = response.content.decode("utf-8")
         performer = Performer.objects.get(registration=self.confirmed_project)

@@ -164,6 +164,14 @@ from .service_scope import (
     mirror_legal_positions,
     mirror_work_positions,
 )
+from .stage_grouping import (
+    StageGroupingBlocked,
+    StageGroupingNeedsConfirm,
+    can_regroup_project_stages,
+    merge_stages,
+    parse_stage_ids,
+    split_project,
+)
 from .services.schedule_copy import copy_typical_gantt_to_project
 from .services import gantt_tasks
 
@@ -1101,6 +1109,7 @@ def _projects_context(user=None, request=None, focus_registration_ids=None):
         "registration_coordinator_choices": _project_coordinator_choices("", show_prs_label=False),
         "is_expert": is_expert,
         "is_admin": _is_admin_user(user),
+        "can_regroup_project_stages": can_regroup_project_stages(user),
     }
 
 
@@ -3949,6 +3958,41 @@ def registration_delete(request, pk: int):
         ProjectRegistration.objects.filter(pk=parent_id).delete()
     ProjectRegistration.refresh_number_sequences([number])
     return _render_projects_updated(request)
+
+
+def _stage_grouping_json(action):
+    try:
+        action()
+    except StageGroupingNeedsConfirm as exc:
+        return JsonResponse({"ok": False, "needs_confirm": True, "warnings": exc.warnings})
+    except StageGroupingBlocked as exc:
+        return JsonResponse({"ok": False, "blocked": True, "message": exc.message}, status=400)
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
+def registration_stages_merge(request):
+    if not can_regroup_project_stages(request.user):
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    try:
+        stage_ids = parse_stage_ids(request.POST.getlist("stage_ids"))
+    except StageGroupingBlocked as exc:
+        return JsonResponse({"ok": False, "blocked": True, "message": exc.message}, status=400)
+    confirm = (request.POST.get("confirm") or "").strip() == "1"
+    return _stage_grouping_json(lambda: merge_stages(stage_ids, confirm=confirm))
+
+
+@login_required
+@require_POST
+def registration_stages_split(request):
+    if not can_regroup_project_stages(request.user):
+        return JsonResponse({"ok": False, "error": "Недостаточно прав."}, status=403)
+    confirm = (request.POST.get("confirm") or "").strip() == "1"
+    return _stage_grouping_json(
+        lambda: split_project(request.POST.get("project_id"), confirm=confirm)
+    )
+
 
 def _registration_json(payload, registration):
     summary = summary_payload_for_registration(registration) if registration is not None else None

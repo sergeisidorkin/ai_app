@@ -12359,6 +12359,30 @@ class PolicyProductMapTests(TestCase):
         self.assertIn('data-product-map-filter="consulting"', html)
         self.assertIn('data-product-map-filter="category"', html)
         self.assertIn('data-product-map-filter="subtype"', html)
+        self.assertIn('data-product-map-stats', html)
+        self.assertIn('data-product-map-stats-toggle', html)
+        self.assertIn('product-map-stats-info', html)
+        self.assertIn('>Вид консалтинга<', html)
+        self.assertIn('>Тип услуги<', html)
+        self.assertIn('>Подтип услуг<', html)
+        self.assertIn('>Продукт<', html)
+        self.assertIn('>Продукты<', html)
+        self.assertIn('class="product-map-stats-hist"', html)
+        self.assertLess(html.find('>Продукты<'), html.find('data-product-map-stats-hist="products"'))
+        products_button = html[
+            html.find('product-map-stats-hist-mode is-active'):html.find('data-product-map-stats-hist="usage"')
+        ]
+        self.assertIn("is-active", products_button)
+        self.assertIn('aria-pressed="true"', products_button)
+        self.assertIn("bi-eye", products_button)
+        self.assertNotIn("bi-eye-slash", products_button)
+        self.assertIn('product-map-stats is-collapsed', html)
+        self.assertLess(html.find('product-map-stats-info'), html.find('data-product-map-stats-toggle'))
+        self.assertLess(html.find('data-product-map-stats-branches'), html.find('>Вид консалтинга<'))
+        self.assertLess(html.find('>Вид консалтинга<'), html.find('data-product-map-stats-level="1"'))
+        self.assertIn('data-product-map-stats-level="1" aria-pressed="true"', html)
+        for level in range(1, 5):
+            self.assertIn(f'data-product-map-stats-level="{level}"', html)
 
         maps = self._maps(response)
         self.assertEqual(
@@ -12434,6 +12458,18 @@ class PolicyProductMapTests(TestCase):
         self.assertIn("function pruneProductMapNode(node, filters)", source)
         self.assertIn("function applyProductMapFilters(field)", source)
         self.assertIn("function filterProductMapMind(mind, filters)", source)
+        self.assertIn("function renderProductMapStats(field)", source)
+        self.assertIn("function scheduleProductMapBadgeSync(field)", source)
+        self.assertIn("function collectProductMapStats(field)", source)
+        self.assertIn("function productMapStatsCollapsedForLevel(types, level)", source)
+        self.assertIn("function productMapStatsUsage(node)", source)
+        self.assertIn("function assignProductMapStatsHistograms(types, mode)", source)
+        self.assertIn("function syncProductMapStatsHistMode(field)", source)
+        self.assertIn("product-map-stats-usage-badge", source)
+        self.assertIn(".product-map-stats-usage-badge", css)
+        self.assertIn(".product-map-stats-hist-bar", css)
+        self.assertIn(".product-map-stats-toggle.is-plus::after", css)
+        self.assertIn(".product-map-stats-table :is(th, td).product-map-stats-count", css)
         self.assertIn("function groupProductMapFilterItems(rows)", source)
         self.assertIn("Math.min((viewW - pad) / bounds.w, (viewH - pad) / bounds.h, 1)", source)
         self.assertIn("function placeProductMapAccuracyRow(node, products, columns, parentAbsX, compact)", source)
@@ -12456,6 +12492,8 @@ class PolicyProductMapTests(TestCase):
         self.assertIn("return text === '-' ? '\\u2212' : text;", source)
         self.assertIn("overflow-y: hidden;", css)
         self.assertIn(".product-map-board--fullscreen", css)
+        self.assertIn(".product-map-stats", css)
+        self.assertIn(".product-map-stats.is-collapsed .product-map-stats-body", css)
 
         staff = get_user_model().objects.create_user(
             username="policy-product-map-link",
@@ -12546,6 +12584,251 @@ class PolicyProductMapTests(TestCase):
         for year in (2024, 2025, 2026):
             self.assertIn(f'id="product-map-period-filter-{year}"', html)
         self.assertNotIn('id="product-map-period-filter-2023"', html)
+
+    def test_product_map_project_list_numbers_only_counted_stages(self):
+        from projects_app.models import ProjectRegistration, ProjectRegistrationProduct
+
+        def registration(number, year, products, **extra):
+            row = ProjectRegistration.objects.create(
+                number=number,
+                name=extra.pop("name", f"MAP {number}"),
+                year=year,
+                **extra,
+            )
+            for rank, product in enumerate(products, start=1):
+                ProjectRegistrationProduct.objects.create(registration=row, product=product, rank=rank)
+            return row
+
+        parent = registration(9201, 2020, [], name="Сводный проект", position=1)
+        counted_first = registration(
+            9201, 2024, [self.shared_product], name="Этап продукта", stage_project=parent, position=2,
+            customer="Общий заказчик", asset_owner="Общий владелец",
+        )
+        unrelated = registration(
+            9201, 2024, [self.orphan], name="Чужой этап", stage_project=parent, position=3,
+            customer="Общий заказчик", asset_owner="Общий владелец",
+        )
+        counted_later = registration(
+            9201, 2025, [self.shared_product], name="Другой год", stage_project=parent, position=4,
+            customer="Общий заказчик", asset_owner="Свой владелец",
+        )
+        undated = registration(
+            9201, None, [self.shared_product], name="Без года", stage_project=parent, position=5,
+            customer="Общий заказчик", asset_owner="Общий владелец",
+        )
+        single = registration(
+            9202, 2024, [self.shared_product], name="Одиночный", position=6,
+            customer="Заказчик проекта", asset_owner="Владелец проекта",
+        )
+        lone_parent = registration(9204, 2019, [], name="Проект одного этапа", position=7)
+        lone_stage = registration(
+            9204, 2024, [self.shared_product], name="Единственный этап", stage_project=lone_parent, position=8,
+        )
+        registration(9203, 2024, [self.orphan], name="Другой проект", position=9)
+        for row in (parent, counted_first, unrelated, counted_later, undated, single, lone_parent, lone_stage):
+            row.refresh_from_db()
+
+        page = self.client.get(reverse("product_map"))
+        self.assertContains(page, 'id="product-map-projects-modal"', html=False)
+        self.assertContains(page, 'data-product-map-projects-count', html=False)
+        self.assertContains(page, reverse("product_map_projects"), html=False)
+        source = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "policy-panels.js"
+        ).read_text()
+        css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertIn("data-product-map-project-count", source)
+        self.assertIn("function openProductMapProjects(field, productId, label)", source)
+        self.assertIn("button.product-map-stats-usage-badge", css)
+        self.assertIn("button.product-map-project-badge-count", css)
+        self.assertIn("#product-map-projects-modal tr.is-uncounted", css)
+        self.assertIn("#d5dbe3", css)
+        self.assertIn(".product-map-projects-total", css)
+        self.assertIn("calc(var(--product-map-projects-pad) * 2)", css)
+        self.assertIn("--product-map-projects-count-size", css)
+        counter_css = css[css.find(".product-map-projects-counter > span"):]
+        self.assertIn("text-align: center", counter_css[:240])
+        self.assertIn("function setProductMapProjectsHeading(modal, label, total)", source)
+
+        def counters(html):
+            return re.findall(r'data-product-map-project-counter="(\d+)"', html)
+
+        def row_html(html, name):
+            for row in re.findall(r"<tr\b[^>]*>.*?</tr>", html, flags=re.S):
+                if name in row:
+                    return row
+            return ""
+
+        response = self.client.get(reverse("product_map_projects"), {"product": self.shared_product.pk})
+        html = response.content.decode()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("BOTH Два", html)
+        self.assertIn("Сводный проект", html)
+        self.assertIn("bi-caret-down-fill", html)
+        self.assertIn("bi-arrows-collapse", html)
+        self.assertIn("Проект (этап) ID", html)
+        self.assertIn(">Заказчик<", html)
+        self.assertIn(">Владелец<", html)
+        self.assertIn("Общий заказчик", row_html(html, "Сводный проект"))
+        self.assertNotIn("Общий владелец", row_html(html, "Сводный проект"))
+        self.assertIn("Свой владелец", row_html(html, "Другой год"))
+        self.assertNotIn("Общий заказчик", row_html(html, "Этап продукта"))
+        self.assertIn("Заказчик проекта", row_html(html, "Одиночный"))
+        self.assertIn("Владелец проекта", row_html(html, "Одиночный"))
+        self.assertEqual(counters(html), ["1", "2", "3", "4"])
+        self.assertIn('data-product-map-project-total="4"', html)
+        self.assertIn("is-uncounted", row_html(html, "Чужой этап"))
+        self.assertNotIn("data-product-map-project-counter", row_html(html, "Чужой этап"))
+        self.assertIn("is-uncounted", row_html(html, "Без года"))
+        self.assertNotIn("data-product-map-project-counter", row_html(html, "Без года"))
+        self.assertNotIn("is-uncounted", row_html(html, "Этап продукта"))
+        self.assertIn("is-uncounted", row_html(html, "Сводный проект"))
+        self.assertNotIn("Другой проект", html)
+        self.assertIn(parent.short_uid, row_html(html, "Сводный проект"))
+        self.assertIn(counted_first.short_uid, row_html(html, "Этап продукта"))
+        self.assertRegex(row_html(html, "Этап продукта"), r'class="product-map-projects-number">\s*</td>')
+        self.assertIn(lone_parent.short_uid, row_html(html, "Единственный этап"))
+        if lone_stage.short_uid != lone_parent.short_uid:
+            self.assertNotIn(lone_stage.short_uid, row_html(html, "Единственный этап"))
+        self.assertNotIn("data-product-map-project-group", row_html(html, "Единственный этап"))
+        self.assertRegex(row_html(html, "Одиночный"), r'class="product-map-projects-number">\s*9202\s*</td>')
+        self.assertIn(single.short_uid, row_html(html, "Одиночный"))
+        self.assertLess(html.find("Этап продукта"), html.find("Чужой этап"))
+        self.assertLess(html.find("Без года"), html.find("Одиночный"))
+        self.assertLess(html.find("Одиночный"), html.find("Единственный этап"))
+
+        filtered = self.client.get(
+            reverse("product_map_projects"),
+            {"product": self.shared_product.pk, "years": ["2024"]},
+        )
+        filtered_html = filtered.content.decode()
+        self.assertEqual(counters(filtered_html), ["1", "2", "3"])
+        self.assertIn('data-product-map-project-total="3"', filtered_html)
+        self.assertIn("Другой год", filtered_html)
+        self.assertNotIn("data-product-map-project-counter", row_html(filtered_html, "Другой год"))
+        self.assertIn("is-uncounted", row_html(filtered_html, "Другой год"))
+        self.assertIn("is-uncounted", row_html(filtered_html, "Чужой этап"))
+        self.assertNotIn("Другой проект", filtered_html)
+
+        only_later = self.client.get(
+            reverse("product_map_projects"),
+            {"product": self.shared_product.pk, "years": "2025"},
+        )
+        later_html = only_later.content.decode()
+        self.assertEqual(counters(later_html), ["1"])
+        self.assertIn("Этап продукта", later_html)
+        self.assertNotIn("Одиночный", later_html)
+        self.assertNotIn("Единственный этап", later_html)
+
+        combined = self.client.get(
+            reverse("product_map_projects"),
+            {"product": [self.shared_product.pk, self.orphan.pk], "label": "Горный"},
+        )
+        combined_html = combined.content.decode()
+        self.assertEqual(combined.status_code, 200)
+        self.assertEqual(counters(combined_html), ["1", "2", "3", "4", "5", "6"])
+        self.assertIn('data-product-map-project-total="6"', combined_html)
+        self.assertIn(">Горный<", combined_html)
+        self.assertIn("Другой проект", combined_html)
+
+        anonymous = Client()
+        self.assertEqual(anonymous.get(reverse("product_map_projects")).status_code, 302)
+        self.assertEqual(
+            self.client.get(reverse("product_map_projects"), {"product": "0"}).status_code,
+            404,
+        )
+
+    def test_product_map_project_list_limits_experts_to_accessible_stages(self):
+        from policy_app.models import EXPERT_GROUP
+        from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
+
+        def registration(number, name, **extra):
+            return ProjectRegistration.objects.create(
+                number=number,
+                name=name,
+                year=extra.pop("year", 2026),
+                customer=extra.pop("customer", ""),
+                asset_owner=extra.pop("asset_owner", ""),
+                **extra,
+            )
+
+        parent = registration(9301, "Сводный доступ", year=2020, position=1)
+        visible = registration(
+            9301,
+            "Видимый этап",
+            stage_project=parent,
+            position=2,
+            customer="Видимый заказчик",
+            asset_owner="Видимый владелец",
+        )
+        hidden_stage = registration(
+            9301,
+            "Скрытый этап",
+            stage_project=parent,
+            position=3,
+            customer="Скрытый заказчик",
+            asset_owner="Скрытый владелец",
+        )
+        hidden_project = registration(
+            9302,
+            "Скрытый проект",
+            position=4,
+            customer="Чужой заказчик",
+            asset_owner="Чужой владелец",
+        )
+        for row in (visible, hidden_stage, hidden_project):
+            ProjectRegistrationProduct.objects.create(
+                registration=row,
+                product=self.shared_product,
+                rank=1,
+            )
+
+        expert_user = get_user_model().objects.create_user(
+            username="policy-map-expert",
+            password="secret123",
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=expert_user, role=EXPERT_GROUP)
+        Performer.objects.create(
+            registration=visible,
+            employee=employee,
+            executor="Эксперт Эксперт",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        Performer.objects.create(
+            registration=hidden_project,
+            employee=employee,
+            executor="Эксперт Эксперт",
+            participation_response=Performer.ParticipationResponse.DECLINED,
+        )
+
+        open_html = self.client.get(
+            reverse("product_map_projects"),
+            {"product": self.shared_product.pk},
+        ).content.decode()
+        self.assertIn("Видимый этап", open_html)
+        self.assertIn("Скрытый этап", open_html)
+        self.assertIn("Скрытый проект", open_html)
+
+        self.client.force_login(expert_user)
+        html = self.client.get(
+            reverse("product_map_projects"),
+            {"product": self.shared_product.pk},
+        ).content.decode()
+        self.assertEqual(
+            re.findall(r'data-product-map-project-counter="(\d+)"', html),
+            ["1"],
+        )
+        self.assertIn("Видимый этап", html)
+        self.assertIn("Видимый заказчик", html)
+        self.assertIn("Видимый владелец", html)
+        self.assertNotIn("Скрытый этап", html)
+        self.assertNotIn("Скрытый заказчик", html)
+        self.assertNotIn("Скрытый владелец", html)
+        self.assertNotIn("Скрытый проект", html)
+        self.assertNotIn("Чужой заказчик", html)
+        self.assertNotIn("Чужой владелец", html)
 
     def test_product_map_omits_project_years_without_registry_rows(self):
         maps = self._maps(self.client.get(reverse("product_map")))

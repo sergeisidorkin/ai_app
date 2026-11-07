@@ -570,6 +570,16 @@
             </button>
           </div>
         </div>
+        {% if can_regroup_project_stages %}
+          <button type="button"
+                  id="registration-stages-merge-btn"
+                  class="btn btn-outline-primary btn-sm d-none"
+                  data-url="{% url 'registration_stages_merge' %}">Объединить</button>
+          <button type="button"
+                  id="registration-stages-split-btn"
+                  class="btn btn-outline-primary btn-sm d-none"
+                  data-url="{% url 'registration_stages_split' %}">Разъединить</button>
+        {% endif %}
         <div class="btn-group">
           <button type="button"
                   id="reg-create-workspace-btn"
@@ -617,4 +627,21 @@
     {% include "policy_app/_policy_pagination.html" with pagination_target="#registration-registry-section" page_size_id="registration-registry" page_obj=registry_page_obj paginator=registry_paginator policy_pagination_pages=registry_pagination_pages policy_pagination_previous_url=registry_pagination_previous_url policy_pagination_next_url=registry_pagination_next_url policy_pagination_start=registry_pagination_start policy_pagination_end=registry_pagination_end policy_page_size=registry_page_size policy_page_size_options=registry_page_size_options policy_page_size_url=registry_page_size_url %}
     {% endif %}
     </div>
+    {% if can_regroup_project_stages %}
+    <div class="modal fade" id="registration-stage-grouping-modal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="registration-stage-grouping-title">Подтвердите действие</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+          </div>
+          <div class="modal-body" id="registration-stage-grouping-body"></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+            <button type="button" class="btn btn-primary btn-sm d-none" id="registration-stage-grouping-confirm">Подтвердить</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>

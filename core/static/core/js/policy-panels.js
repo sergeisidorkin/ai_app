@@ -11413,7 +11413,7 @@
     }, { passive: false });
     canvas.addEventListener('pointerdown', function (event) {
       if (event.button !== 0) return;
-      if (event.target.closest && event.target.closest('jmexpander')) return;
+      if (event.target.closest && event.target.closest('jmexpander, [data-product-map-project-count]')) return;
       const productNode = event.target.closest && event.target.closest('jmnode[data-product-id]');
       state.drag = {
         id: event.pointerId,
@@ -11476,6 +11476,9 @@
         state.jm.resize();
         syncProductMapAccuracyHeaders(state);
         unifyProductMapRails(state.canvas);
+        // resize() recenters nodes when the panel size changes. Counters
+        // are placed from those coordinates, so they must be written after it.
+        syncProductMapProjectBadges(state);
         ensureProductMapSurface(state.canvas);
         fitProductMapView(state);
       });
@@ -12477,9 +12480,14 @@
           );
           const badge = document.createElement('div');
           badge.className = 'product-map-project-badge';
-          const value = document.createElement('span');
+          const value = document.createElement('button');
+          value.type = 'button';
           value.className = 'product-map-project-badge-count';
           value.textContent = String(count);
+          value.dataset.productId = String(data.productId || '');
+          value.setAttribute('data-product-map-project-count', '');
+          value.title = 'Показать проекты';
+          value.setAttribute('aria-label', 'Показать проекты: ' + count);
           const valueSize = 16 + 7 * String(count).length;
           value.style.width = valueSize + 'px';
           value.style.height = valueSize + 'px';
@@ -12571,7 +12579,150 @@
     });
   }
 
+  function ensureProductMapProjectsModal() {
+    const modals = document.querySelectorAll('#product-map-projects-modal');
+    if (!modals.length) return null;
+    const modal = Array.from(modals).find(function (item) {
+      return item.parentElement !== document.body;
+    }) || modals[0];
+    modals.forEach(function (item) {
+      if (item !== modal) item.remove();
+    });
+    if (modal.parentElement !== document.body) document.body.appendChild(modal);
+    bindProductMapProjectsModal(modal);
+    return modal;
+  }
+
+  function syncProductMapProjectsToggleAll(modal) {
+    const button = modal.querySelector('[data-product-map-project-groups]');
+    if (!button) return;
+    const toggles = modal.querySelectorAll('[data-product-map-project-group]');
+    const allCollapsed = toggles.length > 0 && Array.from(toggles).every(function (item) {
+      return item.getAttribute('aria-expanded') === 'false';
+    });
+    button.classList.toggle('active', allCollapsed);
+    const icon = button.querySelector('.bi');
+    if (icon) icon.className = allCollapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+  }
+
+  function setProductMapProjectsGroup(modal, key, collapsed) {
+    modal.querySelectorAll('[data-product-map-project-group]').forEach(function (button) {
+      if ((button.getAttribute('data-product-map-project-group') || '') !== key) return;
+      button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    });
+    modal.querySelectorAll('[data-product-map-project-member]').forEach(function (row) {
+      if ((row.getAttribute('data-product-map-project-member') || '') !== key) return;
+      row.classList.toggle('is-collapsed', collapsed);
+    });
+  }
+
+  function bindProductMapProjectsModal(modal) {
+    if (!modal || modal.dataset.productMapProjectsBound === '1') return;
+    modal.dataset.productMapProjectsBound = '1';
+    modal.addEventListener('show.bs.modal', function () {
+      document.body.classList.add('product-map-projects-open');
+    });
+    modal.addEventListener('hidden.bs.modal', function () {
+      document.body.classList.remove('product-map-projects-open');
+    });
+    modal.addEventListener('click', function (event) {
+      const allButton = event.target.closest && event.target.closest('[data-product-map-project-groups]');
+      if (allButton && modal.contains(allButton)) {
+        event.preventDefault();
+        const toggles = modal.querySelectorAll('[data-product-map-project-group]');
+        const collapse = Array.from(toggles).some(function (button) {
+          return button.getAttribute('aria-expanded') !== 'false';
+        });
+        toggles.forEach(function (button) {
+          setProductMapProjectsGroup(
+            modal,
+            button.getAttribute('data-product-map-project-group') || '',
+            collapse
+          );
+        });
+        syncProductMapProjectsToggleAll(modal);
+        return;
+      }
+      const button = event.target.closest && event.target.closest('[data-product-map-project-group]');
+      if (!button || !modal.contains(button)) return;
+      event.preventDefault();
+      const key = button.getAttribute('data-product-map-project-group') || '';
+      setProductMapProjectsGroup(modal, key, button.getAttribute('aria-expanded') !== 'false');
+      syncProductMapProjectsToggleAll(modal);
+    });
+  }
+
+  function setProductMapProjectsHeading(modal, label, total) {
+    const title = modal.querySelector('[data-product-map-projects-title]');
+    const count = modal.querySelector('[data-product-map-projects-count]');
+    if (title) title.textContent = label || 'Проекты';
+    if (!count) return;
+    if (total == null || total === '') {
+      count.hidden = true;
+      count.textContent = '';
+      return;
+    }
+    const text = String(total);
+    const size = 16 + 7 * text.length;
+    count.hidden = false;
+    count.textContent = text;
+    count.style.width = size + 'px';
+    count.style.height = size + 'px';
+    modal.style.setProperty('--product-map-projects-count-size', size + 'px');
+  }
+
+  function openProductMapProjects(field, productId, label) {
+    const modal = ensureProductMapProjectsModal();
+    const url = field && field.dataset.productMapProjectsUrl;
+    const ids = String(productId || '').split(',').map(function (id) {
+      return id.trim();
+    }).filter(function (id) {
+      return /^\d+$/.test(id);
+    });
+    if (!modal || !url || !ids.length || !window.bootstrap) return;
+    const body = modal.querySelector('[data-product-map-projects-body]');
+    setProductMapProjectsHeading(modal, 'Проекты', null);
+    if (body) {
+      body.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Загрузка…</span></div></div>';
+    }
+    window.bootstrap.Modal.getOrCreateInstance(modal).show();
+    const period = readProductMapPeriod(field);
+    const target = new URL(url, window.location.href);
+    ids.forEach(function (id) {
+      target.searchParams.append('product', id);
+    });
+    if (ids.length > 1 && label) target.searchParams.set('label', label);
+    if (!period.all) {
+      period.years.forEach(function (year) {
+        target.searchParams.append('years', year);
+      });
+    }
+    const token = (modal.__productMapProjectsToken || 0) + 1;
+    modal.__productMapProjectsToken = token;
+    window.fetch(target.toString(), {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin',
+    }).then(function (response) {
+      if (!response.ok) throw new Error('load failed');
+      return response.text();
+    }).then(function (html) {
+      if (modal.__productMapProjectsToken !== token || !body) return;
+      body.innerHTML = html;
+      const label = body.querySelector('[data-product-map-projects-label]');
+      setProductMapProjectsHeading(
+        modal,
+        label ? label.textContent.trim() : '',
+        label ? label.getAttribute('data-product-map-project-total') : null
+      );
+    }).catch(function () {
+      if (modal.__productMapProjectsToken !== token || !body) return;
+      setProductMapProjectsHeading(modal, 'Проекты', null);
+      body.innerHTML = '<p class="text-danger mb-0">Не удалось загрузить проекты.</p>';
+    });
+  }
+
   function bindProductMapProjectControls() {
+    ensureProductMapProjectsModal();
     if (window.__productMapProjectsBound) return;
     window.__productMapProjectsBound = true;
     document.addEventListener('click', function (event) {
@@ -12608,6 +12759,21 @@
       }
       syncProductMapFieldBadges(fieldNode);
     });
+    document.addEventListener('click', function (event) {
+      const count = event.target && event.target.closest
+        ? event.target.closest('[data-product-map-project-count]')
+        : null;
+      if (!count) return;
+      const fieldNode = count.closest('#product-map-field');
+      if (!fieldNode || !policyPane()?.contains(fieldNode)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openProductMapProjects(
+        fieldNode,
+        count.dataset.productId || '',
+        count.getAttribute('data-product-map-projects-label') || ''
+      );
+    });
     document.addEventListener('change', function (event) {
       const changed = event.target;
       if (!changed || !changed.closest) return;
@@ -12621,6 +12787,7 @@
       updateProductMapPeriodLabel(fieldNode);
       syncProductMapFieldBadges(fieldNode);
       if (productMapCollapseEmptyActive(fieldNode)) syncProductMapEmptyBranches(fieldNode, 'reapply');
+      renderProductMapStats(fieldNode);
     });
   }
 
@@ -12975,6 +13142,512 @@
       state.jm.show(filterProductMapMind(state.sourceMind, filters));
     });
     setProductMapLevel(field, productMapSelectedLevel(field));
+    renderProductMapStats(field);
+  }
+
+  function productMapStatsCount(node) {
+    let total = node.products.size;
+    node.children.forEach(function (child) {
+      total += productMapStatsCount(child);
+    });
+    return total;
+  }
+
+  function collectProductMapStats(field) {
+    const filters = field.__productMapFilterState || {
+      consulting: { all: true, ids: new Set() },
+      category: { all: true, ids: new Set() },
+      subtype: { all: true, ids: new Set() },
+    };
+    const types = new Map();
+    function bucket(parent, key, topic) {
+      let node = parent.get(key);
+      if (!node) {
+        node = { key: key, topic: topic, children: new Map(), products: new Map() };
+        parent.set(key, node);
+      }
+      return node;
+    }
+    function addProduct(parent, node) {
+      if (!parent || !node) return;
+      const id = node.productId != null ? String(node.productId) : String(node.id || node.topic || '');
+      if (!id || parent.products.has(id)) return;
+      parent.products.set(id, {
+        topic: node.topic || '',
+        usage: productMapProjectCount(node, period),
+      });
+    }
+    function walk(node, typeNode, serviceNode, subtypeNode) {
+      if (!node) return;
+      const kind = node.mapKind || '';
+      if (kind === 'type' || kind === 'unclassified') {
+        const key = kind === 'unclassified' ? 'unclassified' : 'type:' + node.consultingId;
+        const nextType = bucket(types, key, node.topic || '');
+        (node.children || []).forEach(function (child) {
+          walk(child, nextType, null, null);
+        });
+        return;
+      }
+      if (kind === 'service' && typeNode) {
+        const nextService = bucket(typeNode.children, 'service:' + node.serviceId, node.topic || '');
+        (node.children || []).forEach(function (child) {
+          walk(child, typeNode, nextService, null);
+        });
+        return;
+      }
+      if (kind === 'subtype' && serviceNode) {
+        const nextSubtype = bucket(serviceNode.children, 'subtype:' + node.subtypeId, node.topic || '');
+        (node.children || []).forEach(function (child) {
+          walk(child, typeNode, serviceNode, nextSubtype);
+        });
+        return;
+      }
+      if (kind === 'product') {
+        addProduct(subtypeNode || serviceNode || typeNode, node);
+        return;
+      }
+      (node.children || []).forEach(function (child) {
+        walk(child, typeNode, serviceNode, subtypeNode);
+      });
+    }
+    const period = readProductMapPeriod(field);
+    (field.__productMapInstances || []).forEach(function (state) {
+      if (!state.sourceMind) return;
+      const mind = filterProductMapMind(state.sourceMind, filters);
+      walk(mind.data, null, null);
+    });
+    return types;
+  }
+
+  function productMapStatsUsage(node) {
+    let total = 0;
+    node.products.forEach(function (product) {
+      total += product.usage || 0;
+    });
+    node.children.forEach(function (child) {
+      total += productMapStatsUsage(child);
+    });
+    return total;
+  }
+
+  function productMapStatsHistogramWidths(values) {
+    const maxValue = Math.max.apply(null, values);
+    if (!(maxValue > 0)) return values.map(function () { return 0; });
+    return values.map(function (value) {
+      if (value <= 0) return 0;
+      return Math.round((100 * value / maxValue) * 1000) / 1000;
+    });
+  }
+
+  function productMapStatsHistMode(field) {
+    return field && field.__productMapStatsHist === 'usage' ? 'usage' : 'products';
+  }
+
+  function productMapStatsHistValue(node, mode) {
+    return mode === 'usage' ? productMapStatsUsage(node) : productMapStatsCount(node);
+  }
+
+  function assignProductMapStatsHistograms(types, mode) {
+    const roots = Array.from(types.values());
+    if (!roots.length) return;
+    const rootWidths = productMapStatsHistogramWidths(
+      roots.map(function (node) { return productMapStatsHistValue(node, mode); })
+    );
+    roots.forEach(function (node, index) {
+      node.histogram = rootWidths[index];
+      assignProductMapStatsChildHistograms(node, mode);
+    });
+  }
+
+  function assignProductMapStatsChildHistograms(node, mode) {
+    const parentWidth = node.histogram || 0;
+    const parentValue = productMapStatsHistValue(node, mode);
+    function share(value) {
+      if (parentWidth <= 0 || parentValue <= 0 || value <= 0) return 0;
+      return Math.round((parentWidth * value / parentValue) * 1000) / 1000;
+    }
+    node.children.forEach(function (child) {
+      child.histogram = share(productMapStatsHistValue(child, mode));
+      assignProductMapStatsChildHistograms(child, mode);
+    });
+    node.products.forEach(function (product) {
+      product.histogram = share(mode === 'usage' ? (product.usage || 0) : 1);
+    });
+  }
+
+  function syncProductMapStatsHistMode(field) {
+    const panel = field.querySelector('[data-product-map-stats]');
+    if (!panel) return;
+    const mode = productMapStatsHistMode(field);
+    field.__productMapStatsHist = mode;
+    panel.classList.toggle('is-hist-usage', mode === 'usage');
+    panel.querySelectorAll('[data-product-map-stats-hist]').forEach(function (button) {
+      const active = button.getAttribute('data-product-map-stats-hist') === mode;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      const icon = button.querySelector('.bi');
+      if (icon) icon.className = active ? 'bi bi-eye' : 'bi bi-eye-slash';
+    });
+  }
+
+  function productMapStatsHistCell(width, count, mode) {
+    const cell = document.createElement('td');
+    cell.className = 'product-map-stats-hist';
+    const track = document.createElement('div');
+    track.className = 'product-map-stats-hist-track';
+    const caption = (mode === 'usage' ? 'Использования: ' : 'Продукты: ') + count;
+    track.title = caption;
+    track.setAttribute('aria-label', caption);
+    const bar = document.createElement('div');
+    bar.className = 'product-map-stats-hist-bar';
+    bar.style.width = (Number(width) || 0) + '%';
+    track.appendChild(bar);
+    cell.appendChild(track);
+    return cell;
+  }
+
+  function productMapStatsMeasure(types) {
+    let digits = 1;
+    function walk(node) {
+      digits = Math.max(digits, String(productMapStatsCount(node)).length);
+      node.children.forEach(walk);
+    }
+    types.forEach(walk);
+    return digits;
+  }
+
+  function productMapStatsUsageIds(node) {
+    const ids = [];
+    const seen = new Set();
+    function walk(current) {
+      current.products.forEach(function (product, id) {
+        if ((product.usage || 0) > 0 && !seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
+      });
+      current.children.forEach(walk);
+    }
+    walk(node);
+    return ids;
+  }
+
+  function productMapStatsCountCell(total, usage, productIds, label, showUsage) {
+    const cell = document.createElement('td');
+    cell.className = 'product-map-stats-count';
+    const pair = document.createElement('span');
+    pair.className = 'product-map-stats-count-pair';
+    if (showUsage) cell.classList.add('is-usage');
+    if (showUsage) {
+      const slot = document.createElement('span');
+      slot.className = 'product-map-stats-usage';
+      if (usage > 0 && productIds && productIds.length) {
+        const badge = document.createElement('button');
+        badge.type = 'button';
+        badge.className = 'product-map-stats-usage-badge';
+        badge.textContent = String(usage);
+        badge.style.setProperty('--product-map-stats-usage-digits', String(String(usage).length));
+        badge.setAttribute('data-product-map-project-count', '');
+        badge.dataset.productId = productIds.join(',');
+        if (productIds.length > 1 && label) badge.setAttribute('data-product-map-projects-label', label);
+        badge.title = 'Показать проекты';
+        badge.setAttribute('aria-label', 'Показать проекты: ' + usage);
+        slot.appendChild(badge);
+      }
+      pair.appendChild(slot);
+    } else {
+      const value = document.createElement('span');
+      value.className = 'product-map-stats-total';
+      value.textContent = String(total);
+      pair.appendChild(value);
+    }
+    cell.appendChild(pair);
+    return cell;
+  }
+
+  function productMapStatsLabelCell(topic, branchKey, collapsed) {
+    const cell = document.createElement('td');
+    cell.className = 'product-map-stats-label';
+    if (branchKey) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'product-map-stats-branch';
+      button.setAttribute('data-product-map-stats-branch', branchKey);
+      const open = !collapsed.has(branchKey);
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+      button.setAttribute('aria-label', open ? 'Свернуть строки' : 'Развернуть строки');
+      const icon = document.createElement('i');
+      icon.className = 'bi bi-caret-down-fill';
+      icon.setAttribute('aria-hidden', 'true');
+      button.appendChild(icon);
+      cell.appendChild(button);
+    }
+    const text = document.createElement('span');
+    text.textContent = topic || '';
+    cell.appendChild(text);
+    return cell;
+  }
+
+  function appendProductMapStatsRow(fragment, cells, ancestors, collapsed) {
+    const row = document.createElement('tr');
+    if (ancestors.length) row.setAttribute('data-product-map-stats-ancestors', ancestors.join(' '));
+    if (ancestors.some(function (key) { return collapsed.has(key); })) row.classList.add('is-collapsed');
+    cells.forEach(function (cell) { row.appendChild(cell); });
+    fragment.appendChild(row);
+  }
+
+  function appendProductMapStatsNode(fragment, node, level, ancestors, collapsed, mode) {
+    const cells = [];
+    for (let index = 0; index < 4; index += 1) {
+      if (index === level) {
+        const hasBranch = node.children.size > 0 || node.products.size > 0;
+        cells.push(productMapStatsLabelCell(node.topic, hasBranch ? node.key : '', collapsed));
+      } else {
+        const empty = document.createElement('td');
+        empty.className = 'product-map-stats-label';
+        cells.push(empty);
+      }
+    }
+    cells.push(productMapStatsCountCell(
+      productMapStatsCount(node),
+      productMapStatsUsage(node),
+      productMapStatsUsageIds(node),
+      node.topic,
+      mode === 'usage'
+    ));
+    cells.push(productMapStatsHistCell(node.histogram, productMapStatsHistValue(node, mode), mode));
+    appendProductMapStatsRow(fragment, cells, ancestors, collapsed);
+    const nextAncestors = ancestors.concat(node.key);
+    node.children.forEach(function (child) {
+      appendProductMapStatsNode(fragment, child, level + 1, nextAncestors, collapsed, mode);
+    });
+    node.products.forEach(function (product, id) {
+      const productCells = [];
+      for (let index = 0; index < 4; index += 1) {
+        if (index === 3) productCells.push(productMapStatsLabelCell(product.topic, '', collapsed));
+        else {
+          const empty = document.createElement('td');
+          empty.className = 'product-map-stats-label';
+          productCells.push(empty);
+        }
+      }
+      productCells.push(productMapStatsCountCell(
+        1,
+        product.usage || 0,
+        (product.usage || 0) > 0 ? [id] : [],
+        '',
+        mode === 'usage'
+      ));
+      productCells.push(productMapStatsHistCell(
+        product.histogram,
+        mode === 'usage' ? (product.usage || 0) : 1,
+        mode
+      ));
+      appendProductMapStatsRow(
+        fragment,
+        productCells,
+        nextAncestors.concat(node.key + '#products'),
+        collapsed
+      );
+    });
+  }
+
+  function syncProductMapStatsRows(panel, collapsed) {
+    panel.querySelectorAll('[data-product-map-stats-ancestors]').forEach(function (row) {
+      const ancestors = (row.getAttribute('data-product-map-stats-ancestors') || '').split(' ').filter(Boolean);
+      row.classList.toggle('is-collapsed', ancestors.some(function (key) { return collapsed.has(key); }));
+    });
+    panel.querySelectorAll('[data-product-map-stats-branch]').forEach(function (button) {
+      const open = !collapsed.has(button.getAttribute('data-product-map-stats-branch'));
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+      button.setAttribute('aria-label', open ? 'Свернуть строки' : 'Развернуть строки');
+    });
+    const allButton = panel.querySelector('[data-product-map-stats-branches]');
+    if (!allButton) return;
+    const typeKeys = [];
+    panel.querySelectorAll('[data-product-map-stats-branch]').forEach(function (button) {
+      const key = button.getAttribute('data-product-map-stats-branch') || '';
+      if (key.indexOf('type:') === 0 || key === 'unclassified') typeKeys.push(key);
+    });
+    const open = typeKeys.some(function (key) { return !collapsed.has(key); });
+    allButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    allButton.setAttribute('aria-label', open ? 'Свернуть строки' : 'Развернуть строки');
+  }
+
+  function syncProductMapStatsPanel(field) {
+    const panel = field.querySelector('[data-product-map-stats]');
+    const toggle = panel && panel.querySelector('[data-product-map-stats-toggle]');
+    if (!panel || !toggle) return;
+    if (field.__productMapStatsCollapsed == null) field.__productMapStatsCollapsed = true;
+    const collapsed = !!field.__productMapStatsCollapsed;
+    panel.classList.toggle('is-collapsed', collapsed);
+    toggle.textContent = '';
+    toggle.classList.toggle('is-plus', collapsed);
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    toggle.setAttribute('aria-label', collapsed ? 'Развернуть статистику' : 'Свернуть статистику');
+    scheduleProductMapBadgeSync(field);
+  }
+
+  function productMapStatsCollapsedForLevel(types, level) {
+    const collapsed = new Set();
+    function walk(node, depth) {
+      const hasBranch = node.children.size > 0 || node.products.size > 0;
+      if (hasBranch && depth + 1 >= level) collapsed.add(node.key);
+      if (node.products.size && level < 4) collapsed.add(node.key + '#products');
+      node.children.forEach(function (child) {
+        walk(child, depth + 1);
+      });
+    }
+    types.forEach(function (node) {
+      walk(node, 0);
+    });
+    return collapsed;
+  }
+
+  function markProductMapStatsLevel(field, level) {
+    field.querySelectorAll('[data-product-map-stats-level]').forEach(function (button) {
+      const active = String(level || '') === button.getAttribute('data-product-map-stats-level');
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  function bindProductMapStats(field) {
+    const panel = field.querySelector('[data-product-map-stats]');
+    if (!panel || panel.dataset.productMapStatsBound === '1') return;
+    panel.dataset.productMapStatsBound = '1';
+    panel.addEventListener('click', function (event) {
+      const histMode = event.target.closest && event.target.closest('[data-product-map-stats-hist]');
+      if (histMode && panel.contains(histMode)) {
+        event.preventDefault();
+        event.stopPropagation();
+        const mode = histMode.getAttribute('data-product-map-stats-hist');
+        if ((mode === 'products' || mode === 'usage') && field.__productMapStatsHist !== mode) {
+          field.__productMapStatsHist = mode;
+          renderProductMapStats(field);
+        }
+        return;
+      }
+      const toggle = event.target.closest && event.target.closest('[data-product-map-stats-toggle]');
+      if (toggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        field.__productMapStatsCollapsed = !field.__productMapStatsCollapsed;
+        syncProductMapStatsPanel(field);
+        return;
+      }
+      const allBranches = event.target.closest && event.target.closest('[data-product-map-stats-branches]');
+      if (allBranches) {
+        event.preventDefault();
+        event.stopPropagation();
+        const collapsed = field.__productMapStatsBranches || (field.__productMapStatsBranches = new Set());
+        const typeKeys = [];
+        panel.querySelectorAll('[data-product-map-stats-branch]').forEach(function (button) {
+          const key = button.getAttribute('data-product-map-stats-branch') || '';
+          if (key.indexOf('type:') === 0 || key === 'unclassified') typeKeys.push(key);
+        });
+        const expand = typeKeys.length > 0 && typeKeys.every(function (key) { return collapsed.has(key); });
+        typeKeys.forEach(function (key) {
+          const productKey = key + '#products';
+          if (expand) {
+            collapsed.delete(key);
+            collapsed.delete(productKey);
+          } else {
+            collapsed.add(key);
+            collapsed.add(productKey);
+          }
+        });
+        field.__productMapStatsLevel = null;
+        markProductMapStatsLevel(field, null);
+        syncProductMapStatsRows(panel, collapsed);
+        scheduleProductMapBadgeSync(field);
+        return;
+      }
+      const levelButton = event.target.closest && event.target.closest('[data-product-map-stats-level]');
+      if (levelButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const level = Number(levelButton.getAttribute('data-product-map-stats-level'));
+        if (level >= 1 && level <= 4) {
+          field.__productMapStatsLevel = level;
+          renderProductMapStats(field);
+        }
+        return;
+      }
+      const branch = event.target.closest && event.target.closest('[data-product-map-stats-branch]');
+      if (!branch) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const key = branch.getAttribute('data-product-map-stats-branch');
+      if (!key) return;
+      const collapsed = field.__productMapStatsBranches || (field.__productMapStatsBranches = new Set());
+      const productKey = key + '#products';
+      if (collapsed.has(key)) {
+        collapsed.delete(key);
+        collapsed.delete(productKey);
+      } else {
+        collapsed.add(key);
+        collapsed.add(productKey);
+      }
+      field.__productMapStatsLevel = null;
+      markProductMapStatsLevel(field, null);
+      syncProductMapStatsRows(panel, collapsed);
+      scheduleProductMapBadgeSync(field);
+    });
+  }
+
+  function renderProductMapStats(field) {
+    const panel = field && field.querySelector && field.querySelector('[data-product-map-stats]');
+    const body = panel && panel.querySelector('[data-product-map-stats-rows]');
+    if (!panel || !body) return;
+    bindProductMapStats(field);
+    syncProductMapStatsPanel(field);
+    const types = collectProductMapStats(field);
+    if (!field.__productMapStatsBranches && field.__productMapStatsLevel == null) {
+      field.__productMapStatsLevel = 1;
+    }
+    let collapsed = field.__productMapStatsBranches;
+    if (field.__productMapStatsLevel) {
+      collapsed = productMapStatsCollapsedForLevel(types, field.__productMapStatsLevel);
+      field.__productMapStatsBranches = collapsed;
+    } else if (!collapsed) {
+      collapsed = new Set();
+      field.__productMapStatsBranches = collapsed;
+    }
+    markProductMapStatsLevel(field, field.__productMapStatsLevel);
+    syncProductMapStatsHistMode(field);
+    const histMode = productMapStatsHistMode(field);
+    assignProductMapStatsHistograms(types, histMode);
+    const table = panel.querySelector('.product-map-stats-table');
+    if (table) {
+      table.style.setProperty('--product-map-stats-total-ch', productMapStatsMeasure(types) + 'ch');
+    }
+    const fragment = document.createDocumentFragment();
+    if (!types.size) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 6;
+      cell.className = 'product-map-stats-empty';
+      cell.textContent = 'Нет данных';
+      row.appendChild(cell);
+      fragment.appendChild(row);
+    } else {
+      types.forEach(function (node) {
+        appendProductMapStatsNode(fragment, node, 0, [], collapsed, histMode);
+      });
+    }
+    body.replaceChildren(fragment);
+    syncProductMapStatsRows(panel, collapsed);
+    scheduleProductMapBadgeSync(field);
+  }
+
+  function scheduleProductMapBadgeSync(field) {
+    window.requestAnimationFrame(function () {
+      if (!field.isConnected) return;
+      (field.__productMapInstances || []).forEach(function (state) {
+        syncProductMapProjectBadges(state);
+      });
+    });
   }
 
   function initProductMapFilters(field, maps) {
@@ -13070,6 +13743,7 @@
     });
     field.__productMapInstances = instances;
     initProductMapFilters(field, maps);
+    renderProductMapStats(field);
     updateProductMapPeriodLabel(field);
     bindProductMapProjectControls();
     markProductMapLevel(field, 2);
