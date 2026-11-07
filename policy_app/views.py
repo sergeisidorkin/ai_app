@@ -2463,6 +2463,181 @@ def _product_map_trees(project_counts=None):
     return maps
 
 
+def _product_map_request_years(request):
+    years = set()
+    for value in request.GET.getlist("years"):
+        for part in str(value).split(","):
+            part = part.strip()
+            if part.isdigit():
+                years.add(int(part))
+    return years
+
+
+def _product_map_party_label(value):
+    return " ".join(str(value or "").split())
+
+
+def _product_map_uniform_party(stages, attr):
+    values = [_product_map_party_label(getattr(stage, attr)) for stage in stages]
+    if all(value == values[0] for value in values):
+        return values[0]
+    return None
+
+
+def _product_map_project_summary(stages):
+    first = stages[0]
+    parent = first.stage_project if first.stage_project_id else None
+    source = parent or first
+    return {
+        "number": first.formatted_number,
+        "group": first.group_display,
+        "project_id": parent.short_uid if parent is not None else "",
+        "type": "-".join(stage.type_short_display for stage in stages if stage.type_short_display),
+        "name": source.name,
+        "year": "" if source.year is None else source.year,
+        "customer": _product_map_uniform_party(stages, "customer") or "",
+        "owner": _product_map_uniform_party(stages, "asset_owner") or "",
+    }
+
+
+def _product_map_project_groups(product_id, years):
+    """Проекты, попавшие в счётчик карты, и все их этапы.
+
+    Номер счёта получают только строки реестра, которые входят в счётчик
+    выбранного периода. Этап без этого продукта остаётся в списке проекта.
+    """
+    from projects_app.models import ProjectRegistration, ProjectRegistrationProduct
+
+    counted = ProjectRegistration.objects.registry_rows().exclude(year=None)
+    if years:
+        counted = counted.filter(year__in=years)
+    counted_ids = set(
+        ProjectRegistrationProduct.objects.filter(product_id=product_id, registration__in=counted)
+        .values_list("registration_id", flat=True)
+    )
+    if not counted_ids:
+        return [], 0
+
+    owners = []
+    seen_owners = set()
+    counted_rows = (
+        ProjectRegistration.objects.filter(pk__in=counted_ids)
+        .order_by("position", "id")
+        .values_list("stage_project_id", "pk")
+    )
+    for stage_project_id, row_id in counted_rows:
+        owner_id = stage_project_id or row_id
+        if owner_id in seen_owners:
+            continue
+        seen_owners.add(owner_id)
+        owners.append(owner_id)
+
+    link_prefetch = Prefetch(
+        "product_links",
+        queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+    )
+    rows = (
+        ProjectRegistration.objects.registry_rows()
+        .filter(Q(pk__in=owners) | Q(stage_project_id__in=owners))
+        .select_related("stage_project", "group_member")
+        .prefetch_related(link_prefetch)
+        .order_by("position", "id")
+    )
+    grouped = {}
+    order = []
+    for row in rows:
+        owner_id = row.stage_project_id or row.pk
+        if owner_id not in seen_owners:
+            continue
+        if owner_id not in grouped:
+            grouped[owner_id] = []
+            order.append(owner_id)
+        grouped[owner_id].append(row)
+
+    groups = []
+    counter = 0
+    for owner_id in order:
+        stages = grouped[owner_id]
+        collapsible = len(stages) >= 2 and all(stage.stage_project_id for stage in stages)
+        shared_customer = _product_map_uniform_party(stages, "customer") if collapsible else None
+        shared_owner = _product_map_uniform_party(stages, "asset_owner") if collapsible else None
+        stage_rows = []
+        for stage in stages:
+            related = any(link.product_id == product_id for link in stage.product_links.all())
+            number = None
+            if stage.pk in counted_ids:
+                counter += 1
+                number = counter
+            parent = stage.stage_project if stage.stage_project_id else None
+            if collapsible:
+                project_uid = stage.short_uid
+                number_label = ""
+                group_label = ""
+                customer = "" if shared_customer is not None else _product_map_party_label(stage.customer)
+                owner = "" if shared_owner is not None else _product_map_party_label(stage.asset_owner)
+            elif parent is not None:
+                project_uid = parent.short_uid or stage.short_uid
+                number_label = stage.formatted_number
+                group_label = stage.group_display
+                customer = _product_map_party_label(stage.customer)
+                owner = _product_map_party_label(stage.asset_owner)
+            else:
+                project_uid = stage.short_uid
+                number_label = stage.formatted_number
+                group_label = stage.group_display
+                customer = _product_map_party_label(stage.customer)
+                owner = _product_map_party_label(stage.asset_owner)
+            stage_rows.append(
+                {
+                    "counter": number,
+                    "related": related,
+                    "number": number_label,
+                    "group": group_label,
+                    "project_id": project_uid,
+                    "type": stage.type_short_display,
+                    "name": stage.name,
+                    "year": "" if stage.year is None else stage.year,
+                    "customer": customer,
+                    "owner": owner,
+                }
+            )
+        groups.append(
+            {
+                "key": f"project-{owner_id}",
+                "summary": _product_map_project_summary(stages) if collapsible else None,
+                "stages": stage_rows,
+            }
+        )
+    return groups, counter
+
+
+def _product_map_projects_label(value):
+    return " ".join(str(value or "").split())[:180]
+
+
+def _product_map_project_groups_for_products(product_ids, years):
+    """Списки нескольких продуктов в одной модалке, счётчик сквозной.
+
+    Один продукт остаётся прежним списком. Несколько — те же строки друг за
+    другом, чтобы последняя цифра № совпала с суммой кругов на панели.
+    """
+    if len(product_ids) == 1:
+        return _product_map_project_groups(product_ids[0], years)
+    groups = []
+    total = 0
+    for product_id in product_ids:
+        product_groups, _product_total = _product_map_project_groups(product_id, years)
+        for group in product_groups:
+            group["key"] = f"{product_id}-{group['key']}"
+            for stage in group["stages"]:
+                if not stage["counter"]:
+                    continue
+                total += 1
+                stage["counter"] = total
+            groups.append(group)
+    return groups, total
+
+
 @login_required
 @require_http_methods(["GET"])
 def product_map(request):
@@ -2473,6 +2648,50 @@ def product_map(request):
         {
             "product_maps": _product_map_trees(project_counts),
             "product_map_years": project_years,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET"])
+def product_map_projects(request):
+    product_ids = []
+    seen_ids = set()
+    for value in request.GET.getlist("product"):
+        if not str(value).isdigit():
+            return HttpResponse(status=404)
+        product_id = int(value)
+        if product_id in seen_ids:
+            continue
+        seen_ids.add(product_id)
+        product_ids.append(product_id)
+    if not product_ids:
+        return HttpResponse(status=404)
+    products = {
+        product.pk: product
+        for product in Product.objects.only("id", "short_name", "display_name").filter(pk__in=product_ids)
+    }
+    if len(products) != len(product_ids):
+        return HttpResponse(status=404)
+    ordered = [products[product_id] for product_id in product_ids]
+    groups, total = _product_map_project_groups_for_products(
+        product_ids,
+        _product_map_request_years(request),
+    )
+    if len(ordered) == 1:
+        product_label = _product_workspace_label(ordered[0])
+    else:
+        product_label = _product_map_projects_label(request.GET.get("label")) or ", ".join(
+            _product_workspace_label(product) for product in ordered
+        )
+    return render(
+        request,
+        "policy_app/product_map_projects.html",
+        {
+            "product_label": product_label,
+            "groups": groups,
+            "total": total,
+            "has_collapse": any(group["summary"] for group in groups),
         },
     )
 

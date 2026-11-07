@@ -1,0 +1,60 @@
+<span class="d-none" data-product-map-projects-label data-product-map-project-total="{{ total }}">{{ product_label }}</span>
+{% if groups %}
+  <div class="product-map-projects-wrap">
+    <table class="table table-sm align-middle mb-0 product-map-projects-table" data-product-map-project-total="{{ total }}">
+      <thead>
+        <tr>
+          <th scope="col" class="product-map-projects-counter"><span>№</span></th>
+          <th scope="col" class="product-map-projects-number">{% if has_collapse %}<button type="button"
+                      class="clf-wrap-btn product-map-projects-toggle-all"
+                      data-product-map-project-groups
+                      title="Свернуть/развернуть строки"
+                      aria-label="Свернуть/развернуть строки"><i class="bi bi-arrows-collapse" aria-hidden="true"></i></button>{% endif %}<span>Номер</span></th>
+          <th scope="col">Группа</th>
+          <th scope="col">Проект (этап) ID</th>
+          <th scope="col">Тип</th>
+          <th scope="col">Название</th>
+          <th scope="col">Год</th>
+          <th scope="col">Заказчик</th>
+          <th scope="col">Владелец</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for group in groups %}
+          {% if group.summary %}
+            <tr class="product-map-projects-summary is-uncounted" data-product-map-projects-summary="{{ group.key }}">
+              <td class="product-map-projects-counter"></td>
+              <td class="product-map-projects-number"><button type="button"
+                        class="registration-group-toggle"
+                        data-product-map-project-group="{{ group.key }}"
+                        aria-expanded="true"
+                        aria-label="Свернуть/развернуть строки"><i class="bi bi-caret-down-fill" aria-hidden="true"></i></button><span>{{ group.summary.number }}</span></td>
+              <td>{{ group.summary.group }}</td>
+              <td>{% if group.summary.project_id %}<span class="clf-id-droid-mono">{{ group.summary.project_id }}</span>{% endif %}</td>
+              <td>{{ group.summary.type }}</td>
+              <td>{{ group.summary.name }}</td>
+              <td>{{ group.summary.year }}</td>
+              <td>{{ group.summary.customer }}</td>
+              <td>{{ group.summary.owner }}</td>
+            </tr>
+          {% endif %}
+          {% for stage in group.stages %}
+            <tr {% if group.summary %}data-product-map-project-member="{{ group.key }}" {% endif %}{% if not stage.counter %}class="is-uncounted"{% endif %}>
+              <td class="product-map-projects-counter"{% if stage.counter %} data-product-map-project-counter="{{ stage.counter }}"{% endif %}>{% if stage.counter %}<span>{{ stage.counter }}</span>{% endif %}</td>
+              <td class="product-map-projects-number">{{ stage.number }}</td>
+              <td>{{ stage.group }}</td>
+              <td>{% if stage.project_id %}<span class="clf-id-droid-mono">{{ stage.project_id }}</span>{% endif %}</td>
+              <td>{{ stage.type }}</td>
+              <td>{{ stage.name }}</td>
+              <td>{{ stage.year }}</td>
+              <td>{{ stage.customer }}</td>
+              <td>{{ stage.owner }}</td>
+            </tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="text-muted mb-0">Нет проектов за выбранный период.</p>
+{% endif %}

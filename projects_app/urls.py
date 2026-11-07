@@ -37,6 +37,16 @@ urlpatterns = [
         views.registration_group_summary_edit,
         name="registration_group_summary_edit",
     ),
+    path(
+        "projects/registration-stages/merge/",
+        views.registration_stages_merge,
+        name="registration_stages_merge",
+    ),
+    path(
+        "projects/registration-stages/split/",
+        views.registration_stages_split,
+        name="registration_stages_split",
+    ),
     path("projects/registration/<int:pk>/manager/", views.registration_manager_update, name="registration_manager_update"),
     path("projects/registration/<int:pk>/coordinator/", views.registration_coordinator_update, name="registration_coordinator_update"),
     path("projects/registration/<int:pk>/deadline/", views.registration_deadline_update, name="registration_deadline_update"),

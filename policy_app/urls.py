@@ -78,6 +78,7 @@ urlpatterns = [
     path("consulting-directions/<int:pk>/move-up/", views.consulting_dir_move_up, name="consulting_dir_move_up"),
     path("consulting-directions/<int:pk>/move-down/", views.consulting_dir_move_down, name="consulting_dir_move_down"),
     path("policy/products/map/", views.product_map, name="product_map"),
+    path("policy/products/map/projects/", views.product_map_projects, name="product_map_projects"),
     path("policy/product/create/", views.product_form_create, name="product_form_create"),
     path("policy/product/<int:pk>/", views.product_workspace, name="product_workspace"),
     path("policy/product/<int:pk>/workspace-save/", views.product_workspace_save, name="product_workspace_save"),

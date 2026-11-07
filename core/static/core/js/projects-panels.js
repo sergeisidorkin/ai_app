@@ -104,6 +104,60 @@
       if (!button) return;
       button.disabled = onlySummary;
     });
+    updateStageGroupingButtons();
+  }
+  function updateStageGroupingButtons() {
+    const mergeBtn = pane()?.querySelector('#registration-stages-merge-btn');
+    const splitBtn = pane()?.querySelector('#registration-stages-split-btn');
+    if (!mergeBtn && !splitBtn) return;
+    const rowCount = getCheckedByName('registration-select').length;
+    const summaryCount = checkedRegistrationSummaries().length;
+    const showMerge = rowCount >= 2 && summaryCount === 0;
+    const showSplit = summaryCount === 1 && rowCount === 0;
+    if (mergeBtn) mergeBtn.classList.toggle('d-none', !showMerge);
+    if (splitBtn) splitBtn.classList.toggle('d-none', !showSplit);
+  }
+  let stageGroupingPending = null;
+  function stageGroupingEntries(button) {
+    const entries = [];
+    if (button.id === 'registration-stages-merge-btn') {
+      getCheckedByName('registration-select').forEach((box) => entries.push(['stage_ids', box.value]));
+    } else {
+      const row = checkedRegistrationSummaries()[0]?.closest('tr');
+      entries.push(['project_id', row?.dataset?.summaryProject || '']);
+    }
+    return entries;
+  }
+  function stageGroupingForm(entries, confirm) {
+    const form = new FormData();
+    entries.forEach((pair) => form.append(pair[0], pair[1]));
+    if (confirm) form.append('confirm', '1');
+    return form;
+  }
+  function showStageGroupingDialog(title, lines, canConfirm) {
+    const modalEl = pane()?.querySelector('#registration-stage-grouping-modal');
+    const titleEl = pane()?.querySelector('#registration-stage-grouping-title');
+    const body = pane()?.querySelector('#registration-stage-grouping-body');
+    const confirmBtn = pane()?.querySelector('#registration-stage-grouping-confirm');
+    if (!modalEl || !titleEl || !body || !window.bootstrap) {
+      alert((lines || []).join('\n'));
+      return;
+    }
+    titleEl.textContent = title;
+    body.innerHTML = (lines || []).map((line) => (
+      '<p class="mb-2">' + escapeRegistrationCsvText(line) + '</p>'
+    )).join('');
+    if (confirmBtn) confirmBtn.classList.toggle('d-none', !canConfirm);
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+  async function postStageGrouping(url, entries, confirm) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrftoken },
+      body: stageGroupingForm(entries, confirm),
+    });
+    const data = await response.json().catch(() => ({}));
+    return data;
   }
   function ensureActionsVisibility(name) {
     if (name === 'registration-select') {
@@ -2040,6 +2094,59 @@
     ensureActionsVisibility(name);
     if (name === 'contract-select') updateContractEditBtn();
     if (name === 'registration-select') updateRegWorkspaceBtn();
+  });
+
+  document.addEventListener('click', async (e) => {
+    const root = pane();
+    if (!root) return;
+    const button = e.target.closest('#registration-stages-merge-btn, #registration-stages-split-btn');
+    if (!button || !root.contains(button) || button.classList.contains('d-none')) return;
+    const entries = stageGroupingEntries(button);
+    button.disabled = true;
+    try {
+      const data = await postStageGrouping(button.dataset.url, entries, false);
+      if (data.ok) {
+        await refreshProjectsPane();
+        return;
+      }
+      if (data.needs_confirm) {
+        stageGroupingPending = { url: button.dataset.url, entries };
+        showStageGroupingDialog('Подтвердите действие', data.warnings || [], true);
+        return;
+      }
+      const message = data.message || data.error || 'Операция недоступна.';
+      stageGroupingPending = null;
+      showStageGroupingDialog('Операция недоступна', String(message).split('\n').filter(Boolean), false);
+    } catch (error) {
+      alert(error.message || 'Не удалось выполнить операцию.');
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  document.addEventListener('click', async (e) => {
+    const confirmBtn = e.target.closest('#registration-stage-grouping-confirm');
+    const root = pane();
+    if (!confirmBtn || !root || !root.contains(confirmBtn) || !stageGroupingPending) return;
+    const pending = stageGroupingPending;
+    const modalEl = root.querySelector('#registration-stage-grouping-modal');
+    confirmBtn.disabled = true;
+    try {
+      const data = await postStageGrouping(pending.url, pending.entries, true);
+      if (data.ok) {
+        stageGroupingPending = null;
+        window.bootstrap?.Modal.getInstance(modalEl)?.hide();
+        await refreshProjectsPane();
+        return;
+      }
+      const message = data.message || data.error || 'Операция недоступна.';
+      stageGroupingPending = null;
+      showStageGroupingDialog('Операция недоступна', String(message).split('\n').filter(Boolean), false);
+    } catch (error) {
+      alert(error.message || 'Не удалось выполнить операцию.');
+    } finally {
+      confirmBtn.disabled = false;
+    }
   });
 
   // Восстановление выбора после перерисовки HTMX (один-в-один)

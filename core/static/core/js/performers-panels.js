@@ -4585,6 +4585,73 @@
     window.requestAnimationFrame(sync);
   }
 
+  function initPerformersTableFooterSticky() {
+    var footer = document.querySelector('#performers-table-section .policy-table-footer');
+    var section = footer && footer.closest('#performers-table-section');
+    if (!footer || !section || footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    var spacer = document.createElement('div');
+    spacer.className = 'performers-table-footer-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('beforebegin', spacer);
+
+    var marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    var intersectionObserver = null;
+
+    function release() {
+      if (intersectionObserver) intersectionObserver.disconnect();
+      window.removeEventListener('scroll', sync, true);
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('projects:section-shown', sync);
+    }
+
+    function sync() {
+      if (!footer.isConnected) {
+        release();
+        return;
+      }
+      var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      var sectionRect = section.getBoundingClientRect();
+      var markerRect = marker.getBoundingClientRect();
+      var sectionVisible = sectionRect.top < viewportHeight && sectionRect.bottom > 0;
+      var footerBelowFold = markerRect.top >= viewportHeight - 1;
+      var stuck = sectionVisible && footerBelowFold;
+      if (stuck) {
+        if (!footer.classList.contains('is-stuck')) {
+          var styles = window.getComputedStyle(footer);
+          var blockHeight = footer.offsetHeight
+            + (parseFloat(styles.marginTop) || 0)
+            + (parseFloat(styles.marginBottom) || 0);
+          spacer.style.height = blockHeight + 'px';
+          footer.classList.add('is-stuck');
+        }
+        var pinnedRect = section.getBoundingClientRect();
+        footer.style.left = pinnedRect.left + 'px';
+        footer.style.width = pinnedRect.width + 'px';
+      } else if (footer.classList.contains('is-stuck')) {
+        footer.classList.remove('is-stuck');
+        footer.style.left = '';
+        footer.style.width = '';
+        spacer.style.height = '0px';
+      }
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
+      intersectionObserver.observe(section);
+      intersectionObserver.observe(marker);
+    }
+    window.addEventListener('scroll', sync, true);
+    window.addEventListener('resize', sync);
+    window.addEventListener('projects:section-shown', sync);
+    window.requestAnimationFrame(sync);
+  }
+
   function reportCheckPendingText(data) {
     var progress = data && data.check_progress ? String(data.check_progress).trim() : '';
     return progress ? 'Идет проверка... ' + progress : 'Идет проверка...';
@@ -6938,6 +7005,7 @@
     applyReportVersionCollapsedState();
     initReportCheckPolling();
     initReportSubmissionFooterSticky();
+    initPerformersTableFooterSticky();
     updateReportSubmissionMasterState();
     updateRowHighlight('report-select');
     try { delete window.__tableSel['report-select']; } catch(_) {}
@@ -7021,6 +7089,7 @@
     var root = pane(); if (!root) return;
     if (!(e.target === root || root.contains(e.target))) return;
     ensurePerformerActionsVisibility();
+    initPerformersTableFooterSticky();
     ensureReportCheckActionsVisibility();
     ensureReportMacrosActionsVisibility();
     syncPerformerSectionOrder();
@@ -7283,6 +7352,7 @@
     initReportLocalSource();
     initReportCheckPolling();
     initReportSubmissionFooterSticky();
+    initPerformersTableFooterSticky();
     var root = pane();
     if (root) {
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));

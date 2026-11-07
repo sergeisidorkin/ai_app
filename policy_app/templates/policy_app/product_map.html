@@ -6,7 +6,7 @@
   <div class="card shadow-sm policy-group-card">
     <div class="card-body">
       {% if product_maps %}
-        <div id="product-map-field" class="product-map-field"{% if request.user.is_authenticated and request.user.is_staff %} data-product-workspace-template="{% url 'product_workspace' 0 %}"{% endif %}>
+        <div id="product-map-field" class="product-map-field" data-product-map-projects-url="{% url 'product_map_projects' %}"{% if request.user.is_authenticated and request.user.is_staff %} data-product-workspace-template="{% url 'product_workspace' 0 %}"{% endif %}>
           <div class="product-map-board">
             <div class="product-map-toolbar" role="toolbar" aria-label="Управление картой продуктов">
               <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="1" aria-pressed="false">1</button>
@@ -90,9 +90,74 @@
                   </button>
                 </div>
             </div>
-            {% for item in product_maps %}
-              <div class="product-map-canvas" id="product-map-canvas-{{ forloop.counter }}"></div>
-            {% endfor %}
+            <div class="product-map-stage">
+              <aside class="product-map-stats is-collapsed" data-product-map-stats>
+                <div class="product-map-stats-bar">
+                  <span class="product-map-stats-info"
+                        role="img"
+                        aria-label="Количество продуктов в ветке"
+                        title="Количество продуктов в ветке">
+                    <i class="bi bi-info-circle" aria-hidden="true"></i>
+                  </span>
+                  <button type="button"
+                          class="product-map-stats-toggle is-plus"
+                          data-product-map-stats-toggle
+                          aria-expanded="false"
+                          aria-label="Развернуть статистику"></button>
+                </div>
+                <div class="product-map-stats-body" data-product-map-stats-body>
+                  <table class="product-map-stats-table">
+                    <thead>
+                      <tr>
+                        <th scope="col" class="product-map-stats-label">
+                          <button type="button"
+                                  class="product-map-stats-branch"
+                                  data-product-map-stats-branches
+                                  aria-expanded="false"
+                                  aria-label="Развернуть строки"><i class="bi bi-caret-down-fill" aria-hidden="true"></i></button><span>Вид консалтинга</span>
+                          <span class="product-map-stats-levels" role="group" aria-label="Уровни статистики">
+                            <button type="button" class="btn btn-outline-primary product-map-level product-map-stats-level is-active" data-product-map-stats-level="1" aria-pressed="true">1</button>
+                            <button type="button" class="btn btn-outline-primary product-map-level product-map-stats-level" data-product-map-stats-level="2" aria-pressed="false">2</button>
+                            <button type="button" class="btn btn-outline-primary product-map-level product-map-stats-level" data-product-map-stats-level="3" aria-pressed="false">3</button>
+                            <button type="button" class="btn btn-outline-primary product-map-level product-map-stats-level" data-product-map-stats-level="4" aria-pressed="false">4</button>
+                          </span>
+                        </th>
+                        <th scope="col" class="product-map-stats-label">Тип услуги</th>
+                        <th scope="col" class="product-map-stats-label">Подтип услуг</th>
+                        <th scope="col" class="product-map-stats-label">Продукт</th>
+                        <th scope="col" class="product-map-stats-count">Продукты</th>
+                        <th scope="col" class="product-map-stats-hist">
+                          <span class="product-map-stats-hist-modes" role="group" aria-label="Диаграмма">
+                            <button type="button"
+                                    class="product-map-toggle product-map-stats-hist-mode is-active"
+                                    data-product-map-stats-hist="products"
+                                    aria-pressed="true"
+                                    title="Число продуктов"
+                                    aria-label="Число продуктов">
+                              <i class="bi bi-eye" aria-hidden="true"></i>
+                              <span class="product-map-stats-hist-swatch is-products" aria-hidden="true"></span>
+                            </button>
+                            <button type="button"
+                                    class="product-map-toggle product-map-stats-hist-mode"
+                                    data-product-map-stats-hist="usage"
+                                    aria-pressed="false"
+                                    title="Число использований"
+                                    aria-label="Число использований">
+                              <i class="bi bi-eye-slash" aria-hidden="true"></i>
+                              <span class="product-map-stats-hist-swatch is-usage" aria-hidden="true"></span>
+                            </button>
+                          </span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody data-product-map-stats-rows></tbody>
+                  </table>
+                </div>
+              </aside>
+              {% for item in product_maps %}
+                <div class="product-map-canvas" id="product-map-canvas-{{ forloop.counter }}"></div>
+              {% endfor %}
+            </div>
           </div>
         </div>
       {% else %}
@@ -101,4 +166,18 @@
     </div>
   </div>
   {{ product_maps|json_script:"product-map-data" }}
+  <div class="modal fade" id="product-map-projects-modal" tabindex="-1" aria-hidden="true" aria-labelledby="product-map-projects-title">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable product-map-projects-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="product-map-projects-title">
+            <span class="product-map-projects-total" data-product-map-projects-count hidden></span>
+            <span data-product-map-projects-title>Проекты</span>
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body" data-product-map-projects-body></div>
+      </div>
+    </div>
+  </div>
 </div>

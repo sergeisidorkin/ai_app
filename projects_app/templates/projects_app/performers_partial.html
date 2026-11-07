@@ -7,6 +7,7 @@
         <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
         <span>Загрузка исполнителей…</span>
       </div>
+      <div id="performers-table-section">
       <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
         <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
           <i class="bi bi-table"></i> Исполнители
@@ -51,11 +52,17 @@
             <div id="perf-asset-list"></div>
           </div>
         </div>
+        {% if not is_expert %}
+        <button type="button" id="perf-toggle-costs" class="perf-vis-toggle" title="Показать/скрыть затраты" aria-pressed="false">
+          <i class="bi bi-eye-slash" aria-hidden="true"></i>
+          <span class="js-perf-costs-label">Показать затраты</span>
+        </button>
+        {% endif %}
         <span class="row-order-status text-muted d-none align-self-center" data-row-order-status></span>
       </div>
 
 <div id="performers-main-section" style="overflow-x:auto">
-  <table class="table table-sm align-middle performers-table mb-0"
+  <table class="table table-sm align-middle performers-table mb-0{% if not is_expert %} perf-costs-hidden{% endif %}"
          {% if request.user.is_authenticated and request.user.is_staff %}
          data-queued-row-order
          data-row-order-save-url="{% url 'performer_row_order' %}"
@@ -174,11 +181,11 @@
           {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
         </td>
         {% if not is_expert %}
-          <td class="text-nowrap text-end" data-sum-actual="{{ p.actual_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.actual_costs != None %}{{ p.actual_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+          <td class="text-nowrap text-end perf-cost-cell" data-sum-actual="{{ p.actual_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}"><span class="perf-cost-value">{% if p.actual_costs != None %}{{ p.actual_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</span></td>
           <td class="perf-spacer"></td>
-          <td class="text-nowrap text-end" data-sum-estimated="{{ p.estimated_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.estimated_costs != None %}{{ p.estimated_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+          <td class="text-nowrap text-end perf-cost-cell" data-sum-estimated="{{ p.estimated_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}"><span class="perf-cost-value">{% if p.estimated_costs != None %}{{ p.estimated_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</span></td>
           <td class="perf-spacer"></td>
-          <td class="text-nowrap text-end" data-sum-agreed="{{ p.agreed_amount|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}">{% if p.agreed_amount != None %}{{ p.agreed_amount|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</td>
+          <td class="text-nowrap text-end perf-cost-cell" data-sum-agreed="{{ p.agreed_amount|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}"><span class="perf-cost-value">{% if p.agreed_amount != None %}{{ p.agreed_amount|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</span></td>
           <td class="perf-spacer"></td>
         {% endif %}
       </tr>
@@ -190,11 +197,11 @@
       <tfoot>
         <tr class="fw-semibold" id="perf-totals-row" style="border-top:1.5px solid #000;">
           <td colspan="11" style="border-bottom:none; padding-bottom:0;"></td>
-          <td class="text-nowrap text-end" id="perf-total-actual" style="border-bottom:none; padding-bottom:0;"></td>
+          <td class="text-nowrap text-end perf-cost-cell" id="perf-total-actual" style="border-bottom:none; padding-bottom:0;"><span class="perf-cost-value"></span></td>
           <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
-          <td class="text-nowrap text-end" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"></td>
+          <td class="text-nowrap text-end perf-cost-cell" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"><span class="perf-cost-value"></span></td>
           <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
-          <td class="text-nowrap text-end" id="perf-total-agreed" style="border-bottom:none; padding-bottom:0;"></td>
+          <td class="text-nowrap text-end perf-cost-cell" id="perf-total-agreed" style="border-bottom:none; padding-bottom:0;"><span class="perf-cost-value"></span></td>
           <td colspan="1" style="border-bottom:none; padding-bottom:0;"></td>
         </tr>
       </tfoot>
@@ -202,32 +209,35 @@
   </table>
 </div>
 {% if request.user.is_authenticated and request.user.is_staff and not user_is_direction_head and not is_expert %}
-  <div class="d-flex align-items-stretch gap-2 products-actions-row mt-2">
-    <button
-      class="btn btn-primary btn-sm d-flex align-items-center"
-      hx-get="{% url 'performer_form_create' %}"
-      hx-target="#performers-modal .modal-content"
-      hx-swap="innerHTML">
-      <i class="bi bi-plus-circle me-2"></i>Добавить строку
-    </button>
-    <div id="performers-actions" class="d-none">
-      <div class="btn-group">
-        <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх">
-          <i class="bi bi-arrow-up-square"></i>
-        </button>
-        <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз">
-          <i class="bi bi-arrow-down-square"></i>
-        </button>
-        <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить">
-          <i class="bi bi-pencil-square"></i>
-        </button>
-        <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить">
-          <i class="bi bi-x-square"></i>
-        </button>
+  <div class="policy-table-footer">
+    <div class="policy-table-footer-actions products-actions-row">
+      <button
+        class="btn btn-primary btn-sm d-flex align-items-center"
+        hx-get="{% url 'performer_form_create' %}"
+        hx-target="#performers-modal .modal-content"
+        hx-swap="innerHTML">
+        <i class="bi bi-plus-circle me-2"></i>Добавить строку
+      </button>
+      <div id="performers-actions" class="d-none">
+        <div class="btn-group">
+          <button type="button" data-panel-action="up" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вверх">
+            <i class="bi bi-arrow-up-square"></i>
+          </button>
+          <button type="button" data-panel-action="down" class="btn btn-outline-primary btn-sm h-100 py-0" title="Переместить вниз">
+            <i class="bi bi-arrow-down-square"></i>
+          </button>
+          <button type="button" data-panel-action="edit" class="btn btn-outline-primary btn-sm h-100 py-0" title="Изменить">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button type="button" data-panel-action="delete" class="btn btn-outline-danger btn-sm h-100 py-0" title="Удалить">
+            <i class="bi bi-x-square"></i>
+          </button>
+        </div>
       </div>
     </div>
   </div>
 {% endif %}
+      </div>
 
 <div id="participation-confirmation-section" class="mt-5"{% if is_expert %} data-expert-readonly="1"{% endif %}>
   <div class="d-flex align-items-center gap-3 mb-3 table-section-header flex-wrap">
@@ -858,6 +868,10 @@
   }
   window.__perfProjectFilter = window.__perfProjectFilter || [FILTER_ALL];
   window.__perfAssetFilter = window.__perfAssetFilter || [FILTER_ALL];
+  if (typeof window.__perfCostsVisible !== "boolean") {
+    var savedCosts = window.UIPref ? UIPref.get("performers:costsVisible", false) : false;
+    window.__perfCostsVisible = savedCosts === true;
+  }
 
   function initPerfFilter() {
     const pane = document.getElementById("performers-pane");
@@ -974,9 +988,33 @@
       var elA = pane.querySelector('#perf-total-actual');
       var elE = pane.querySelector('#perf-total-estimated');
       var elG = pane.querySelector('#perf-total-agreed');
-      if (elA) elA.textContent = render(sums.actual);
-      if (elE) elE.textContent = render(sums.estimated);
-      if (elG) elG.textContent = render(sums.agreed);
+      setCostText(elA, render(sums.actual));
+      setCostText(elE, render(sums.estimated));
+      setCostText(elG, render(sums.agreed));
+    }
+
+    function setCostText(el, text) {
+      if (!el) return;
+      var span = el.querySelector('.perf-cost-value');
+      if (span) span.textContent = text;
+      else el.textContent = text;
+    }
+
+    function applyCostsVisibility() {
+      var table = pane.querySelector('#performers-main-section > table.performers-table');
+      var visible = window.__perfCostsVisible === true;
+      if (table) table.classList.toggle('perf-costs-hidden', !visible);
+      var btn = pane.querySelector('#perf-toggle-costs');
+      if (!btn) return;
+      btn.classList.toggle('perf-vis-toggle--active', visible);
+      btn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+      var icon = btn.querySelector('.bi');
+      if (icon) {
+        icon.classList.toggle('bi-eye', visible);
+        icon.classList.toggle('bi-eye-slash', !visible);
+      }
+      var label = btn.querySelector('.js-perf-costs-label');
+      if (label) label.textContent = visible ? 'Скрыть затраты' : 'Показать затраты';
     }
 
     function applyFilters() {
@@ -1083,6 +1121,15 @@
       }
     });
 
+    var costsBtn = pane.querySelector('#perf-toggle-costs');
+    if (costsBtn) {
+      costsBtn.addEventListener('click', function () {
+        window.__perfCostsVisible = window.__perfCostsVisible !== true;
+        applyCostsVisibility();
+        if (window.UIPref) UIPref.set('performers:costsVisible', window.__perfCostsVisible === true);
+      });
+    }
+
     // --- init ---
     var initProj = window.__perfProjectFilter && window.__perfProjectFilter.length
       ? window.__perfProjectFilter : [FILTER_ALL];
@@ -1091,6 +1138,7 @@
 
     rebuildAssetList();
     applyFilters();
+    applyCostsVisibility();
   }
 
   document.addEventListener("DOMContentLoaded", initPerfFilter);

@@ -1215,24 +1215,12 @@ def _ensure_performer_rows_for_work_item(instance):
     if not instance.project_id:
         return
 
-    unique_project_role_codes = {"PRD", "CRD"}
     project_manager_name = _normalize_text_value(getattr(instance.project, "project_manager", ""))
     manager_name = _normalize_text_value(instance.manager)
 
     sections = _ordered_project_sections(instance.project)
     if not sections:
         return
-
-    existing_unique_codes = {
-        normalized_code
-        for code in (
-            Performer.objects
-            .filter(registration=instance.project, typical_section__isnull=False)
-            .values_list("typical_section__code", flat=True)
-        )
-        for normalized_code in [_normalize_text_value(code).upper()]
-        if normalized_code in unique_project_role_codes
-    }
 
     from group_app.expertise_management import ExpertiseAssignmentIndex
 
@@ -1321,8 +1309,6 @@ def _ensure_performer_rows_for_work_item(instance):
         if section.id in existing_section_ids_for_asset:
             continue
         section_code = _normalize_section_code(section)
-        if section_code in unique_project_role_codes and section_code in existing_unique_codes:
-            continue
         if section_code == "PRJ" and project_manager_name == manager_name:
             continue
 
@@ -1337,7 +1323,6 @@ def _ensure_performer_rows_for_work_item(instance):
 
         if section_code == "PRD":
             executor_name, employee_obj = _resolve_executor_assignment(project_manager_name)
-            existing_unique_codes.add(section_code)
         elif section_code == "PRJ":
             executor_name, employee_obj = _resolve_executor_assignment(manager_name)
         elif section.expertise_dir_id:
