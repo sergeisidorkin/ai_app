@@ -321,6 +321,7 @@ def _apply_merge(anchor, selected, parents):
             stage_project_id=anchor.pk,
             **_values_for_update(anchor, SHARED_CARD_FIELDS),
         )
+        _rekey_transferred_scopes(moved_ids)
     result = list(
         ProjectRegistration.objects.filter(stage_project_id=anchor.pk).order_by("position", "id")
     )
@@ -496,6 +497,36 @@ def _scope_is_shared(model, stage_ids):
 def _detach_scope_keys(stage_ids):
     _detach_model_scope(WorkVolume, stage_ids)
     _detach_model_scope(LegalEntity, stage_ids)
+
+
+def _rekey_transferred_scopes(stage_ids):
+    """Даёт перенесённым этапам свои ключи, если часть донора остаётся на старых."""
+    _rekey_transferred_model_scope(WorkVolume, stage_ids)
+    _rekey_transferred_model_scope(LegalEntity, stage_ids)
+
+
+def _rekey_transferred_model_scope(model, stage_ids):
+    moved_ids = list(stage_ids)
+    if not moved_ids:
+        return
+    keys = list(
+        model.objects.filter(project_id__in=moved_ids)
+        .exclude(scope_key__isnull=True)
+        .values_list("scope_key", flat=True)
+        .distinct()
+    )
+    if not keys:
+        return
+    shared_outside = set(
+        model.objects.filter(scope_key__in=keys)
+        .exclude(project_id__in=moved_ids)
+        .values_list("scope_key", flat=True)
+        .distinct()
+    )
+    for scope_key in shared_outside:
+        model.objects.filter(project_id__in=moved_ids, scope_key=scope_key).update(
+            scope_key=uuid.uuid4()
+        )
 
 
 def _detach_model_scope(model, stage_ids):

@@ -2500,17 +2500,27 @@ def _product_map_project_summary(stages):
     }
 
 
-def _product_map_project_groups(product_id, years):
+def _product_map_visible_registration_ids(user):
+    """None — без ограничения. Список — только проекты, доступные эксперту."""
+    from projects_app.views import _confirmed_project_ids_for_expert
+
+    return _confirmed_project_ids_for_expert(user)
+
+
+def _product_map_project_groups(product_id, years, visible_ids=None):
     """Проекты, попавшие в счётчик карты, и все их этапы.
 
     Номер счёта получают только строки реестра, которые входят в счётчик
     выбранного периода. Этап без этого продукта остаётся в списке проекта.
+    Для эксперта и счётчик, и соседние этапы ограничены его проектами.
     """
     from projects_app.models import ProjectRegistration, ProjectRegistrationProduct
 
     counted = ProjectRegistration.objects.registry_rows().exclude(year=None)
     if years:
         counted = counted.filter(year__in=years)
+    if visible_ids is not None:
+        counted = counted.filter(pk__in=visible_ids)
     counted_ids = set(
         ProjectRegistrationProduct.objects.filter(product_id=product_id, registration__in=counted)
         .values_list("registration_id", flat=True)
@@ -2536,9 +2546,13 @@ def _product_map_project_groups(product_id, years):
         "product_links",
         queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
     )
+    rows = ProjectRegistration.objects.registry_rows().filter(
+        Q(pk__in=owners) | Q(stage_project_id__in=owners)
+    )
+    if visible_ids is not None:
+        rows = rows.filter(pk__in=visible_ids)
     rows = (
-        ProjectRegistration.objects.registry_rows()
-        .filter(Q(pk__in=owners) | Q(stage_project_id__in=owners))
+        rows
         .select_related("stage_project", "group_member")
         .prefetch_related(link_prefetch)
         .order_by("position", "id")
@@ -2615,18 +2629,18 @@ def _product_map_projects_label(value):
     return " ".join(str(value or "").split())[:180]
 
 
-def _product_map_project_groups_for_products(product_ids, years):
+def _product_map_project_groups_for_products(product_ids, years, visible_ids=None):
     """Списки нескольких продуктов в одной модалке, счётчик сквозной.
 
     Один продукт остаётся прежним списком. Несколько — те же строки друг за
     другом, чтобы последняя цифра № совпала с суммой кругов на панели.
     """
     if len(product_ids) == 1:
-        return _product_map_project_groups(product_ids[0], years)
+        return _product_map_project_groups(product_ids[0], years, visible_ids)
     groups = []
     total = 0
     for product_id in product_ids:
-        product_groups, _product_total = _product_map_project_groups(product_id, years)
+        product_groups, _product_total = _product_map_project_groups(product_id, years, visible_ids)
         for group in product_groups:
             group["key"] = f"{product_id}-{group['key']}"
             for stage in group["stages"]:
@@ -2677,6 +2691,7 @@ def product_map_projects(request):
     groups, total = _product_map_project_groups_for_products(
         product_ids,
         _product_map_request_years(request),
+        _product_map_visible_registration_ids(request.user),
     )
     if len(ordered) == 1:
         product_label = _product_workspace_label(ordered[0])

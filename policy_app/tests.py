@@ -12739,6 +12739,97 @@ class PolicyProductMapTests(TestCase):
             404,
         )
 
+    def test_product_map_project_list_limits_experts_to_accessible_stages(self):
+        from policy_app.models import EXPERT_GROUP
+        from projects_app.models import Performer, ProjectRegistration, ProjectRegistrationProduct
+
+        def registration(number, name, **extra):
+            return ProjectRegistration.objects.create(
+                number=number,
+                name=name,
+                year=extra.pop("year", 2026),
+                customer=extra.pop("customer", ""),
+                asset_owner=extra.pop("asset_owner", ""),
+                **extra,
+            )
+
+        parent = registration(9301, "Сводный доступ", year=2020, position=1)
+        visible = registration(
+            9301,
+            "Видимый этап",
+            stage_project=parent,
+            position=2,
+            customer="Видимый заказчик",
+            asset_owner="Видимый владелец",
+        )
+        hidden_stage = registration(
+            9301,
+            "Скрытый этап",
+            stage_project=parent,
+            position=3,
+            customer="Скрытый заказчик",
+            asset_owner="Скрытый владелец",
+        )
+        hidden_project = registration(
+            9302,
+            "Скрытый проект",
+            position=4,
+            customer="Чужой заказчик",
+            asset_owner="Чужой владелец",
+        )
+        for row in (visible, hidden_stage, hidden_project):
+            ProjectRegistrationProduct.objects.create(
+                registration=row,
+                product=self.shared_product,
+                rank=1,
+            )
+
+        expert_user = get_user_model().objects.create_user(
+            username="policy-map-expert",
+            password="secret123",
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=expert_user, role=EXPERT_GROUP)
+        Performer.objects.create(
+            registration=visible,
+            employee=employee,
+            executor="Эксперт Эксперт",
+            participation_response=Performer.ParticipationResponse.CONFIRMED,
+        )
+        Performer.objects.create(
+            registration=hidden_project,
+            employee=employee,
+            executor="Эксперт Эксперт",
+            participation_response=Performer.ParticipationResponse.DECLINED,
+        )
+
+        open_html = self.client.get(
+            reverse("product_map_projects"),
+            {"product": self.shared_product.pk},
+        ).content.decode()
+        self.assertIn("Видимый этап", open_html)
+        self.assertIn("Скрытый этап", open_html)
+        self.assertIn("Скрытый проект", open_html)
+
+        self.client.force_login(expert_user)
+        html = self.client.get(
+            reverse("product_map_projects"),
+            {"product": self.shared_product.pk},
+        ).content.decode()
+        self.assertEqual(
+            re.findall(r'data-product-map-project-counter="(\d+)"', html),
+            ["1"],
+        )
+        self.assertIn("Видимый этап", html)
+        self.assertIn("Видимый заказчик", html)
+        self.assertIn("Видимый владелец", html)
+        self.assertNotIn("Скрытый этап", html)
+        self.assertNotIn("Скрытый заказчик", html)
+        self.assertNotIn("Скрытый владелец", html)
+        self.assertNotIn("Скрытый проект", html)
+        self.assertNotIn("Чужой заказчик", html)
+        self.assertNotIn("Чужой владелец", html)
+
     def test_product_map_omits_project_years_without_registry_rows(self):
         maps = self._maps(self.client.get(reverse("product_map")))
         alpha = maps[1]["mind"]["data"]

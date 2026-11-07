@@ -231,6 +231,58 @@ class StageGroupingTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("девяти", response.json()["message"])
 
+    def test_partial_merge_detaches_transferred_service_scope_from_donor(self):
+        from projects_app.service_scope import _work_fields_from_volume, write_work_scope
+
+        _donor_parent, donor_stages = self._stages(8112, 2, name="Донор")
+        _dest_parent, dest_stage = self._single_project(8112, "Получатель", 30)
+        ProjectRegistration.objects.filter(pk=dest_stage.pk).update(position=0)
+        dest_stage.refresh_from_db()
+        moved, kept = donor_stages
+        scope_key = uuid.uuid4()
+        legal_key = uuid.uuid4()
+        volumes = [
+            WorkVolume.objects.create(project=stage, asset_name="Общий актив", name="Работа", position=1)
+            for stage in donor_stages
+        ]
+        WorkVolume.objects.filter(pk__in=[volume.pk for volume in volumes]).update(scope_key=scope_key)
+        LegalEntity.objects.filter(work_item__in=volumes).update(scope_key=legal_key)
+
+        saved = self.client.post(
+            reverse("registration_stages_merge"),
+            {"stage_ids": [dest_stage.pk, moved.pk], "confirm": "1"},
+        )
+
+        self.assertEqual(saved.status_code, 200, saved.content)
+        self.assertTrue(saved.json()["ok"])
+        moved.refresh_from_db()
+        kept.refresh_from_db()
+        self.assertEqual(moved.stage_project_id, dest_stage.stage_project_id)
+        self.assertNotEqual(kept.stage_project_id, dest_stage.stage_project_id)
+
+        kept_volume = WorkVolume.objects.get(project=kept)
+        moved_volume = WorkVolume.objects.get(project=moved, asset_name="Общий актив")
+        destination_ids = [moved.pk, dest_stage.pk]
+        destination_work_keys = set(
+            WorkVolume.objects.filter(project_id__in=destination_ids).values_list("scope_key", flat=True)
+        )
+        self.assertEqual(kept_volume.scope_key, scope_key)
+        self.assertNotIn(scope_key, destination_work_keys)
+        self.assertEqual(destination_work_keys, {moved_volume.scope_key})
+        self.assertEqual(LegalEntity.objects.get(work_item=kept_volume).scope_key, legal_key)
+        self.assertFalse(
+            LegalEntity.objects.filter(project_id__in=destination_ids, scope_key=legal_key).exists()
+        )
+
+        fields = _work_fields_from_volume(moved_volume)
+        fields["asset_name"] = "Переименованный"
+        write_work_scope(moved_volume.scope_key, moved, fields, source_pk=moved_volume.pk)
+
+        kept_volume.refresh_from_db()
+        self.assertEqual(kept_volume.asset_name, "Общий актив")
+        self.assertEqual(kept_volume.scope_key, scope_key)
+        self.assertTrue(WorkVolume.objects.filter(project=kept, asset_name="Общий актив").exists())
+
     def test_split_turns_summary_into_separate_projects_and_breaks_scope(self):
         parent, stages = self._stages(8107, 2)
         original_uids = [stage.short_uid for stage in stages]
