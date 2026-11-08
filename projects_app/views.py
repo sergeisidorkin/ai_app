@@ -39,12 +39,26 @@ from .models import (
     _ensure_performer_rows_for_work_item,
     _sync_project_registration_primary_product,
 )
+from .system_performer_groups import (
+    REGISTRY_ASSIGNED_SPECIALTIES,
+    is_homogeneous_director_group,
+    is_protected_registry_group,
+    locked_specialty_merge_error,
+    locked_split_error,
+    merge_director_display_group,
+    protected_system_group_ids,
+    release_obsolete_system_group_members,
+    remember_director_split,
+    section_system_specialty,
+    sync_system_performer_display_groups,
+)
 from .registration_summary import (
     DEFERRED_STATUS,
     deferred_pairs_for_numbers,
     is_group_deferred,
     legacy_summary_status_dates,
     registration_summary_state,
+    registration_summary_type_label,
     block_is_deferred,
     summary_block_for_group,
     summary_block_for_project,
@@ -489,7 +503,7 @@ def _apply_registration_summary(block, summary_key, group_label, deferred, legac
     contract_ids = {item.contract_project_registration_id for item in block}
     agreements = {item.agreement_type for item in block}
     uniform_contract = len(contract_ids) == 1 and len(agreements) == 1
-    summary_type = "-".join(item.type_short_display for item in block if item.type_short_display)
+    summary_type = registration_summary_type_label(block)
     contract = first.contract_project_registration if uniform_contract else None
     summary_state = registration_summary_state([item.status for item in block], deferred)
     first.opens_registration_summary = True
@@ -595,9 +609,7 @@ def _annotate_registration_number_groups(registrations):
             agreements = {item.agreement_type for item in block}
             uniform_contract = len(contract_ids) == 1 and len(agreements) == 1
             summary_key = f"{first.formatted_number}:{current_group}"
-            summary_type = "-".join(
-                item.type_short_display for item in block if item.type_short_display
-            )
+            summary_type = registration_summary_type_label(block)
             contract = first.contract_project_registration if uniform_contract else None
             first.opens_registration_summary = True
             first.registration_summary_type = summary_type
@@ -6307,7 +6319,7 @@ def legal_entity_move_down(request, pk: int):
 
     return render(request, PROJECTS_PARTIAL_TEMPLATE, _projects_context(request.user, request))
 
-def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
+def _bind_dynamic_performer_fields(form, *, data=None, instance=None, asset_names=None):
     """
     Привязать серверные зависимости формы:
       - typical_section.queryset по продукту выбранной регистрации
@@ -6319,6 +6331,8 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
         reg_id = data.get("registration")
     elif instance is not None:
         reg_id = getattr(instance, "registration_id", None)
+    elif not data:
+        reg_id = form.initial.get("registration") or None
     if data and data.get("asset_name"):
         current_asset = data.get("asset_name", "")
     elif instance is not None:
@@ -6359,7 +6373,22 @@ def _bind_dynamic_performer_fields(form, *, data=None, instance=None):
                 .values_list("asset_name", flat=True)
                 .distinct()
             )
-        if current_asset and current_asset not in assets:
+        if asset_names is not None:
+            allowed_assets = {str(name) for name in asset_names}
+            assets = [asset for asset in assets if str(asset) in allowed_assets]
+        if (
+            not data
+            and instance is None
+            and asset_names is not None
+            and len(asset_names) == 1
+            and not current_asset
+            and (not reg_id or asset_names[0] in assets)
+        ):
+            current_asset = asset_names[0]
+            if current_asset not in assets:
+                assets.append(current_asset)
+            form.initial["asset_name"] = current_asset
+        elif current_asset and current_asset not in assets:
             assets.append(current_asset)
         choices = [("", "— Не выбрано —")] + [(a, a) for a in assets if a]
         # Если поле CharField с Select-виджетом — просто зададим choices на виджете
@@ -6634,6 +6663,7 @@ def _performers_context(user=None, request=None):
         .select_related(
             "registration",
             "registration__type",
+            "registration__group_member",
             "typical_section",
             "typical_section__product",
             "typical_section__service_block__expertise_direction",
@@ -6641,7 +6671,10 @@ def _performers_context(user=None, request=None):
             "employee__user",
             "currency",
         )
-        .prefetch_related(registration_products_prefetch)
+        .prefetch_related(
+            registration_products_prefetch,
+            "typical_section__service_block__ranked_specialties__specialty",
+        )
         .order_by(
             "-registration__number",
             "registration__short_uid",
@@ -6811,6 +6844,8 @@ def _performers_context(user=None, request=None):
             )
         )
         for p in performers:
+            p.system_specialty = section_system_specialty(p.typical_section)
+            p.system_group_locked = p.system_specialty in REGISTRY_ASSIGNED_SPECIALTIES
             p.executor_locked = _is_executor_locked(user, p)
             if is_expert:
                 p.executor_locked = True
@@ -7001,10 +7036,98 @@ def _performers_context(user=None, request=None):
     context.update(report_submission_pagination)
     return context
 
+
+def _normalize_performer_executor(value):
+    return " ".join(str(value or "").split()).strip()
+
+
+def _performer_display_group_key(performer):
+    return (
+        performer.registration_id,
+        _normalize_performer_executor(performer.executor),
+        performer.typical_section_id,
+        performer.grade or "",
+        performer.grade_name or "",
+        performer.actual_costs,
+        performer.estimated_costs,
+        performer.agreed_amount,
+        performer.currency_id,
+    )
+
+
+def _performer_display_asset_name(performer):
+    return " ".join(str(performer.asset_name or "").split()).strip()
+
+
+def _performer_display_group_error(performers):
+    if len(performers) < 2:
+        return "Для объединения выберите несколько строк."
+    if any(not performer.typical_section_id for performer in performers):
+        return "Для объединения у всех строк должен быть назначен один типовой раздел."
+    if len({_performer_display_group_key(performer) for performer in performers}) != 1:
+        executors = {_normalize_performer_executor(performer.executor) for performer in performers}
+        if len(executors) != 1:
+            return "Для объединения у строк должен быть один исполнитель или исполнитель не назначен ни у одной строки."
+        if len({performer.typical_section_id for performer in performers}) != 1:
+            return "Для объединения у всех строк должен быть один типовой раздел."
+        if len({performer.registration_id for performer in performers}) != 1:
+            return "Для объединения строки должны относиться к одному этапу проекта."
+        return "Объединить можно только строки, которые отличаются только наименованием актива."
+    assets = []
+    for performer in performers:
+        asset = _performer_display_asset_name(performer)
+        if not asset:
+            return "Для объединения у каждой строки должно быть наименование актива."
+        assets.append(asset)
+    if len(assets) != len(set(assets)):
+        return "Для объединения строки должны отличаться наименованием актива."
+    return ""
+
+
+def normalize_performer_display_groups(group_ids=None):
+    """Снимает визуальную группу, если в ней меньше двух согласованных строк."""
+    grouped = defaultdict(list)
+    performers = (
+        Performer.objects
+        .exclude(display_group_id__isnull=True)
+        .select_related(
+            "registration",
+            "registration__group_member",
+            "typical_section",
+            "typical_section__service_block",
+        )
+        .prefetch_related("typical_section__service_block__ranked_specialties__specialty")
+    )
+    if group_ids is not None:
+        performers = performers.filter(display_group_id__in=list(group_ids))
+    for performer in performers.order_by("position", "id"):
+        grouped[performer.display_group_id].append(performer)
+    released_ids = release_obsolete_system_group_members(grouped)
+    protected_ids = protected_system_group_ids()
+    stale_ids = [
+        member.pk
+        for members in grouped.values()
+        if members and members[0].display_group_id not in protected_ids
+        and not is_homogeneous_director_group(members)
+        and not is_protected_registry_group(members)
+        and _performer_display_group_error(members)
+        for member in members
+    ]
+    if stale_ids:
+        Performer.objects.filter(pk__in=stale_ids).update(display_group_id=None)
+    return len(stale_ids) + len(released_ids)
+
+
+def _performers_page_context(request):
+    sync_system_performer_display_groups()
+    normalize_performer_display_groups()
+    return _performers_context(request.user, request)
+
+
 @login_required
 @require_http_methods(["GET"])
 def performers_partial(request):
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_page_context(request))
 
 @login_required
 @require_http_methods(["GET"])
@@ -7130,8 +7253,105 @@ def _build_direction_hourly_rate_map():
     return result
 
 
+def _registration_group_label(registration):
+    """Текст группы из уже загруженного участника, как у ``group_display``."""
+    member = registration.group_member if registration.group_member_id else None
+    if member is not None:
+        return member.group_code_label
+    return (registration.group or "").strip().upper()
+
+
+def _registration_section_rank_map(registration):
+    product_rank_map = dict(registration.product_rank_map)
+    if not product_rank_map and registration.type_id:
+        return {registration.type_id: 1}
+    return product_rank_map
+
+
+def _sections_by_product(product_ids):
+    grouped = defaultdict(list)
+    if not product_ids:
+        return grouped
+    sections = (
+        TypicalSection.objects
+        .filter(product_id__in=product_ids)
+        .exclude(Q(is_system=True) | Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+        .select_related("product", "service_block", "service_block__expertise_dir")
+        .prefetch_related(
+            "service_block__ranked_specialties",
+            "service_block__ranked_specialties__specialty",
+        )
+        .order_by("position", "id")
+    )
+    for section in sections:
+        grouped[section.product_id].append(section)
+    return grouped
+
+
+def _ordered_sections_from_catalog(product_rank_map, sections_by_product):
+    if not product_rank_map:
+        return []
+    sections = []
+    for product_id in product_rank_map:
+        sections.extend(sections_by_product.get(product_id, []))
+    sections.sort(
+        key=lambda section: (
+            product_rank_map.get(section.product_id, 999999),
+            section.position,
+            section.id,
+        )
+    )
+    return sections
+
+
+def _direction_id_from_index(typical_section, group_member, assignment_index):
+    if not typical_section or not getattr(typical_section, "expertise_dir_id", None):
+        return None
+    unit = assignment_index.operation_unit(typical_section.expertise_dir_id, group_member)
+    return unit.pk if unit else None
+
+
+def _section_form_payload(section, group_member, assignment_index):
+    return {
+        "id": section.id,
+        "label": _typical_section_option_label(section),
+        "product_id": section.product_id,
+        "pricing_method": (section.expertise_dir.pricing_method or "") if section.expertise_dir_id else "",
+        "direction_id": _direction_id_from_index(section, group_member, assignment_index),
+        "specialty_ids": [
+            link.specialty_id
+            for link in section.ranked_specialties.all()
+            if link.specialty_id
+        ],
+        "accounting_type": section.accounting_type or "",
+        "system_specialty": section_system_specialty(section),
+    }
+
+
+def _performer_assets_map(registrations):
+    assets_map = {str(registration.id): [] for registration in registrations}
+    if not registrations:
+        return assets_map
+    seen = defaultdict(set)
+    rows = (
+        WorkVolume.objects
+        .filter(project_id__in=[registration.id for registration in registrations])
+        .order_by("project__position", "position", "id")
+        .values_list("project_id", "asset_name")
+    )
+    for project_id, asset_name in rows:
+        name = asset_name or ""
+        if not name or name in seen[project_id]:
+            continue
+        seen[project_id].add(name)
+        assets_map[str(project_id)].append(name)
+    return assets_map
+
+
 def _performer_form_ctx(form, action: str, performer=None):
-    regs = (
+    from group_app.expertise_management import ExpertiseAssignmentIndex
+
+    regs = list(
         ProjectRegistration.objects
         .select_related("type", "group_member")
         .prefetch_related(
@@ -7143,51 +7363,45 @@ def _performer_form_ctx(form, action: str, performer=None):
         .order_by("position", "id")
     )
 
-    reg_map = {
-        str(r.id): {
-            "group": r.group_display,
-            "type": r.type_short_display,
-            "type_short": r.type_short_display,
-            "type_id": r.type_id,
-            "name": r.name,
+    reg_map = {}
+    rank_maps = {}
+    for registration in regs:
+        type_label = registration.type_short_display
+        reg_map[str(registration.id)] = {
+            "group": _registration_group_label(registration),
+            "type": type_label,
+            "type_short": type_label,
+            "type_id": registration.type_id,
+            "name": registration.name,
+            "project_manager": registration.project_manager or "",
+            "project_coordinator": registration.project_coordinator or "",
         }
-        for r in regs
+        rank_maps[registration.id] = _registration_section_rank_map(registration)
+
+    product_ids = {
+        product_id
+        for rank_map in rank_maps.values()
+        for product_id in rank_map
     }
-    assets_map = {
-        str(r.id): [
-            a for a in WorkVolume.objects
-                     .filter(project=r)
-                     .values_list("asset_name", flat=True)
-                     .distinct()
-            if a
-        ]
-        for r in regs
+    sections_by_product = _sections_by_product(product_ids)
+    direction_ids = {
+        section.expertise_dir_id
+        for sections in sections_by_product.values()
+        for section in sections
+        if section.expertise_dir_id
     }
+    assignment_index = ExpertiseAssignmentIndex(direction_ids)
     sections_map = {}
-    for r in regs:
-        ordered_sections = _ordered_registration_sections(r)
-        if not ordered_sections:
-            sections_map[str(r.id)] = []
-            continue
-        sections_map[str(r.id)] = [
-            {
-                "id": s.id,
-                "label": _typical_section_option_label(s),
-                "product_id": s.product_id,
-                "pricing_method": (s.expertise_dir.pricing_method or "") if s.expertise_dir_id else "",
-                "direction_id": _effective_direction_id(
-                    s,
-                    getattr(r, "group_member", None),
-                ),
-                "specialty_ids": [
-                    link.specialty_id
-                    for link in s.ranked_specialties.all()
-                    if link.specialty_id
-                ],
-                "accounting_type": s.accounting_type or "",
-            }
-            for s in ordered_sections
+    for registration in regs:
+        member = registration.group_member if registration.group_member_id else None
+        sections_map[str(registration.id)] = [
+            _section_form_payload(section, member, assignment_index)
+            for section in _ordered_sections_from_catalog(
+                rank_maps[registration.id],
+                sections_by_product,
+            )
         ]
+    assets_map = _performer_assets_map(regs)
 
     executor_grade_map = _build_executor_grade_map()
     executor_options = _build_executor_options_payload()
@@ -7221,7 +7435,7 @@ def _performer_form_ctx(form, action: str, performer=None):
     }
 
 def _render_performers_updated(request):
-    resp = render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
+    resp = render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_page_context(request))
     resp[HX_TRIGGER_HEADER] = HX_PERFORMERS_UPDATED_EVENT
     return resp
 
@@ -7269,7 +7483,7 @@ def _performer_order_signature_for_items(items):
 @login_required
 @require_http_methods(["GET"])
 def performers_partial(request):
-    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_context(request.user, request))
+    return render(request, PERFORMERS_PARTIAL_TEMPLATE, _performers_page_context(request))
 
 def _next_performer_position(registration_id: int | None = None):
     filters = {"registration_id": registration_id} if registration_id else None
@@ -7913,6 +8127,71 @@ def report_render_docx_source(request, key: str):
     return response
 
 
+def _performer_create_owning_project_ids(request):
+    """Owning-project ids from the Projects filters, or None when the form is unscoped."""
+    if _request_param(request, "owning_project_scoped") != "1":
+        return None
+    project_ids = []
+    seen = set()
+    for value in _split_request_values(request, "owning_project"):
+        if value in {"__all__", "0"}:
+            continue
+        try:
+            project_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if project_id in seen:
+            continue
+        seen.add(project_id)
+        project_ids.append(project_id)
+    return project_ids
+
+
+def _performer_create_asset_names(request):
+    """Asset names from the executors-table filter, or None when that filter is not applied."""
+    if _request_param(request, "asset_scoped") != "1":
+        return None
+    raw = _request_param(request, "performer_asset") or ""
+    try:
+        parsed = json.loads(raw) if raw else []
+    except json.JSONDecodeError:
+        parsed = []
+    if isinstance(parsed, str):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        return []
+    names = []
+    seen = set()
+    for value in parsed:
+        name = str(value).strip()
+        if not name or name in {"__all__", "0"} or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _performer_create_scope_ctx(owning_project_ids, asset_names):
+    project_scoped = owning_project_ids is not None
+    asset_scoped = asset_names is not None
+    return {
+        "owning_project_scoped": project_scoped,
+        "owning_project_ids": ",".join(str(pk) for pk in owning_project_ids) if project_scoped else "",
+        "performer_asset_scoped": asset_scoped,
+        "performer_asset_names_json": json.dumps(asset_names or [], ensure_ascii=False) if asset_scoped else "",
+    }
+
+
+def _performer_create_form(request, data=None):
+    owning_project_ids = _performer_create_owning_project_ids(request)
+    asset_names = _performer_create_asset_names(request)
+    if data is None:
+        form = PerformerForm(owning_project_ids=owning_project_ids)
+    else:
+        form = PerformerForm(data, owning_project_ids=owning_project_ids)
+    return form, owning_project_ids, asset_names
+
+
 @login_required
 @require_http_methods(["GET", "POST"])
 def performer_form_create(request):
@@ -7921,20 +8200,24 @@ def performer_form_create(request):
     POST: если форма невалидна — вернуть её обратно (200), если валидна — 204 + HX-Trigger.
     """
     if request.method == "GET":
-        form = PerformerForm()
-        _bind_dynamic_performer_fields(form)  # чтобы селекты были заполнены сразу
-        return render(request, PERF_FORM_TEMPLATE, _performer_form_ctx(form, "create"))
+        form, owning_project_ids, asset_names = _performer_create_form(request)
+        _bind_dynamic_performer_fields(form, asset_names=asset_names)  # чтобы селекты были заполнены сразу
+        ctx = _performer_form_ctx(form, "create")
+        ctx.update(_performer_create_scope_ctx(owning_project_ids, asset_names))
+        return render(request, PERF_FORM_TEMPLATE, ctx)
 
     # POST
-    form = PerformerForm(request.POST)
-    _bind_dynamic_performer_fields(form, data=request.POST)  # ВАЖНО: привязать перед is_valid()
+    form, owning_project_ids, asset_names = _performer_create_form(request, data=request.POST)
+    _bind_dynamic_performer_fields(form, data=request.POST, asset_names=asset_names)  # ВАЖНО: привязать перед is_valid()
 
     if not form.is_valid():
         # Статус 200 — чтобы htmx спокойно перерисовал содержимое модалки шаблоном формы с ошибками
+        ctx = _performer_form_ctx(form, "create")
+        ctx.update(_performer_create_scope_ctx(owning_project_ids, asset_names))
         return render(
             request,
             PERF_FORM_TEMPLATE,
-            _performer_form_ctx(form, "create"),
+            ctx,
             status=200,
         )
 
@@ -7955,11 +8238,11 @@ def performer_form_edit(request, pk: int):
     POST: если невалидно — вернуть форму (200); если ок — 204 + HX-Trigger.
     """
     p = get_object_or_404(Performer.objects.select_related("typical_section", "typical_section__service_block__expertise_direction", "employee", "employee__user"), pk=pk)
-    executor_locked = _is_executor_locked(request.user, p)
 
     if request.method == "GET":
         form = PerformerForm(instance=p)
         _bind_dynamic_performer_fields(form, instance=p)
+        executor_locked = _is_executor_locked(request.user, p) or form.fields["executor"].disabled
         if executor_locked:
             attrs = form.fields["executor"].widget.attrs
             attrs["readonly"] = True
@@ -7971,6 +8254,7 @@ def performer_form_edit(request, pk: int):
     # POST
     form = PerformerForm(request.POST, instance=p)
     _bind_dynamic_performer_fields(form, data=request.POST, instance=p)
+    executor_locked = _is_executor_locked(request.user, p) or form.fields["executor"].disabled
 
     if not form.is_valid():
         if executor_locked:
@@ -8038,6 +8322,94 @@ def participation_batch_split(request):
             "performer_ids": ids,
         }
     )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def performer_display_group_merge(request):
+    try:
+        performer_ids = _parse_performer_ids_from_request(request)
+        performers = list(
+            Performer.objects
+            .filter(pk__in=performer_ids)
+            .select_related(
+                "registration",
+                "registration__group_member",
+                "typical_section",
+                "typical_section__service_block",
+            )
+            .prefetch_related("typical_section__service_block__ranked_specialties__specialty")
+            .order_by("position", "id")
+        )
+        if len(performers) != len(set(performer_ids)):
+            raise ValueError("Часть выбранных строк не найдена.")
+        locked_error = locked_specialty_merge_error(performers)
+        if locked_error:
+            raise ValueError(locked_error)
+        director_merge = merge_director_display_group(performers)
+        if director_merge is not None:
+            if director_merge.get("error"):
+                raise ValueError(director_merge["error"])
+            old_group_ids = director_merge.pop("old_group_ids", set())
+            if old_group_ids:
+                normalize_performer_display_groups(old_group_ids)
+            return JsonResponse(director_merge)
+        error = _performer_display_group_error(performers)
+        if error:
+            raise ValueError(error)
+        old_group_ids = {performer.display_group_id for performer in performers if performer.display_group_id}
+        group_id = uuid.uuid4()
+        with transaction.atomic():
+            Performer.objects.filter(pk__in=performer_ids).update(display_group_id=group_id)
+            if old_group_ids:
+                normalize_performer_display_groups(old_group_ids)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "display_group_id": str(group_id),
+            "performer_ids": performer_ids,
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def performer_display_group_split(request):
+    raw_ids = request.POST.getlist("display_group_ids[]") or request.POST.getlist("display_group_ids")
+    if not raw_ids:
+        return JsonResponse({"ok": False, "error": "Не выбрана сводная строка."}, status=400)
+    try:
+        group_ids = [uuid.UUID(str(value).strip()) for value in raw_ids if str(value).strip()]
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "Некорректный идентификатор группы."}, status=400)
+    if not group_ids:
+        return JsonResponse({"ok": False, "error": "Не выбрана сводная строка."}, status=400)
+    grouped_rows = list(
+        Performer.objects
+        .filter(display_group_id__in=group_ids)
+        .select_related(
+            "registration",
+            "registration__group_member",
+            "typical_section",
+            "typical_section__service_block",
+        )
+        .prefetch_related("typical_section__service_block__ranked_specialties__specialty")
+    )
+    if not grouped_rows:
+        return JsonResponse({"ok": False, "error": "Группа не найдена."}, status=400)
+    locked_error = locked_split_error(grouped_rows)
+    if locked_error:
+        return JsonResponse({"ok": False, "error": locked_error}, status=400)
+    remember_director_split(grouped_rows)
+    updated = Performer.objects.filter(display_group_id__in=group_ids).update(display_group_id=None)
+    if not updated:
+        return JsonResponse({"ok": False, "error": "Группа не найдена."}, status=400)
+    return JsonResponse({"ok": True, "updated": updated, "display_group_ids": [str(value) for value in group_ids]})
 
 
 @login_required

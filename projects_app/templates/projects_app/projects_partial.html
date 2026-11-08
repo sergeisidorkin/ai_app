@@ -939,6 +939,24 @@
       }
     }
 
+    function stageCountLabel(count) {
+      const number = Math.abs(parseInt(count, 10) || 0);
+      const lastTwo = number % 100;
+      const last = number % 10;
+      let word = "этапов";
+      if (last === 1 && lastTwo !== 11) word = "этап";
+      else if ([2, 3, 4].includes(last) && ![12, 13, 14].includes(lastTwo)) word = "этапа";
+      return number + " " + word;
+    }
+
+    function summaryTypeLabel(members) {
+      if (members.length > 3) return stageCountLabel(members.length);
+      return members
+        .map((row) => (row.dataset.regGroupType || "").trim())
+        .filter(Boolean)
+        .join("-");
+    }
+
     function summaryMembers(summary) {
       const key = summary?.dataset?.registrationGroupKey || "";
       const members = [];
@@ -1125,12 +1143,7 @@
         const uniformContract = contractIds.size === 1 && agreements.size === 1;
         setDroidMonoCellValue(contractCell, uniformContract ? (first.dataset.regGroupContractLabel || "") : "");
         if (agreementCell) agreementCell.textContent = uniformContract ? (first.dataset.regGroupAgreementType || "") : "";
-        if (typeCell) {
-          typeCell.textContent = members
-            .map((row) => (row.dataset.regGroupType || "").trim())
-            .filter(Boolean)
-            .join("-");
-        }
+        if (typeCell) typeCell.textContent = summaryTypeLabel(members);
         members.forEach((row) => {
           const memberNumber = row.querySelector('[data-reg-group-cell="number"]');
           const memberGroup = row.querySelector('[data-reg-group-cell="group"]');

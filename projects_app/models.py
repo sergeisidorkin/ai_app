@@ -1216,6 +1216,7 @@ def _ensure_performer_rows_for_work_item(instance):
         return
 
     project_manager_name = _normalize_text_value(getattr(instance.project, "project_manager", ""))
+    project_coordinator_name = _normalize_text_value(getattr(instance.project, "project_coordinator", ""))
     manager_name = _normalize_text_value(instance.manager)
 
     sections = _ordered_project_sections(instance.project)
@@ -1304,6 +1305,12 @@ def _ensure_performer_rows_for_work_item(instance):
         .first()
     )
 
+    from .system_performer_groups import (
+        PROJECT_COORDINATOR_SPECIALTY,
+        PROJECT_MANAGER_SPECIALTY,
+        section_system_specialty,
+    )
+
     performers = []
     for section in sections:
         if section.id in existing_section_ids_for_asset:
@@ -1321,8 +1328,11 @@ def _ensure_performer_rows_for_work_item(instance):
         estimated_costs_value = None
         agreed_amount_value = None
 
-        if section_code == "PRD":
+        specialty_name = section_system_specialty(section)
+        if specialty_name == PROJECT_MANAGER_SPECIALTY or section_code == "PRD":
             executor_name, employee_obj = _resolve_executor_assignment(project_manager_name)
+        elif specialty_name == PROJECT_COORDINATOR_SPECIALTY or section_code == "CRD":
+            executor_name, employee_obj = _resolve_executor_assignment(project_coordinator_name)
         elif section_code == "PRJ":
             executor_name, employee_obj = _resolve_executor_assignment(manager_name)
         elif section.expertise_dir_id:
@@ -1484,6 +1494,12 @@ class Performer(models.Model):
     participation_request_sent_at = models.DateTimeField("Дата отправки запроса", null=True, blank=True)
     participation_deadline_at = models.DateTimeField("Срок подтверждения", null=True, blank=True)
     participation_batch_id = models.UUIDField("ID батча подтверждения участия", null=True, blank=True, db_index=True)
+    display_group_id = models.UUIDField(
+        "Визуальная группа исполнителей",
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     participation_response = models.CharField(
         "Ответ на запрос",
         max_length=20,
@@ -1701,6 +1717,34 @@ class Performer(models.Model):
         if timezone.now() > self.contract_deadline_at:
             return "Просрочено"
         return ""
+
+
+class PerformerSystemGroupState(models.Model):
+    """Визуальная группа системной специальности многоэтапного проекта."""
+
+    project_number = models.PositiveIntegerField("Номер проекта", db_index=True)
+    group_label = models.CharField("Группа", max_length=64, blank=True, default="")
+    specialty_name = models.CharField("Специальность", max_length=255)
+    display_group_id = models.UUIDField(
+        "Визуальная группа",
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    split_by_user = models.BooleanField("Разъединено пользователем", default=False)
+
+    class Meta:
+        verbose_name = "Группа системной специальности"
+        verbose_name_plural = "Группы системных специальностей"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project_number", "group_label", "specialty_name"],
+                name="ux_performer_system_group_state",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.project_number} {self.group_label} — {self.specialty_name}"
 
 
 class PaymentRequestPerformer(Performer):

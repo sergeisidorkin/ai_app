@@ -1874,14 +1874,42 @@ body .second-sidebar + .flex-grow-1 {
   overflow: visible;
 }
 
+#performers-table-section {
+  --performers-table-scroll-offset-top: 0px;
+  --performers-table-margin-to-scroll: 10px;
+  --performers-table-action-gap: 30px;
+  --performers-table-scroll-action-gap: 11.75px;
+}
+
+#performers-main-section {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  padding-bottom: var(--performers-table-scroll-offset-top);
+}
+
+#performers-main-section > .performers-table {
+  margin-bottom: 0 !important;
+}
+
+#performers-main-section.has-horizontal-scroll > .performers-table {
+  margin-bottom: var(--performers-table-margin-to-scroll) !important;
+}
+
 #performers-table-section .policy-table-footer {
   position: sticky;
   bottom: 0;
   z-index: 20;
-  margin-top: calc(30px - .75rem);
+  /* padding-top остаётся для залипшей панели; отрицательный margin
+     прижимает кнопку к низу строки итогов, не сдвигая сами суммы. */
+  margin-top: calc(0px - .75rem);
   padding-top: .75rem;
   padding-bottom: .75rem;
   border-top: 1px solid transparent;
+}
+
+#performers-main-section.has-horizontal-scroll + .policy-table-footer {
+  margin-top: calc(0px - .75rem);
 }
 
 #performers-pane #performers-table-section .policy-table-footer.is-stuck {
@@ -1891,7 +1919,86 @@ body .second-sidebar + .flex-grow-1 {
   margin: 0 !important;
   box-sizing: border-box;
   background: #fff;
-  border-top-color: #e9ecef;
+  border-top: 1px solid transparent;
+}
+
+#performers-pane #performers-table-section .policy-table-footer.is-stuck.is-totals-line {
+  border-top-color: var(--bs-table-border-color, #dee2e6);
+}
+
+#perf-totals-row > td {
+  border-top: 1px solid var(--bs-table-border-color, #dee2e6) !important;
+}
+
+#perf-totals-row > .perf-cost-cell,
+#perf-totals-row > .perf-spacer,
+#perf-totals-row > td:last-child {
+  border-top: 1.5px solid #000 !important;
+}
+
+.performers-table.perf-costs-hidden #perf-totals-row > .perf-cost-cell,
+.performers-table.perf-costs-hidden #perf-totals-row > .perf-spacer,
+.performers-table.perf-costs-hidden #perf-totals-row > td:last-child {
+  border-top: 1px solid var(--bs-table-border-color, #dee2e6) !important;
+}
+
+#performers-table-section .performers-sticky-cost-line {
+  display: none;
+  position: absolute;
+  top: -1px;
+  height: 1.5px;
+  background: #000;
+  z-index: 4;
+  pointer-events: none;
+}
+
+#performers-table-section .policy-table-footer.is-stuck.is-totals-line .performers-sticky-cost-line {
+  display: block;
+}
+
+#performers-table-section .policy-table-footer.perf-costs-hidden.is-stuck.is-totals-line .performers-sticky-cost-line {
+  display: none;
+}
+
+#performers-table-section .performers-sticky-totals {
+  display: none;
+}
+
+#performers-table-section .policy-table-footer.is-stuck.is-totals-covered .performers-sticky-totals {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+#performers-table-section .policy-table-footer.is-stuck .policy-table-footer-actions {
+  position: relative;
+  z-index: 2;
+}
+
+#performers-table-section .performers-sticky-total {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  box-sizing: border-box;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+#performers-table-section .policy-table-footer.perf-costs-hidden .performers-sticky-total {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  user-select: none;
 }
 
 #performers-table-section .policy-sticky-actions-marker {
@@ -9337,7 +9444,7 @@ body.product-map-fullscreen-active {
 
 .product-map-stats-table {
   width: max-content;
-  border-collapse: collapse;
+  border-collapse: separate;
   border-spacing: 0;
   font-size: .75rem;
   line-height: 1.3;
@@ -9355,22 +9462,28 @@ body.product-map-fullscreen-active {
 }
 
 .product-map-stats-table thead tr {
-  background: rgba(196, 216, 228, .44);
+  /* Два слоя rgba(196, 216, 228, .44) поверх фона карты #f2f7fb.
+     Плотный цвет, чтобы при прокрутке строки не просвечивали и оттенок не менялся. */
+  background: #d2e2eb;
 }
 
 .product-map-stats-table tbody tr {
   background: rgba(255, 255, 255, .64);
 }
 
+.product-map-stats-table tbody tr:hover > td {
+  background-color: rgba(33, 55, 72, .07);
+}
+
 .product-map-stats-table th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   padding-top: calc(var(--product-map-stats-pad-y) * 2);
   padding-bottom: calc(var(--product-map-stats-pad-y) * 2);
   font-weight: 600;
   color: #075D94;
-  background: rgba(196, 216, 228, .44);
+  background: #d2e2eb;
 }
 
 .product-map-stats-table thead th:first-child {
@@ -9404,10 +9517,13 @@ body.product-map-fullscreen-active {
 }
 
 .product-map-stats-table :is(th, td).product-map-stats-label {
-  position: relative;
   max-width: none;
   padding-left: calc(var(--product-map-stats-inset) + var(--product-map-stats-toggle) + var(--product-map-stats-gap));
   white-space: nowrap;
+}
+
+.product-map-stats-table td.product-map-stats-label:has(> .product-map-stats-branch) {
+  position: relative;
 }
 
 .product-map-stats-table :is(th, td).product-map-stats-count {
@@ -10513,18 +10629,70 @@ td.product-map-stats-hist .product-map-stats-hist-track {
   text-overflow: clip !important;
 }
 
+#performers-main-section .performers-table thead th:nth-child(6),
 #performers-main-section .performers-table tbody td:nth-child(6) {
+  position: relative;
+  width: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  text-align: center;
+}
+
+#performers-main-section .performers-table tbody td:nth-child(7) {
   white-space: nowrap !important;
   overflow: visible !important;
   text-overflow: clip !important;
   max-width: none !important;
 }
 
-#performers-main-section .performers-table thead th:nth-child(7),
-#performers-main-section .performers-table tbody td:nth-child(7) {
+#performers-main-section .performers-table thead th:nth-child(8),
+#performers-main-section .performers-table tbody td:nth-child(8) {
   width: 56px !important;
   min-width: 56px !important;
   max-width: 56px !important;
+}
+
+#performers-main-section #performer-groups-toggle,
+#performers-main-section .performer-group-toggle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+}
+#performers-main-section .performer-group-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #ced4da;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+}
+#performers-main-section .performer-group-toggle:hover,
+#performers-main-section .performer-group-toggle:active {
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+}
+#performers-main-section .performer-group-toggle .bi {
+  transition: transform .12s ease-out;
+}
+#performers-main-section .performer-group-toggle[aria-expanded="false"] .bi {
+  transform: rotate(-90deg);
+}
+#performers-main-section tr.performer-group-member-collapsed {
+  display: none !important;
 }
 
 #performers-main-section .performers-table .text-truncate {
@@ -10559,12 +10727,46 @@ td.product-map-stats-hist .product-map-stats-hist-track {
   margin-bottom: var(--payment-request-table-margin-to-scroll) !important;
 }
 
-#participation-confirmation-section .participation-table-wrap + .products-actions-row {
-  margin-top: var(--payment-request-table-action-gap) !important;
+#participation-confirmation-section .participation-request-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  margin-top: calc(var(--payment-request-table-action-gap) - .75rem);
+  padding-top: .75rem;
+  padding-bottom: .75rem;
+  border-top: 1px solid transparent;
 }
 
-#participation-confirmation-section .participation-table-wrap.has-horizontal-scroll + .products-actions-row {
-  margin-top: var(--payment-request-table-scroll-action-gap) !important;
+#participation-confirmation-section .participation-table-wrap.has-horizontal-scroll + .participation-request-footer {
+  margin-top: calc(var(--payment-request-table-scroll-action-gap) - .75rem) !important;
+}
+
+#participation-confirmation-section .participation-request-footer .products-actions-row {
+  margin-top: 0 !important;
+}
+
+#participation-confirmation-section .participation-request-footer.is-stuck {
+  position: fixed;
+  bottom: 0;
+  z-index: 30;
+  margin: 0 !important;
+  box-sizing: border-box;
+  background: #fff;
+  border-top-color: #e9ecef;
+}
+
+#participation-confirmation-section .policy-sticky-actions-marker {
+  display: block;
+  height: 1px;
+  margin-top: -1px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#participation-confirmation-section .participation-request-footer-spacer {
+  display: block;
+  height: 0;
+  pointer-events: none;
 }
 
 #participation-confirmation-section .performers-table col.col-checkbox {
@@ -11696,6 +11898,7 @@ td.product-map-stats-hist .product-map-stats-hist-track {
 #participation-section-toggle,
 #participation-asset-toggle,
 #registration-groups-toggle,
+#performer-groups-toggle,
 #contract-section-toggle,
 #contract-asset-toggle,
 #info-request-section-toggle,

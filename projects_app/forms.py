@@ -20,6 +20,7 @@ from .models import (
     LegalEntity,
     Performer,
     ProjectRegistration,
+    ProjectRegistrationProduct,
     ReportCheckLine,
     ReportCheckRule,
     ReportMacro,
@@ -1292,6 +1293,48 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
             raise RuntimeError("WorkVolumeForm.save требует commit=True")
         return save_work_volume_form(self)
 
+def _registration_choice_queryset(queryset):
+    return queryset.select_related("type").prefetch_related(
+        models.Prefetch(
+            "product_links",
+            queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+        )
+    )
+
+
+def _performer_registry_executor_locked(performer):
+    from .system_performer_groups import is_registry_assigned_section
+
+    if not getattr(performer, "typical_section_id", None):
+        return False
+    return is_registry_assigned_section(performer.typical_section)
+
+
+def _posted_model(queryset, raw):
+    if raw in (None, ""):
+        return None
+    try:
+        return queryset.filter(pk=raw).first()
+    except (TypeError, ValueError):
+        return None
+
+
+def _posted_performer_section(data):
+    return _posted_model(
+        TypicalSection.objects.select_related("service_block").prefetch_related(
+            "service_block__ranked_specialties__specialty"
+        ),
+        data.get("typical_section") if data is not None else None,
+    )
+
+
+def _posted_performer_registration(data):
+    return _posted_model(
+        ProjectRegistration.objects.all(),
+        data.get("registration") if data is not None else None,
+    )
+
+
 class PerformerForm(forms.ModelForm):
     registration = ProjectChoiceField(
         queryset=ProjectRegistration.objects.registry_rows().order_by("-id"),
@@ -1344,8 +1387,23 @@ class PerformerForm(forms.ModelForm):
 
     _money_fields = ("actual_costs", "estimated_costs", "agreed_amount")
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, owning_project_ids=None, **kwargs):
         super().__init__(*args, **kwargs)
+        queryset = self.fields["registration"].queryset
+        if owning_project_ids is not None:
+            queryset = (
+                ProjectRegistration.objects.registry_rows()
+                .filter(
+                    models.Q(pk__in=owning_project_ids)
+                    | models.Q(stage_project_id__in=owning_project_ids)
+                )
+                .order_by("-id")
+            )
+        self.fields["registration"].queryset = _registration_choice_queryset(queryset)
+        if owning_project_ids is not None and len(owning_project_ids) == 1 and not self.is_bound:
+            only_stage = list(self.fields["registration"].queryset)
+            if len(only_stage) == 1:
+                self.initial["registration"] = only_stage[0].pk
         if self.data:
             data = self.data.copy()
             for fn in self._money_fields:
@@ -1362,6 +1420,20 @@ class PerformerForm(forms.ModelForm):
             current_executor,
             typical_section_id=current_typical_section_id,
         )
+        forced = self._registry_executor_lock()
+        if forced is not None:
+            choices = list(self.fields["executor"].choices)
+            present = {value for value, _label in choices}
+            for name in (forced, current_executor):
+                if name and name not in present:
+                    choices.append((name, name))
+                    present.add(name)
+            self.fields["executor"].choices = choices
+            if self.is_bound:
+                self.initial["executor"] = forced
+            self.fields["executor"].disabled = True
+            attrs = self.fields["executor"].widget.attrs
+            attrs["class"] = f"{attrs.get('class', '')} readonly-field".strip()
 
         today = timezone.now().date()
         currency_qs = OKVCurrency.objects.filter(
@@ -1377,6 +1449,26 @@ class PerformerForm(forms.ModelForm):
             if rub:
                 self.initial["currency"] = rub.pk
 
+    def _registry_executor_lock(self):
+        """Имя исполнителя из реестра, если поле нужно заблокировать.
+
+        None оставляет выбор свободным. У отправленной формы решение
+        принимается по выбранному разделу, а не по прежнему разделу строки.
+        """
+        from .system_performer_groups import is_registry_assigned_section, registry_executor_name
+
+        if self.is_bound:
+            section = _posted_performer_section(self.data)
+            if not is_registry_assigned_section(section):
+                return None
+            registration = _posted_performer_registration(self.data)
+            if registration is None and getattr(self.instance, "registration_id", None):
+                registration = self.instance.registration
+            return registry_executor_name(registration, section) or ""
+        if self.instance and self.instance.pk and _performer_registry_executor_locked(self.instance):
+            return registry_executor_name(self.instance.registration, self.instance.typical_section) or ""
+        return None
+
     @staticmethod
     def _clean_money(value):
         if not value:
@@ -1391,6 +1483,19 @@ class PerformerForm(forms.ModelForm):
 
     def clean_agreed_amount(self):
         return self._clean_money(self.cleaned_data.get("agreed_amount"))
+
+    def clean(self):
+        cleaned = super().clean()
+        section = cleaned.get("typical_section")
+        registration = cleaned.get("registration")
+        if section is None or registration is None:
+            return cleaned
+        from .system_performer_groups import registry_executor_name
+
+        forced = registry_executor_name(registration, section)
+        if forced is not None:
+            cleaned["executor"] = forced
+        return cleaned
 
 class WorkItemChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):

@@ -1,0 +1,21 @@
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("projects_app", "0133_report_review_entry_appealed_at"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="performer",
+            name="display_group_id",
+            field=models.UUIDField(
+                blank=True,
+                db_index=True,
+                null=True,
+                verbose_name="Визуальная группа исполнителей",
+            ),
+        ),
+    ]

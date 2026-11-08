@@ -5,6 +5,34 @@ from .models import ProjectRegistration, RegistrationGroupSummaryState
 NOT_STARTED_STATUS = "Не начат"
 DEFERRED_STATUS = "Отложен"
 SUMMARY_PROGRESS_STATUSES = ("В работе", "На проверке", "Завершён")
+SUMMARY_TYPE_CHAIN_LIMIT = 3
+
+
+def stage_count_label(count):
+    """Счётная форма: 1 этап, 4 этапа, 5 этапов, 11 этапов, 21 этап, 22 этапа."""
+    number = abs(int(count))
+    last_two = number % 100
+    last = number % 10
+    if last == 1 and last_two != 11:
+        word = "этап"
+    elif last in {2, 3, 4} and last_two not in {12, 13, 14}:
+        word = "этапа"
+    else:
+        word = "этапов"
+    return f"{number} {word}"
+
+
+def registration_summary_type_label(stages):
+    """Тип сводной строки: цепочка до трёх этапов, дальше — число этапов."""
+    items = list(stages)
+    if len(items) > SUMMARY_TYPE_CHAIN_LIMIT:
+        return stage_count_label(len(items))
+    labels = []
+    for item in items:
+        label = str(getattr(item, "type_short_display", "") or "").strip()
+        if label:
+            labels.append(label)
+    return "-".join(labels)
 
 
 def registration_summary_state(statuses, deferred):

@@ -141,7 +141,17 @@
 
   function collectOrderIds(table) {
     var selectionName = selectionNameForTable(table);
-    return tableRows(table).map(function (row) {
+    var rows = tableRows(table);
+    if (table && table.dataset && table.dataset.rowOrderLogical === '1') {
+      rows = rows.slice().sort(function (a, b) {
+        var ai = parseInt(a.dataset.rowOrderLogicalIndex, 10);
+        var bi = parseInt(b.dataset.rowOrderLogicalIndex, 10);
+        if (isNaN(ai)) ai = 0;
+        if (isNaN(bi)) bi = 0;
+        return ai - bi;
+      });
+    }
+    return rows.map(function (row) {
       return rowIdOf(row, selectionName);
     }).filter(Boolean);
   }
@@ -150,6 +160,7 @@
     return !row
       || row.classList.contains('d-none')
       || row.classList.contains('registration-group-member-collapsed')
+      || row.classList.contains('performer-group-member-collapsed')
       || row.hidden;
   }
 

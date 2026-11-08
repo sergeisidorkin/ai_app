@@ -26,6 +26,14 @@
   hx-on::after-request="if(event.detail.successful) window.bootstrap?.Modal.getOrCreateInstance(document.getElementById('performers-modal'))?.hide()"
 >
   {% csrf_token %}
+  {% if owning_project_scoped %}
+    <input type="hidden" name="owning_project_scoped" value="1">
+    <input type="hidden" name="owning_project" value="{{ owning_project_ids }}">
+  {% endif %}
+  {% if performer_asset_scoped %}
+    <input type="hidden" name="asset_scoped" value="1">
+    <input type="hidden" name="performer_asset" value="{{ performer_asset_names_json }}">
+  {% endif %}
   <div class="modal-body" data-modal-size="xl">
     {{ form.non_field_errors }}
 
@@ -151,26 +159,57 @@
   const tariffMap= JSON.parse(document.getElementById('perf-tariff-map').textContent || '{}');
   const tariffHoursMap = JSON.parse(document.getElementById('perf-tariff-hours-map').textContent || '{}');
   const dirHourlyRateMap = JSON.parse(document.getElementById('perf-direction-hourly-rate-map').textContent || '{}');
+  const assetFilterInput = formEl.querySelector('input[name="performer_asset"]');
+  var assetFilter = null;
+  if (assetFilterInput) {
+    try { assetFilter = JSON.parse(assetFilterInput.value || '[]'); }
+    catch (e) { assetFilter = []; }
+    if (!Array.isArray(assetFilter)) assetFilter = [];
+  }
+
+  function stageAssets(regId) {
+    var list = (assetsMap[regId] || []).slice();
+    if (!Array.isArray(assetFilter)) return list;
+    var allowed = {};
+    assetFilter.forEach(function (name) { allowed[String(name)] = true; });
+    return list.filter(function (name) { return allowed[String(name)]; });
+  }
 
   function refillAssets(regId) {
     if (!assetSel) return;
-    const list = assetsMap[regId] || [];
-    const current = assetSel.value;
+    var list = stageAssets(regId);
+    var current = assetSel.value;
+    var single = Array.isArray(assetFilter) && assetFilter.length === 1 ? String(assetFilter[0]) : '';
     assetSel.innerHTML = '';
-    const opt0 = document.createElement('option');
-    opt0.value = ''; opt0.textContent = '— Не выбрано —';
+    var opt0 = document.createElement('option');
+    opt0.value = '';
+    opt0.textContent = '— Не выбрано —';
     assetSel.appendChild(opt0);
-    list.forEach(v => {
-      const o = document.createElement('option'); o.value = v; o.textContent = v;
-      assetSel.appendChild(o);
+    list.forEach(function (name) {
+      var option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      assetSel.appendChild(option);
     });
-    if (current && !list.includes(current)) {
-      const custom = document.createElement('option');
+    if (current && list.indexOf(current) === -1 && !Array.isArray(assetFilter)) {
+      var custom = document.createElement('option');
       custom.value = current;
       custom.textContent = current;
       assetSel.appendChild(custom);
     }
-    if (current) assetSel.value = current;
+    if (current && (list.indexOf(current) !== -1 || !Array.isArray(assetFilter))) {
+      assetSel.value = current;
+    } else if (single && list.indexOf(single) !== -1) {
+      assetSel.value = single;
+    } else if (single && !regId) {
+      var only = document.createElement('option');
+      only.value = single;
+      only.textContent = single;
+      assetSel.appendChild(only);
+      assetSel.value = single;
+    } else {
+      assetSel.value = '';
+    }
   }
 
   function padSectionCode(n) {
@@ -231,10 +270,23 @@
     });
   }
 
+  function registryExecutorName(sectionInfo, regInfo) {
+    if (!sectionInfo) return null;
+    if (sectionInfo.system_specialty === 'Руководитель проекта') return regInfo.project_manager || '';
+    if (sectionInfo.system_specialty === 'Координатор') return regInfo.project_coordinator || '';
+    return null;
+  }
+
   function refillExecutors() {
     if (!execSel) return;
     var current = execSel.value;
+    var regId = regSel ? regSel.value : '';
+    var regInfo = regMap[regId] || {};
+    var registryName = registryExecutorName(getSelectedSectionInfo(), regInfo);
     var list = filteredExecutorOptions();
+    if (registryName && !list.some(function (opt) { return opt.value === registryName; })) {
+      list = list.concat([{ value: registryName, label: registryName }]);
+    }
     execSel.innerHTML = '';
     var opt0 = document.createElement('option');
     opt0.value = '';
@@ -246,6 +298,15 @@
       o.textContent = opt.label || opt.value;
       execSel.appendChild(o);
     });
+    if (registryName !== null) {
+      execSel.value = registryName;
+      execSel.disabled = true;
+      execSel.classList.add('readonly-field');
+      if (execSel.value !== current) applyExecutorGrade(execSel.value);
+      return;
+    }
+    execSel.disabled = false;
+    execSel.classList.remove('readonly-field');
     var currentAllowed = current && list.some(function(opt) {
       return opt.value === current;
     });
@@ -364,6 +425,10 @@
   }
 
   if (regSel?.value) applyReg(regSel.value);
+  else if (Array.isArray(assetFilter) && assetFilter.length === 1) {
+    refillAssets('');
+    updateSectionCode();
+  }
 
   if (regSel) regSel.addEventListener('change', function() {
     applyReg(regSel.value);

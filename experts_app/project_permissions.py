@@ -2,6 +2,7 @@
 
 PROJECT_COORDINATOR_SPECIALTY = "Координатор"
 PROJECT_MANAGER_SPECIALTY = "Руководитель проекта"
+PROJECT_DIRECTOR_SPECIALTY = "Директор"
 
 PERM_VIEW_PROJECT = "view_project"
 PERM_VIEW_REPORTS = "view_reports"
