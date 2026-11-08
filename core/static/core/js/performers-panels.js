@@ -87,7 +87,7 @@
   }
   function updatePaymentRequestScrollGaps() {
     qa(
-      '#participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap, #report-submission-section .report-submission-table-wrap, #report-check-section .report-check-table-wrap, #report-macros-section .report-macros-table-wrap',
+      '#performers-main-section, #participation-confirmation-section .participation-table-wrap, .payment-request-section .info-request-table-wrap, #info-request-approval-section .info-request-table-wrap, #report-submission-section .report-submission-table-wrap, #report-check-section .report-check-table-wrap, #report-macros-section .report-macros-table-wrap',
       document
     ).forEach(function(wrap) {
       var clipped = getComputedStyle(wrap).overflowX === 'hidden';
@@ -274,11 +274,13 @@
   }
   function ensurePerformerActionsVisibility() {
     const panel = pane()?.querySelector('#performers-actions');
-    if (!panel) return;
-    const any = getVisiblePerformerChecks().some(b => b.checked);
-    panel.classList.toggle('d-none', !any);
-    panel.classList.toggle('d-flex', any);
-    updatePerformerLockedActionButtons(panel);
+    if (panel) {
+      const any = getVisiblePerformerChecks().some(b => b.checked);
+      panel.classList.toggle('d-none', !any);
+      panel.classList.toggle('d-flex', any);
+      updatePerformerLockedActionButtons(panel);
+    }
+    updatePerformerDisplayGroupAction();
   }
   function performerRowIsSectionLocked(tr) {
     return !!(tr && tr.dataset.reportSectionLocked === '1');
@@ -350,7 +352,398 @@
     });
   }
   function syncPerformerSectionOrder(table) {
-    updatePerformerSectionCodes(sortPerformerRowsByProjectAndAsset(table));
+    const rootTable = table || pane()?.querySelector('#performers-main-section table.performers-table');
+    flattenPerformerDisplayGroups(rootTable);
+    updatePerformerSectionCodes(sortPerformerRowsByProjectAndAsset(rootTable));
+    assignPerformerLogicalIndexes(rootTable);
+    applyPerformerDisplayGroups(rootTable);
+    updatePerformerDisplayGroupAction();
+  }
+
+  var PERFORMER_GROUP_COLLAPSE_KEY = 'performer-display-groups-collapsed';
+
+  function performersMainTable(table) {
+    return table || pane()?.querySelector('#performers-main-section table.performers-table') || null;
+  }
+
+  function loadPerformerGroupCollapsed() {
+    try {
+      var raw = window.localStorage.getItem(PERFORMER_GROUP_COLLAPSE_KEY);
+      var parsed = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    } catch (error) {
+      return new Set();
+    }
+  }
+
+  function savePerformerGroupCollapsed(collapsed) {
+    try {
+      window.localStorage.setItem(PERFORMER_GROUP_COLLAPSE_KEY, JSON.stringify(Array.from(collapsed)));
+    } catch (error) {
+      // localStorage can be unavailable.
+    }
+  }
+
+  function performerLogicalIndex(row) {
+    var value = parseInt(row && row.dataset ? row.dataset.rowOrderLogicalIndex : '', 10);
+    return isNaN(value) ? 0 : value;
+  }
+
+  function performerDataRows(table) {
+    var rootTable = performersMainTable(table);
+    var tbody = rootTable && rootTable.querySelector('tbody');
+    if (!tbody) return [];
+    return Array.from(tbody.querySelectorAll('tr[data-row-order-id]'));
+  }
+
+  function flattenPerformerDisplayGroups(table) {
+    var rootTable = performersMainTable(table);
+    var tbody = rootTable && rootTable.querySelector('tbody');
+    if (!tbody) return;
+    tbody.querySelectorAll('tr[data-performer-group-summary]').forEach(function (row) {
+      row.remove();
+    });
+    var rows = performerDataRows(rootTable);
+    rows.forEach(function (row) {
+      row.classList.remove('performer-group-member-collapsed');
+    });
+    var indexed = rows.filter(function (row) {
+      return row.dataset.rowOrderLogicalIndex !== undefined && row.dataset.rowOrderLogicalIndex !== '';
+    });
+    if (!indexed.length || indexed.length !== rows.length) return;
+    indexed.sort(function (a, b) {
+      return performerLogicalIndex(a) - performerLogicalIndex(b);
+    });
+    indexed.forEach(function (row) {
+      tbody.appendChild(row);
+    });
+  }
+
+  function clearPerformerLogicalIndexes(table) {
+    performerDataRows(table).forEach(function (row) {
+      delete row.dataset.rowOrderLogicalIndex;
+      row.removeAttribute('data-row-order-logical-index');
+    });
+  }
+
+  function assignPerformerLogicalIndexes(table) {
+    performerDataRows(table).forEach(function (row, index) {
+      row.dataset.rowOrderLogicalIndex = String(index);
+    });
+  }
+
+  function normalizePerformerText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function performerCostSignature(row) {
+    function part(selector, name) {
+      var cell = row.querySelector(selector);
+      if (!cell) return '';
+      return cell.dataset[name] || '';
+    }
+    var actual = row.querySelector('[data-sum-actual]');
+    return [
+      part('[data-sum-actual]', 'sumActual'),
+      part('[data-sum-estimated]', 'sumEstimated'),
+      part('[data-sum-agreed]', 'sumAgreed'),
+      actual ? (actual.dataset.currency || '') : '',
+    ].join('\0');
+  }
+
+  function performerDisplayGroupKey(row) {
+    return [
+      row.dataset.projectId || '',
+      normalizePerformerText(row.dataset.executor),
+      row.dataset.typicalSectionId || '',
+      row.dataset.grade || '',
+      row.dataset.gradeName || '',
+      performerCostSignature(row),
+    ].join('\0');
+  }
+
+  function performerRowsEligibleToMerge(rows) {
+    if (!rows || rows.length < 2) return false;
+    if (rows.some(function (row) { return row.dataset.systemGroupLocked === '1'; })) return false;
+    if (rows.every(function (row) { return row.dataset.systemSpecialty === 'Директор'; })) {
+      var projectNumber = rows[0].dataset.projectNumber || '';
+      var projectGroup = rows[0].dataset.projectGroup || '';
+      return rows.every(function (row) {
+        return (row.dataset.projectNumber || '') === projectNumber
+          && (row.dataset.projectGroup || '') === projectGroup;
+      });
+    }
+    if (rows.some(function (row) { return !normalizePerformerText(row.dataset.typicalSectionId); })) return false;
+    var key = performerDisplayGroupKey(rows[0]);
+    if (!rows.every(function (row) { return performerDisplayGroupKey(row) === key; })) return false;
+    var assets = rows.map(function (row) { return normalizePerformerText(row.dataset.assetName); });
+    if (assets.some(function (asset) { return !asset; })) return false;
+    return new Set(assets).size === assets.length;
+  }
+
+  function performerGroupMembers(table, groupId) {
+    return performerDataRows(table).filter(function (row) {
+      return (row.dataset.displayGroupId || '') === groupId;
+    });
+  }
+
+  function visiblePerformerGroupAssets(members) {
+    var assets = [];
+    members.forEach(function (row) {
+      if (row.classList.contains('d-none')) return;
+      var name = normalizePerformerText(row.dataset.assetName);
+      if (name && assets.indexOf(name) === -1) assets.push(name);
+    });
+    return assets;
+  }
+
+  function summaryCellText(row, index) {
+    var cell = row.cells && row.cells[index];
+    return cell ? normalizePerformerText(cell.textContent) : '';
+  }
+
+  function blankDivergentSummaryCells(row, members) {
+    var skip = { 0: true, 5: true, 6: true, 7: true, 8: true };
+    Array.from(row.cells || []).forEach(function (cell, index) {
+      if (skip[index]) return;
+      var texts = members.map(function (member) { return summaryCellText(member, index); });
+      if (texts.every(function (text) { return text === texts[0]; })) return;
+      if (index === 1) {
+        var label = normalizePerformerText(members[0].dataset.projectNumberLabel);
+        var sameLabel = members.every(function (member) {
+          return normalizePerformerText(member.dataset.projectNumberLabel) === label;
+        });
+        cell.textContent = sameLabel ? label : '';
+        return;
+      }
+      cell.textContent = '';
+    });
+  }
+
+  function buildPerformerSummaryRow(groupId, members) {
+    var source = members[0];
+    var row = source.cloneNode(true);
+    row.removeAttribute('data-row-order-id');
+    row.removeAttribute('data-row-order-logical-index');
+    row.removeAttribute('data-edit-url');
+    row.removeAttribute('data-delete-url');
+    row.removeAttribute('data-move-up-url');
+    row.removeAttribute('data-move-down-url');
+    row.dataset.performerGroupSummary = '1';
+    row.dataset.displayGroupId = groupId;
+    row.dataset.assetName = '';
+    row.classList.remove('d-none', 'table-active', 'performer-group-member-collapsed');
+    var sourceCheckbox = source.querySelector('input[name="performer-select"]');
+    var checkboxCell = row.querySelector('td');
+    var lockedGroup = members.some(function (member) {
+      return member.dataset.systemGroupLocked === '1';
+    });
+    if (checkboxCell && sourceCheckbox && !sourceCheckbox.disabled && !lockedGroup) {
+      checkboxCell.innerHTML = ''
+        + '<div class="form-check m-0">'
+        + '<input class="form-check-input" type="checkbox" name="performer-group-select" value="'
+        + groupId
+        + '" aria-label="Выделить сводную строку">'
+        + '</div>';
+    } else if (checkboxCell) {
+      checkboxCell.innerHTML = '';
+    }
+    var toggleCell = row.querySelector('.performer-group-toggle-col');
+    if (toggleCell) {
+      toggleCell.innerHTML = ''
+        + '<button type="button" class="performer-group-toggle" data-performer-group-toggle="'
+        + groupId
+        + '" aria-expanded="true" aria-label="Свернуть/развернуть группу">'
+        + '<i class="bi bi-caret-down-fill"></i>'
+        + '</button>';
+    }
+    var assetCell = row.querySelector('.performer-asset-cell');
+    if (assetCell) assetCell.textContent = pluralAssets(visiblePerformerGroupAssets(members).length);
+    var codeCell = row.querySelector('.js-section-code');
+    if (codeCell) codeCell.textContent = '';
+    blankDivergentSummaryCells(row, members);
+    row.querySelectorAll('.performer-quick-edit, .performer-locked-icon').forEach(function (icon) {
+      icon.remove();
+    });
+    row.querySelectorAll('[data-sum-actual], [data-sum-estimated], [data-sum-agreed]').forEach(function (cell) {
+      cell.removeAttribute('data-sum-actual');
+      cell.removeAttribute('data-sum-estimated');
+      cell.removeAttribute('data-sum-agreed');
+    });
+    return row;
+  }
+
+  function updatePerformerGroupHeaderToggle(table) {
+    var rootTable = performersMainTable(table);
+    if (!rootTable) return;
+    var toggle = rootTable.querySelector('#performer-groups-toggle');
+    if (!toggle) return;
+    var summaries = Array.from(rootTable.querySelectorAll('tr[data-performer-group-summary]'));
+    var allCollapsed = summaries.length > 0 && summaries.every(function (summary) {
+      var button = summary.querySelector('[data-performer-group-toggle]');
+      return button && button.getAttribute('aria-expanded') === 'false';
+    });
+    var icon = toggle.querySelector('i');
+    if (icon) icon.className = allCollapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+    toggle.classList.toggle('active', allCollapsed);
+  }
+
+  function setPerformerGroupCollapsed(groupId, collapsed) {
+    var table = performersMainTable();
+    if (!table || !groupId) return;
+    var summary = table.querySelector('tr[data-performer-group-summary][data-display-group-id="' + groupId + '"]');
+    var button = summary && summary.querySelector('[data-performer-group-toggle]');
+    if (button) button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    performerGroupMembers(table, groupId).forEach(function (row) {
+      row.classList.toggle('performer-group-member-collapsed', collapsed);
+      if (collapsed) {
+        var checkbox = row.querySelector('input[name="performer-select"]');
+        if (checkbox) checkbox.checked = false;
+      }
+    });
+    var stored = loadPerformerGroupCollapsed();
+    if (collapsed) stored.add(groupId);
+    else stored.delete(groupId);
+    savePerformerGroupCollapsed(stored);
+    updatePerformerGroupHeaderToggle(table);
+    updatePerformerMasterState();
+    updateRowHighlight('performer-select');
+    ensurePerformerActionsVisibility();
+  }
+
+  function toggleAllPerformerGroups() {
+    var table = performersMainTable();
+    if (!table) return;
+    var summaries = Array.from(table.querySelectorAll('tr[data-performer-group-summary]'));
+    if (!summaries.length) return;
+    var allCollapsed = summaries.every(function (summary) {
+      var button = summary.querySelector('[data-performer-group-toggle]');
+      return button && button.getAttribute('aria-expanded') === 'false';
+    });
+    summaries.forEach(function (summary) {
+      setPerformerGroupCollapsed(summary.dataset.displayGroupId || '', !allCollapsed);
+    });
+  }
+
+  function syncPerformerDisplayGroupVisibility(table) {
+    var rootTable = performersMainTable(table);
+    if (!rootTable) return;
+    rootTable.querySelectorAll('tr[data-performer-group-summary]').forEach(function (summary) {
+      var members = performerGroupMembers(rootTable, summary.dataset.displayGroupId || '');
+      var assets = visiblePerformerGroupAssets(members);
+      var assetCell = summary.querySelector('.performer-asset-cell');
+      if (assetCell) assetCell.textContent = pluralAssets(assets.length);
+      var hidden = assets.length === 0;
+      summary.classList.toggle('d-none', hidden);
+      if (hidden) {
+        var checkbox = summary.querySelector('input[name="performer-group-select"]');
+        if (checkbox) checkbox.checked = false;
+      }
+    });
+    updatePerformerDisplayGroupAction();
+  }
+
+  window.__syncPerformerDisplayGroupVisibility = function () {
+    syncPerformerDisplayGroupVisibility();
+  };
+
+  function applyPerformerDisplayGroups(table) {
+    var rootTable = performersMainTable(table);
+    var tbody = rootTable && rootTable.querySelector('tbody');
+    if (!tbody) return;
+    var rows = performerDataRows(rootTable);
+    var groups = new Map();
+    var singles = [];
+    rows.forEach(function (row) {
+      var groupId = row.dataset.displayGroupId || '';
+      if (!groupId) {
+        singles.push(row);
+        return;
+      }
+      if (!groups.has(groupId)) groups.set(groupId, []);
+      groups.get(groupId).push(row);
+    });
+    var blocks = [];
+    groups.forEach(function (members, groupId) {
+      if (members.length < 2) {
+        members.forEach(function (row) { singles.push(row); });
+        return;
+      }
+      members.sort(function (a, b) { return performerLogicalIndex(a) - performerLogicalIndex(b); });
+      var firstIndex = members.reduce(function (min, row) {
+        return Math.min(min, performerLogicalIndex(row));
+      }, performerLogicalIndex(members[0]));
+      blocks.push({ id: groupId, members: members, index: firstIndex });
+    });
+    blocks.sort(function (a, b) { return a.index - b.index; });
+    singles.sort(function (a, b) { return performerLogicalIndex(a) - performerLogicalIndex(b); });
+    var collapsed = loadPerformerGroupCollapsed();
+    blocks.forEach(function (block) {
+      var isCollapsed = collapsed.has(block.id);
+      var summary = buildPerformerSummaryRow(block.id, block.members);
+      var button = summary.querySelector('[data-performer-group-toggle]');
+      if (button) button.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+      tbody.appendChild(summary);
+      block.members.forEach(function (row) {
+        row.classList.toggle('performer-group-member-collapsed', isCollapsed);
+        tbody.appendChild(row);
+      });
+    });
+    singles.forEach(function (row) {
+      row.classList.remove('performer-group-member-collapsed');
+      tbody.appendChild(row);
+    });
+    syncPerformerDisplayGroupVisibility(rootTable);
+    updatePerformerGroupHeaderToggle(rootTable);
+  }
+
+  function selectedPerformerRowsForGroupAction() {
+    return getChecked('performer-select').map(function (box) {
+      return box.closest('tr');
+    }).filter(function (row) {
+      return row
+        && row.dataset.performerGroupSummary !== '1'
+        && !row.classList.contains('d-none')
+        && !row.classList.contains('performer-group-member-collapsed');
+    });
+  }
+
+  function selectedPerformerGroupIds() {
+    var table = performersMainTable();
+    if (!table) return [];
+    return Array.from(table.querySelectorAll('input[name="performer-group-select"]:checked')).filter(function (box) {
+      var row = box.closest('tr');
+      return row && !row.classList.contains('d-none');
+    }).map(function (box) {
+      return String(box.value || '');
+    }).filter(Boolean);
+  }
+
+  function updatePerformerDisplayGroupAction() {
+    var button = pane()?.querySelector('#performer-display-group-action');
+    if (!button) return;
+    var groupIds = selectedPerformerGroupIds();
+    var rows = selectedPerformerRowsForGroupAction();
+    var showSplit = groupIds.length > 0 && rows.length === 0;
+    var showMerge = groupIds.length === 0 && performerRowsEligibleToMerge(rows);
+    if (showSplit) {
+      button.classList.remove('d-none');
+      button.disabled = false;
+      button.textContent = 'Разъединить';
+      button.dataset.mode = 'split';
+      return;
+    }
+    if (showMerge) {
+      button.classList.remove('d-none');
+      button.disabled = false;
+      button.textContent = 'Объединить';
+      button.dataset.mode = 'merge';
+      return;
+    }
+    button.classList.add('d-none');
+    button.disabled = true;
+    button.textContent = 'Объединить';
+    button.dataset.mode = '';
   }
   function updatePerformerLockedActionButtons(panel) {
     if (!panel) return;
@@ -386,12 +779,15 @@
     }
     const root = pane();
     if (!root) return false;
+    const table = root.querySelector('#performers-main-section table.performers-table');
+    flattenPerformerDisplayGroups(table);
+    clearPerformerLogicalIndexes(table);
     return !!window.__queuedRowOrder.moveSelection(root, action, {
       selectionName: 'performer-select',
       selectedIds: checked.map((box) => String(box.value)),
       rowScopeDataKey: 'projectId',
-      onAfterMove: function (table) {
-        syncPerformerSectionOrder(table);
+      onAfterMove: function (movedTable) {
+        syncPerformerSectionOrder(movedTable);
         updatePerformerMasterState();
         updateRowHighlight('performer-select');
         ensurePerformerActionsVisibility();
@@ -402,7 +798,9 @@
   function getVisiblePerformerChecks() {
     return getRowChecks('performer-select').filter((checkbox) => {
       const row = checkbox.closest('tr');
-      return row && !row.classList.contains('d-none');
+      return row
+        && !row.classList.contains('d-none')
+        && !row.classList.contains('performer-group-member-collapsed');
     });
   }
 
@@ -4520,6 +4918,81 @@
     });
   }
 
+  function initParticipationRequestFooterSticky() {
+    var footer = document.querySelector('#participation-confirmation-section .participation-request-footer');
+    var section = footer && footer.closest('#participation-confirmation-section');
+    if (!footer || !section || footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    var spacer = document.createElement('div');
+    spacer.className = 'participation-request-footer-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('beforebegin', spacer);
+
+    var marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    var intersectionObserver = null;
+
+    function release() {
+      if (intersectionObserver) intersectionObserver.disconnect();
+      window.removeEventListener('scroll', sync, true);
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('projects:section-shown', sync);
+    }
+
+    function sync() {
+      if (!footer.isConnected) {
+        release();
+        return;
+      }
+      var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      var sectionRect = section.getBoundingClientRect();
+      var markerRect = marker.getBoundingClientRect();
+      var sectionVisible = sectionRect.top < viewportHeight && sectionRect.bottom > 0;
+      var footerBelowFold = markerRect.top >= viewportHeight - 1;
+      var barTop = viewportHeight - (footer.offsetHeight || 0);
+      function coversBar(el) {
+        if (!el) return false;
+        var rect = el.getBoundingClientRect();
+        return rect.bottom > barTop + 1 && rect.top < viewportHeight;
+      }
+      var headerOverlapsBar = coversBar(section.querySelector('.table-section-header'))
+        || coversBar(section.querySelector('.participation-table-wrap thead'));
+      var stuck = sectionVisible && footerBelowFold && !headerOverlapsBar;
+      if (stuck) {
+        if (!footer.classList.contains('is-stuck')) {
+          var styles = window.getComputedStyle(footer);
+          var blockHeight = footer.offsetHeight
+            + (parseFloat(styles.marginTop) || 0)
+            + (parseFloat(styles.marginBottom) || 0);
+          spacer.style.height = blockHeight + 'px';
+          footer.classList.add('is-stuck');
+        }
+        var pinnedRect = section.getBoundingClientRect();
+        footer.style.left = pinnedRect.left + 'px';
+        footer.style.width = pinnedRect.width + 'px';
+      } else if (footer.classList.contains('is-stuck')) {
+        footer.classList.remove('is-stuck');
+        footer.style.left = '';
+        footer.style.width = '';
+        spacer.style.height = '0px';
+      }
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
+      intersectionObserver.observe(section);
+      intersectionObserver.observe(marker);
+    }
+    window.addEventListener('scroll', sync, true);
+    window.addEventListener('resize', sync);
+    window.addEventListener('projects:section-shown', sync);
+    window.requestAnimationFrame(sync);
+  }
+
   function initReportSubmissionFooterSticky() {
     var footer = document.querySelector('#report-submission-section .policy-table-footer');
     var section = footer && footer.closest('#report-submission-section');
@@ -4602,12 +5075,62 @@
     footer.insertAdjacentElement('afterend', marker);
 
     var intersectionObserver = null;
+    var stickyTotalKeys = [
+      ['actual', '#perf-total-actual'],
+      ['estimated', '#perf-total-estimated'],
+      ['agreed', '#perf-total-agreed']
+    ];
+
+    function positionStickyCostLine() {
+      var line = footer.querySelector('.performers-sticky-cost-line');
+      var cell = section.querySelector('#perf-total-actual');
+      if (!line || !cell) return;
+      var footerRect = footer.getBoundingClientRect();
+      var cellRect = cell.getBoundingClientRect();
+      if (cellRect.right <= footerRect.left || cellRect.left >= footerRect.right) {
+        line.style.width = '0px';
+        return;
+      }
+      var left = Math.max(0, cellRect.left - footerRect.left);
+      line.style.left = left + 'px';
+      line.style.width = Math.max(0, footerRect.width - left) + 'px';
+    }
+
+    function positionStickyTotals() {
+      var layer = footer.querySelector('.performers-sticky-totals');
+      if (!layer || !footer.classList.contains('is-stuck')) return;
+      var footerRect = footer.getBoundingClientRect();
+      stickyTotalKeys.forEach(function(pair) {
+        var el = layer.querySelector('[data-sticky-total="' + pair[0] + '"]');
+        var cell = section.querySelector(pair[1]);
+        if (!el || !cell) return;
+        var valueEl = cell.querySelector('.perf-cost-value');
+        var raw = valueEl ? valueEl.textContent : cell.textContent;
+        el.textContent = (raw || '').trim();
+        var rect = cell.getBoundingClientRect();
+        var cellStyles = window.getComputedStyle(cell);
+        var padRight = (parseFloat(cellStyles.paddingRight) || 0) + (parseFloat(cellStyles.borderRightWidth) || 0);
+        el.style.left = (rect.left - footerRect.left) + 'px';
+        el.style.width = Math.max(0, rect.width) + 'px';
+        el.style.paddingRight = padRight + 'px';
+        el.style.fontSize = cellStyles.fontSize;
+        el.style.fontFamily = cellStyles.fontFamily;
+      });
+    }
+
+    function syncStickyTotals() {
+      if (!footer.isConnected) return;
+      sync();
+    }
 
     function release() {
       if (intersectionObserver) intersectionObserver.disconnect();
       window.removeEventListener('scroll', sync, true);
       window.removeEventListener('resize', sync);
       window.removeEventListener('projects:section-shown', sync);
+      if (window.__syncPerformersStickyTotals === syncStickyTotals) {
+        window.__syncPerformersStickyTotals = null;
+      }
     }
 
     function sync() {
@@ -4633,13 +5156,34 @@
         var pinnedRect = section.getBoundingClientRect();
         footer.style.left = pinnedRect.left + 'px';
         footer.style.width = pinnedRect.width + 'px';
+        var totalsRow = section.querySelector('#perf-totals-row');
+        var showBarLine = true;
+        var showBarTotals = true;
+        if (totalsRow) {
+          var totalsRect = totalsRow.getBoundingClientRect();
+          var barTop = footer.getBoundingClientRect().top;
+          var rowOnScreen = totalsRect.bottom > 1;
+          var tableLineVisible = rowOnScreen && totalsRect.top < barTop - 1;
+          var sumsMid = (totalsRect.top + totalsRect.bottom) / 2;
+          var tableSumsVisible = rowOnScreen && sumsMid < barTop - 1;
+          showBarLine = !tableLineVisible;
+          showBarTotals = !tableSumsVisible;
+        }
+        footer.classList.toggle('is-totals-line', showBarLine);
+        footer.classList.toggle('is-totals-covered', showBarTotals);
+        if (showBarLine) positionStickyCostLine();
+        if (showBarTotals) positionStickyTotals();
       } else if (footer.classList.contains('is-stuck')) {
         footer.classList.remove('is-stuck');
+        footer.classList.remove('is-totals-line');
+        footer.classList.remove('is-totals-covered');
         footer.style.left = '';
         footer.style.width = '';
         spacer.style.height = '0px';
       }
     }
+
+    window.__syncPerformersStickyTotals = syncStickyTotals;
 
     if ('IntersectionObserver' in window) {
       intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
@@ -6641,6 +7185,14 @@
       return;
     }
 
+    const groupCb = e.target.closest('tbody input.form-check-input[name="performer-group-select"]');
+    if (groupCb && root.contains(groupCb)) {
+      const groupRow = groupCb.closest('tr');
+      if (groupRow) groupRow.classList.toggle('table-active', !!groupCb.checked);
+      updatePerformerDisplayGroupAction();
+      return;
+    }
+
     const participationRowCb = e.target.closest('tbody input.form-check-input[name="participation-select"]');
     if (participationRowCb && root.contains(participationRowCb)) {
       propagateGroupCheck(participationRowCb, 'participation-select');
@@ -6881,10 +7433,14 @@
 
       if (!allProj || !allAsset) {
         perfRows.forEach(function(row) {
+          if (row.dataset.performerGroupSummary === '1') return;
           var mp = allProj || pf.indexOf(row.dataset.owningProjectId || row.dataset.projectId || '') !== -1;
           var ma = allAsset || af.indexOf(row.dataset.assetName || '') !== -1;
           if (!(mp && ma)) row.classList.add('d-none');
         });
+      }
+      if (typeof window.__syncPerformerDisplayGroupVisibility === 'function') {
+        window.__syncPerformerDisplayGroupVisibility();
       }
       if (typeof window.__enforceMasterOnRows === 'function') window.__enforceMasterOnRows();
       if (typeof window.__syncPaymentRequestFilter === 'function') {
@@ -6913,6 +7469,7 @@
       // --- totals ---
       var sums = { actual: {}, estimated: {}, agreed: {} };
       perfRows.forEach(function(row) {
+        if (row.dataset.performerGroupSummary === '1') return;
         if (row.classList.contains('d-none')) return;
         var a = row.querySelector('[data-sum-actual]');
         var e = row.querySelector('[data-sum-estimated]');
@@ -6948,6 +7505,12 @@
       if (elA) elA.textContent = renderS(sums.actual);
       if (elE) elE.textContent = renderS(sums.estimated);
       if (elG) elG.textContent = renderS(sums.agreed);
+      var costsVisible = window.__perfCostsVisible === true;
+      var costsTable = root.querySelector('#performers-main-section > table.performers-table');
+      var costsFooter = root.querySelector('#performers-table-section .policy-table-footer');
+      if (costsTable) costsTable.classList.toggle('perf-costs-hidden', !costsVisible);
+      if (costsFooter) costsFooter.classList.toggle('perf-costs-hidden', !costsVisible);
+      if (window.__syncPerformersStickyTotals) window.__syncPerformersStickyTotals();
     })();
 
     var performerIds = (window.__tableSel && window.__tableSel['performer-select']) || [];
@@ -7006,6 +7569,7 @@
     initReportCheckPolling();
     initReportSubmissionFooterSticky();
     initPerformersTableFooterSticky();
+    initParticipationRequestFooterSticky();
     updateReportSubmissionMasterState();
     updateRowHighlight('report-select');
     try { delete window.__tableSel['report-select']; } catch(_) {}
@@ -7090,6 +7654,7 @@
     if (!(e.target === root || root.contains(e.target))) return;
     ensurePerformerActionsVisibility();
     initPerformersTableFooterSticky();
+    initParticipationRequestFooterSticky();
     ensureReportCheckActionsVisibility();
     ensureReportMacrosActionsVisibility();
     syncPerformerSectionOrder();
@@ -7118,7 +7683,8 @@
     return Array.from(root.querySelectorAll(
       '#performers-main-section table.performers-table tbody tr[data-project-id]'
     )).filter(function(r) {
-      if (r.classList.contains('d-none')) return false;
+      if (r.dataset.performerGroupSummary === '1') return false;
+      if (r.classList.contains('d-none') || r.classList.contains('performer-group-member-collapsed')) return false;
       var cb = r.querySelector('input[name="performer-select"]');
       return !cb || !cb.disabled;
     });
@@ -7281,6 +7847,77 @@
     }
   }
 
+  function performerFilterIsAll(values) {
+    return !values || !values.length || values.indexOf('__all__') !== -1;
+  }
+
+  // Проекты, чьи этапы можно выбрать в «Этап ID»: верхние фильтры раздела и фильтры таблицы.
+  window.__performerStageOwningProjects = function () {
+    var FILTER_ALL = '__all__';
+    var masterValues = typeof window.__getMasterValues === 'function'
+      ? window.__getMasterValues()
+      : (window.__masterProjectFilter || [FILTER_ALL]);
+    var ids;
+    if (!performerFilterIsAll(masterValues)) {
+      ids = masterValues.map(String).filter(function (id) {
+        return id && id !== FILTER_ALL && id !== '0';
+      });
+    } else {
+      var nodes = document.querySelectorAll('#master-filter-projects-list .js-master-filter');
+      if (!nodes.length) nodes = document.querySelectorAll('#projects-pane .js-reg-filter');
+      if (!nodes.length) return null;
+      ids = [];
+      Array.from(nodes).forEach(function (input) {
+        if (!input.value || input.value === FILTER_ALL) return;
+        var row = input.closest('.form-check');
+        if (row && row.classList.contains('d-none')) return;
+        ids.push(String(input.value));
+      });
+    }
+
+    var headerProjects = window.__perfProjectFilter || [FILTER_ALL];
+    if (!performerFilterIsAll(headerProjects)) {
+      var selected = {};
+      headerProjects.forEach(function (id) { selected[String(id)] = true; });
+      ids = ids.filter(function (id) { return selected[id]; });
+    }
+
+    var assets = window.__perfAssetFilter || [FILTER_ALL];
+    if (!performerFilterIsAll(assets)) {
+      var assetSet = {};
+      assets.forEach(function (name) { assetSet[String(name)] = true; });
+      var projectsWithAsset = {};
+      document.querySelectorAll('#performers-main-section table.performers-table tbody tr').forEach(function (row) {
+        var asset = row.dataset.assetName || '';
+        if (!assetSet[asset]) return;
+        var owning = row.dataset.owningProjectId || row.dataset.projectId || '';
+        if (owning) projectsWithAsset[String(owning)] = true;
+      });
+      ids = ids.filter(function (id) { return projectsWithAsset[id]; });
+    }
+
+    var seen = {};
+    return ids.filter(function (id) {
+      if (seen[id]) return false;
+      seen[id] = true;
+      return true;
+    });
+  };
+
+  document.body.addEventListener('htmx:configRequest', function (evt) {
+    var elt = evt.detail && evt.detail.elt;
+    if (!elt || elt.getAttribute('data-performer-stage-scope') !== '1' || !evt.detail.parameters) return;
+    var ids = window.__performerStageOwningProjects();
+    if (!ids) return;
+    evt.detail.parameters.owning_project_scoped = '1';
+    evt.detail.parameters.owning_project = ids.join(',');
+    var assetSelection = window.__perfAssetFilter || ['__all__'];
+    if (!performerFilterIsAll(assetSelection)) {
+      evt.detail.parameters.asset_scoped = '1';
+      evt.detail.parameters.performer_asset = JSON.stringify(assetSelection);
+    }
+  });
+
   document.body.addEventListener('htmx:configRequest', function (evt) {
     const path = evt.detail && evt.detail.path || '';
     if (path.indexOf('performers/partial') === -1 || !evt.detail.parameters) return;
@@ -7340,6 +7977,57 @@
     await handleReportMacrosCsvUpload(uploadUrl, file);
   });
 
+  document.addEventListener('click', async function (event) {
+    var groupToggle = event.target.closest('[data-performer-group-toggle]');
+    if (groupToggle) {
+      event.preventDefault();
+      var expanded = groupToggle.getAttribute('aria-expanded') !== 'false';
+      setPerformerGroupCollapsed(groupToggle.getAttribute('data-performer-group-toggle') || '', expanded);
+      return;
+    }
+    var groupsToggle = event.target.closest('#performer-groups-toggle');
+    if (groupsToggle) {
+      event.preventDefault();
+      toggleAllPerformerGroups();
+      return;
+    }
+    var actionButton = event.target.closest('#performer-display-group-action');
+    if (!actionButton || actionButton.disabled || actionButton.classList.contains('d-none')) return;
+    var mode = actionButton.dataset.mode || '';
+    var url = mode === 'split' ? actionButton.dataset.splitUrl : actionButton.dataset.mergeUrl;
+    if (!url || (mode !== 'split' && mode !== 'merge')) return;
+    var formData = new FormData();
+    if (mode === 'split') {
+      selectedPerformerGroupIds().forEach(function (groupId) {
+        formData.append('display_group_ids[]', groupId);
+      });
+    } else {
+      selectedPerformerRowsForGroupAction().forEach(function (row) {
+        var checkbox = row.querySelector('input[name="performer-select"]');
+        if (checkbox && checkbox.value) formData.append('performer_ids[]', checkbox.value);
+      });
+    }
+    actionButton.disabled = true;
+    try {
+      var response = await fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+      });
+      var data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data && data.error || 'Не удалось изменить группировку строк.');
+      }
+      window.__tableSel['performer-select'] = [];
+      window.__tableSelLast = null;
+      document.body.dispatchEvent(new Event('performers-updated'));
+    } catch (error) {
+      alert(error.message || 'Не удалось изменить группировку строк.');
+      actionButton.disabled = false;
+      updatePerformerDisplayGroupAction();
+    }
+  });
+
   document.addEventListener('DOMContentLoaded', () => {
     initParticipationProjectFilter();
     initContractProjectFilter();
@@ -7353,6 +8041,7 @@
     initReportCheckPolling();
     initReportSubmissionFooterSticky();
     initPerformersTableFooterSticky();
+    initParticipationRequestFooterSticky();
     var root = pane();
     if (root) {
       applyRowGrouping(root.querySelector('#participation-confirmation-section'));

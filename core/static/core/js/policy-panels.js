@@ -12902,8 +12902,8 @@
 
   function productMapSelectedLevel(field) {
     const active = field && field.querySelector('[data-product-map-level].is-active');
-    const level = active ? Number(active.dataset.productMapLevel) : 2;
-    return level >= 1 && level <= 5 ? level : 2;
+    const level = active ? Number(active.dataset.productMapLevel) : 5;
+    return level >= 1 && level <= 5 ? level : 5;
   }
 
   function productMapIdSelected(ids, value) {
@@ -13746,7 +13746,7 @@
     renderProductMapStats(field);
     updateProductMapPeriodLabel(field);
     bindProductMapProjectControls();
-    markProductMapLevel(field, 2);
+    setProductMapLevel(field, productMapSelectedLevel(field));
     field.dataset.productMapState = 'ready';
     bindProductMapScreen(field);
     bindProductMapFullscreen();

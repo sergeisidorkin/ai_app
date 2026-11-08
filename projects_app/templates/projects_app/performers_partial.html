@@ -61,7 +61,7 @@
         <span class="row-order-status text-muted d-none align-self-center" data-row-order-status></span>
       </div>
 
-<div id="performers-main-section" style="overflow-x:auto">
+<div id="performers-main-section">
   <table class="table table-sm align-middle performers-table mb-0{% if not is_expert %} perf-costs-hidden{% endif %}"
          {% if request.user.is_authenticated and request.user.is_staff %}
          data-queued-row-order
@@ -69,6 +69,7 @@
          data-row-order-signature="{{ performer_order_signature }}"
          data-row-order-context="projects-performers"
          data-row-order-payload-field="ordered_performer_ids"
+         data-row-order-logical="1"
          {% endif %}>
     <colgroup>
       <col class="col-checkbox">  <!-- чекбокс -->
@@ -76,6 +77,7 @@
       <col class="col-number">    <!-- Проект ID -->
       <col class="col-type">      <!-- Продукт -->
       <col class="col-name">      <!-- Название -->
+      <col class="col-group-toggle"> <!-- сворачивание группы -->
       <col class="col-active">    <!-- Актив -->
       <col class="col-section-code"> <!-- Код -->
       <col style="width:28px">   <!-- быстрое редактирование -->
@@ -110,6 +112,14 @@
       <th class="text-nowrap">Этап ID</th>
       <th class="text-nowrap">Продукт</th>
       <th class="text-nowrap">Название</th>
+      <th class="performer-group-toggle-col">
+        <button type="button"
+                class="clf-wrap-btn"
+                id="performer-groups-toggle"
+                title="Свернуть/развернуть строки">
+          <i class="bi bi-arrows-collapse"></i>
+        </button>
+      </th>
       <th>Наименование актива</th>
       <th>Код</th>
       <th></th>
@@ -133,8 +143,17 @@
         data-project-id="{{ p.registration_id }}"
         data-owning-project-id="{{ p.registration.owning_project_id }}"
         data-project-number="{{ p.registration.number|default:0 }}"
+        data-project-group="{{ p.registration.group_display }}"
+        data-project-number-label="{{ p.registration.formatted_number }}{{ p.registration.group_alpha2 }}"
         data-stage-uid="{{ p.registration.short_uid }}"
+        data-system-specialty="{{ p.system_specialty|default:'' }}"
+        data-system-group-locked="{% if p.system_group_locked %}1{% else %}0{% endif %}"
         data-asset-name="{{ p.asset_name }}"
+        data-display-group-id="{{ p.display_group_id|default:'' }}"
+        data-executor="{{ p.executor }}"
+        data-typical-section-id="{% if p.typical_section_id %}{{ p.typical_section_id }}{% endif %}"
+        data-grade="{{ p.grade }}"
+        data-grade-name="{{ p.grade_name }}"
         data-edit-url="{% url 'performer_form_edit' p.pk %}"
         data-delete-url="{% url 'performer_delete' p.pk %}"
         data-move-up-url="{% url 'performer_move_up' p.pk %}"
@@ -162,7 +181,8 @@
           {{ p.section_product_short_display|default:"—" }}
         </td>
         <td class="text-truncate">{{ p.registration.name }}</td>
-        <td class="text-nowrap">{{ p.asset_name }}</td>
+        <td class="performer-group-toggle-col"></td>
+        <td class="text-nowrap performer-asset-cell">{{ p.asset_name }}</td>
         <td class="text-nowrap js-section-code"><span class="clf-id-droid-mono">{{ p.section_code }}</span></td>
         <td class="text-center p-0">
           {% if request.user.is_authenticated and request.user.is_staff %}
@@ -190,13 +210,13 @@
         {% endif %}
       </tr>
     {% empty %}
-      <tr><td colspan="{% if is_expert %}11{% else %}17{% endif %}" class="text-muted">Пока нет данных.</td></tr>
+      <tr><td colspan="{% if is_expert %}12{% else %}18{% endif %}" class="text-muted">Пока нет данных.</td></tr>
     {% endfor %}
     </tbody>
     {% if not is_expert %}
       <tfoot>
-        <tr class="fw-semibold" id="perf-totals-row" style="border-top:1.5px solid #000;">
-          <td colspan="11" style="border-bottom:none; padding-bottom:0;"></td>
+        <tr class="fw-semibold" id="perf-totals-row">
+          <td colspan="12" style="border-bottom:none; padding-bottom:0;"></td>
           <td class="text-nowrap text-end perf-cost-cell" id="perf-total-actual" style="border-bottom:none; padding-bottom:0;"><span class="perf-cost-value"></span></td>
           <td class="perf-spacer" style="border-bottom:none; padding-bottom:0;"></td>
           <td class="text-nowrap text-end perf-cost-cell" id="perf-total-estimated" style="border-bottom:none; padding-bottom:0;"><span class="perf-cost-value"></span></td>
@@ -209,10 +229,17 @@
   </table>
 </div>
 {% if request.user.is_authenticated and request.user.is_staff and not user_is_direction_head and not is_expert %}
-  <div class="policy-table-footer">
+  <div class="policy-table-footer perf-costs-hidden">
+    <div class="performers-sticky-cost-line" aria-hidden="true"></div>
+    <div class="performers-sticky-totals" aria-hidden="true">
+      <span class="performers-sticky-total" data-sticky-total="actual"></span>
+      <span class="performers-sticky-total" data-sticky-total="estimated"></span>
+      <span class="performers-sticky-total" data-sticky-total="agreed"></span>
+    </div>
     <div class="policy-table-footer-actions products-actions-row">
       <button
         class="btn btn-primary btn-sm d-flex align-items-center"
+        data-performer-stage-scope="1"
         hx-get="{% url 'performer_form_create' %}"
         hx-target="#performers-modal .modal-content"
         hx-swap="innerHTML">
@@ -234,6 +261,13 @@
           </button>
         </div>
       </div>
+      <button type="button"
+              id="performer-display-group-action"
+              class="btn btn-outline-primary btn-sm d-none"
+              data-merge-url="{% url 'performer_display_group_merge' %}"
+              data-split-url="{% url 'performer_display_group_split' %}">
+        Объединить
+      </button>
     </div>
   </div>
 {% endif %}
@@ -433,6 +467,7 @@
   </div>
 
     {% if request.user.is_authenticated and request.user.is_staff and not is_expert %}
+      <div class="participation-request-footer">
       <div id="participation-request-actions"
            class="d-flex align-items-stretch gap-2 products-actions-row"
            data-request-url="{% url 'participation_request' %}"
@@ -460,6 +495,7 @@
                 disabled>
           Объединить
         </button>
+      </div>
       </div>
 
       <div class="modal fade" id="participation-request-modal" tabindex="-1" aria-hidden="true">
@@ -961,6 +997,7 @@
     function updateTotals() {
       var sums = {actual: {}, estimated: {}, agreed: {}};
       rows.forEach(function(row) {
+        if (row.dataset.performerGroupSummary === '1') return;
         if (row.classList.contains('d-none')) return;
         var a = row.querySelector('[data-sum-actual]');
         var e = row.querySelector('[data-sum-estimated]');
@@ -991,6 +1028,7 @@
       setCostText(elA, render(sums.actual));
       setCostText(elE, render(sums.estimated));
       setCostText(elG, render(sums.agreed));
+      if (window.__syncPerformersStickyTotals) window.__syncPerformersStickyTotals();
     }
 
     function setCostText(el, text) {
@@ -1004,6 +1042,9 @@
       var table = pane.querySelector('#performers-main-section > table.performers-table');
       var visible = window.__perfCostsVisible === true;
       if (table) table.classList.toggle('perf-costs-hidden', !visible);
+      var footer = pane.querySelector('#performers-table-section .policy-table-footer');
+      if (footer) footer.classList.toggle('perf-costs-hidden', !visible);
+      if (window.__syncPerformersStickyTotals) window.__syncPerformersStickyTotals();
       var btn = pane.querySelector('#perf-toggle-costs');
       if (!btn) return;
       btn.classList.toggle('perf-vis-toggle--active', visible);
@@ -1025,11 +1066,13 @@
       var projSet = new Set(pv);
       var assetSet = new Set(av);
       rows.forEach(function(row) {
+        if (row.dataset.performerGroupSummary === '1') return;
         var matchProj = showAllProj || projSet.has(row.dataset.owningProjectId || row.dataset.projectId || '');
         var matchAsset = showAllAsset || assetSet.has(row.dataset.assetName || '');
         var matchMaster = !window.__projectsMasterAllowsRow || window.__projectsMasterAllowsRow(row);
         row.classList.toggle('d-none', !(matchProj && matchAsset && matchMaster));
       });
+      if (window.__syncPerformerDisplayGroupVisibility) window.__syncPerformerDisplayGroupVisibility();
       if (window.__hideProjectOptionsOutsideMaster) window.__hideProjectOptionsOutsideMaster(projChecks);
       updateFilterLabel(projLabel, projChecks, pv, 'проект');
       updateFilterLabel(assetLabel, allAssetChecks, av, 'актив');

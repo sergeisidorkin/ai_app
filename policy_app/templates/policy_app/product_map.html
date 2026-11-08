@@ -10,10 +10,10 @@
           <div class="product-map-board">
             <div class="product-map-toolbar" role="toolbar" aria-label="Управление картой продуктов">
               <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="1" aria-pressed="false">1</button>
-              <button type="button" class="btn btn-outline-primary btn-sm product-map-level is-active" data-product-map-level="2" aria-pressed="true">2</button>
+              <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="2" aria-pressed="false">2</button>
               <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="3" aria-pressed="false">3</button>
               <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="4" aria-pressed="false">4</button>
-              <button type="button" class="btn btn-outline-primary btn-sm product-map-level" data-product-map-level="5" aria-pressed="false">5</button>
+              <button type="button" class="btn btn-outline-primary btn-sm product-map-level is-active" data-product-map-level="5" aria-pressed="true">5</button>
               <div class="product-map-filters" role="group" aria-label="Фильтры карты продуктов">
                   <div class="dropdown" data-product-map-filter="consulting">
                     <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false">
@@ -54,13 +54,13 @@
                       <div data-product-map-filter-list></div>
                     </div>
                   </div>
-                  <button type="button" class="product-map-toggle" data-product-map-projects-toggle aria-pressed="false" title="Показать/скрыть проекты">
-                    <i class="bi bi-eye-slash" aria-hidden="true"></i>
+                  <button type="button" class="product-map-toggle is-active" data-product-map-projects-toggle aria-pressed="true" title="Показать/скрыть проекты">
+                    <i class="bi bi-eye" aria-hidden="true"></i>
                     <span>Показать проекты</span>
                   </button>
-                  <button type="button" class="product-map-toggle" data-product-map-collapse-empty aria-pressed="false" title="Свернуть/развернуть ветки без проектов за выбранный период">
-                    <i class="bi bi-dash-circle" aria-hidden="true"></i>
-                    <span data-product-map-collapse-empty-label>Свернуть пустые</span>
+                  <button type="button" class="product-map-toggle is-active" data-product-map-collapse-empty aria-pressed="true" title="Свернуть/развернуть ветки без проектов за выбранный период">
+                    <i class="bi bi-plus-circle" aria-hidden="true"></i>
+                    <span data-product-map-collapse-empty-label>Развернуть пустые</span>
                   </button>
                   <div class="dropdown" data-product-map-period>
                     <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false">

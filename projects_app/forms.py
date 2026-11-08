@@ -20,6 +20,7 @@ from .models import (
     LegalEntity,
     Performer,
     ProjectRegistration,
+    ProjectRegistrationProduct,
     ReportCheckLine,
     ReportCheckRule,
     ReportMacro,
@@ -1292,6 +1293,23 @@ class WorkVolumeForm(BootstrapMixin, forms.ModelForm):
             raise RuntimeError("WorkVolumeForm.save требует commit=True")
         return save_work_volume_form(self)
 
+def _registration_choice_queryset(queryset):
+    return queryset.select_related("type").prefetch_related(
+        models.Prefetch(
+            "product_links",
+            queryset=ProjectRegistrationProduct.objects.select_related("product").order_by("rank", "id"),
+        )
+    )
+
+
+def _performer_registry_executor_locked(performer):
+    from .system_performer_groups import is_registry_assigned_section
+
+    if not getattr(performer, "typical_section_id", None):
+        return False
+    return is_registry_assigned_section(performer.typical_section)
+
+
 class PerformerForm(forms.ModelForm):
     registration = ProjectChoiceField(
         queryset=ProjectRegistration.objects.registry_rows().order_by("-id"),
@@ -1344,8 +1362,23 @@ class PerformerForm(forms.ModelForm):
 
     _money_fields = ("actual_costs", "estimated_costs", "agreed_amount")
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, owning_project_ids=None, **kwargs):
         super().__init__(*args, **kwargs)
+        queryset = self.fields["registration"].queryset
+        if owning_project_ids is not None:
+            queryset = (
+                ProjectRegistration.objects.registry_rows()
+                .filter(
+                    models.Q(pk__in=owning_project_ids)
+                    | models.Q(stage_project_id__in=owning_project_ids)
+                )
+                .order_by("-id")
+            )
+        self.fields["registration"].queryset = _registration_choice_queryset(queryset)
+        if owning_project_ids is not None and len(owning_project_ids) == 1 and not self.is_bound:
+            only_stage = list(self.fields["registration"].queryset)
+            if len(only_stage) == 1:
+                self.initial["registration"] = only_stage[0].pk
         if self.data:
             data = self.data.copy()
             for fn in self._money_fields:
@@ -1362,6 +1395,20 @@ class PerformerForm(forms.ModelForm):
             current_executor,
             typical_section_id=current_typical_section_id,
         )
+        if self.instance and self.instance.pk and _performer_registry_executor_locked(self.instance):
+            from .system_performer_groups import registry_executor_name
+
+            forced = registry_executor_name(self.instance.registration, self.instance.typical_section) or ""
+            choices = list(self.fields["executor"].choices)
+            present = {value for value, _label in choices}
+            for name in (forced, current_executor):
+                if name and name not in present:
+                    choices.append((name, name))
+                    present.add(name)
+            self.fields["executor"].choices = choices
+            self.fields["executor"].disabled = True
+            attrs = self.fields["executor"].widget.attrs
+            attrs["class"] = f"{attrs.get('class', '')} readonly-field".strip()
 
         today = timezone.now().date()
         currency_qs = OKVCurrency.objects.filter(
@@ -1391,6 +1438,19 @@ class PerformerForm(forms.ModelForm):
 
     def clean_agreed_amount(self):
         return self._clean_money(self.cleaned_data.get("agreed_amount"))
+
+    def clean(self):
+        cleaned = super().clean()
+        section = cleaned.get("typical_section")
+        registration = cleaned.get("registration")
+        if section is None or registration is None:
+            return cleaned
+        from .system_performer_groups import registry_executor_name
+
+        forced = registry_executor_name(registration, section)
+        if forced is not None:
+            cleaned["executor"] = forced
+        return cleaned
 
 class WorkItemChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):

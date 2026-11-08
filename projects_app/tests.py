@@ -21,7 +21,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.db import IntegrityError
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from docx import Document
@@ -71,6 +71,7 @@ from projects_app.models import (
     PaymentRequestPerformer,
     Performer,
     PerformerReportUpload,
+    PerformerSystemGroupState,
     ProjectRegistration,
     ProjectRegistrationProduct,
     RegistrationGroupSummaryState,
@@ -346,6 +347,453 @@ class ParticipationBatchViewTests(TestCase):
         self.performer_b.refresh_from_db()
         self.assertIsNone(self.performer_a.participation_batch_id)
         self.assertIsNone(self.performer_b.participation_batch_id)
+
+
+class PerformerDisplayGroupViewTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="display-group-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.product = Product.objects.create(
+            short_name="DG",
+            name_en="Display Group",
+            name_ru="Группа отображения",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.section = self.product.sections.create(
+            code="MRK",
+            short_name="Marketing",
+            short_name_ru="Маркетинг",
+            name_en="Marketing",
+            name_ru="Маркетинг",
+            accounting_type="Раздел",
+            position=1,
+        )
+        self.other_section = self.product.sections.create(
+            code="ECN",
+            short_name="Economics",
+            short_name_ru="Экономика",
+            name_en="Economics",
+            name_ru="Экономика",
+            accounting_type="Раздел",
+            position=2,
+        )
+        self.project = ProjectRegistration.objects.create(number=8240, name="Группа активов", year=2026)
+        self.batch_id = uuid.uuid4()
+        self.quarry = self._performer("Карьер", position=1)
+        self.factory = self._performer("Фабрика", position=2)
+
+    def _performer(self, asset_name, **overrides):
+        values = {
+            "registration": self.project,
+            "executor": "Иванов Иван Иванович",
+            "asset_name": asset_name,
+            "typical_section": self.section,
+            "grade": "3/5",
+            "grade_name": "Старший",
+            "actual_costs": Decimal("100.00"),
+            "estimated_costs": Decimal("120.00"),
+            "agreed_amount": Decimal("110.00"),
+            "participation_batch_id": self.batch_id,
+        }
+        values.update(overrides)
+        return Performer.objects.create(**values)
+
+    def _merge(self, *performers):
+        return self.client.post(
+            reverse("performer_display_group_merge"),
+            {"performer_ids": [str(performer.pk) for performer in performers]},
+        )
+
+    def test_merge_groups_rows_without_changing_performer_data(self):
+        quarry_position = self.quarry.position
+        factory_position = self.factory.position
+        response = self._merge(self.quarry, self.factory)
+
+        self.assertEqual(response.status_code, 200)
+        self.quarry.refresh_from_db()
+        self.factory.refresh_from_db()
+        self.assertIsNotNone(self.quarry.display_group_id)
+        self.assertEqual(self.quarry.display_group_id, self.factory.display_group_id)
+        self.assertEqual(self.quarry.position, quarry_position)
+        self.assertEqual(self.factory.position, factory_position)
+        self.assertEqual(self.quarry.participation_batch_id, self.batch_id)
+        self.assertEqual(self.factory.participation_batch_id, self.batch_id)
+        self.assertEqual(self.quarry.executor, "Иванов Иван Иванович")
+        self.assertEqual(self.factory.asset_name, "Фабрика")
+
+    def test_merge_allows_rows_without_executor(self):
+        self.quarry.executor = ""
+        self.factory.executor = ""
+        self.quarry.save(update_fields=["executor"])
+        self.factory.save(update_fields=["executor"])
+
+        response = self._merge(self.quarry, self.factory)
+
+        self.assertEqual(response.status_code, 200)
+        self.quarry.refresh_from_db()
+        self.factory.refresh_from_db()
+        self.assertEqual(self.quarry.display_group_id, self.factory.display_group_id)
+
+    def test_merge_rejects_different_executors_sections_assets_and_costs(self):
+        other_executor = self._performer("Склад", executor="Петров Петр Петрович", position=3)
+        response = self._merge(self.quarry, other_executor)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("один исполнитель", response.json()["error"])
+
+        other_section = self._performer("Склад", typical_section=self.other_section, position=4)
+        response = self._merge(self.quarry, other_section)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("типовой раздел", response.json()["error"])
+
+        same_asset = self._performer("Карьер", position=5)
+        response = self._merge(self.quarry, same_asset)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("наименованием актива", response.json()["error"])
+
+        other_costs = self._performer("Склад", actual_costs=Decimal("10.00"), position=6)
+        response = self._merge(self.quarry, other_costs)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("только наименованием актива", response.json()["error"])
+
+        self.quarry.refresh_from_db()
+        self.assertIsNone(self.quarry.display_group_id)
+
+    def test_split_and_inconsistent_group_return_rows(self):
+        self._merge(self.quarry, self.factory)
+        self.quarry.refresh_from_db()
+        group_id = self.quarry.display_group_id
+
+        response = self.client.post(
+            reverse("performer_display_group_split"),
+            {"display_group_ids": [str(group_id)]},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.quarry.refresh_from_db()
+        self.factory.refresh_from_db()
+        self.assertIsNone(self.quarry.display_group_id)
+        self.assertIsNone(self.factory.display_group_id)
+
+        self._merge(self.quarry, self.factory)
+        self.factory.executor = "Сидоров Сидор Сидорович"
+        self.factory.save(update_fields=["executor"])
+        page = self.client.get(reverse("performers_partial"))
+        self.assertEqual(page.status_code, 200)
+        self.quarry.refresh_from_db()
+        self.factory.refresh_from_db()
+        self.assertIsNone(self.quarry.display_group_id)
+        self.assertIsNone(self.factory.display_group_id)
+
+    def test_delete_dissolves_group_of_one_remaining_row(self):
+        self._merge(self.quarry, self.factory)
+        response = self.client.post(reverse("performer_delete", args=[self.factory.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.quarry.refresh_from_db()
+        self.assertIsNone(self.quarry.display_group_id)
+        self.assertFalse(Performer.objects.filter(pk=self.factory.pk).exists())
+
+    def test_performers_partial_renders_group_column_and_action(self):
+        self._merge(self.quarry, self.factory)
+        self.quarry.refresh_from_db()
+        response = self.client.get(reverse("performers_partial"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        main_start = html.find('id="performers-main-section"')
+        main_html = html[main_start:html.find("</table>", main_start)]
+        self.assertIn('id="performer-groups-toggle"', main_html)
+        self.assertIn("bi-arrows-collapse", main_html)
+        self.assertLess(main_html.find('id="performer-groups-toggle"'), main_html.find(">Наименование актива</th>"))
+        self.assertLess(main_html.find(">Наименование актива</th>"), main_html.find(">Код</th>"))
+        self.assertIn(f'data-display-group-id="{self.quarry.display_group_id}"', main_html)
+        self.assertIn('id="performer-display-group-action"', html)
+        self.assertIn("Объединить", html)
+        self.assertIn('data-row-order-logical="1"', main_html)
+
+
+class SystemPerformerSpecialtyGroupTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="system-group-staff",
+            password="secret",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Иванов",
+        )
+        self.client.force_login(self.user)
+        self.manager_employee = Employee.objects.create(user=self.user, patronymic="Иванович")
+        self.product = Product.objects.create(
+            short_name="SG",
+            name_en="System Group",
+            name_ru="Системная группа",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.other_product = Product.objects.create(
+            short_name="S2",
+            name_en="Second",
+            name_ru="Второй",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+        )
+        self.manager_section = self._section(self.product, "PRD", "Руководитель проекта", 1)
+        self.coordinator_section = self._section(self.product, "CRD", "Координатор", 2)
+        self.director_section = self._section(self.product, "DIR", "Директор", 3)
+        self.other_director_section = self._section(self.other_product, "DIR", "Директор", 1)
+        self.first_stage = ProjectRegistration.objects.create(
+            number=8301,
+            type=self.product,
+            name="Первый этап",
+            year=2026,
+            position=1,
+            project_manager="Иванов Иван Иванович",
+            project_coordinator="Соколова Софья Сергеевна",
+        )
+        self.second_stage = ProjectRegistration.objects.create(
+            number=8301,
+            type=self.other_product,
+            name="Второй этап",
+            year=2026,
+            position=2,
+            project_manager="Иванов Иван Иванович",
+            project_coordinator="Соколова Софья Сергеевна",
+        )
+
+    def _section(self, product, code, name, position):
+        return product.sections.create(
+            code=code,
+            short_name=name,
+            short_name_ru=name,
+            name_en=name,
+            name_ru=name,
+            accounting_type="Раздел",
+            position=position,
+        )
+
+    def _performer(self, registration, section, asset_name, **overrides):
+        values = {
+            "registration": registration,
+            "typical_section": section,
+            "asset_name": asset_name,
+            "executor": "Иванов Иван Иванович",
+            "grade": "3/5",
+            "grade_name": "Старший",
+            "actual_costs": Decimal("100.00"),
+            "estimated_costs": Decimal("80.00"),
+        }
+        values.update(overrides)
+        return Performer.objects.create(**values)
+
+    def _reload(self, *performers):
+        self.client.get(reverse("performers_partial"))
+        for performer in performers:
+            performer.refresh_from_db()
+
+    def test_multistage_manager_and_coordinator_are_grouped_and_cannot_split(self):
+        first_manager = self._performer(self.first_stage, self.manager_section, "Карьер", actual_costs=Decimal("100.00"))
+        second_manager = self._performer(
+            self.second_stage,
+            self.manager_section,
+            "Фабрика",
+            actual_costs=Decimal("40.00"),
+            grade="1/5",
+            grade_name="Младший",
+        )
+        first_coordinator = self._performer(
+            self.first_stage,
+            self.coordinator_section,
+            "Карьер",
+            executor="Соколова Софья Сергеевна",
+        )
+        second_coordinator = self._performer(
+            self.second_stage,
+            self.coordinator_section,
+            "Порт",
+            executor="Соколова Софья Сергеевна",
+        )
+
+        self._reload(first_manager, second_manager, first_coordinator, second_coordinator)
+
+        self.assertIsNotNone(first_manager.display_group_id)
+        self.assertEqual(first_manager.display_group_id, second_manager.display_group_id)
+        self.assertNotEqual(first_manager.display_group_id, first_coordinator.display_group_id)
+        self.assertEqual(first_coordinator.display_group_id, second_coordinator.display_group_id)
+        self.assertEqual(first_manager.grade, "3/5")
+        self.assertEqual(second_manager.actual_costs, Decimal("40.00"))
+
+        response = self.client.post(
+            reverse("performer_display_group_split"),
+            {"display_group_ids": [str(first_manager.display_group_id)]},
+        )
+        self.assertEqual(response.status_code, 400)
+        first_manager.refresh_from_db()
+        self.assertIsNotNone(first_manager.display_group_id)
+
+        page = self.client.get(reverse("performers_partial"))
+        html = page.content.decode()
+        self.assertIn('data-system-specialty="Руководитель проекта"', html)
+        self.assertIn('data-system-group-locked="1"', html)
+        self.assertIn('data-system-specialty="Координатор"', html)
+
+        rejected = self.client.post(
+            reverse("performer_display_group_merge"),
+            {"performer_ids": [str(first_manager.pk), str(second_manager.pk)]},
+        )
+        self.assertEqual(rejected.status_code, 400)
+
+    def test_registry_save_rewrites_executor_and_form_keeps_it(self):
+        performer = self._performer(self.first_stage, self.manager_section, "Карьер", executor="Старый Исполнитель")
+        self.first_stage.project_manager = "Иванов Иван Иванович"
+        self.first_stage.save(update_fields=["project_manager"])
+        performer.refresh_from_db()
+        self.assertEqual(performer.executor, "Иванов Иван Иванович")
+        self.assertEqual(performer.employee, self.manager_employee)
+        self.assertEqual(performer.grade, "3/5")
+        self.assertEqual(performer.estimated_costs, Decimal("80.00"))
+
+        response = self.client.post(
+            reverse("performer_form_edit", args=[performer.pk]),
+            {
+                "registration": self.first_stage.pk,
+                "asset_name": "Карьер",
+                "typical_section": self.manager_section.pk,
+                "executor": "Петров Петр Петрович",
+                "grade": "1/5",
+                "grade_name": "Младший",
+                "actual_costs": "15.00",
+                "estimated_costs": "80.00",
+                "agreed_amount": "",
+            },
+        )
+        self.assertEqual(response.status_code, 204, response.content)
+        performer.refresh_from_db()
+        self.assertEqual(performer.executor, "Иванов Иван Иванович")
+        self.assertEqual(performer.grade, "1/5")
+        self.assertEqual(performer.actual_costs, Decimal("15.00"))
+
+        form = self.client.get(reverse("performer_form_edit", args=[performer.pk]))
+        self.assertContains(form, "disabled")
+
+    def test_single_stage_registry_group_survives_saving_a_different_cost(self):
+        alone = ProjectRegistration.objects.create(
+            number=8302,
+            type=self.product,
+            name="Один этап",
+            year=2026,
+            position=5,
+            project_manager="Иванов Иван Иванович",
+            project_coordinator="Соколова Софья Сергеевна",
+        )
+        first = self._performer(alone, self.coordinator_section, "Карьер", executor="Соколова Софья Сергеевна")
+        second = self._performer(
+            alone,
+            self.coordinator_section,
+            "Фабрика",
+            executor="Соколова Софья Сергеевна",
+            actual_costs=Decimal("40.00"),
+            grade="1/5",
+            grade_name="Младший",
+        )
+        self._reload(first, second)
+        self.assertIsNotNone(first.display_group_id)
+        self.assertEqual(first.display_group_id, second.display_group_id)
+
+        response = self.client.post(
+            reverse("performer_form_edit", args=[first.pk]),
+            {
+                "registration": alone.pk,
+                "asset_name": "Карьер",
+                "typical_section": self.coordinator_section.pk,
+                "executor": "Петров Петр Петрович",
+                "grade": "5/5",
+                "grade_name": "Ведущий",
+                "actual_costs": "15.00",
+                "estimated_costs": "90.00",
+                "agreed_amount": "15.00",
+            },
+        )
+        self.assertEqual(response.status_code, 204, response.content)
+        self._reload(first, second)
+        self.assertEqual(first.display_group_id, second.display_group_id)
+        first.refresh_from_db()
+        self.assertEqual(first.executor, "Соколова Софья Сергеевна")
+        self.assertEqual(first.actual_costs, Decimal("15.00"))
+        self.assertEqual(second.actual_costs, Decimal("40.00"))
+
+    def test_director_group_can_stay_split_and_rejoin_when_merged_completely(self):
+        first = self._performer(self.first_stage, self.director_section, "Карьер", executor="Директоров Директор Директорович")
+        second = self._performer(
+            self.second_stage,
+            self.other_director_section,
+            "Фабрика",
+            executor="Другой Директор Директорович",
+            actual_costs=Decimal("10.00"),
+        )
+        self._reload(first, second)
+        group_id = first.display_group_id
+        self.assertIsNotNone(group_id)
+        self.assertEqual(group_id, second.display_group_id)
+
+        split = self.client.post(
+            reverse("performer_display_group_split"),
+            {"display_group_ids": [str(group_id)]},
+        )
+        self.assertEqual(split.status_code, 200)
+        self._reload(first, second)
+        self.assertIsNone(first.display_group_id)
+        self.assertIsNone(second.display_group_id)
+        state = PerformerSystemGroupState.objects.get(project_number=8301, specialty_name="Директор")
+        self.assertTrue(state.split_by_user)
+
+        third = self._performer(self.first_stage, self.director_section, "Порт", executor="Директоров Директор Директорович")
+        self._reload(first, second, third)
+        self.assertIsNone(third.display_group_id)
+
+        partial = self.client.post(
+            reverse("performer_display_group_merge"),
+            {"performer_ids": [str(first.pk), str(second.pk)]},
+        )
+        self.assertEqual(partial.status_code, 200)
+        self._reload(first, second, third)
+        self.assertEqual(first.display_group_id, second.display_group_id)
+        self.assertIsNone(third.display_group_id)
+
+        complete = self.client.post(
+            reverse("performer_display_group_merge"),
+            {"performer_ids": [str(first.pk), str(second.pk), str(third.pk)]},
+        )
+        self.assertEqual(complete.status_code, 200)
+        fourth = self._performer(self.second_stage, self.other_director_section, "Склад")
+        self._reload(first, second, third, fourth)
+        self.assertEqual(first.display_group_id, fourth.display_group_id)
+        state.refresh_from_db()
+        self.assertFalse(state.split_by_user)
+
+    def test_new_coordinator_row_takes_executor_from_registry(self):
+        WorkVolume.objects.create(
+            project=self.first_stage,
+            name="Карьер",
+            asset_name="Карьер",
+            manager="Петров Петр Петрович",
+        )
+        coordinator = Performer.objects.get(
+            registration=self.first_stage,
+            typical_section=self.coordinator_section,
+            asset_name="Карьер",
+        )
+        manager = Performer.objects.get(
+            registration=self.first_stage,
+            typical_section=self.manager_section,
+            asset_name="Карьер",
+        )
+        self.assertEqual(coordinator.executor, "Соколова Софья Сергеевна")
+        self.assertEqual(manager.executor, "Иванов Иван Иванович")
 
 
 class SourceDataTargetFolderViewTests(TestCase):
@@ -1098,6 +1546,475 @@ class PerformerFormExecutorFilteringTests(TestCase):
 
         self.assertIn(self.matching_name, choices)
         self.assertIn(self.other_name, choices)
+
+
+class PerformerFormContextQueryTests(TestCase):
+    def test_form_context_batches_sections_assets_and_directions(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from group_app.models import ExpertiseManagementMode
+        from policy_app.models import TypicalSection
+        from projects_app.report_submission import performer_section_code_ids_by_asset
+        from projects_app.views import _effective_direction_id, _performer_form_ctx
+
+        uk = GroupMember.objects.create(
+            short_name="IMC",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+            is_management_company=True,
+        )
+        local = GroupMember.objects.create(
+            short_name="Local",
+            country_name="Казахстан",
+            country_code="398",
+            country_alpha2="KZ",
+            position=2,
+        )
+        shared = ExpertiseDirection.objects.create(
+            name="Общее",
+            short_name="SHR",
+            position=1,
+            pricing_method="hours",
+        )
+        separate = ExpertiseDirection.objects.create(
+            name="Раздельное",
+            short_name="SEP",
+            position=2,
+            pricing_method="vpm",
+        )
+        separate_mode = separate.management_mode
+        separate_mode.mode = ExpertiseManagementMode.MODE_SEPARATE
+        separate_mode.save(update_fields=["mode"])
+        uk_shared = OrgUnit.objects.create(
+            company=uk,
+            level=2,
+            department_name="Общее УК",
+            short_name="SHR",
+            unit_type="expertise",
+            expertise=shared,
+        )
+        OrgUnit.objects.create(
+            company=uk,
+            level=1,
+            department_name="Дирекция",
+            short_name="DIR",
+            unit_type="expertise",
+            expertise=shared,
+        )
+        uk_separate = OrgUnit.objects.create(
+            company=uk,
+            level=2,
+            department_name="Раздельное УК",
+            short_name="SEP-UK",
+            unit_type="expertise",
+            expertise=separate,
+        )
+        local_separate = OrgUnit.objects.create(
+            company=local,
+            level=2,
+            department_name="Раздельное KZ",
+            short_name="SEP-KZ",
+            unit_type="expertise",
+            expertise=separate,
+        )
+        early = Product.objects.create(short_name="EAR", name_en="Early", name_ru="Ранний")
+        late = Product.objects.create(short_name="LAT", name_en="Late", name_ru="Поздний")
+        early_section = early.sections.create(
+            code="EAR",
+            short_name="Early",
+            short_name_ru="Ранний",
+            name_en="Early",
+            name_ru="Ранний",
+            accounting_type="Разделы",
+            position=5,
+        )
+        late_section = late.sections.create(
+            code="LAT",
+            short_name="Late",
+            short_name_ru="Поздний",
+            name_en="Late",
+            name_ru="Поздний",
+            accounting_type="Материалы",
+            position=1,
+        )
+        early.sections.create(
+            code="SYS",
+            short_name="System",
+            short_name_ru="Система",
+            name_en="System",
+            name_ru="Система",
+            accounting_type="Разделы",
+            position=0,
+            is_system=True,
+        )
+        early_section.expertise_dir = shared
+        early_section.save(update_fields=["expertise_dir"])
+        late_section.expertise_dir = separate
+        late_section.save(update_fields=["expertise_dir"])
+        specialty = ExpertSpecialty.objects.create(specialty="Ранняя")
+        TypicalSectionSpecialty.objects.create(section=early_section, specialty=specialty, rank=1)
+
+        ranked = ProjectRegistration.objects.create(
+            number=8101,
+            name="С рангами",
+            year=2026,
+            group_member=local,
+            type=early,
+        )
+        ProjectRegistrationProduct.objects.create(registration=ranked, product=late, rank=1)
+        ProjectRegistrationProduct.objects.create(registration=ranked, product=early, rank=2)
+        typed = ProjectRegistration.objects.create(
+            number=8102,
+            name="Только тип",
+            year=2026,
+            group_member=uk,
+            type=early,
+        )
+        bare = ProjectRegistration.objects.create(
+            number=8103,
+            name="Без продукта",
+            year=2026,
+            group="kz",
+        )
+        WorkVolume.objects.create(project=ranked, name="Первый", asset_name="Склад", position=1)
+        WorkVolume.objects.create(project=ranked, name="Повтор", asset_name="Склад", position=2)
+        WorkVolume.objects.create(project=ranked, name="Пустой", asset_name="", position=3)
+        WorkVolume.objects.create(project=ranked, name="Второй", asset_name="Рудник", position=4)
+        Performer.objects.create(
+            registration=ranked,
+            asset_name="Склад",
+            typical_section=early_section,
+            executor="Первый",
+            position=1,
+        )
+        Performer.objects.create(
+            registration=ranked,
+            asset_name="Склад",
+            typical_section=late_section,
+            executor="Второй",
+            position=2,
+        )
+
+        form = PerformerForm()
+        with CaptureQueriesContext(connection) as captured:
+            ctx = _performer_form_ctx(form, "create")
+        # Один проход по проектам, разделам и направлениям: число запросов
+        # не должно расти вместе с числом регистраций.
+        self.assertEqual(
+            len(captured.captured_queries),
+            17,
+            "\n".join(item["sql"] for item in captured.captured_queries),
+        )
+
+        with CaptureQueriesContext(connection) as section_codes:
+            performer_section_code_ids_by_asset()
+        self.assertEqual(len(section_codes.captured_queries), 1)
+
+        with CaptureQueriesContext(connection) as labels:
+            choice_labels = [
+                form.fields["registration"].label_from_instance(obj)
+                for obj in form.fields["registration"].queryset
+            ]
+        self.assertLessEqual(len(labels.captured_queries), 4)
+        self.assertTrue(any("С рангами" in label for label in choice_labels))
+
+        reg_map = json.loads(ctx["reg_map_json"])
+        assets_map = json.loads(ctx["assets_map_json"])
+        sections_map = json.loads(ctx["sections_map_json"])
+        local.refresh_from_db()
+        self.assertEqual(reg_map[str(ranked.pk)]["group"], local.group_code_label)
+        self.assertEqual(reg_map[str(ranked.pk)]["type_short"], "LAT-EAR")
+        self.assertEqual(reg_map[str(typed.pk)]["type_short"], "EAR")
+        self.assertEqual(reg_map[str(bare.pk)]["group"], "KZ")
+        self.assertEqual(assets_map[str(ranked.pk)], ["Склад", "Рудник"])
+        self.assertEqual(assets_map[str(typed.pk)], [])
+        self.assertEqual(assets_map[str(bare.pk)], [])
+
+        ranked_ids = [row["id"] for row in sections_map[str(ranked.pk)]]
+        self.assertEqual(ranked_ids, [late_section.pk, early_section.pk])
+        self.assertEqual([row["id"] for row in sections_map[str(typed.pk)]], [early_section.pk])
+        self.assertEqual(sections_map[str(bare.pk)], [])
+        early_payload = sections_map[str(ranked.pk)][1]
+        self.assertEqual(early_payload["pricing_method"], "hours")
+        self.assertEqual(early_payload["specialty_ids"], [specialty.pk])
+        self.assertEqual(early_payload["accounting_type"], "Разделы")
+        self.assertEqual(sections_map[str(ranked.pk)][0]["direction_id"], local_separate.pk)
+        self.assertEqual(early_payload["direction_id"], uk_shared.pk)
+        self.assertEqual(sections_map[str(typed.pk)][0]["direction_id"], uk_shared.pk)
+
+        expected_directions = {
+            ranked.pk: {late_section.pk: local_separate.pk, early_section.pk: uk_shared.pk},
+            typed.pk: {early_section.pk: uk_shared.pk},
+        }
+        self.assertNotEqual(uk_separate.pk, local_separate.pk)
+        for registration_id, directions in expected_directions.items():
+            registration = ProjectRegistration.objects.select_related("group_member").get(pk=registration_id)
+            for row in sections_map[str(registration_id)]:
+                section = TypicalSection.objects.select_related(
+                    "service_block",
+                    "service_block__expertise_dir",
+                ).get(pk=row["id"])
+                self.assertEqual(row["direction_id"], directions[row["id"]])
+                self.assertEqual(
+                    row["direction_id"],
+                    _effective_direction_id(section, registration.group_member),
+                )
+
+
+class PerformerStageChoicesFilterTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="performer-stage-filter",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.kept_parent = ProjectRegistration.objects.create(number=7101, name="Оставляемый проект", year=2026)
+        self.kept_stage = ProjectRegistration.objects.create(
+            number=7101,
+            name="Оставляемый этап",
+            year=2026,
+            stage_project=self.kept_parent,
+        )
+        self.other_parent = ProjectRegistration.objects.create(number=7102, name="Чужой проект", year=2025)
+        self.other_stage = ProjectRegistration.objects.create(
+            number=7102,
+            name="Чужой этап",
+            year=2025,
+            stage_project=self.other_parent,
+        )
+        self.solo = ProjectRegistration.objects.create(number=7103, name="Проект без этапов", year=2026)
+
+    def _select_html(self, response, name):
+        html = response.content.decode()
+        select = re.search(rf'<select\b[^>]*\bname="{name}"[^>]*>.*?</select>', html, re.S)
+        self.assertIsNotNone(select, name)
+        return select.group(0)
+
+    def _option_ids(self, response):
+        return [int(value) for value in re.findall(r'\bvalue="(\d+)"', self._select_html(response, "registration"))]
+
+    def _selected_value(self, response, name):
+        select = self._select_html(response, name)
+        match = re.search(r'<option\b[^>]*\bselected\b[^>]*>', select)
+        self.assertIsNotNone(match, select)
+        value = re.search(r'\bvalue="([^"]*)"', match.group(0))
+        return value.group(1) if value else ""
+
+    def _option_labels(self, response, name):
+        return re.findall(r'<option\b[^>]*>(.*?)</option>', self._select_html(response, name), re.S)
+
+    def test_unscoped_create_form_lists_every_stage(self):
+        response = self.client.get(reverse("performer_form_create"))
+
+        self.assertEqual(response.status_code, 200)
+        option_ids = self._option_ids(response)
+        self.assertIn(self.kept_stage.pk, option_ids)
+        self.assertIn(self.other_stage.pk, option_ids)
+        self.assertIn(self.solo.pk, option_ids)
+        self.assertNotIn(self.kept_parent.pk, option_ids)
+        self.assertNotContains(response, 'name="owning_project_scoped"')
+
+    def test_scoped_create_form_lists_stages_of_filtered_projects_only(self):
+        response = self.client.get(reverse("performer_form_create"), {
+            "owning_project_scoped": "1",
+            "owning_project": f"{self.kept_parent.pk},{self.solo.pk}",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            set(self._option_ids(response)),
+            {self.kept_stage.pk, self.solo.pk},
+        )
+        self.assertContains(response, 'name="owning_project_scoped" value="1"', html=False)
+        self.assertContains(
+            response,
+            f'name="owning_project" value="{self.kept_parent.pk},{self.solo.pk}"',
+            html=False,
+        )
+
+    def test_empty_scope_lists_no_stages(self):
+        response = self.client.get(reverse("performer_form_create"), {
+            "owning_project_scoped": "1",
+            "owning_project": "",
+        })
+
+        self.assertEqual(self._option_ids(response), [])
+
+    def test_scoped_post_rejects_stage_outside_filters_and_keeps_the_list(self):
+        response = self.client.post(reverse("performer_form_create"), {
+            "registration": self.other_stage.pk,
+            "owning_project_scoped": "1",
+            "owning_project": str(self.kept_parent.pk),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Performer.objects.filter(registration=self.other_stage).exists())
+        self.assertEqual(self._option_ids(response), [self.kept_stage.pk])
+
+    def test_scoped_post_saves_stage_of_filtered_project(self):
+        response = self.client.post(reverse("performer_form_create"), {
+            "registration": self.kept_stage.pk,
+            "owning_project_scoped": "1",
+            "owning_project": str(self.kept_parent.pk),
+        })
+
+        self.assertEqual(response.status_code, 204)
+        self.assertTrue(Performer.objects.filter(registration=self.kept_stage).exists())
+
+    def test_add_row_button_sends_current_project_filters(self):
+        response = self.client.get(reverse("performers_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        button = html[html.find("Добавить строку") - 400:html.find("Добавить строку")]
+        self.assertIn('data-performer-stage-scope="1"', button)
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "performers-panels.js"
+        ).read_text()
+        self.assertIn("window.__performerStageOwningProjects", script)
+        self.assertIn("window.__perfProjectFilter", script)
+        self.assertIn("window.__perfAssetFilter", script)
+        self.assertIn("window.__getMasterValues", script)
+        self.assertIn("performer_asset", script)
+
+    def test_single_filtered_project_is_selected_in_the_modal(self):
+        response = self.client.get(reverse("performer_form_create"), {
+            "owning_project_scoped": "1",
+            "owning_project": str(self.solo.pk),
+        })
+
+        self.assertEqual(self._selected_value(response, "registration"), str(self.solo.pk))
+
+    def test_single_project_with_several_stages_stays_unselected(self):
+        ProjectRegistration.objects.create(
+            number=7101,
+            name="Второй этап",
+            year=2026,
+            stage_project=self.kept_parent,
+        )
+
+        response = self.client.get(reverse("performer_form_create"), {
+            "owning_project_scoped": "1",
+            "owning_project": str(self.kept_parent.pk),
+        })
+
+        self.assertEqual(len(self._option_ids(response)), 2)
+        self.assertEqual(self._selected_value(response, "registration"), "")
+
+    def test_asset_field_follows_the_asset_filter_and_selects_the_only_asset(self):
+        WorkVolume.objects.create(project=self.solo, name="Рудник", asset_name="Рудник")
+        WorkVolume.objects.create(project=self.solo, name="Карьер", asset_name="Карьер")
+
+        response = self.client.get(reverse("performer_form_create"), {
+            "owning_project_scoped": "1",
+            "owning_project": str(self.solo.pk),
+            "asset_scoped": "1",
+            "performer_asset": '["Рудник"]',
+        })
+
+        self.assertEqual(self._selected_value(response, "registration"), str(self.solo.pk))
+        self.assertEqual(self._selected_value(response, "asset_name"), "Рудник")
+        self.assertIn("Рудник", self._option_labels(response, "asset_name"))
+        self.assertNotIn("Карьер", self._option_labels(response, "asset_name"))
+        self.assertContains(response, 'name="performer_asset"', html=False)
+
+    def test_several_filtered_assets_are_listed_without_preselection(self):
+        WorkVolume.objects.create(project=self.solo, name="Рудник", asset_name="Рудник")
+        WorkVolume.objects.create(project=self.solo, name="Карьер", asset_name="Карьер")
+        WorkVolume.objects.create(project=self.solo, name="Фабрика", asset_name="Фабрика")
+
+        response = self.client.get(reverse("performer_form_create"), {
+            "owning_project_scoped": "1",
+            "owning_project": str(self.solo.pk),
+            "asset_scoped": "1",
+            "performer_asset": '["Рудник", "Карьер"]',
+        })
+
+        labels = self._option_labels(response, "asset_name")
+        self.assertIn("Рудник", labels)
+        self.assertIn("Карьер", labels)
+        self.assertNotIn("Фабрика", labels)
+        self.assertEqual(self._selected_value(response, "asset_name"), "")
+
+    def test_single_asset_is_selected_before_a_stage_is_chosen(self):
+        ProjectRegistration.objects.create(
+            number=7101,
+            name="Второй этап",
+            year=2026,
+            stage_project=self.kept_parent,
+        )
+
+        response = self.client.get(reverse("performer_form_create"), {
+            "owning_project_scoped": "1",
+            "owning_project": str(self.kept_parent.pk),
+            "asset_scoped": "1",
+            "performer_asset": '["Рудник"]',
+        })
+
+        self.assertEqual(self._selected_value(response, "registration"), "")
+        self.assertEqual(self._selected_value(response, "asset_name"), "Рудник")
+
+
+class RegistrationSummaryTypeLabelTests(SimpleTestCase):
+    def test_stage_count_uses_russian_count_form(self):
+        from projects_app.registration_summary import stage_count_label
+
+        expected = {
+            1: "1 этап",
+            2: "2 этапа",
+            3: "3 этапа",
+            4: "4 этапа",
+            5: "5 этапов",
+            8: "8 этапов",
+            9: "9 этапов",
+            10: "10 этапов",
+            11: "11 этапов",
+            12: "12 этапов",
+            13: "13 этапов",
+            14: "14 этапов",
+            21: "21 этап",
+            22: "22 этапа",
+            24: "24 этапа",
+            25: "25 этапов",
+            101: "101 этап",
+            111: "111 этапов",
+            112: "112 этапов",
+        }
+        for count, label in expected.items():
+            self.assertEqual(stage_count_label(count), label)
+
+    def test_summary_type_keeps_chain_through_three_stages(self):
+        from projects_app.registration_summary import registration_summary_type_label
+
+        class Stage:
+            def __init__(self, label):
+                self.type_short_display = label
+
+        self.assertEqual(
+            registration_summary_type_label([Stage("RFR"), Stage("TDD")]),
+            "RFR-TDD",
+        )
+        self.assertEqual(
+            registration_summary_type_label([Stage("RFR"), Stage("TDD"), Stage("CPR")]),
+            "RFR-TDD-CPR",
+        )
+        self.assertEqual(
+            registration_summary_type_label([Stage("RFR"), Stage(""), Stage("TDD"), Stage("CPR")]),
+            "4 этапа",
+        )
+        self.assertEqual(
+            registration_summary_type_label([Stage("A"), Stage("B"), Stage("C"), Stage("D"), Stage("E")]),
+            "5 этапов",
+        )
 
 
 class ProjectRegistrationFormViewTests(TestCase):
@@ -3106,6 +4023,74 @@ class ProjectRegistrationFormViewTests(TestCase):
         )
         self.assertContains(response, first.short_uid)
         self.assertContains(response, second.short_uid)
+
+    def test_registry_summary_type_counts_stages_beyond_three(self):
+        def add(number, name, product, position):
+            return ProjectRegistration.objects.create(
+                number=number,
+                group_member=self.group_member,
+                agreement_type=ProjectRegistration.AgreementType.MAIN,
+                type=product,
+                name=name,
+                status="Не начат",
+                year=2026,
+                position=position,
+            )
+
+        products = (self.product, self.extra_product, self.product)
+        for index, product in enumerate(products, start=1):
+            add(7101, f"Три этапа {index}", product, index)
+
+        three = self.client.get(reverse("projects_partial"))
+        self.assertContains(
+            three,
+            '<td data-col="type" data-reg-summary-cell="type">DD-CTRL-DD</td>',
+            html=False,
+        )
+
+        add(7101, "Четвёртый этап", self.extra_product, 4)
+        four = self.client.get(reverse("projects_partial"))
+        self.assertContains(
+            four,
+            '<td data-col="type" data-reg-summary-cell="type">4 этапа</td>',
+            html=False,
+        )
+        self.assertNotContains(four, "DD-CTRL-DD-CTRL", html=False)
+        self.assertContains(four, ">DD<", html=False)
+        self.assertContains(four, ">CTRL<", html=False)
+
+        for index in range(5):
+            add(
+                7102,
+                f"Пять этапов {index}",
+                self.product if index % 2 == 0 else self.extra_product,
+                10 + index,
+            )
+        five = self.client.get(reverse("projects_partial"))
+        self.assertContains(
+            five,
+            '<td data-col="type" data-reg-summary-cell="type">5 этапов</td>',
+            html=False,
+        )
+
+        parent = add(7103, "Проект из четырёх этапов", self.product, 20)
+        for index, product in enumerate((self.product, self.extra_product, self.product, self.extra_product), start=1):
+            ProjectRegistration.objects.create(
+                number=7103,
+                group_member=self.group_member,
+                agreement_type=ProjectRegistration.AgreementType.MAIN,
+                type=product,
+                name=f"Этап родителя {index}",
+                status="Не начат",
+                year=2026,
+                stage_project=parent,
+                position=20 + index,
+            )
+        parent_page = self.client.get(reverse("projects_partial")).content.decode("utf-8")
+        self.assertEqual(
+            parent_page.count('<td data-col="type" data-reg-summary-cell="type">4 этапа</td>'),
+            2,
+        )
 
     def test_projects_registry_summary_owns_people_deadline_and_shared_evaluation_date(self):
         first, second = self._create_summary_pair(6230)

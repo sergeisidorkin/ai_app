@@ -540,7 +540,7 @@ def performer_section_code_ids_by_asset(performers=None) -> dict:
         if performers is not None
         else (
             Performer.objects
-            .select_related("typical_section")
+            .select_related("typical_section", "typical_section__service_block")
             .order_by("registration_id", "position", "id")
         )
     )
