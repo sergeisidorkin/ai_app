@@ -487,10 +487,14 @@
     });
   }
 
+  function performerGroupMemberPassesFilters(row) {
+    return !!row && !row.classList.contains('d-none');
+  }
+
   function visiblePerformerGroupAssets(members) {
     var assets = [];
     members.forEach(function (row) {
-      if (row.classList.contains('d-none')) return;
+      if (!performerGroupMemberPassesFilters(row)) return;
       var name = normalizePerformerText(row.dataset.assetName);
       if (name && assets.indexOf(name) === -1) assets.push(name);
     });
@@ -633,7 +637,7 @@
       var assets = visiblePerformerGroupAssets(members);
       var assetCell = summary.querySelector('.performer-asset-cell');
       if (assetCell) assetCell.textContent = pluralAssets(assets.length);
-      var hidden = assets.length === 0;
+      var hidden = !members.some(performerGroupMemberPassesFilters);
       summary.classList.toggle('d-none', hidden);
       if (hidden) {
         var checkbox = summary.querySelector('input[name="performer-group-select"]');

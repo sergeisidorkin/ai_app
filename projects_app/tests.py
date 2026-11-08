@@ -5,6 +5,7 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import tempfile
 import uuid
 import zipfile
@@ -794,6 +795,249 @@ class SystemPerformerSpecialtyGroupTests(TestCase):
         )
         self.assertEqual(coordinator.executor, "Соколова Софья Сергеевна")
         self.assertEqual(manager.executor, "Иванов Иван Иванович")
+
+    def _marketing_executor(self):
+        specialty = ExpertSpecialty.objects.create(specialty="Маркетинг")
+        section = self._section(self.product, "MRK", "Маркетинг", 4)
+        TypicalSectionSpecialty.objects.create(section=section, specialty=specialty, rank=1)
+        user = get_user_model().objects.create_user(
+            username="marketing-executor",
+            password="secret",
+            first_name="Петр",
+            last_name="Петров",
+            is_staff=True,
+        )
+        employee = Employee.objects.create(user=user, patronymic="Петрович")
+        profile = ExpertProfile.objects.create(employee=employee)
+        ExpertProfileSpecialty.objects.create(profile=profile, specialty=specialty, rank=1)
+        return section, "Петров Петр Петрович"
+
+    def test_editing_manager_into_ordinary_section_keeps_submitted_executor(self):
+        marketing, executor_name = self._marketing_executor()
+        performer = self._performer(self.first_stage, self.manager_section, "Карьер")
+        other = self._performer(self.second_stage, self.manager_section, "Фабрика", actual_costs=Decimal("40.00"))
+        self._reload(performer, other)
+        self.assertEqual(performer.display_group_id, other.display_group_id)
+
+        unbound = PerformerForm(instance=performer)
+        self.assertTrue(unbound.fields["executor"].disabled)
+        ordinary = PerformerForm(
+            data={
+                "registration": self.first_stage.pk,
+                "asset_name": "Карьер",
+                "typical_section": marketing.pk,
+                "executor": executor_name,
+            },
+            instance=performer,
+        )
+        self.assertFalse(ordinary.fields["executor"].disabled)
+        kept = PerformerForm(
+            data={
+                "registration": self.first_stage.pk,
+                "asset_name": "Карьер",
+                "typical_section": self.manager_section.pk,
+                "executor": executor_name,
+            },
+            instance=performer,
+        )
+        self.assertTrue(kept.fields["executor"].disabled)
+
+        response = self.client.post(
+            reverse("performer_form_edit", args=[performer.pk]),
+            {
+                "registration": self.first_stage.pk,
+                "asset_name": "Карьер",
+                "typical_section": marketing.pk,
+                "executor": executor_name,
+                "grade": "3/5",
+                "grade_name": "Старший",
+                "actual_costs": "100.00",
+                "estimated_costs": "80.00",
+                "agreed_amount": "",
+            },
+        )
+        self.assertEqual(response.status_code, 204, response.content)
+        performer.refresh_from_db()
+        self.assertEqual(performer.executor, executor_name)
+        self.assertEqual(performer.typical_section_id, marketing.pk)
+
+        self._reload(performer, other)
+        self.assertIsNone(performer.display_group_id)
+        self.assertIsNotNone(other.display_group_id)
+        self.assertNotEqual(performer.display_group_id, other.display_group_id)
+
+    def test_moving_manager_to_another_project_leaves_the_old_system_group(self):
+        performer = self._performer(self.first_stage, self.manager_section, "Карьер")
+        other = self._performer(self.second_stage, self.manager_section, "Фабрика", actual_costs=Decimal("40.00"))
+        self._reload(performer, other)
+        destination = ProjectRegistration.objects.create(
+            number=8400,
+            type=self.product,
+            name="Другой проект",
+            year=2026,
+            project_manager="Новый Руководитель Проектов",
+            project_coordinator="Соколова Софья Сергеевна",
+        )
+
+        response = self.client.post(
+            reverse("performer_form_edit", args=[performer.pk]),
+            {
+                "registration": destination.pk,
+                "asset_name": "Карьер",
+                "typical_section": self.manager_section.pk,
+                "executor": "Петров Петр Петрович",
+                "grade": "3/5",
+                "grade_name": "Старший",
+                "actual_costs": "100.00",
+                "estimated_costs": "80.00",
+                "agreed_amount": "",
+            },
+        )
+        self.assertEqual(response.status_code, 204, response.content)
+        performer.refresh_from_db()
+        self.assertEqual(performer.executor, "Новый Руководитель Проектов")
+        self.assertEqual(performer.registration_id, destination.pk)
+
+        self._reload(performer, other)
+        self.assertIsNone(performer.display_group_id)
+        self.assertIsNotNone(other.display_group_id)
+        self.assertNotEqual(performer.display_group_id, other.display_group_id)
+
+
+def _js_function(source, name):
+    marker = f"function {name}("
+    start = source.index(marker)
+    depth = 0
+    for index in range(source.index("{", start), len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(name)
+
+
+class PerformerGroupSummaryVisibilityTests(SimpleTestCase):
+    def test_summary_follows_visible_members_not_asset_names(self):
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "performers-panels.js"
+        ).read_text()
+        extracted = "\n".join(
+            _js_function(script, name)
+            for name in (
+                "performersMainTable",
+                "performerDataRows",
+                "performerGroupMembers",
+                "performerGroupMemberPassesFilters",
+                "normalizePerformerText",
+                "visiblePerformerGroupAssets",
+                "pluralAssets",
+                "syncPerformerDisplayGroupVisibility",
+            )
+        )
+        completed = subprocess.run(
+            ["node", "-e", _PERFORMER_GROUP_VISIBILITY_RUNNER + extracted],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertFalse(result["emptyAssetsHidden"])
+        self.assertEqual(result["emptyAssetLabel"], "0 активов")
+        self.assertFalse(result["collapsedHidden"])
+        self.assertTrue(result["filteredHidden"])
+        self.assertEqual(result["mixedAssetLabel"], "1 актив")
+        self.assertFalse(result["mixedHidden"])
+
+
+_PERFORMER_GROUP_VISIBILITY_RUNNER = r"""
+function ClassList() { this.items = []; }
+ClassList.prototype.contains = function (name) { return this.items.indexOf(name) !== -1; };
+ClassList.prototype.add = function (name) { if (!this.contains(name)) this.items.push(name); };
+ClassList.prototype.toggle = function (name, force) {
+  var on = force === undefined ? !this.contains(name) : !!force;
+  if (on) this.add(name);
+  else this.items = this.items.filter(function (item) { return item !== name; });
+};
+function El(kind) {
+  this.kind = kind;
+  this.dataset = {};
+  this.classList = new ClassList();
+  this.children = [];
+  this.className = '';
+  this.textContent = '';
+  this.name = '';
+  this.checked = false;
+}
+El.prototype.append = function (child) { this.children.push(child); return child; };
+function matches(el, selector) {
+  if (selector === 'tbody') return el.kind === 'tbody';
+  if (selector === 'tr[data-performer-group-summary]') return el.kind === 'tr' && el.dataset.performerGroupSummary === '1';
+  if (selector === 'tr[data-row-order-id]') return el.kind === 'tr' && !!el.dataset.rowOrderId;
+  if (selector === '.performer-asset-cell') return el.className === 'performer-asset-cell';
+  if (selector === 'input[name="performer-group-select"]') return el.kind === 'input' && el.name === 'performer-group-select';
+  return false;
+}
+El.prototype.querySelectorAll = function (selector) {
+  var found = [];
+  (function walk(node) {
+    node.children.forEach(function (child) {
+      if (matches(child, selector)) found.push(child);
+      walk(child);
+    });
+  })(this);
+  return found;
+};
+El.prototype.querySelector = function (selector) {
+  return this.querySelectorAll(selector)[0] || null;
+};
+function member(groupId, asset, hidden) {
+  var row = new El('tr');
+  row.dataset.rowOrderId = 'row';
+  row.dataset.displayGroupId = groupId;
+  row.dataset.assetName = asset;
+  if (hidden) row.classList.add('d-none');
+  return row;
+}
+function build(groupId, members) {
+  var table = new El('table');
+  var body = table.append(new El('tbody'));
+  var summary = body.append(new El('tr'));
+  summary.dataset.performerGroupSummary = '1';
+  summary.dataset.displayGroupId = groupId;
+  var cell = summary.append(new El('td'));
+  cell.className = 'performer-asset-cell';
+  members.forEach(function (row) { body.append(row); });
+  return { table: table, summary: summary, cell: cell };
+}
+function updatePerformerDisplayGroupAction() {}
+var empty = build('empty', [member('empty', '', false), member('empty', '   ', false)]);
+syncPerformerDisplayGroupVisibility(empty.table);
+var collapsed = build('collapsed', [member('collapsed', '', false), member('collapsed', '', false)]);
+collapsed.table.querySelectorAll('tr[data-row-order-id]').forEach(function (row) {
+  row.classList.add('performer-group-member-collapsed');
+});
+syncPerformerDisplayGroupVisibility(collapsed.table);
+var filtered = build('filtered', [member('filtered', '', true), member('filtered', 'Карьер', true)]);
+syncPerformerDisplayGroupVisibility(filtered.table);
+var mixed = build('mixed', [member('mixed', 'Карьер', false), member('mixed', 'Порт', true)]);
+syncPerformerDisplayGroupVisibility(mixed.table);
+console.log(JSON.stringify({
+  emptyAssetsHidden: empty.summary.classList.contains('d-none'),
+  emptyAssetLabel: empty.cell.textContent,
+  collapsedHidden: collapsed.summary.classList.contains('d-none'),
+  filteredHidden: filtered.summary.classList.contains('d-none'),
+  mixedHidden: mixed.summary.classList.contains('d-none'),
+  mixedAssetLabel: mixed.cell.textContent,
+}));
+"""
 
 
 class SourceDataTargetFolderViewTests(TestCase):

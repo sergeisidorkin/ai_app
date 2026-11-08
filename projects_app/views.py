@@ -43,11 +43,11 @@ from .system_performer_groups import (
     REGISTRY_ASSIGNED_SPECIALTIES,
     is_homogeneous_director_group,
     is_protected_registry_group,
-    is_registry_assigned_section,
     locked_specialty_merge_error,
     locked_split_error,
     merge_director_display_group,
     protected_system_group_ids,
+    release_obsolete_system_group_members,
     remember_director_split,
     section_system_specialty,
     sync_system_performer_display_groups,
@@ -7102,6 +7102,7 @@ def normalize_performer_display_groups(group_ids=None):
         performers = performers.filter(display_group_id__in=list(group_ids))
     for performer in performers.order_by("position", "id"):
         grouped[performer.display_group_id].append(performer)
+    released_ids = release_obsolete_system_group_members(grouped)
     protected_ids = protected_system_group_ids()
     stale_ids = [
         member.pk
@@ -7114,7 +7115,7 @@ def normalize_performer_display_groups(group_ids=None):
     ]
     if stale_ids:
         Performer.objects.filter(pk__in=stale_ids).update(display_group_id=None)
-    return len(stale_ids)
+    return len(stale_ids) + len(released_ids)
 
 
 def _performers_page_context(request):
@@ -8237,11 +8238,11 @@ def performer_form_edit(request, pk: int):
     POST: если невалидно — вернуть форму (200); если ок — 204 + HX-Trigger.
     """
     p = get_object_or_404(Performer.objects.select_related("typical_section", "typical_section__service_block__expertise_direction", "employee", "employee__user"), pk=pk)
-    executor_locked = _is_executor_locked(request.user, p) or is_registry_assigned_section(p.typical_section)
 
     if request.method == "GET":
         form = PerformerForm(instance=p)
         _bind_dynamic_performer_fields(form, instance=p)
+        executor_locked = _is_executor_locked(request.user, p) or form.fields["executor"].disabled
         if executor_locked:
             attrs = form.fields["executor"].widget.attrs
             attrs["readonly"] = True
@@ -8253,6 +8254,7 @@ def performer_form_edit(request, pk: int):
     # POST
     form = PerformerForm(request.POST, instance=p)
     _bind_dynamic_performer_fields(form, data=request.POST, instance=p)
+    executor_locked = _is_executor_locked(request.user, p) or form.fields["executor"].disabled
 
     if not form.is_valid():
         if executor_locked:

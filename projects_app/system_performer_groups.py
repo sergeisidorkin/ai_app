@@ -260,6 +260,47 @@ def protected_system_group_ids():
     )
 
 
+def performer_matches_system_group(performer, state) -> bool:
+    """Строка всё ещё относится к сохранённой системной группе."""
+    if section_system_specialty(performer.typical_section) != state.specialty_name:
+        return False
+    return project_key(performer.registration) == (state.project_number, state.group_label)
+
+
+def release_obsolete_system_group_members(grouped) -> list:
+    """Снимает системную группу со строк, которые в неё больше не входят.
+
+    Синхронизация только назначает текущих участников и не очищает прежних.
+    Пока старый id числится в PerformerSystemGroupState, обычная нормализация
+    такую строку не трогает.
+    """
+    from .models import Performer, PerformerSystemGroupState
+
+    states = {
+        state.display_group_id: state
+        for state in PerformerSystemGroupState.objects.exclude(display_group_id__isnull=True)
+    }
+    if not states:
+        return []
+    obsolete_ids = []
+    for members in grouped.values():
+        if not members:
+            continue
+        state = states.get(members[0].display_group_id)
+        if state is None:
+            continue
+        for member in members:
+            if not performer_matches_system_group(member, state):
+                obsolete_ids.append(member.pk)
+    if not obsolete_ids:
+        return []
+    Performer.objects.filter(pk__in=obsolete_ids).update(display_group_id=None)
+    obsolete = set(obsolete_ids)
+    for group_id, members in list(grouped.items()):
+        grouped[group_id] = [member for member in members if member.pk not in obsolete]
+    return obsolete_ids
+
+
 def is_protected_registry_group(members) -> bool:
     """Руководитель и координатор не распускаются, даже если затраты или этап различаются."""
     if len(members) < 2:

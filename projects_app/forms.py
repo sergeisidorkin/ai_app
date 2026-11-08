@@ -1310,6 +1310,31 @@ def _performer_registry_executor_locked(performer):
     return is_registry_assigned_section(performer.typical_section)
 
 
+def _posted_model(queryset, raw):
+    if raw in (None, ""):
+        return None
+    try:
+        return queryset.filter(pk=raw).first()
+    except (TypeError, ValueError):
+        return None
+
+
+def _posted_performer_section(data):
+    return _posted_model(
+        TypicalSection.objects.select_related("service_block").prefetch_related(
+            "service_block__ranked_specialties__specialty"
+        ),
+        data.get("typical_section") if data is not None else None,
+    )
+
+
+def _posted_performer_registration(data):
+    return _posted_model(
+        ProjectRegistration.objects.all(),
+        data.get("registration") if data is not None else None,
+    )
+
+
 class PerformerForm(forms.ModelForm):
     registration = ProjectChoiceField(
         queryset=ProjectRegistration.objects.registry_rows().order_by("-id"),
@@ -1395,10 +1420,8 @@ class PerformerForm(forms.ModelForm):
             current_executor,
             typical_section_id=current_typical_section_id,
         )
-        if self.instance and self.instance.pk and _performer_registry_executor_locked(self.instance):
-            from .system_performer_groups import registry_executor_name
-
-            forced = registry_executor_name(self.instance.registration, self.instance.typical_section) or ""
+        forced = self._registry_executor_lock()
+        if forced is not None:
             choices = list(self.fields["executor"].choices)
             present = {value for value, _label in choices}
             for name in (forced, current_executor):
@@ -1406,6 +1429,8 @@ class PerformerForm(forms.ModelForm):
                     choices.append((name, name))
                     present.add(name)
             self.fields["executor"].choices = choices
+            if self.is_bound:
+                self.initial["executor"] = forced
             self.fields["executor"].disabled = True
             attrs = self.fields["executor"].widget.attrs
             attrs["class"] = f"{attrs.get('class', '')} readonly-field".strip()
@@ -1423,6 +1448,26 @@ class PerformerForm(forms.ModelForm):
             rub = currency_qs.filter(code_alpha="RUB").first()
             if rub:
                 self.initial["currency"] = rub.pk
+
+    def _registry_executor_lock(self):
+        """Имя исполнителя из реестра, если поле нужно заблокировать.
+
+        None оставляет выбор свободным. У отправленной формы решение
+        принимается по выбранному разделу, а не по прежнему разделу строки.
+        """
+        from .system_performer_groups import is_registry_assigned_section, registry_executor_name
+
+        if self.is_bound:
+            section = _posted_performer_section(self.data)
+            if not is_registry_assigned_section(section):
+                return None
+            registration = _posted_performer_registration(self.data)
+            if registration is None and getattr(self.instance, "registration_id", None):
+                registration = self.instance.registration
+            return registry_executor_name(registration, section) or ""
+        if self.instance and self.instance.pk and _performer_registry_executor_locked(self.instance):
+            return registry_executor_name(self.instance.registration, self.instance.typical_section) or ""
+        return None
 
     @staticmethod
     def _clean_money(value):
