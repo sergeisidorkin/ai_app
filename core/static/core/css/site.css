@@ -6568,6 +6568,12 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   overflow-y: visible;
 }
 
+#proposals-pane .proposal-service-sections-editor .table-responsive,
+#proposals-pane .proposal-commercial-editor .table-responsive {
+  margin-left: -0.875rem;
+  padding-left: 0.875rem;
+}
+
 #proposals-pane .proposal-assets-table .proposal-assets-check-col,
 #proposals-pane .proposal-assets-table td.proposal-asset-check-cell {
   width: 28px;
@@ -7304,18 +7310,18 @@ html.table-action-progress * {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover > td {
+  :is(#contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover > td {
     background-color: #f6f8fa;
     color: #747d86;
   }
 
-  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .form-control:not(.readonly-field),
-  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .form-select:not(.readonly-field) {
+  :is(#contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .form-control:not(.readonly-field),
+  :is(#contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .form-select:not(.readonly-field) {
     background-color: #fafbfc;
     color: #747d86;
   }
 
-  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .readonly-field {
+  :is(#contracts-modal, #contracts-drafts-pane) .proposal-service-sections-table tbody:not(.proposal-service-insert-active) tr:hover .readonly-field {
     background-color: #eef0f2 !important;
     color: #606870 !important;
   }
@@ -7331,18 +7337,18 @@ html.table-action-progress * {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover > td {
+  :is(#contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover > td {
     background-color: #f6f8fa;
     color: #212529;
   }
 
-  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .form-control:not(.readonly-field),
-  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .form-select:not(.readonly-field) {
+  :is(#contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .form-control:not(.readonly-field),
+  :is(#contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .form-select:not(.readonly-field) {
     background-color: #fafbfc;
     color: #212529;
   }
 
-  :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .readonly-field {
+  :is(#contracts-modal, #contracts-drafts-pane) .proposal-commercial-table tbody:not(.proposal-commercial-insert-active) > tr.proposal-commercial-data-row:hover .readonly-field {
     background-color: #eef0f2 !important;
     color: #495057 !important;
   }
@@ -7364,6 +7370,11 @@ html.table-action-progress * {
   background: transparent;
   color: #6c757d;
   cursor: pointer;
+}
+
+#proposals-pane .proposal-service-sections-editor .proposal-row-insert,
+#proposals-pane .proposal-commercial-editor .proposal-row-insert {
+  left: 0;
 }
 
 :is(#proposals-pane, #contracts-modal, #contracts-drafts-pane) .proposal-row-insert::before {

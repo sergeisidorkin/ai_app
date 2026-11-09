@@ -7048,10 +7048,6 @@ def _performer_display_group_key(performer):
         performer.typical_section_id,
         performer.grade or "",
         performer.grade_name or "",
-        performer.actual_costs,
-        performer.estimated_costs,
-        performer.agreed_amount,
-        performer.currency_id,
     )
 
 

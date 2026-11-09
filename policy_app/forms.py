@@ -686,12 +686,12 @@ class TypicalSectionForm(forms.ModelForm):
         block_qs = (
             ServiceBlockClassifier.objects.select_related("expertise_dir")
             .prefetch_related("ranked_specialties", "ranked_specialties__specialty")
-            .order_by("position", "id")
+            .order_by("-usage_count", "position", "id")
         )
         if self.choose_service_block:
             block_qs = block_qs.exclude(code="DSC")
         self.fields["service_block"].queryset = block_qs
-        self.fields["service_block"].label_from_instance = lambda obj: obj.code
+        self.fields["service_block"].label_from_instance = lambda obj: obj.code_option_label()
         self.fields["service_block"].empty_label = "---------"
         self.fields["service_block"].required = False
         self.fields["code"].required = False

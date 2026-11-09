@@ -828,6 +828,7 @@ def _service_block_inline_payload(block):
         "expertise": block.expertise_dir.short_name if block.expertise_dir_id and block.expertise_dir else "",
         "department": block.department_display,
         "executor": specialties,
+        "option_label": block.code_option_label(),
     }
 
 

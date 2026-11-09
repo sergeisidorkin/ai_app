@@ -441,7 +441,7 @@ class PerformerDisplayGroupViewTests(TestCase):
         self.factory.refresh_from_db()
         self.assertEqual(self.quarry.display_group_id, self.factory.display_group_id)
 
-    def test_merge_rejects_different_executors_sections_assets_and_costs(self):
+    def test_merge_rejects_different_executors_sections_and_assets(self):
         other_executor = self._performer("Склад", executor="Петров Петр Петрович", position=3)
         response = self._merge(self.quarry, other_executor)
         self.assertEqual(response.status_code, 400)
@@ -457,13 +457,47 @@ class PerformerDisplayGroupViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("наименованием актива", response.json()["error"])
 
-        other_costs = self._performer("Склад", actual_costs=Decimal("10.00"), position=6)
-        response = self._merge(self.quarry, other_costs)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("только наименованием актива", response.json()["error"])
-
         self.quarry.refresh_from_db()
         self.assertIsNone(self.quarry.display_group_id)
+
+    def test_merge_allows_different_costs_with_the_same_currency(self):
+        other_costs = self._performer(
+            "Склад",
+            actual_costs=Decimal("10.00"),
+            estimated_costs=Decimal("20.00"),
+            agreed_amount=Decimal("30.00"),
+            position=6,
+        )
+
+        response = self._merge(self.quarry, other_costs)
+
+        self.assertEqual(response.status_code, 200)
+        self.quarry.refresh_from_db()
+        other_costs.refresh_from_db()
+        self.assertIsNotNone(self.quarry.display_group_id)
+        self.assertEqual(self.quarry.display_group_id, other_costs.display_group_id)
+        self.assertEqual(self.quarry.actual_costs, Decimal("100.00"))
+        self.assertEqual(other_costs.actual_costs, Decimal("10.00"))
+        self.assertEqual(other_costs.estimated_costs, Decimal("20.00"))
+        self.assertEqual(other_costs.agreed_amount, Decimal("30.00"))
+
+    def test_merge_allows_different_currencies(self):
+        from classifiers_app.models import OKVCurrency
+
+        rub = OKVCurrency.objects.create(code_numeric="643", code_alpha="RUB", name="Российский рубль")
+        usd = OKVCurrency.objects.create(code_numeric="840", code_alpha="USD", name="Доллар США")
+        self.quarry.currency = rub
+        self.quarry.save(update_fields=["currency"])
+        other_currency = self._performer("Склад", currency=usd, position=7)
+
+        response = self._merge(self.quarry, other_currency)
+
+        self.assertEqual(response.status_code, 200)
+        self.quarry.refresh_from_db()
+        other_currency.refresh_from_db()
+        self.assertEqual(self.quarry.display_group_id, other_currency.display_group_id)
+        self.assertEqual(self.quarry.currency_id, rub.pk)
+        self.assertEqual(other_currency.currency_id, usd.pk)
 
     def test_split_and_inconsistent_group_return_rows(self):
         self._merge(self.quarry, self.factory)
