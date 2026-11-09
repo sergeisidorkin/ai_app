@@ -7592,6 +7592,17 @@ class TypicalSectionViewsTests(TestCase):
             editor_js.index("data-service-block-accounting"),
         )
         self.assertIn("appendTypicalSectionLocalFilters(params, wrapper)", editor_js)
+        self.assertIn(
+            "appendTypicalSectionLocalFilters(\n"
+            "          params,\n"
+            "          btn.closest('[data-policy-table-key=\"typical-sections\"]')\n"
+            "        )",
+            editor_js,
+        )
+        self.assertLess(
+            editor_js.index("if (btnId === 'sections-csv-download-btn')"),
+            editor_js.index("const nextQuery = params.toString()"),
+        )
         self.assertIn("reopenFilter: dropdown?.dataset?.typicalSectionsFilter", editor_js)
         self.assertIn("['25', '50', '100', 'all']", editor_js)
 

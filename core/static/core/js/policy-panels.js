@@ -3247,7 +3247,15 @@
       if (!btn) return;
       const baseUrl = btn.dataset.baseUrl || btn.getAttribute('href').split('?')[0];
       btn.dataset.baseUrl = baseUrl;
-      btn.setAttribute('href', baseUrl + query);
+      const params = new URLSearchParams(query.replace(/^\?/, ''));
+      if (btnId === 'sections-csv-download-btn') {
+        appendTypicalSectionLocalFilters(
+          params,
+          btn.closest('[data-policy-table-key="typical-sections"]')
+        );
+      }
+      const nextQuery = params.toString();
+      btn.setAttribute('href', baseUrl + (nextQuery ? '?' + nextQuery : ''));
     });
   }
 
