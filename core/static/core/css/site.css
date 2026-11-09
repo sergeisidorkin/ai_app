@@ -1123,6 +1123,13 @@ body .second-sidebar + .flex-grow-1 {
   margin-left: -1.5em !important;
   margin-right: 0 !important;
 }
+#policy-pane [data-typical-sections-filter] .form-check {
+  padding-left: 1.5em !important;
+}
+#policy-pane [data-typical-sections-filter] .form-check-input {
+  margin-left: -1.5em !important;
+  margin-right: 0 !important;
+}
 
 
 
@@ -1189,6 +1196,72 @@ body .second-sidebar + .flex-grow-1 {
   width: 1%;
   white-space: nowrap;
   text-align: left;
+}
+#policy-pane .typical-sections-table > thead > tr > th.typical-section-short-name-ru-head {
+  height: 1px;
+  vertical-align: middle;
+}
+#policy-pane .typical-section-short-name-ru-head-line {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+#policy-pane .typical-section-short-name-ru-sort {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-left: 8px;
+  padding: 0;
+  border: 1px solid #adb5bd;
+  border-radius: 3px;
+  background: #fff;
+  color: #adb5bd;
+  font-size: .65rem;
+  line-height: 1;
+  cursor: pointer;
+}
+#policy-pane .typical-section-short-name-ru-sort:hover {
+  background: #f8f9fa;
+  border-color: #9ca5ae;
+  color: #9ca5ae;
+}
+#policy-pane .typical-section-short-name-ru-sort.active {
+  background: #adb5bd;
+  border-color: #adb5bd;
+  color: #fff;
+}
+#policy-pane .typical-section-short-name-ru-sort.active:hover {
+  background: #9ca5ae;
+  border-color: #9ca5ae;
+  color: #fff;
+}
+#policy-pane .typical-section-short-name-ru-sort .bi-caret-down-fill {
+  transform: translateY(1px);
+}
+#policy-pane .typical-section-short-name-ru-sort-idle {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: .62rem;
+  line-height: 1;
+}
+#policy-pane .typical-section-short-name-ru-sort-idle .bi {
+  display: block;
+  height: 1em;
+  line-height: 1;
+}
+#policy-pane .typical-section-short-name-ru-sort-idle .bi::before {
+  display: block;
+  line-height: 1;
+  vertical-align: top;
+}
+#policy-pane .typical-section-short-name-ru-sort-idle .bi-caret-down {
+  margin-top: -0.566em;
 }
 #policy-pane[data-policy-workspace="1"] #policy-typical-sections-section td.typical-section-code-col[data-inline-type="select"] {
   padding-left: var(--bs-table-cell-padding-x, .25rem);
@@ -8210,19 +8283,22 @@ html.table-action-progress * {
 }
 
 #policy-modal .policy-product-select-shell,
-#policy-modal .policy-section-select-shell {
+#policy-modal .policy-section-select-shell,
+#policy-modal .policy-service-block-select-shell {
   position: relative;
 }
 
 #policy-modal .policy-product-select-shell select.policy-product-select,
-#policy-modal .policy-section-select-shell select.policy-section-select {
+#policy-modal .policy-section-select-shell select.policy-section-select,
+#policy-modal .policy-service-block-select-shell select.policy-service-block-select {
   position: relative;
   z-index: 2;
   opacity: .01;
 }
 
 #policy-modal .policy-product-select-display,
-#policy-modal .policy-section-select-display {
+#policy-modal .policy-section-select-display,
+#policy-modal .policy-service-block-select-display {
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -8242,7 +8318,8 @@ html.table-action-progress * {
 }
 
 #policy-modal .policy-product-select-display::after,
-#policy-modal .policy-section-select-display::after {
+#policy-modal .policy-section-select-display::after,
+#policy-modal .policy-service-block-select-display::after {
   content: "";
   position: absolute;
   right: .75rem;
@@ -8258,7 +8335,8 @@ html.table-action-progress * {
 }
 
 #policy-modal .policy-product-select-display.is-placeholder,
-#policy-modal .policy-section-select-display.is-placeholder {
+#policy-modal .policy-section-select-display.is-placeholder,
+#policy-modal .policy-service-block-select-display.is-placeholder {
   color: #6c757d;
 }
 
@@ -9849,6 +9927,9 @@ td.product-map-stats-hist .product-map-stats-hist-track {
 #policy-pane .table-section-header.esp-colpicker-open,
 #policy-pane .table-section-header:has(.epr-colpicker-menu.show) {
   z-index: 1020;
+}
+#policy-pane .table-section-header:has([data-typical-sections-filter] .dropdown-menu.show) {
+  z-index: 30;
 }
 #policy-pane .policy-group-card > .card-body > :first-child > .table-section-header {
   margin-top: 0 !important;

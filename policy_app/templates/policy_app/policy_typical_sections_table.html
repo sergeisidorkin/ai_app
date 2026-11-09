@@ -5,15 +5,72 @@
          data-policy-master-managed="1"
          data-policy-table-page="{{ page_obj.number|default:'1' }}"
          data-policy-table-page-size="{{ policy_page_size|default:'25' }}"
+         data-short-name-ru-sort="{{ short_name_ru_sort }}"
          {% if policy_inline_edit %}data-policy-inline="1" data-policy-row-insert="1"{% endif %}>
 {% if policy_inline_edit %}
 <script type="application/json" data-policy-inline-options>{{ policy_inline_options_json|safe }}</script>
 {% endif %}
-<div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 24px;">
-    <h5 class="table-section-title">
+<div class="d-flex align-items-center gap-3 flex-wrap mb-3 table-section-header" style="margin-top: 24px;">
+    <h5 class="table-section-title mb-0">
         <i class="bi bi-table me-2"></i>
         Типовые блоки услуг
     </h5>
+    <div class="dropdown" data-typical-sections-filter="section_code" id="typical-sections-code-filter-dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="typical-sections-code-filter-toggle"
+                data-bs-toggle="dropdown"
+                data-bs-auto-close="outside"
+                aria-expanded="false">
+            Код: <span class="js-typical-sections-code-filter-label">{{ section_code_filter_label|default:"Все" }}</span>
+        </button>
+        <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="typical-sections-code-filter-toggle"
+             style="max-height: 240px; overflow-y: auto;">
+            <div class="form-check mb-2">
+                <input class="form-check-input js-typical-sections-filter" type="checkbox"
+                       value="__all__" id="typical-sections-code-filter-all" data-filter-key="section_code"
+                       {% if not selected_section_codes %}checked{% endif %}>
+                <label class="form-check-label" for="typical-sections-code-filter-all">Все коды</label>
+            </div>
+            <hr class="dropdown-divider">
+            {% for option in section_code_options %}
+                <div class="form-check">
+                    <input class="form-check-input js-typical-sections-filter" type="checkbox"
+                           value="{{ option.code }}" id="typical-sections-code-filter-{{ forloop.counter }}"
+                           data-filter-key="section_code" data-summary-label="{{ option.code }}"
+                           {% if option.code in selected_section_codes %}checked{% endif %}>
+                    <label class="form-check-label" for="typical-sections-code-filter-{{ forloop.counter }}">{{ option.label }}</label>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="dropdown" data-typical-sections-filter="executor" id="typical-sections-executor-filter-dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="typical-sections-executor-filter-toggle"
+                data-bs-toggle="dropdown"
+                data-bs-auto-close="outside"
+                aria-expanded="false">
+            Исполнитель: <span class="js-typical-sections-executor-filter-label">{{ section_executor_filter_label|default:"Все" }}</span>
+        </button>
+        <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="typical-sections-executor-filter-toggle"
+             style="max-height: 240px; overflow-y: auto;">
+            <div class="form-check mb-2">
+                <input class="form-check-input js-typical-sections-filter" type="checkbox"
+                       value="__all__" id="typical-sections-executor-filter-all" data-filter-key="executor"
+                       {% if not selected_section_executors %}checked{% endif %}>
+                <label class="form-check-label" for="typical-sections-executor-filter-all">Все исполнители</label>
+            </div>
+            <hr class="dropdown-divider">
+            {% for option in section_executor_options %}
+                <div class="form-check">
+                    <input class="form-check-input js-typical-sections-filter" type="checkbox"
+                           value="{{ option.id }}" id="typical-sections-executor-filter-{{ forloop.counter }}"
+                           data-filter-key="executor" data-summary-label="{{ option.label }}"
+                           {% if option.id in selected_section_executors %}checked{% endif %}>
+                    <label class="form-check-label" for="typical-sections-executor-filter-{{ forloop.counter }}">{{ option.label }}</label>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
 </div>
 
 <div class="policy-table-editor">
@@ -36,11 +93,43 @@
             <th class="policy-workspace-product-cell">Продукт</th>
             <th class="typical-section-code-col">Код</th>
             <th>Краткое имя EN</th>
-            <th>Краткое имя RU</th>
+            <th class="text-nowrap typical-section-short-name-ru-head">
+                <span class="typical-section-short-name-ru-head-line">
+                Краткое имя RU
+                <button type="button"
+                        class="typical-section-short-name-ru-sort{% if short_name_ru_sort %} active{% endif %}"
+                        data-short-name-ru-sort-btn="1"
+                        hx-get="{{ short_name_ru_sort_url }}"
+                        hx-target="#policy-typical-sections-section"
+                        hx-swap="outerHTML"
+                        {% if short_name_ru_sort == "asc" %}
+                        title="Сортировка по возрастанию"
+                        aria-label="Сортировка по возрастанию"
+                        {% elif short_name_ru_sort == "desc" %}
+                        title="Сортировка по убыванию"
+                        aria-label="Сортировка по убыванию"
+                        {% else %}
+                        title="Сортировка выключена"
+                        aria-label="Сортировка выключена"
+                        {% endif %}
+                        aria-pressed="{% if short_name_ru_sort %}true{% else %}false{% endif %}">
+                    {% if short_name_ru_sort == "asc" %}
+                        <i class="bi bi-caret-up-fill" aria-hidden="true"></i>
+                    {% elif short_name_ru_sort == "desc" %}
+                        <i class="bi bi-caret-down-fill" aria-hidden="true"></i>
+                    {% else %}
+                        <span class="typical-section-short-name-ru-sort-idle" aria-hidden="true">
+                            <i class="bi bi-caret-up"></i>
+                            <i class="bi bi-caret-down"></i>
+                        </span>
+                    {% endif %}
+                </button>
+                </span>
+            </th>
             <th>Наименование раздела (услуги) EN</th>
             <th>Наименование раздела (услуги) RU</th>
+            <th class="text-nowrap typical-section-executor-col">Исполнитель</th>
             <th class="typical-section-derived-col">Тип учета</th>
-            <th class="typical-section-derived-col typical-section-executor-col">Исполнитель</th>
             <th class="typical-section-derived-col">Экспертиза</th>
             <th class="typical-section-derived-col">Подразделение</th>
             <th class="typical-section-tkp-col"><span class="typical-section-tkp-heading"><i class="bi bi-ban" aria-hidden="true"></i>ТКП</span></th>
@@ -92,13 +181,13 @@
                 <td class="text-nowrap" data-service-block-name="ru">{{ s.short_name_ru }}</td>
                 <td{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="name_en" data-inline-type="text" data-inline-value="{{ s.name_en }}"{% endif %}>{{ s.name_en }}</td>
                 <td{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="name_ru" data-inline-type="text" data-inline-value="{{ s.name_ru }}"{% endif %}>{{ s.name_ru }}</td>
-                <td class="text-nowrap typical-section-derived-col" data-service-block-accounting>{% if s.is_system_dsc %}{% else %}{{ s.accounting_type }}{% endif %}</td>
-                <td class="text-nowrap typical-section-derived-col typical-section-executor-col" data-service-block-executor>
+                <td class="text-nowrap typical-section-executor-col" data-service-block-executor>
                     {% if s.is_system_dsc %}
                     {% else %}
                         {% for rs in s.ranked_specialties.all %}{% if forloop.first %}<span>{{ rs.specialty.specialty }}</span>{% else %}<br><span>{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}
                     {% endif %}
                 </td>
+                <td class="text-nowrap typical-section-derived-col" data-service-block-accounting>{% if s.is_system_dsc %}{% else %}{{ s.accounting_type }}{% endif %}</td>
                 <td class="text-nowrap typical-section-derived-col" data-service-block-expertise>{% if s.expertise_dir %}{{ s.expertise_dir.short_name }}{% endif %}</td>
                 <td class="text-nowrap typical-section-derived-col" data-service-block-department>{{ s.managed_department_display }}</td>
                 <td class="text-center typical-section-tkp-col"{% if policy_inline_edit and not s.is_system_dsc %} data-inline-field="exclude_from_tkp_autofill" data-inline-type="checkbox" data-inline-value="{% if s.exclude_from_tkp_autofill %}true{% else %}false{% endif %}"{% endif %}>

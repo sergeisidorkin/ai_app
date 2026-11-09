@@ -4468,6 +4468,21 @@ class ServiceBlockClassifierTableTests(TestCase):
         self.assertLess(html.index(f">{frequent}<"), html.index(f">{rare}<"))
         self.assertNotIn(">ABC<", html)
         self.assertNotIn(">DEF<", html)
+        self.assertIn("policy-service-block-select", html)
+        self.assertIn('data-code="ABC"', html)
+        self.assertIn('data-code="DEF"', html)
+
+        policy_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "policy-panels.js"
+        ).read_text()
+        css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertIn("function syncPolicyServiceBlockSelectDisplay(select)", policy_js)
+        self.assertIn("display.textContent = hasValue ? code : placeholder;", policy_js)
+        self.assertIn("initPolicyServiceBlockSelects(e.target);", policy_js)
+        self.assertIn("#policy-modal .policy-service-block-select-display", css)
+        self.assertNotIn("#policy-modal .policy-service-block-select-display.readonly-field", css)
 
         editor_js = (
             Path(__file__).resolve().parents[1]
@@ -5918,13 +5933,17 @@ class TypicalSectionPaginationTests(TestCase):
 
         default = self.client.get(endpoint, {"product": product.pk})
         self.assertEqual(default.context["policy_page_size"], 25)
-        self.assertEqual(default.context["policy_page_size_options"], (25, 50, 100))
+        self.assertEqual(
+            default.context["policy_page_size_options"],
+            (25, 50, 100, {"value": "all", "label": "Все"}),
+        )
         self.assertEqual(len(default.context["sections"]), 25)
         self.assertContains(default, 'data-policy-table-page-size="25"', html=False)
         self.assertContains(default, 'name="page_size"', html=False)
         self.assertContains(default, '<option value="25" selected>', html=False)
         self.assertContains(default, '<option value="50">', html=False)
         self.assertContains(default, '<option value="100">', html=False)
+        self.assertContains(default, '<option value="all">Все</option>', html=False)
         self.assertContains(default, 'hx-trigger="change"', html=False)
         self.assertContains(default, 'hx-target="#policy-typical-sections-section"', html=False)
         self.assertContains(default, 'hx-swap="outerHTML"', html=False)
@@ -5951,6 +5970,16 @@ class TypicalSectionPaginationTests(TestCase):
         self.assertEqual(hundred.context["policy_page_size"], 100)
         self.assertEqual(len(hundred.context["sections"]), 68)
         self.assertContains(hundred, "1–68 из 68")
+
+        everything = self.client.get(
+            endpoint,
+            {"product": product.pk, "page_size": "all", "page": 3},
+        )
+        self.assertEqual(everything.context["policy_page_size"], "all")
+        self.assertEqual(everything.context["page_obj"].number, 1)
+        self.assertEqual(len(everything.context["sections"]), 68)
+        self.assertContains(everything, "1–68 из 68")
+        self.assertContains(everything, '<option value="all" selected>Все</option>', html=False)
 
     def test_combined_filters_and_repeated_products(self):
         first = self._create_product(
@@ -7402,11 +7431,370 @@ class TypicalSectionViewsTests(TestCase):
             html=False,
         )
         self.assertContains(response, 'class="typical-section-derived-col">Тип учета</th>', html=False)
-        self.assertContains(response, 'typical-section-derived-col typical-section-executor-col">Исполнитель</th>', html=False)
+        self.assertContains(response, 'typical-section-executor-col">Исполнитель</th>', html=False)
+        self.assertNotContains(
+            response,
+            'typical-section-derived-col typical-section-executor-col">Исполнитель</th>',
+            html=False,
+        )
         self.assertContains(response, 'class="typical-section-derived-col">Экспертиза</th>', html=False)
         self.assertContains(response, 'class="typical-section-derived-col">Подразделение</th>', html=False)
         self.assertContains(response, 'aria-label="Исключить из автозаполнения в ТКП"', html=False)
         self.assertContains(response, 'id="sections-csv-download-btn"', html=False)
+
+    def test_code_and_executor_filters_follow_master_panel_and_each_other(self):
+        geology = ExpertSpecialty.objects.create(specialty="Геология фильтра", position=1)
+        mining = ExpertSpecialty.objects.create(specialty="Горное дело фильтра", position=2)
+        geology_block = ServiceBlockClassifier.objects.create(
+            code="ABC",
+            short_name="geo",
+            short_name_ru="гео",
+            position=1,
+        )
+        mining_block = ServiceBlockClassifier.objects.create(
+            code="DEF",
+            short_name="mine",
+            short_name_ru="горн",
+            position=2,
+        )
+        other_block = ServiceBlockClassifier.objects.create(
+            code="GHI",
+            short_name="other",
+            short_name_ru="другой",
+            position=3,
+        )
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=geology_block, specialty=geology, rank=1
+        )
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=mining_block, specialty=mining, rank=1
+        )
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=other_block, specialty=geology, rank=1
+        )
+        other_product = Product.objects.create(
+            short_name="FIN",
+            name_en="Finance",
+            name_ru="Финансы",
+            consulting_type="Финансовый",
+            position=2,
+        )
+        self.product.consulting_type = "Горный"
+        self.product.save(update_fields=["consulting_type"])
+        for product, block in (
+            (self.product, geology_block),
+            (self.product, mining_block),
+            (other_product, other_block),
+        ):
+            TypicalSection.objects.create(
+                product=product,
+                service_block=block,
+                code=block.code,
+                name_en=block.short_name,
+                name_ru=block.short_name_ru,
+                position=1,
+            )
+
+        def filter_values(html, key):
+            return re.findall(rf'value="([^"]+)"[^>]*data-filter-key="{key}"', html)
+
+        def row_codes(html):
+            return re.findall(
+                r'class="text-nowrap typical-section-code-col"[^>]*>\s*(?:<span[^>]*>)?([^<\s]+)',
+                html,
+            )
+
+        master = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"product": self.product.pk},
+        )
+        master_html = master.content.decode()
+        self.assertEqual(master.status_code, 200)
+        name_ru_at = master_html.index("Наименование раздела (услуги) RU")
+        executor_at = master_html.index('typical-section-executor-col">Исполнитель')
+        accounting_at = master_html.index("Тип учета")
+        self.assertLess(name_ru_at, executor_at)
+        self.assertLess(executor_at, accounting_at)
+        self.assertIn("Код:", master_html)
+        self.assertIn("Исполнитель:", master_html)
+        self.assertEqual(master_html.count("btn btn-outline-secondary btn-sm dropdown-toggle"), 2)
+        self.assertNotIn("typical-sections-code-filter-toggle\" class=\"btn btn-outline-primary", master_html)
+        self.assertIn(">ABC гео<", master_html)
+        self.assertIn(">DEF горн<", master_html)
+        self.assertNotIn(">ABC гео —", master_html)
+        self.assertCountEqual(
+            [value for value in filter_values(master_html, "section_code") if value != "__all__"],
+            ["ABC", "DEF"],
+        )
+        self.assertCountEqual(row_codes(master_html), ["ABC", "DEF"])
+        self.assertNotIn("GHI", row_codes(master_html))
+
+        by_code = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"product": self.product.pk, "section_code": "ABC"},
+        )
+        by_code_html = by_code.content.decode()
+        self.assertEqual(row_codes(by_code_html), ["ABC"])
+        self.assertEqual(
+            [value for value in filter_values(by_code_html, "executor") if value != "__all__"],
+            [str(geology.pk)],
+        )
+        self.assertIn(">ABC<", by_code_html)
+        self.assertIn("section_code=ABC", by_code_html)
+
+        by_executor = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"product": self.product.pk, "executor": geology.pk},
+        )
+        by_executor_html = by_executor.content.decode()
+        self.assertEqual(row_codes(by_executor_html), ["ABC"])
+        self.assertEqual(
+            [value for value in filter_values(by_executor_html, "section_code") if value != "__all__"],
+            ["ABC"],
+        )
+        self.assertIn(">ABC гео<", by_executor_html)
+        self.assertNotIn(">DEF горн<", by_executor_html)
+
+        both = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"product": self.product.pk, "section_code": "ABC", "executor": geology.pk},
+        )
+        both_html = both.content.decode()
+        self.assertEqual(row_codes(both_html), ["ABC"])
+        self.assertIn("js-typical-sections-code-filter-label\">ABC<", both_html)
+        self.assertIn("js-typical-sections-executor-filter-label\">Геология фильтра<", both_html)
+
+        stale = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"consulting": "Финансовый", "section_code": "ABC", "executor": mining.pk},
+        )
+        stale_html = stale.content.decode()
+        self.assertEqual(row_codes(stale_html), ["GHI"])
+        self.assertIn("js-typical-sections-code-filter-label\">Все<", stale_html)
+        self.assertIn("js-typical-sections-executor-filter-label\">Все<", stale_html)
+        self.assertNotIn("section_code=", stale_html)
+        self.assertNotIn("executor=", stale_html)
+
+        csv_response = self.client.get(
+            reverse("section_csv_download"),
+            {"product": self.product.pk, "section_code": "DEF"},
+        )
+        csv_text = csv_response.content.decode("utf-8-sig")
+        self.assertIn("DEF", csv_text)
+        self.assertNotIn("ABC", csv_text)
+        self.assertNotIn("GHI", csv_text)
+
+        editor_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "policy-panels.js"
+        ).read_text()
+        self.assertLess(
+            editor_js.index("data-service-block-executor"),
+            editor_js.index("data-service-block-accounting"),
+        )
+        self.assertIn("appendTypicalSectionLocalFilters(params, wrapper)", editor_js)
+        self.assertIn(
+            "appendTypicalSectionLocalFilters(\n"
+            "          params,\n"
+            "          btn.closest('[data-policy-table-key=\"typical-sections\"]')\n"
+            "        )",
+            editor_js,
+        )
+        self.assertLess(
+            editor_js.index("if (btnId === 'sections-csv-download-btn')"),
+            editor_js.index("const nextQuery = params.toString()"),
+        )
+        self.assertIn("reopenFilter: dropdown?.dataset?.typicalSectionsFilter", editor_js)
+        self.assertIn("['25', '50', '100', 'all']", editor_js)
+
+    def test_short_name_ru_sort_orders_before_pagination(self):
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        for index in range(26):
+            if index == 0:
+                short_name_ru = "Яблоко"
+            elif index == 25:
+                short_name_ru = "Арбуз"
+            else:
+                short_name_ru = f"Метка {index:02d}"
+            code = "A" + alphabet[index // 26] + alphabet[index % 26]
+            block = ServiceBlockClassifier.objects.create(
+                code=code,
+                short_name=f"en{index:02d}",
+                short_name_ru=short_name_ru,
+                position=index + 1,
+            )
+            product = Product.objects.create(
+                short_name=f"S{index:02d}",
+                name_en=f"Sort {index}",
+                name_ru=f"Сортировка {index}",
+                consulting_type="Горный",
+                position=index + 1,
+            )
+            TypicalSection.objects.create(
+                product=product,
+                service_block=block,
+                code=block.code,
+                name_en=block.short_name,
+                name_ru=block.short_name_ru,
+                position=1,
+            )
+
+        endpoint = reverse("policy_typical_sections_table")
+
+        def names(response):
+            return [section.short_name_ru for section in response.context["sections"]]
+
+        plain = self.client.get(endpoint, {"consulting": "Горный", "page_size": 25})
+        plain_html = plain.content.decode()
+        self.assertEqual(names(plain)[0], "Яблоко")
+        self.assertNotIn("Арбуз", names(plain))
+        self.assertEqual(len(names(plain)), 25)
+        self.assertIn('data-short-name-ru-sort=""', plain_html)
+        self.assertIn("Сортировка выключена", plain_html)
+        self.assertIn("bi-caret-up", plain_html)
+        self.assertIn("bi-caret-down", plain_html)
+        self.assertNotIn("bi-caret-up-fill", plain_html)
+        self.assertNotIn("bi-caret-down-fill", plain_html)
+        self.assertIn('hx-target="#policy-typical-sections-section"', plain_html)
+        plain_button = re.search(
+            r'data-short-name-ru-sort-btn="1"\s+hx-get="([^"]+)"',
+            plain_html,
+        )
+        self.assertIsNotNone(plain_button)
+        self.assertIn("short_name_ru_sort=asc", plain_button.group(1))
+        self.assertIn("page=1", plain_button.group(1))
+
+        ascending = self.client.get(
+            endpoint,
+            {"consulting": "Горный", "page_size": 25, "short_name_ru_sort": "asc"},
+        )
+        ascending_html = ascending.content.decode()
+        self.assertEqual(names(ascending)[0], "Арбуз")
+        self.assertNotIn("Яблоко", names(ascending))
+        self.assertEqual(len(names(ascending)), 25)
+        self.assertIn('data-short-name-ru-sort="asc"', ascending_html)
+        self.assertIn("bi-caret-up-fill", ascending_html)
+        self.assertIn("Сортировка по возрастанию", ascending_html)
+        self.assertIn("short_name_ru_sort=asc", ascending_html)
+        self.assertNotIn("bi-caret-down-fill", ascending_html)
+        ascending_button = re.search(
+            r'data-short-name-ru-sort-btn="1"\s+hx-get="([^"]+)"',
+            ascending_html,
+        )
+        self.assertIsNotNone(ascending_button)
+        self.assertIn("short_name_ru_sort=desc", ascending_button.group(1))
+
+        descending = self.client.get(
+            endpoint,
+            {"consulting": "Горный", "page_size": 25, "short_name_ru_sort": "desc"},
+        )
+        descending_html = descending.content.decode()
+        self.assertEqual(names(descending)[0], "Яблоко")
+        self.assertNotIn("Арбуз", names(descending))
+        self.assertIn("bi-caret-down-fill", descending_html)
+        self.assertIn("Сортировка по убыванию", descending_html)
+        self.assertNotIn("bi-caret-up-fill", descending_html)
+        descending_button = re.search(
+            r'data-short-name-ru-sort-btn="1"\s+hx-get="([^"]+)"',
+            descending_html,
+        )
+        self.assertIsNotNone(descending_button)
+        self.assertNotIn("short_name_ru_sort=", descending_button.group(1))
+
+        invalid = self.client.get(
+            endpoint,
+            {"consulting": "Горный", "page_size": 25, "short_name_ru_sort": "sideways"},
+        )
+        self.assertEqual(names(invalid), names(plain))
+        self.assertNotIn("short_name_ru_sort=sideways", invalid.content.decode())
+
+        editor_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "policy-panels.js"
+        ).read_text()
+        self.assertIn("params.set('short_name_ru_sort', sort);", editor_js)
+
+    def test_code_or_executor_filter_shows_every_matching_row(self):
+        geology = ExpertSpecialty.objects.create(specialty="Геология страниц", position=1)
+        block = ServiceBlockClassifier.objects.create(
+            code="ABC",
+            short_name="geo",
+            short_name_ru="гео",
+            position=1,
+        )
+        other = ServiceBlockClassifier.objects.create(
+            code="DEF",
+            short_name="other",
+            short_name_ru="другой",
+            position=2,
+        )
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=block, specialty=geology, rank=1
+        )
+        products = []
+        for index in range(1, 27):
+            product = Product.objects.create(
+                short_name=f"P{index:02d}",
+                name_en=f"Product {index}",
+                name_ru=f"Продукт {index}",
+                consulting_type="Горный",
+                position=index,
+            )
+            products.append(product)
+            TypicalSection.objects.create(
+                product=product,
+                service_block=block,
+                code=block.code,
+                name_en=block.short_name,
+                name_ru=block.short_name_ru,
+                position=1,
+            )
+        TypicalSection.objects.create(
+            product=products[0],
+            service_block=other,
+            code=other.code,
+            name_en=other.short_name,
+            name_ru=other.short_name_ru,
+            position=2,
+        )
+
+        plain = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"page_size": 25},
+        )
+        self.assertEqual(plain.context["policy_page_size"], 25)
+        self.assertEqual(len(plain.context["sections"]), 25)
+        self.assertGreater(plain.context["paginator"].count, 25)
+        self.assertContains(plain, "1–25 из")
+
+        by_code = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"page_size": 25, "page": 2, "section_code": "ABC"},
+        )
+        self.assertEqual(by_code.context["policy_page_size"], "all")
+        self.assertEqual(len(by_code.context["sections"]), 26)
+        self.assertEqual(by_code.context["paginator"].count, 26)
+        self.assertEqual(by_code.context["page_obj"].number, 1)
+        self.assertContains(by_code, "1–26 из 26")
+        self.assertContains(by_code, '<option value="all" selected>Все</option>', html=False)
+        self.assertContains(by_code, 'data-policy-table-page-size="all"', html=False)
+        self.assertEqual({section.code for section in by_code.context["sections"]}, {"ABC"})
+
+        by_executor = self.client.get(
+            reverse("policy_typical_sections_table"),
+            {"page_size": 50, "executor": geology.pk},
+        )
+        self.assertEqual(by_executor.context["policy_page_size"], "all")
+        self.assertEqual(len(by_executor.context["sections"]), 26)
+        self.assertContains(by_executor, "1–26 из 26")
+        self.assertContains(by_executor, '<option value="all" selected>Все</option>', html=False)
+        policy_css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertIn(
+            "#policy-pane .table-section-header:has([data-typical-sections-filter] .dropdown-menu.show) {\n"
+            "  z-index: 30;\n"
+            "}",
+            policy_css,
+        )
 
     def test_create_section_saves_tkp_exclusion_flag(self):
         block = ServiceBlockClassifier.objects.create(
