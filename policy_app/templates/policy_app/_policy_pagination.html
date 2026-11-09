@@ -12,7 +12,11 @@
                 hx-target="{{ pagination_target }}"
                 hx-swap="outerHTML">
             {% for option in policy_page_size_options %}
-                <option value="{{ option }}"{% if option == policy_page_size %} selected{% endif %}>{{ option }}</option>
+                {% if option.value %}
+                    <option value="{{ option.value }}"{% if option.value == policy_page_size %} selected{% endif %}>{{ option.label }}</option>
+                {% else %}
+                    <option value="{{ option }}"{% if option == policy_page_size %} selected{% endif %}>{{ option }}</option>
+                {% endif %}
             {% endfor %}
         </select>
     </div>

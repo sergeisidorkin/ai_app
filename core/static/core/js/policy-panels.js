@@ -361,6 +361,46 @@
     });
   }
 
+  function syncPolicyServiceBlockSelectDisplay(select) {
+    const shell = select?.closest('.policy-service-block-select-shell');
+    const display = shell?.querySelector('.policy-service-block-select-display');
+    if (!display) return;
+    const selected = select.options[select.selectedIndex];
+    const hasValue = !!String(selected?.value || '').trim();
+    const code = String(selected?.dataset?.code || '').trim();
+    const placeholder = String(selected?.textContent || '').trim() || '---------';
+    display.textContent = hasValue ? code : placeholder;
+    display.classList.toggle('is-placeholder', !hasValue);
+    display.classList.toggle('readonly-field', !!select.disabled);
+  }
+
+  function enhancePolicyServiceBlockSelect(select) {
+    if (!select || select.dataset.policyServiceBlockEnhanced === '1') {
+      if (select) syncPolicyServiceBlockSelectDisplay(select);
+      return;
+    }
+    const parent = select.parentElement;
+    if (!parent) return;
+    const shell = document.createElement('div');
+    shell.className = 'policy-service-block-select-shell';
+    parent.insertBefore(shell, select);
+    shell.appendChild(select);
+    const display = document.createElement('div');
+    display.className = 'policy-service-block-select-display';
+    shell.appendChild(display);
+    select.dataset.policyServiceBlockEnhanced = '1';
+    select.addEventListener('change', function () {
+      syncPolicyServiceBlockSelectDisplay(select);
+    });
+    syncPolicyServiceBlockSelectDisplay(select);
+  }
+
+  function initPolicyServiceBlockSelects(root) {
+    qa('select.policy-service-block-select', root).forEach(function (select) {
+      enhancePolicyServiceBlockSelect(select);
+    });
+  }
+
   window.syncPolicySectionSelectDisplay = syncPolicySectionSelectDisplay;
 
   function bindPolicyFilterMenuWidth(dropdown) {
@@ -1819,16 +1859,16 @@
     row.appendChild(textCell('name_en'));
     row.appendChild(textCell('name_ru'));
 
+    const specTd = document.createElement('td');
+    specTd.className = 'text-nowrap typical-section-executor-col';
+    specTd.setAttribute('data-service-block-executor', '');
+    specTd.textContent = '—';
+    row.appendChild(specTd);
+
     const typeTd = document.createElement('td');
     typeTd.className = 'text-nowrap typical-section-derived-col';
     typeTd.setAttribute('data-service-block-accounting', '');
     row.appendChild(typeTd);
-
-    const specTd = document.createElement('td');
-    specTd.className = 'text-nowrap typical-section-derived-col typical-section-executor-col';
-    specTd.setAttribute('data-service-block-executor', '');
-    specTd.textContent = '—';
-    row.appendChild(specTd);
 
     const expertiseTd = document.createElement('td');
     expertiseTd.className = 'text-nowrap typical-section-derived-col';
@@ -2307,7 +2347,7 @@
 
   function getPolicyTablePageSize(wrapper) {
     const value = normalizeFilterValue(wrapper?.dataset?.policyTablePageSize);
-    return ['25', '50', '100'].includes(value) ? value : '25';
+    return ['25', '50', '100', 'all'].includes(value) ? value : '25';
   }
 
   let policyManagedRefreshTimer = null;
@@ -2740,6 +2780,76 @@
     }
   }
 
+  function readTypicalSectionFilterValues(wrapper, key) {
+    if (!wrapper) return [];
+    return Array.from(wrapper.querySelectorAll(
+      '.js-typical-sections-filter[data-filter-key="' + key + '"]'
+    )).filter(function (checkbox) {
+      return checkbox.checked && checkbox.value && checkbox.value !== '__all__';
+    }).map(function (checkbox) {
+      return checkbox.value;
+    });
+  }
+
+  function typicalSectionShortNameRuSort(wrapper) {
+    const value = normalizeFilterValue(wrapper?.dataset?.shortNameRuSort);
+    return value === 'asc' || value === 'desc' ? value : '';
+  }
+
+  function appendTypicalSectionLocalFilters(params, wrapper) {
+    readTypicalSectionFilterValues(wrapper, 'section_code').forEach(function (value) {
+      params.append('section_code', value);
+    });
+    readTypicalSectionFilterValues(wrapper, 'executor').forEach(function (value) {
+      params.append('executor', value);
+    });
+    const sort = typicalSectionShortNameRuSort(wrapper);
+    if (sort) params.set('short_name_ru_sort', sort);
+  }
+
+  function reopenTypicalSectionFilter(root, key) {
+    if (!root || !key || !window.bootstrap?.Dropdown) return;
+    const toggle = root.querySelector(
+      '[data-typical-sections-filter="' + key + '"] [data-bs-toggle="dropdown"]'
+    );
+    if (!toggle) return;
+    window.bootstrap.Dropdown.getOrCreateInstance(toggle).show();
+  }
+
+  function bindTypicalSectionHeaderFilters() {
+    if (window.__typicalSectionHeaderFiltersBound) return;
+    window.__typicalSectionHeaderFiltersBound = true;
+    document.addEventListener('change', function (event) {
+      const input = event.target;
+      if (!input?.classList?.contains('js-typical-sections-filter')) return;
+      const dropdown = input.closest('[data-typical-sections-filter]');
+      const checks = dropdown
+        ? Array.from(dropdown.querySelectorAll('.js-typical-sections-filter'))
+        : [];
+      if (input.value === '__all__' && input.checked) {
+        checks.forEach(function (checkbox) {
+          checkbox.checked = checkbox.value === '__all__';
+        });
+      } else if (input.value === '__all__' && !input.checked) {
+        const first = checks.find(function (checkbox) { return checkbox.value !== '__all__'; });
+        if (first) first.checked = true;
+        else input.checked = true;
+      } else if (input.checked) {
+        const allCheckbox = checks.find(function (checkbox) { return checkbox.value === '__all__'; });
+        if (allCheckbox) allCheckbox.checked = false;
+      } else if (!checks.some(function (checkbox) {
+        return checkbox.value !== '__all__' && checkbox.checked;
+      })) {
+        const allCheckbox = checks.find(function (checkbox) { return checkbox.value === '__all__'; });
+        if (allCheckbox) allCheckbox.checked = true;
+      }
+      refreshLoadedPolicyFragment('typical-sections', {
+        page: '1',
+        reopenFilter: dropdown?.dataset?.typicalSectionsFilter || '',
+      });
+    });
+  }
+
   function refreshLoadedPolicyFragment(tableKey, options) {
     options = options || {};
     const root = policyPane();
@@ -2761,6 +2871,7 @@
     const pageSize = getPolicyTablePageSize(wrapper);
     const query = buildPolicyMasterFilterQueryString(window.__policyMasterFilters);
     const params = new URLSearchParams(query.replace(/^\?/, ''));
+    if (tableKey === 'typical-sections') appendTypicalSectionLocalFilters(params, wrapper);
     params.set('page', page);
     params.set('page_size', pageSize);
     const requestUrl = baseUrl + '?' + params.toString();
@@ -2810,6 +2921,7 @@
       current.replaceWith(refreshed);
       if (window.htmx) window.htmx.process(refreshed);
       initializeArrivingPolicyFragment(refreshed);
+      if (tableKey === 'typical-sections') reopenTypicalSectionFilter(refreshed, options.reopenFilter);
       if (selectionName && selectedIds.length) {
         const selected = new Set(selectedIds.map(String));
         qa(
@@ -14741,6 +14853,9 @@
         syncPolicySelectionToVisible(master.dataset.targetName);
     });
     updatePolicyMasterFilterDownloadLinks();
+    if (fragment.dataset.policyTableKey === 'typical-sections') {
+      qa('[data-typical-sections-filter]', fragment).forEach(bindPolicyFilterMenuWidth);
+    }
     if (fragment.dataset.policyTableKey === 'typical-service-compositions') {
       initTypicalServiceCompositionWrapToggle();
     }
@@ -14809,6 +14924,7 @@
     }
     initPolicyProductSelects(e.target);
     initPolicySectionSelects(e.target);
+    initPolicyServiceBlockSelects(e.target);
   });
 
   // After an htmx swap, the policy pane (and our chart container with it) may
@@ -14883,6 +14999,8 @@
 
   initPolicyProductSelects(document);
   initPolicySectionSelects(document);
+  initPolicyServiceBlockSelects(document);
+  bindTypicalSectionHeaderFilters();
   initTypicalServiceCompositionWrapToggle();
   collapseSpecialtyTariffsSpecialties();
   initPolicyMasterFilters();

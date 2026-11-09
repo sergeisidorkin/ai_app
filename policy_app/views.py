@@ -21,7 +21,7 @@ from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, IntegerField, Max, Prefetch, Q, Value
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, Lower
 from django.http import HttpResponse, JsonResponse, QueryDict
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_http_methods, require_POST
@@ -134,6 +134,7 @@ HX_TRIGGER_HEADER = "HX-Trigger"
 HX_POLICY_UPDATED_EVENT = "policy-updated"
 POLICY_TABLE_PAGE_SIZE = 25
 POLICY_TABLE_PAGE_SIZE_OPTIONS = (25, 50, 100)
+POLICY_PAGE_SIZE_ALL = "all"
 PRODUCT_CSV_HEADERS = [
     "Краткое имя",
     "Наименование на английском языке",
@@ -753,23 +754,34 @@ def _policy_unpaged_context(request, queryset):
     }
 
 
-def _policy_pagination_context(request, queryset):
-    if _is_policy_workspace_request(request):
-        return _policy_unpaged_context(request, queryset)
+def _policy_requested_page_size(request):
     try:
         page_size = int(request.GET.get("page_size", POLICY_TABLE_PAGE_SIZE))
     except (TypeError, ValueError):
         page_size = POLICY_TABLE_PAGE_SIZE
     if page_size not in POLICY_TABLE_PAGE_SIZE_OPTIONS:
-        page_size = POLICY_TABLE_PAGE_SIZE
+        return POLICY_TABLE_PAGE_SIZE
+    return page_size
 
-    paginator = Paginator(queryset, page_size)
-    page_obj = paginator.get_page(request.GET.get("page"))
+
+def _policy_pagination_context(request, queryset, *, show_all=False):
+    if _is_policy_workspace_request(request):
+        return _policy_unpaged_context(request, queryset)
+    page_size = _policy_requested_page_size(request)
+    shown_page_size = page_size
+    if show_all:
+        total = queryset.count()
+        paginator = Paginator(queryset, max(total, 1))
+        page_obj = paginator.get_page(1)
+        shown_page_size = POLICY_PAGE_SIZE_ALL
+    else:
+        paginator = Paginator(queryset, page_size)
+        page_obj = paginator.get_page(request.GET.get("page"))
     filter_query = _policy_filter_query_without_page(request)
 
     def page_url(page_number):
         page_query = filter_query.copy()
-        page_query["page_size"] = page_size
+        page_query["page_size"] = shown_page_size
         page_query["page"] = page_number
         return f"{request.path}?{page_query.urlencode()}"
 
@@ -803,7 +815,7 @@ def _policy_pagination_context(request, queryset):
         else "",
         "policy_pagination_start": page_obj.start_index(),
         "policy_pagination_end": page_obj.end_index(),
-        "policy_page_size": page_size,
+        "policy_page_size": shown_page_size,
         "policy_page_size_options": POLICY_TABLE_PAGE_SIZE_OPTIONS,
         "policy_page_size_url": page_size_url,
         "policy_filter_query": filter_query.urlencode(),
@@ -847,17 +859,225 @@ def _typical_section_inline_options():
     }
 
 
+def _typical_section_requested_codes(request):
+    codes = []
+    seen = set()
+    for raw in request.GET.getlist("section_code"):
+        code = normalize_service_block_code(raw)
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        codes.append(code)
+    return codes
+
+
+def _typical_section_requested_executors(request):
+    executor_ids = []
+    seen = set()
+    for raw in request.GET.getlist("executor"):
+        executor_id = _positive_int(raw)
+        if not executor_id or executor_id in seen:
+            continue
+        seen.add(executor_id)
+        executor_ids.append(executor_id)
+    return executor_ids
+
+
+def _filter_sections_by_codes(queryset, codes):
+    if not codes:
+        return queryset
+    return queryset.filter(code__in=codes)
+
+
+def _filter_sections_by_executors(queryset, executor_ids):
+    if not executor_ids:
+        return queryset
+    matching_ids = (
+        queryset.filter(service_block__ranked_specialties__specialty_id__in=executor_ids)
+        .order_by()
+        .values("pk")
+    )
+    return queryset.filter(pk__in=matching_ids)
+
+
+def _typical_section_code_option_label(code, short_name_ru):
+    """Пункт фильтра «Код»: код и краткое имя RU, без исполнителя."""
+    code = str(code or "").strip()
+    short_name_ru = str(short_name_ru or "").strip()
+    return " ".join(part for part in (code, short_name_ru) if part)
+
+
+def _typical_section_code_options(queryset):
+    rows = (
+        queryset.exclude(code="")
+        .order_by("code")
+        .values_list("code", "service_block__short_name_ru")
+        .distinct()
+    )
+    options = []
+    seen = set()
+    for code, short_name_ru in rows:
+        code = str(code or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        options.append((code, _typical_section_code_option_label(code, short_name_ru)))
+    return options
+
+
+def _typical_section_executor_options(queryset):
+    specialty_ids = (
+        queryset.filter(service_block__ranked_specialties__specialty__specialty__gt="")
+        .order_by()
+        .values_list("service_block__ranked_specialties__specialty_id", flat=True)
+        .distinct()
+    )
+    return list(
+        ExpertSpecialty.objects.filter(pk__in=specialty_ids)
+        .exclude(specialty="")
+        .order_by("specialty", "id")
+        .values_list("id", "specialty")
+    )
+
+
+def _multi_filter_label(selected_labels):
+    if not selected_labels:
+        return "Все"
+    if len(selected_labels) == 1:
+        return selected_labels[0]
+    return f"{len(selected_labels)} выбрано"
+
+
+def _apply_typical_section_local_filters(master_queryset, request):
+    """Код и исполнитель сужают друг друга после фильтров верхней панели."""
+    requested_codes = _typical_section_requested_codes(request)
+    requested_executors = _typical_section_requested_executors(request)
+
+    available_codes = _typical_section_code_options(
+        _filter_sections_by_executors(master_queryset, requested_executors)
+    )
+    available_code_set = {code for code, _label in available_codes}
+    codes = [code for code in requested_codes if code in available_code_set]
+
+    available_executors = _typical_section_executor_options(
+        _filter_sections_by_codes(master_queryset, codes)
+    )
+    available_executor_ids = {specialty_id for specialty_id, _name in available_executors}
+    executor_ids = [
+        specialty_id for specialty_id in requested_executors if specialty_id in available_executor_ids
+    ]
+    if executor_ids != requested_executors:
+        available_codes = _typical_section_code_options(
+            _filter_sections_by_executors(master_queryset, executor_ids)
+        )
+
+    sections = _filter_sections_by_codes(
+        _filter_sections_by_executors(master_queryset, executor_ids),
+        codes,
+    )
+    return sections, available_codes, available_executors, codes, executor_ids
+
+
+def _rewrite_typical_section_filter_query(request, codes, executor_ids):
+    query = request.GET.copy()
+    if codes:
+        query.setlist("section_code", codes)
+    else:
+        query.pop("section_code", None)
+    if executor_ids:
+        query.setlist("executor", [str(specialty_id) for specialty_id in executor_ids])
+    else:
+        query.pop("executor", None)
+    request.GET = query
+
+
+def _typical_section_short_name_ru_sort(request):
+    value = str(request.GET.get("short_name_ru_sort") or "").strip().lower()
+    if value in {"asc", "desc"}:
+        return value
+    return ""
+
+
+def _order_typical_sections(queryset, sort):
+    if sort == "asc":
+        return queryset.order_by(Lower("service_block__short_name_ru").asc(), "id")
+    if sort == "desc":
+        return queryset.order_by(Lower("service_block__short_name_ru").desc(), "id")
+    return queryset
+
+
+def _typical_section_short_name_ru_sort_url(request, sort):
+    next_sort = {"": "asc", "asc": "desc", "desc": ""}.get(sort, "asc")
+    query = request.GET.copy()
+    query["page"] = "1"
+    if next_sort:
+        query["short_name_ru_sort"] = next_sort
+    else:
+        query.pop("short_name_ru_sort", None)
+    encoded = query.urlencode()
+    return f"{request.path}?{encoded}" if encoded else request.path
+
+
+def _rewrite_typical_section_sort_query(request, sort):
+    query = request.GET.copy()
+    if sort:
+        query["short_name_ru_sort"] = sort
+    else:
+        query.pop("short_name_ru_sort", None)
+    request.GET = query
+
+
 def _policy_typical_sections_table_context(request):
-    sections = _apply_policy_master_product_filters(
+    master_sections = _apply_policy_master_product_filters(
         _policy_typical_sections_queryset(),
         request,
     )
-    context = _policy_pagination_context(request, sections)
+    (
+        sections,
+        code_options,
+        executor_options,
+        selected_codes,
+        selected_executors,
+    ) = _apply_typical_section_local_filters(master_sections, request)
+    _rewrite_typical_section_filter_query(request, selected_codes, selected_executors)
+    short_name_ru_sort = _typical_section_short_name_ru_sort(request)
+    sections = _order_typical_sections(sections, short_name_ru_sort)
+    _rewrite_typical_section_sort_query(request, short_name_ru_sort)
+    page_size_raw = str(request.GET.get("page_size") or "").strip().lower()
+    context = _policy_pagination_context(
+        request,
+        sections,
+        show_all=bool(
+            selected_codes or selected_executors or page_size_raw == POLICY_PAGE_SIZE_ALL
+        ),
+    )
+    context["policy_page_size_options"] = (
+        *POLICY_TABLE_PAGE_SIZE_OPTIONS,
+        {"value": POLICY_PAGE_SIZE_ALL, "label": "Все"},
+    )
     from group_app.expertise_management import attach_display_units
 
     page_sections = attach_display_units(list(context["page_obj"].object_list), direction_attr="expertise_dir")
     context["page_obj"].object_list = page_sections
     context["sections"] = page_sections
+    context["section_code_options"] = [
+        {"code": code, "label": label} for code, label in code_options
+    ]
+    context["section_executor_options"] = [
+        {"id": specialty_id, "label": name} for specialty_id, name in executor_options
+    ]
+    context["selected_section_codes"] = selected_codes
+    context["selected_section_executors"] = selected_executors
+    context["section_code_filter_label"] = _multi_filter_label(selected_codes)
+    executor_labels = [
+        name for specialty_id, name in executor_options if specialty_id in set(selected_executors)
+    ]
+    context["section_executor_filter_label"] = _multi_filter_label(executor_labels)
+    context["short_name_ru_sort"] = short_name_ru_sort
+    context["short_name_ru_sort_url"] = _typical_section_short_name_ru_sort_url(
+        request,
+        short_name_ru_sort,
+    )
     if context.get("policy_workspace") and getattr(request.user, "is_staff", False):
         context["policy_inline_edit"] = True
         context["policy_inline_options_json"] = json.dumps(
@@ -4064,8 +4284,11 @@ def section_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(SECTION_CSV_HEADERS)
 
-    sections = _apply_policy_master_product_filters(
-        _policy_typical_sections_queryset(),
+    sections, _codes, _executors, _selected_codes, _selected_executors = _apply_typical_section_local_filters(
+        _apply_policy_master_product_filters(
+            _policy_typical_sections_queryset(),
+            request,
+        ),
         request,
     )
     for section in sections:

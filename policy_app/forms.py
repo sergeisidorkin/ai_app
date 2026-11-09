@@ -652,7 +652,10 @@ class TypicalSectionForm(forms.ModelForm):
         label="Код",
         queryset=ServiceBlockClassifier.objects.none(),
         required=False,
-        widget=ServiceBlockChoiceSelect(attrs={"class": "form-select", "id": "sec-service-block"}),
+        widget=ServiceBlockChoiceSelect(attrs={
+            "class": "form-select policy-service-block-select",
+            "id": "sec-service-block",
+        }),
     )
     product = forms.ModelChoiceField(
         label="Продукт",
