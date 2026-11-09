@@ -972,6 +972,11 @@ class PerformerGroupSummaryVisibilityTests(SimpleTestCase):
                 "normalizePerformerText",
                 "visiblePerformerGroupAssets",
                 "pluralAssets",
+                "performerRowCurrency",
+                "performerMoneyCents",
+                "formatPerformerMoney",
+                "setPerformerCostCellText",
+                "fillPerformerSummaryCosts",
                 "syncPerformerDisplayGroupVisibility",
             )
         )
@@ -989,6 +994,13 @@ class PerformerGroupSummaryVisibilityTests(SimpleTestCase):
         self.assertTrue(result["filteredHidden"])
         self.assertEqual(result["mixedAssetLabel"], "1 актив")
         self.assertFalse(result["mixedHidden"])
+        self.assertEqual(result["mixedActual"], "100,00 RUB")
+        self.assertEqual(result["mixedEstimated"], "80,00 RUB")
+        self.assertEqual(result["mixedAgreed"], "40,00 RUB")
+        self.assertEqual(result["summedActual"], "300,00 RUB")
+        self.assertEqual(result["foreignHiddenActual"], "100,00 RUB")
+        self.assertEqual(result["splitCurrencyActual"], "")
+        self.assertEqual(result["collapsedActual"], "300,00 RUB")
 
 
 _PERFORMER_GROUP_VISIBILITY_RUNNER = r"""
@@ -1011,12 +1023,21 @@ function El(kind) {
   this.checked = false;
 }
 El.prototype.append = function (child) { this.children.push(child); return child; };
+El.prototype.appendChild = El.prototype.append;
+var document = { createElement: function () { return new El('span'); } };
 function matches(el, selector) {
   if (selector === 'tbody') return el.kind === 'tbody';
   if (selector === 'tr[data-performer-group-summary]') return el.kind === 'tr' && el.dataset.performerGroupSummary === '1';
   if (selector === 'tr[data-row-order-id]') return el.kind === 'tr' && !!el.dataset.rowOrderId;
   if (selector === '.performer-asset-cell') return el.className === 'performer-asset-cell';
+  if (selector === '.perf-cost-value') return el.className === 'perf-cost-value';
   if (selector === 'input[name="performer-group-select"]') return el.kind === 'input' && el.name === 'performer-group-select';
+  if (selector === '[data-sum-actual]') return Object.prototype.hasOwnProperty.call(el.dataset, 'sumActual');
+  if (selector === '[data-sum-estimated]') return Object.prototype.hasOwnProperty.call(el.dataset, 'sumEstimated');
+  if (selector === '[data-sum-agreed]') return Object.prototype.hasOwnProperty.call(el.dataset, 'sumAgreed');
+  if (selector.indexOf('[data-summary-cost="') === 0) {
+    return el.dataset.summaryCost === selector.slice(20, -2);
+  }
   return false;
 }
 El.prototype.querySelectorAll = function (selector) {
@@ -1032,15 +1053,28 @@ El.prototype.querySelectorAll = function (selector) {
 El.prototype.querySelector = function (selector) {
   return this.querySelectorAll(selector)[0] || null;
 };
-function member(groupId, asset, hidden) {
+function member(groupId, asset, hidden, costs) {
   var row = new El('tr');
   row.dataset.rowOrderId = 'row';
   row.dataset.displayGroupId = groupId;
   row.dataset.assetName = asset;
   if (hidden) row.classList.add('d-none');
+  if (costs) {
+    [['sumActual', costs.actual], ['sumEstimated', costs.estimated], ['sumAgreed', costs.agreed]].forEach(function (spec) {
+      if (spec[1] === undefined) return;
+      var cost = row.append(new El('td'));
+      cost.dataset[spec[0]] = spec[1];
+      cost.dataset.currency = costs.currency || '';
+    });
+  }
   return row;
 }
-function build(groupId, members) {
+function summaryCost(group, kind) {
+  var cell = group.summary.querySelector('[data-summary-cost="' + kind + '"]');
+  var value = cell && cell.querySelector('.perf-cost-value');
+  return value ? value.textContent : '';
+}
+function build(groupId, members, withCosts) {
   var table = new El('table');
   var body = table.append(new El('tbody'));
   var summary = body.append(new El('tr'));
@@ -1048,6 +1082,15 @@ function build(groupId, members) {
   summary.dataset.displayGroupId = groupId;
   var cell = summary.append(new El('td'));
   cell.className = 'performer-asset-cell';
+  if (withCosts) {
+    ['actual', 'estimated', 'agreed'].forEach(function (kind) {
+      var cost = summary.append(new El('td'));
+      cost.dataset.summaryCost = kind;
+      var value = cost.append(new El('span'));
+      value.className = 'perf-cost-value';
+      value.textContent = '300,00 RUB';
+    });
+  }
   members.forEach(function (row) { body.append(row); });
   return { table: table, summary: summary, cell: cell };
 }
@@ -1061,8 +1104,34 @@ collapsed.table.querySelectorAll('tr[data-row-order-id]').forEach(function (row)
 syncPerformerDisplayGroupVisibility(collapsed.table);
 var filtered = build('filtered', [member('filtered', '', true), member('filtered', 'Карьер', true)]);
 syncPerformerDisplayGroupVisibility(filtered.table);
-var mixed = build('mixed', [member('mixed', 'Карьер', false), member('mixed', 'Порт', true)]);
+var mixed = build('mixed', [
+  member('mixed', 'Карьер', false, { actual: '100.00', estimated: '80.00', agreed: '40.00', currency: 'RUB' }),
+  member('mixed', 'Порт', true, { actual: '200.00', estimated: '20.00', agreed: '10.00', currency: 'RUB' }),
+], true);
 syncPerformerDisplayGroupVisibility(mixed.table);
+var summed = build('summed', [
+  member('summed', 'Карьер', false, { actual: '100.00', currency: 'RUB' }),
+  member('summed', 'Порт', false, { actual: '200.00', currency: 'RUB' }),
+], true);
+syncPerformerDisplayGroupVisibility(summed.table);
+var foreignHidden = build('foreign', [
+  member('foreign', 'Карьер', false, { actual: '100.00', currency: 'RUB' }),
+  member('foreign', 'Порт', true, { actual: '200.00', currency: 'USD' }),
+], true);
+syncPerformerDisplayGroupVisibility(foreignHidden.table);
+var splitCurrency = build('split', [
+  member('split', 'Карьер', false, { actual: '100.00', currency: 'RUB' }),
+  member('split', 'Порт', false, { actual: '200.00', currency: 'USD' }),
+], true);
+syncPerformerDisplayGroupVisibility(splitCurrency.table);
+var collapsedCosts = build('collapsed-costs', [
+  member('collapsed-costs', 'Карьер', false, { actual: '100.00', currency: 'RUB' }),
+  member('collapsed-costs', 'Порт', false, { actual: '200.00', currency: 'RUB' }),
+], true);
+collapsedCosts.table.querySelectorAll('tr[data-row-order-id]').forEach(function (row) {
+  row.classList.add('performer-group-member-collapsed');
+});
+syncPerformerDisplayGroupVisibility(collapsedCosts.table);
 console.log(JSON.stringify({
   emptyAssetsHidden: empty.summary.classList.contains('d-none'),
   emptyAssetLabel: empty.cell.textContent,
@@ -1070,6 +1139,13 @@ console.log(JSON.stringify({
   filteredHidden: filtered.summary.classList.contains('d-none'),
   mixedHidden: mixed.summary.classList.contains('d-none'),
   mixedAssetLabel: mixed.cell.textContent,
+  mixedActual: summaryCost(mixed, 'actual'),
+  mixedEstimated: summaryCost(mixed, 'estimated'),
+  mixedAgreed: summaryCost(mixed, 'agreed'),
+  summedActual: summaryCost(summed, 'actual'),
+  foreignHiddenActual: summaryCost(foreignHidden, 'actual'),
+  splitCurrencyActual: summaryCost(splitCurrency, 'actual'),
+  collapsedActual: summaryCost(collapsedCosts, 'actual'),
 }));
 """
 

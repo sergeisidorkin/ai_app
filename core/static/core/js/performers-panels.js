@@ -508,14 +508,10 @@
     });
   }
 
-  var performerSummaryCostCells = [
-    ['[data-sum-actual]', 'sumActual'],
-    ['[data-sum-estimated]', 'sumEstimated'],
-    ['[data-sum-agreed]', 'sumAgreed'],
-  ];
-
   function performerRowCurrency(row) {
-    var cell = row.querySelector('[data-sum-actual], [data-sum-estimated], [data-sum-agreed]');
+    var cell = row.querySelector('[data-sum-actual]')
+      || row.querySelector('[data-sum-estimated]')
+      || row.querySelector('[data-sum-agreed]');
     return cell ? (cell.dataset.currency || '') : '';
   }
 
@@ -552,18 +548,27 @@
   }
 
   function fillPerformerSummaryCosts(row, members) {
-    var currencies = members.map(performerRowCurrency);
-    var sameCurrency = currencies.every(function (currency) { return currency === currencies[0]; });
-    performerSummaryCostCells.forEach(function (spec) {
-      var cell = row.querySelector(spec[0]);
+    var visibleMembers = (members || []).filter(performerGroupMemberPassesFilters);
+    var specs = [
+      ['[data-sum-actual]', 'sumActual', 'actual'],
+      ['[data-sum-estimated]', 'sumEstimated', 'estimated'],
+      ['[data-sum-agreed]', 'sumAgreed', 'agreed'],
+    ];
+    var currencies = visibleMembers.map(performerRowCurrency);
+    var sameCurrency = currencies.length > 0 && currencies.every(function (currency) {
+      return currency === currencies[0];
+    });
+    specs.forEach(function (spec) {
+      var cell = row.querySelector(spec[0]) || row.querySelector('[data-summary-cost="' + spec[2] + '"]');
       if (!cell) return;
+      cell.dataset.summaryCost = spec[2];
       if (!sameCurrency) {
         setPerformerCostCellText(cell, '');
         return;
       }
       var total = 0;
       var hasNumber = false;
-      members.forEach(function (member) {
+      visibleMembers.forEach(function (member) {
         var source = member.querySelector(spec[0]);
         if (!source) return;
         var cents = performerMoneyCents(source.dataset[spec[1]]);
@@ -695,6 +700,7 @@
       var assets = visiblePerformerGroupAssets(members);
       var assetCell = summary.querySelector('.performer-asset-cell');
       if (assetCell) assetCell.textContent = pluralAssets(assets.length);
+      fillPerformerSummaryCosts(summary, members);
       var hidden = !members.some(performerGroupMemberPassesFilters);
       summary.classList.toggle('d-none', hidden);
       if (hidden) {
