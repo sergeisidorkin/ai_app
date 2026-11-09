@@ -5232,6 +5232,16 @@
     return button;
   }
 
+  function proposalRowInsertLimitedToCheckColumn(scope) {
+    return !!scope?.closest('#proposals-pane');
+  }
+
+  function pointerPastProposalCheckColumn(row, clientX) {
+    const checkCell = row?.querySelector('.proposal-asset-check-cell');
+    if (!checkCell) return true;
+    return clientX > checkCell.getBoundingClientRect().right;
+  }
+
   function syncProposalRowInsertGeometry(button, row, checkCell) {
     const iconRect = button?.querySelector('svg')?.getBoundingClientRect();
     const buttonRect = button?.getBoundingClientRect();
@@ -7323,10 +7333,17 @@
         }
         if (event.target.closest('.proposal-row-insert')) return;
         if (rowInsertTarget && rowInsertButton?.isConnected) {
-          const activeRateCell = rowInsertTarget.querySelector('.proposal-commercial-rate-cell');
-          if (!activeRateCell || event.clientX >= activeRateCell.getBoundingClientRect().left) {
-            clearRowInsertMarker();
-            return;
+          if (proposalRowInsertLimitedToCheckColumn(scope)) {
+            if (pointerPastProposalCheckColumn(rowInsertTarget, event.clientX)) {
+              clearRowInsertMarker();
+              return;
+            }
+          } else {
+            const activeRateCell = rowInsertTarget.querySelector('.proposal-commercial-rate-cell');
+            if (!activeRateCell || event.clientX >= activeRateCell.getBoundingClientRect().left) {
+              clearRowInsertMarker();
+              return;
+            }
           }
           const activeRect = rowInsertTarget.getBoundingClientRect();
           const activeBoundaryY = rowInsertPosition === 'before' ? activeRect.top : activeRect.bottom;
@@ -7337,10 +7354,17 @@
           clearRowInsertMarker();
           return;
         }
-        const rateCell = row.querySelector('.proposal-commercial-rate-cell');
-        if (!rateCell || event.clientX >= rateCell.getBoundingClientRect().left) {
-          clearRowInsertMarker();
-          return;
+        if (proposalRowInsertLimitedToCheckColumn(scope)) {
+          if (pointerPastProposalCheckColumn(row, event.clientX)) {
+            clearRowInsertMarker();
+            return;
+          }
+        } else {
+          const rateCell = row.querySelector('.proposal-commercial-rate-cell');
+          if (!rateCell || event.clientX >= rateCell.getBoundingClientRect().left) {
+            clearRowInsertMarker();
+            return;
+          }
         }
         const rect = row.getBoundingClientRect();
         const distanceFromTop = event.clientY - rect.top;
@@ -8078,12 +8102,26 @@
       }
       if (event.target.closest('.proposal-row-insert')) return;
       if (rowInsertTarget && rowInsertButton.isConnected) {
+        if (
+          proposalRowInsertLimitedToCheckColumn(scope)
+          && pointerPastProposalCheckColumn(rowInsertTarget, event.clientX)
+        ) {
+          clearRowInsertMarker();
+          return;
+        }
         const activeRect = rowInsertTarget.getBoundingClientRect();
         const activeBoundaryY = rowInsertPosition === 'before' ? activeRect.top : activeRect.bottom;
         if (Math.abs(event.clientY - activeBoundaryY) <= 14) return;
       }
       const row = event.target.closest('tr');
       if (!row || row.parentElement !== tbody) {
+        clearRowInsertMarker();
+        return;
+      }
+      if (
+        proposalRowInsertLimitedToCheckColumn(scope)
+        && pointerPastProposalCheckColumn(row, event.clientX)
+      ) {
         clearRowInsertMarker();
         return;
       }

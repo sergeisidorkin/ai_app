@@ -1936,10 +1936,17 @@
     }
 
     function serviceBlockOptionLabel(item) {
+      const prepared = String((item && item.option_label) || '').trim();
+      if (prepared) return prepared;
       const code = String((item && item.code) || '').trim();
       const shortNameRu = String((item && item.short_name_ru) || '').trim();
-      if (code && shortNameRu) return code + ' ' + shortNameRu;
-      return code || shortNameRu;
+      const executor = (item && Array.isArray(item.executor) ? item.executor : [])
+        .map(function (line) { return String(line || '').trim(); })
+        .filter(Boolean)
+        .join('; ');
+      const head = [code, shortNameRu].filter(Boolean).join(' ');
+      if (head && executor) return head + ' — ' + executor;
+      return head || executor;
     }
 
     return {

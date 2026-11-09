@@ -1359,6 +1359,22 @@ class ServiceBlockClassifier(models.Model):
             kwargs["update_fields"] = list(set(update_fields) | {"code"})
         super().save(*args, **kwargs)
 
+    def code_option_label(self):
+        """Подпись в списке поля «Код»: код, краткое имя RU и исполнитель."""
+        code = str(self.code or "").strip()
+        short_name_ru = str(self.short_name_ru or "").strip()
+        specialties = []
+        for link in self.ranked_specialties.all():
+            specialty = getattr(link, "specialty", None)
+            name = str(getattr(specialty, "specialty", "") or "").strip()
+            if name:
+                specialties.append(name)
+        head = " ".join(part for part in (code, short_name_ru) if part)
+        executor = "; ".join(specialties)
+        if head and executor:
+            return f"{head} — {executor}"
+        return head or executor
+
 
 class ServiceBlockClassifierSpecialty(models.Model):
     """Упорядоченный исполнитель блока. Не записывается в типовые разделы."""

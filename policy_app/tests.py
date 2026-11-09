@@ -4410,11 +4410,71 @@ class ServiceBlockClassifierTableTests(TestCase):
         codes = [item["code"] for item in _typical_section_inline_options()["service_blocks"]]
         self.assertLess(codes.index("ABC"), codes.index("DEF"))
         self.assertNotIn("DSC", codes)
+        self.assertTrue(
+            all("option_label" in item for item in _typical_section_inline_options()["service_blocks"])
+        )
 
         table = self.client.get(reverse("policy_service_block_classifiers_table"))
         html = table.content.decode()
         self.assertIn('class="sbc-col-usage"', html)
         self.assertRegex(html, r'class="sbc-col-usage"[^>]*>2<')
+
+    def test_code_dropdown_shows_short_name_executor_and_usage_order(self):
+        geology = ExpertSpecialty.objects.create(
+            specialty="Геология",
+            position=1,
+            expertise_dir=self.expertise,
+        )
+        mining = ExpertSpecialty.objects.create(
+            specialty="Горное дело",
+            position=2,
+            expertise_dir=self.expertise,
+        )
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.first,
+            specialty=geology,
+            rank=1,
+        )
+        ServiceBlockClassifierSpecialty.objects.create(
+            classifier=self.first,
+            specialty=mining,
+            rank=2,
+        )
+        product = Product.objects.create(
+            short_name="UA",
+            name_en="UA",
+            name_ru="UA",
+            position=1,
+        )
+        TypicalSection.objects.create(
+            product=product,
+            service_block=self.second,
+            code="DEF",
+            position=1,
+        )
+
+        from policy_app.views import _typical_section_inline_options
+
+        frequent = "DEF второй"
+        rare = "ABC первый — Геология; Горное дело"
+        labels = [
+            item["option_label"]
+            for item in _typical_section_inline_options()["service_blocks"]
+        ]
+        self.assertLess(labels.index(frequent), labels.index(rare))
+
+        response = self.client.get(reverse("section_form_create"))
+        html = response.content.decode()
+        self.assertLess(html.index(f">{frequent}<"), html.index(f">{rare}<"))
+        self.assertNotIn(">ABC<", html)
+        self.assertNotIn(">DEF<", html)
+
+        editor_js = (
+            Path(__file__).resolve().parents[1]
+            / "core" / "static" / "core" / "js" / "inline-table-editor.js"
+        ).read_text()
+        self.assertIn("item.option_label", editor_js)
+        self.assertIn("head + ' — ' + executor", editor_js)
 
     def test_form_locks_department_and_organization_from_expertise(self):
         create = self.client.get(reverse("service_block_classifier_form_create"))

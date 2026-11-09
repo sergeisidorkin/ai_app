@@ -436,21 +436,6 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
-  function performerCostSignature(row) {
-    function part(selector, name) {
-      var cell = row.querySelector(selector);
-      if (!cell) return '';
-      return cell.dataset[name] || '';
-    }
-    var actual = row.querySelector('[data-sum-actual]');
-    return [
-      part('[data-sum-actual]', 'sumActual'),
-      part('[data-sum-estimated]', 'sumEstimated'),
-      part('[data-sum-agreed]', 'sumAgreed'),
-      actual ? (actual.dataset.currency || '') : '',
-    ].join('\0');
-  }
-
   function performerDisplayGroupKey(row) {
     return [
       row.dataset.projectId || '',
@@ -458,7 +443,6 @@
       row.dataset.typicalSectionId || '',
       row.dataset.grade || '',
       row.dataset.gradeName || '',
-      performerCostSignature(row),
     ].join('\0');
   }
 
@@ -509,7 +493,7 @@
   function blankDivergentSummaryCells(row, members) {
     var skip = { 0: true, 5: true, 6: true, 7: true, 8: true };
     Array.from(row.cells || []).forEach(function (cell, index) {
-      if (skip[index]) return;
+      if (skip[index] || cell.classList.contains('perf-cost-cell')) return;
       var texts = members.map(function (member) { return summaryCellText(member, index); });
       if (texts.every(function (text) { return text === texts[0]; })) return;
       if (index === 1) {
@@ -521,6 +505,84 @@
         return;
       }
       cell.textContent = '';
+    });
+  }
+
+  function performerRowCurrency(row) {
+    var cell = row.querySelector('[data-sum-actual]')
+      || row.querySelector('[data-sum-estimated]')
+      || row.querySelector('[data-sum-agreed]');
+    return cell ? (cell.dataset.currency || '') : '';
+  }
+
+  function performerMoneyCents(raw) {
+    if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+    var text = String(raw).trim().replace(/\s/g, '').replace(',', '.');
+    if (!/^-?\d+(\.\d+)?$/.test(text)) return null;
+    var negative = text.charAt(0) === '-';
+    var parts = (negative ? text.slice(1) : text).split('.');
+    var cents = parseInt(parts[0], 10) * 100;
+    var frac = (parts[1] || '').slice(0, 2);
+    while (frac.length < 2) frac += '0';
+    cents += parseInt(frac, 10);
+    return negative ? -cents : cents;
+  }
+
+  function formatPerformerMoney(cents) {
+    var negative = cents < 0;
+    var abs = Math.abs(cents);
+    var integer = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+    var frac = String(abs % 100).padStart(2, '0');
+    return (negative ? '-' : '') + integer + ',' + frac;
+  }
+
+  function setPerformerCostCellText(cell, text) {
+    var valueEl = cell.querySelector('.perf-cost-value');
+    if (!valueEl) {
+      valueEl = document.createElement('span');
+      valueEl.className = 'perf-cost-value';
+      cell.textContent = '';
+      cell.appendChild(valueEl);
+    }
+    valueEl.textContent = text;
+  }
+
+  function fillPerformerSummaryCosts(row, members) {
+    var visibleMembers = (members || []).filter(performerGroupMemberPassesFilters);
+    var specs = [
+      ['[data-sum-actual]', 'sumActual', 'actual'],
+      ['[data-sum-estimated]', 'sumEstimated', 'estimated'],
+      ['[data-sum-agreed]', 'sumAgreed', 'agreed'],
+    ];
+    var currencies = visibleMembers.map(performerRowCurrency);
+    var sameCurrency = currencies.length > 0 && currencies.every(function (currency) {
+      return currency === currencies[0];
+    });
+    specs.forEach(function (spec) {
+      var cell = row.querySelector(spec[0]) || row.querySelector('[data-summary-cost="' + spec[2] + '"]');
+      if (!cell) return;
+      cell.dataset.summaryCost = spec[2];
+      if (!sameCurrency) {
+        setPerformerCostCellText(cell, '');
+        return;
+      }
+      var total = 0;
+      var hasNumber = false;
+      visibleMembers.forEach(function (member) {
+        var source = member.querySelector(spec[0]);
+        if (!source) return;
+        var cents = performerMoneyCents(source.dataset[spec[1]]);
+        if (cents === null) return;
+        hasNumber = true;
+        total += cents;
+      });
+      if (!hasNumber) {
+        setPerformerCostCellText(cell, '');
+        return;
+      }
+      var text = formatPerformerMoney(total);
+      if (currencies[0]) text += ' ' + currencies[0];
+      setPerformerCostCellText(cell, text);
     });
   }
 
@@ -566,6 +628,7 @@
     var codeCell = row.querySelector('.js-section-code');
     if (codeCell) codeCell.textContent = '';
     blankDivergentSummaryCells(row, members);
+    fillPerformerSummaryCosts(row, members);
     row.querySelectorAll('.performer-quick-edit, .performer-locked-icon').forEach(function (icon) {
       icon.remove();
     });
@@ -637,6 +700,7 @@
       var assets = visiblePerformerGroupAssets(members);
       var assetCell = summary.querySelector('.performer-asset-cell');
       if (assetCell) assetCell.textContent = pluralAssets(assets.length);
+      fillPerformerSummaryCosts(summary, members);
       var hidden = !members.some(performerGroupMemberPassesFilters);
       summary.classList.toggle('d-none', hidden);
       if (hidden) {
