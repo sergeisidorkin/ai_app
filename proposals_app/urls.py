@@ -19,6 +19,7 @@ urlpatterns = [
     path("proposals/<int:pk>/dispatch/edit/", views.proposal_dispatch_form_edit, name="proposal_dispatch_form_edit"),
     path("proposals/docx-source/<int:pk>/", views.proposal_onlyoffice_docx_source, name="proposal_onlyoffice_docx_source"),
     path("proposals/<int:pk>/dispatch/docx/download/", views.proposal_generated_docx_download, name="proposal_generated_docx_download"),
+    path("proposals/<int:pk>/dispatch/pdf/download/", views.proposal_generated_pdf_download, name="proposal_generated_pdf_download"),
     path("proposals/dispatch/send/", views.proposal_dispatch_send, name="proposal_dispatch_send"),
     path(
         "proposals/dispatch/transfer-to-contract/",

@@ -1,0 +1,104 @@
+<div class="proposal-dispatch-contact-block"
+     data-dispatch-contact-block="1"
+     data-dispatch-role="{{ row.role|default:'to' }}"
+     data-email="{{ row.email|default:'' }}"
+     data-contact-fields-locked="{% if row.contact_fields_locked %}1{% else %}0{% endif %}">
+  <div class="proposal-dispatch-contact-heading">
+    <span class="proposal-dispatch-contact-index" aria-hidden="true">{{ row.contact_index|default:"" }}</span>
+    <div class="form-label mb-0 proposal-dispatch-contact-title">{% if row.contact_full_name or row.email %}{% if row.contact_full_name %}<span class="proposal-dispatch-contact-title-name">{{ row.contact_full_name }}</span>{% endif %}{% if row.contact_full_name and row.email %} — {% endif %}{{ row.email }}{% else %}Новый адресат{% endif %}</div>
+  </div>
+  <div class="proposal-dispatch-contact-card">
+  <input type="hidden" name="dispatch_recipient_role" value="{{ row.role|default:'to' }}">
+  <input type="hidden" name="dispatch_recipient_person_id" value="{{ row.person_id|default:'' }}">
+  <input type="hidden" name="dispatch_recipient_email_record_id" value="{{ row.email_record_id|default:'' }}">
+  <input type="hidden" name="dispatch_recipient_position_record_id" value="{{ row.position_record_id|default:'' }}">
+  <input type="hidden" name="dispatch_recipient_identifier_record_id" value="{{ row.identifier_record_id|default:'' }}">
+  <input type="hidden" name="dispatch_recipient_selected_from_autocomplete" value="{{ row.autocomplete_selected_value|default:'0' }}">
+
+  <div class="row g-2 mb-3">
+    <div class="col-4">
+      <label class="form-label">Фамилия</label>
+      <input type="text" class="form-control{% if row.contact_fields_locked %} readonly-field{% endif %}" name="dispatch_recipient_last_name" value="{{ row.last_name|default:'' }}"{% if row.contact_fields_locked %} readonly tabindex="-1"{% endif %}>
+    </div>
+    <div class="col-4">
+      <label class="form-label">Имя</label>
+      <input type="text" class="form-control{% if row.contact_fields_locked %} readonly-field{% endif %}" name="dispatch_recipient_first_name" value="{{ row.first_name|default:'' }}"{% if row.contact_fields_locked %} readonly tabindex="-1"{% endif %}>
+    </div>
+    <div class="col-4">
+      <label class="form-label">Отчество</label>
+      <input type="text" class="form-control{% if row.contact_fields_locked %} readonly-field{% endif %}" name="dispatch_recipient_middle_name" value="{{ row.middle_name|default:'' }}"{% if row.contact_fields_locked %} readonly tabindex="-1"{% endif %}>
+    </div>
+  </div>
+
+  <div class="row g-2 mb-3">
+    <div class="col-12">
+      <label class="form-label">Эл. почта</label>
+      <input type="email" class="form-control{% if row.contact_fields_locked %} readonly-field{% endif %} js-dispatch-block-email" name="dispatch_recipient_email" value="{{ row.email|default:'' }}"{% if row.contact_fields_locked %} readonly tabindex="-1"{% endif %}>
+    </div>
+  </div>
+
+  <div class="row g-2 mb-3">
+    <div class="col-12">
+      <label class="form-label">Наименование организации (краткое)</label>
+      <div class="ler-ac-wrap">
+        <input type="text"
+               class="form-control{% if row.contact_fields_locked %} readonly-field{% endif %} js-dispatch-organization"
+               name="dispatch_recipient_organization"
+               value="{{ row.organization_short_name|default:'' }}"
+               placeholder="Искать по наименованию и регистрационному номеру"
+               autocomplete="off"
+               {% if row.contact_fields_locked %}readonly tabindex="-1"{% endif %}>
+        <div class="ler-ac-list js-dispatch-organization-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-2 mb-3">
+    <div class="col-3">
+      <label class="form-label">Страна</label>
+      <select class="form-select js-dispatch-recipient-country{% if row.contact_fields_locked %} readonly-field{% endif %}" {% if row.contact_fields_locked %}disabled tabindex="-1"{% else %}name="dispatch_recipient_country"{% endif %}>
+        <option value="">---------</option>
+        {% for country in recipient_countries %}
+          <option value="{{ country.pk }}"{% if row.country_id == country.pk %} selected{% endif %}>{{ country.short_name }}</option>
+        {% endfor %}
+      </select>
+      {% if row.contact_fields_locked %}
+        <input type="hidden" name="dispatch_recipient_country" value="{{ row.country_id|default:'' }}">
+      {% endif %}
+    </div>
+    <div class="col-3">
+      <label class="form-label">Идентификатор</label>
+      <input type="text"
+             class="form-control readonly-field js-dispatch-recipient-identifier"
+             name="dispatch_recipient_identifier"
+             value="{{ row.identifier|default:'' }}"
+             readonly
+             tabindex="-1">
+    </div>
+    <div class="col-3">
+      <label class="form-label">Регистрационный номер</label>
+      <input type="text"
+             class="form-control{% if row.contact_fields_locked %} readonly-field{% endif %} js-dispatch-registration-number"
+             name="dispatch_recipient_registration_number"
+             value="{{ row.registration_number|default:'' }}"
+             {% if row.contact_fields_locked %}readonly tabindex="-1"{% endif %}>
+    </div>
+    <div class="col-3">
+      <label class="form-label">Дата регистрации</label>
+      <input type="text"
+             class="form-control{% if row.contact_fields_locked %} readonly-field{% endif %} js-date js-dispatch-registration-date"
+             name="dispatch_recipient_registration_date"
+             value="{{ row.registration_date_display|default:'' }}"
+             autocomplete="off"
+             {% if row.contact_fields_locked %}readonly tabindex="-1"{% endif %}>
+    </div>
+  </div>
+
+  <div class="row g-2">
+    <div class="col-12">
+      <label class="form-label">Должность</label>
+      <input type="text" class="form-control{% if row.contact_fields_locked %} readonly-field{% endif %}" name="dispatch_recipient_job_title" value="{{ row.job_title|default:'' }}"{% if row.contact_fields_locked %} readonly tabindex="-1"{% endif %}>
+    </div>
+  </div>
+  </div>
+</div>

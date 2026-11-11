@@ -3,6 +3,8 @@
      data-reports-page-size="{{ reports_page_size|default:'25' }}"
      data-reports-projects="{% if reports_project_ids %}{% for project_id in reports_project_ids %}{% if not forloop.first %},{% endif %}{{ project_id }}{% endfor %}{% else %}__all__{% endif %}"
      data-reports-table-url="{% url 'report_submission_table' %}">
+  {{ reports_asset_names|json_script:"report-submission-asset-names" }}
+  {{ reports_selected_assets|json_script:"report-submission-selected-assets" }}
   <div class="report-submission-table-wrap">
     <table id="report-submission-table" class="table table-sm align-middle performers-table">
       <colgroup>

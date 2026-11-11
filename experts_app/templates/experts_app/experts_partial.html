@@ -1,9 +1,50 @@
-<div id="experts-pane">
-    <div class="d-flex justify-content-between align-items-center mb-3 table-section-header" style="margin-top: 0px;">
+<div id="experts-pane"
+     data-experts-page="{{ page_obj.number }}"
+     data-experts-page-size="{{ policy_page_size }}"
+     data-experts-full-name-sort="{{ full_name_sort }}"
+     data-experts-specialties="{{ experts_specialty_ids }}"
+     {% if request.user.is_authenticated and request.user.is_staff %}
+     data-policy-table-key="expert-profiles"
+     data-policy-inline="1"
+     {% endif %}>
+{% if request.user.is_authenticated and request.user.is_staff and expert_profile_inline_options_json %}
+<script type="application/json" data-policy-inline-options>{{ expert_profile_inline_options_json|safe }}</script>
+{% endif %}
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3 table-section-header" style="margin-top: 0px;">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
         <h5 class="table-section-title">
             <i class="bi bi-table me-2"></i>
             База физлиц-исполнителей
         </h5>
+        <div class="dropdown" data-experts-specialty-filter="specialty" id="experts-specialty-filter-dropdown">
+            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                    id="experts-specialty-filter-toggle"
+                    data-bs-toggle="dropdown"
+                    data-bs-auto-close="outside"
+                    aria-expanded="false">
+                Специальность: <span class="js-experts-specialty-filter-label">{{ profile_specialty_filter_label|default:"Все" }}</span>
+            </button>
+            <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="experts-specialty-filter-toggle"
+                 style="max-height: 240px; overflow-y: auto;">
+                <div class="form-check mb-2">
+                    <input class="form-check-input js-experts-specialty-filter" type="checkbox"
+                           value="__all__" id="experts-specialty-filter-all" data-filter-key="specialty"
+                           {% if not selected_profile_specialties %}checked{% endif %}>
+                    <label class="form-check-label" for="experts-specialty-filter-all">Все специальности</label>
+                </div>
+                <hr class="dropdown-divider">
+                {% for option in profile_specialty_options %}
+                    <div class="form-check">
+                        <input class="form-check-input js-experts-specialty-filter" type="checkbox"
+                               value="{{ option.id }}" id="experts-specialty-filter-{{ forloop.counter }}"
+                               data-filter-key="specialty" data-summary-label="{{ option.label }}"
+                               {% if option.id in selected_profile_specialties %}checked{% endif %}>
+                        <label class="form-check-label" for="experts-specialty-filter-{{ forloop.counter }}">{{ option.label }}</label>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+        </div>
         <div class="d-flex align-items-center gap-2">
             <span class="small text-muted text-nowrap">Отображаемые поля:</span>
             <div class="epr-colpicker" id="epr-colpicker-wrap">
@@ -106,12 +147,14 @@
         </div>
     </div>
 
+    <div class="experts-table-editor">
     <div class="registration-table-wrap experts-profiles-table-wrap" id="epr-table-wrap">
         {% include "experts_app/profiles_table_partial.html" %}
     </div>
 
+    <div class="policy-table-footer">
     {% if request.user.is_authenticated and request.user.is_staff %}
-    <div class="d-flex align-items-stretch gap-2 products-actions-row">
+    <div class="policy-table-footer-actions products-actions-row">
       <button
               type="button"
               id="epr-edit-btn"
@@ -132,7 +175,7 @@
           </button>
         </div>
       </div>
-      <a href="{% url 'epr_csv_download' %}"
+      <a href="{% url 'epr_csv_download' %}{% if experts_csv_query %}?{{ experts_csv_query }}{% endif %}"
          id="epr-csv-download-btn"
          class="btn btn-primary btn-sm d-flex align-items-center"
          title="Скачать CSV"
@@ -147,5 +190,10 @@
       </button>
       <input type="file" id="epr-csv-file-input" accept=".csv" class="d-none">
     </div>
+    {% else %}
+    <div class="policy-table-footer-actions"></div>
     {% endif %}
+    {% include "policy_app/_policy_pagination.html" with pagination_target="#experts-pane" page_size_id="experts-profiles" %}
+    </div>
+    </div>
 </div>

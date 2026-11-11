@@ -2203,20 +2203,46 @@ def _import_business_registry_csv_rows(rows):
         "events": 0,
     }
 
+    from group_app.registry_sync import (
+        csv_ref_pk,
+        group_owned_business_entity_ids,
+        group_owned_primary_identifier_ids,
+    )
+
+    protected_entity_ids = group_owned_business_entity_ids()
+    protected_identifier_ids = group_owned_primary_identifier_ids()
+
     with transaction.atomic():
         BusinessEntityRelationRecord.objects.all().delete()
         BusinessEntityReorganizationEvent.objects.all().delete()
-        LegalEntityRecord.objects.filter(
+        preserved_records = LegalEntityRecord.objects.filter(
             attribute__in=[
                 LegalEntityRecord.ATTRIBUTE_NAME,
                 LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
             ]
-        ).delete()
-        BusinessEntityIdentifierRecord.objects.all().delete()
-        BusinessEntityRecord.objects.all().delete()
+        )
+        if protected_identifier_ids:
+            preserved_records.exclude(identifier_record_id__in=protected_identifier_ids).delete()
+            preserved_records.filter(identifier_record_id__isnull=True).delete()
+        else:
+            preserved_records.delete()
+        BusinessEntityIdentifierRecord.objects.exclude(pk__in=protected_identifier_ids).delete()
+        BusinessEntityRecord.objects.exclude(pk__in=protected_entity_ids).delete()
 
         created_entities = {}
         for item in business_entities:
+            protected_entity_pk = csv_ref_pk(item["ref"], "BSN")
+            if protected_entity_pk in protected_entity_ids:
+                entity = BusinessEntityRecord.objects.filter(pk=protected_entity_pk).first()
+                if entity is not None:
+                    entity.record_date = item["record_date"]
+                    entity.record_author = item["record_author"]
+                    entity.source = item["source"]
+                    entity.comment = item["comment"]
+                    entity.position = item["position"]
+                    entity.save(update_fields=["record_date", "record_author", "source", "comment", "position", "updated_at"])
+                    created_entities[item["ref"]] = entity
+                    continue
             created_entities[item["ref"]] = BusinessEntityRecord.objects.create(
                 name=item["name"],
                 record_date=item["record_date"],
@@ -2229,6 +2255,19 @@ def _import_business_registry_csv_rows(rows):
 
         created_identifiers = {}
         for item in identifiers:
+            protected_identifier_pk = csv_ref_pk(item["ref"], "IDN")
+            if protected_identifier_pk in protected_identifier_ids:
+                identifier = BusinessEntityIdentifierRecord.objects.filter(pk=protected_identifier_pk).first()
+                if identifier is not None:
+                    identifier.registration_region = item["registration_region"]
+                    identifier.record_date = item["record_date"]
+                    identifier.record_author = item["record_author"]
+                    identifier.valid_from = item["valid_from"]
+                    identifier.valid_to = item["valid_to"]
+                    identifier.position = item["position"]
+                    identifier.save()
+                    created_identifiers[item["ref"]] = identifier
+                    continue
             created_identifiers[item["ref"]] = BusinessEntityIdentifierRecord.objects.create(
                 business_entity=created_entities[item["business_entity_ref"]],
                 identifier_type=item["identifier_type"],
@@ -2245,6 +2284,9 @@ def _import_business_registry_csv_rows(rows):
             created_counts["identifiers"] += 1
 
         for item in names:
+            identifier_record = created_identifiers[item["identifier_ref"]]
+            if identifier_record.pk in protected_identifier_ids:
+                continue
             LegalEntityRecord.objects.create(
                 attribute=LegalEntityRecord.ATTRIBUTE_NAME,
                 identifier_record=created_identifiers[item["identifier_ref"]],
@@ -2264,9 +2306,12 @@ def _import_business_registry_csv_rows(rows):
             created_counts["names"] += 1
 
         for item in addresses:
+            address_identifier = created_identifiers[item["identifier_ref"]]
+            if address_identifier.pk in protected_identifier_ids:
+                continue
             LegalEntityRecord.objects.create(
                 attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS,
-                identifier_record=created_identifiers[item["identifier_ref"]],
+                identifier_record=address_identifier,
                 registration_country=item["registration_country"],
                 registration_region=item["registration_region"],
                 record_date=item["record_date"],
@@ -3579,6 +3624,10 @@ def ber_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def ber_delete(request, pk: int):
+    from group_app.registry_sync import GROUP_CHAIN_LOCKED_MESSAGE, is_group_owned_business_entity
+
+    if is_group_owned_business_entity(pk):
+        return _validation_error(GROUP_CHAIN_LOCKED_MESSAGE)
     get_object_or_404(BusinessEntityRecord, pk=pk).delete()
     return _render_ber_updated(request, affected=["bei-select", "ler-select", "bea-select", "brl-select"])
 
@@ -3683,7 +3732,11 @@ def bei_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def bei_delete(request, pk: int):
+    from group_app.registry_sync import GROUP_CHAIN_LOCKED_MESSAGE, is_group_primary_identifier
+
     item = get_object_or_404(BusinessEntityIdentifierRecord, pk=pk)
+    if is_group_primary_identifier(item):
+        return _validation_error(GROUP_CHAIN_LOCKED_MESSAGE)
     if item.business_entity.identifiers.exclude(pk=item.pk).count() == 0:
         return _validation_error(
             "Нельзя удалить последнюю запись из \"Реестр идентификаторов\": у каждой бизнес-сущности должен быть как минимум один идентификатор."
@@ -4700,7 +4753,11 @@ def ler_form_edit(request, pk: int):
 @user_passes_test(staff_required)
 @require_POST
 def ler_delete(request, pk: int):
+    from group_app.registry_sync import GROUP_CHAIN_LOCKED_MESSAGE, is_group_owned_name_record
+
     item = get_object_or_404(LegalEntityRecord, pk=pk, attribute=LegalEntityRecord.ATTRIBUTE_NAME)
+    if is_group_owned_name_record(item):
+        return _validation_error(GROUP_CHAIN_LOCKED_MESSAGE)
     if item.identifier_record_id and LegalEntityRecord.objects.filter(identifier_record_id=item.identifier_record_id).exclude(pk=item.pk).count() == 0:
         return _validation_error(
             "Нельзя удалить последнюю связанную запись: у каждого идентификатора должна быть как минимум одна запись в \"Реестр наименований/Реестр юридических адресов\"."
@@ -4865,6 +4922,8 @@ def ler_csv_upload(request):
     countries_by_alpha2 = {c.alpha2.strip().upper(): c for c in OKSMCountry.objects.all() if c.alpha2}
     countries_by_alpha3 = {c.alpha3.strip().upper(): c for c in OKSMCountry.objects.all() if c.alpha3}
 
+    from group_app.registry_sync import is_group_owned_name_record, is_group_primary_identifier
+
     author = _ler_record_author(request.user)
     today = date_type.today()
 
@@ -4923,6 +4982,40 @@ def ler_csv_upload(request):
                 attribute=LegalEntityRecord.ATTRIBUTE_NAME,
                 short_name__iexact=short_name,
             ).first()
+            if existing and is_group_owned_name_record(existing):
+                changed_fields = []
+                if effective_region and effective_region != (existing.registration_region or ""):
+                    changed_fields.append(
+                        f'Регион: «{existing.registration_region or "—"}» → «{effective_region}»'
+                    )
+                    existing.registration_region = effective_region
+                if name_received_date is not None and name_received_date != existing.name_received_date:
+                    old_d = existing.name_received_date.strftime("%d.%m.%Y") if existing.name_received_date else "—"
+                    changed_fields.append(
+                        f'Дата получения наим.: «{old_d}» → «{name_received_date.strftime("%d.%m.%Y")}»'
+                    )
+                    existing.name_received_date = name_received_date
+                if name_changed_date is not None and name_changed_date != existing.name_changed_date:
+                    old_d = existing.name_changed_date.strftime("%d.%m.%Y") if existing.name_changed_date else "—"
+                    changed_fields.append(
+                        f'Дата смены наим.: «{old_d}» → «{name_changed_date.strftime("%d.%m.%Y")}»'
+                    )
+                    existing.name_changed_date = name_changed_date
+                if changed_fields:
+                    existing.record_date = record_date_csv or today
+                    existing.record_author = record_author_csv or author
+                    existing.save()
+                    conflicts.append(
+                        f'Строка {i}: «{short_name}» — обновлено: {"; ".join(changed_fields)}. '
+                        "Поля состава группы не изменены."
+                    )
+                    updated_count += 1
+                else:
+                    skipped_count += 1
+                    conflicts.append(
+                        f'Строка {i}: «{short_name}» — юрлицо из состава группы, заблокированные поля не изменены.'
+                    )
+                continue
             if existing:
                 changed_fields = []
                 field_map = {
@@ -4973,6 +5066,12 @@ def ler_csv_upload(request):
                 continue
 
             matched_identifier = find_identifier_for_registration_number(registration_number)
+            if is_group_primary_identifier(matched_identifier):
+                skipped_count += 1
+                conflicts.append(
+                    f'Строка {i}: «{short_name}» — юрлицо из состава группы, заблокированные поля не изменены.'
+                )
+                continue
             created = LegalEntityRecord.objects.create(
                 attribute=LegalEntityRecord.ATTRIBUTE_NAME,
                 short_name=short_name,

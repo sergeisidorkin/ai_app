@@ -37,6 +37,7 @@ from .models import (
     PositionRecord,
     ResidenceAddressRecord,
     SpecialtyRecord,
+    parse_prs_id,
 )
 from experts_app.models import ExpertSpecialty
 
@@ -706,6 +707,106 @@ def prs_autocomplete(request):
     return JsonResponse({"results": results, "total_count": queryset.count()})
 
 
+def _dispatch_organization_details(short_name):
+    from classifiers_app.models import LegalEntityRecord
+
+    organization = (short_name or "").strip()
+    if not organization:
+        return {}
+    matches = list(
+        LegalEntityRecord.objects.filter(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            is_active=True,
+            short_name__iexact=organization,
+        ).select_related("registration_country")[:2]
+    )
+    if len(matches) != 1:
+        return {}
+    match = matches[0]
+    registration_date = ""
+    if match.registration_date:
+        registration_date = match.registration_date.strftime("%d.%m.%Y")
+    return {
+        "country_id": match.registration_country_id or "",
+        "identifier": match.identifier or "",
+        "registration_number": match.registration_number or "",
+        "registration_date": registration_date,
+        "identifier_record_id": match.identifier_record_id or "",
+    }
+
+
+@login_required
+@require_http_methods(["GET"])
+def prs_dispatch_search(request):
+    query = str(request.GET.get("q") or "").strip()
+    if not query:
+        return JsonResponse({"results": [], "total_count": 0})
+
+    def token_match(value):
+        folded = value.casefold()
+        variants = {value, folded, folded.capitalize(), " ".join(part.capitalize() for part in folded.split())}
+        condition = Q()
+        for variant in variants:
+            if not variant:
+                continue
+            condition |= (
+                Q(last_name__icontains=variant)
+                | Q(first_name__icontains=variant)
+                | Q(emails__email__icontains=variant)
+            )
+        return condition
+
+    person_filter = Q()
+    for token in query.split():
+        person_filter &= token_match(token)
+    people = (
+        PersonRecord.objects.filter(person_filter)
+        .distinct()
+        .prefetch_related("emails", "positions")
+        .order_by("last_name", "first_name", "middle_name", "position", "id")[:20]
+    )
+    results = []
+    for person in people:
+        emails = [item for item in person.emails.all() if (item.email or "").strip() and item.is_active]
+        if not emails:
+            emails = [item for item in person.emails.all() if (item.email or "").strip()]
+        positions = list(person.positions.all())
+        position = next((item for item in positions if item.is_active), None)
+        if position is None and positions:
+            position = positions[0]
+        organization = position.organization_short_name if position else ""
+        job_title = position.job_title if position else ""
+        organization_details = _dispatch_organization_details(organization)
+        full_name = " ".join(
+            part for part in [person.last_name, person.first_name, person.middle_name] if (part or "").strip()
+        ).strip()
+        for email in emails:
+            if len(results) >= 10:
+                break
+            label = f"{full_name} — {email.email}" if full_name else email.email
+            results.append(
+                {
+                    "person_id": person.pk,
+                    "email_record_id": email.pk,
+                    "position_record_id": position.pk if position else "",
+                    "last_name": person.last_name or "",
+                    "first_name": person.first_name or "",
+                    "middle_name": person.middle_name or "",
+                    "email": email.email,
+                    "organization_short_name": organization,
+                    "job_title": job_title,
+                    "label": label,
+                    **organization_details,
+                }
+            )
+        if len(results) >= 10:
+            break
+    from users_app.contact_sync import annotate_staff_locked_contacts
+
+    annotate_staff_locked_contacts(results)
+    return JsonResponse({"results": results, "total_count": len(results)})
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET"])
@@ -861,14 +962,7 @@ def _parse_prs_csv_birth_date(raw_value):
 
 
 def _parse_prs_csv_id(raw_value):
-    value = (raw_value or "").strip().upper()
-    if not value:
-        return None
-    if value.endswith("-PRS"):
-        value = value[:-4]
-    if value.isdigit():
-        return int(value)
-    return None
+    return parse_prs_id(raw_value)
 
 
 def _format_prs_csv_birth_date(value):

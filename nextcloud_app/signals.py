@@ -61,7 +61,65 @@ def _schedule_contract_share_revoke(user_id: int | None, folder_path: str) -> No
     transaction.on_commit(_run)
 
 
-from projects_app.models import Performer  # noqa: E402
+from projects_app.models import Performer, ProjectRegistration  # noqa: E402
+
+_WORKSPACE_POSITION_FIELDS = (
+    "project_manager",
+    "project_manager_prs_id",
+    "project_coordinator",
+    "project_coordinator_prs_id",
+)
+
+
+def _workspace_position_snapshot(registration) -> dict:
+    return {
+        field: (getattr(registration, field, "") or "")
+        for field in _WORKSPACE_POSITION_FIELDS
+    }
+
+
+@receiver(pre_save, sender=ProjectRegistration)
+def remember_previous_workspace_positions(sender, instance, raw=False, **kwargs):
+    if raw or not instance.pk:
+        instance._previous_workspace_positions = {}
+        return
+    instance._previous_workspace_positions = (
+        sender.objects.filter(pk=instance.pk).values(*_WORKSPACE_POSITION_FIELDS).first()
+        or {}
+    )
+
+
+@receiver(post_save, sender=ProjectRegistration)
+def grant_workspace_access_on_position_assignment(
+    sender,
+    instance,
+    raw=False,
+    update_fields=None,
+    **kwargs,
+):
+    if raw:
+        return
+    if update_fields is not None and set(update_fields).isdisjoint(_WORKSPACE_POSITION_FIELDS):
+        return
+    previous = getattr(instance, "_previous_workspace_positions", {}) or {}
+    current = _workspace_position_snapshot(instance)
+    if all((previous.get(field) or "") == current[field] for field in _WORKSPACE_POSITION_FIELDS):
+        return
+
+    project_id = instance.pk
+
+    def _run():
+        from .workspace import grant_existing_project_workspace_editor_access
+
+        try:
+            grant_existing_project_workspace_editor_access(project_id)
+        except Exception:
+            logger.exception(
+                "Failed to grant Nextcloud workspace access after position assignment on project %s",
+                project_id,
+            )
+
+    transaction.on_commit(_run)
 
 
 @receiver(pre_save, sender=Performer)

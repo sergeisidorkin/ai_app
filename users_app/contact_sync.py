@@ -1,6 +1,7 @@
 from datetime import date as date_type
 
-from django.db.models import Max
+from django.contrib.auth import get_user_model
+from django.db.models import Max, Q
 
 from contacts_app.models import (
     CitizenshipRecord,
@@ -325,6 +326,138 @@ def sync_employee_contacts(employee, *, actor=None):
     employee.managed_position_record = position
     person.user_kind = _refresh_person_user_kind(employee.__class__, person.pk)
     employee._previous_person_record_id = person.pk
+
+
+def _optional_pk(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _contact_attr(row, name):
+    if isinstance(row, dict):
+        return row.get(name)
+    return getattr(row, name, None)
+
+
+def staff_locked_contact_matches(*, emails=(), person_ids=(), email_record_ids=()):
+    from .models import Employee
+
+    email_keys = []
+    seen_emails = set()
+    for email in emails:
+        key = str(email or "").strip().casefold()
+        if not key or key in seen_emails:
+            continue
+        seen_emails.add(key)
+        email_keys.append(key)
+    locked_emails = set()
+    if email_keys:
+        query = Q()
+        for key in email_keys:
+            query |= Q(email__iexact=key)
+        locked_emails = {
+            str(email or "").strip().casefold()
+            for email in get_user_model().objects.filter(is_staff=True).filter(query).values_list("email", flat=True)
+            if str(email or "").strip()
+        }
+    person_id_set = {pk for pk in (_optional_pk(value) for value in person_ids) if pk}
+    email_record_id_set = {pk for pk in (_optional_pk(value) for value in email_record_ids) if pk}
+    locked_person_ids = set()
+    if person_id_set:
+        locked_person_ids = set(
+            Employee.objects.filter(person_record_id__in=person_id_set, user__is_staff=True).values_list(
+                "person_record_id",
+                flat=True,
+            )
+        )
+    locked_email_record_ids = set()
+    if email_record_id_set:
+        locked_email_record_ids = set(
+            Employee.objects.filter(
+                managed_email_record_id__in=email_record_id_set,
+                user__is_staff=True,
+            ).values_list("managed_email_record_id", flat=True)
+        )
+    return {
+        "emails": locked_emails,
+        "person_ids": locked_person_ids,
+        "email_record_ids": locked_email_record_ids,
+    }
+
+
+def contact_fields_are_staff_locked(*, email="", person_id=None, email_record_id=None, matches=None):
+    if matches is None:
+        matches = staff_locked_contact_matches(
+            emails=[email],
+            person_ids=[person_id],
+            email_record_ids=[email_record_id],
+        )
+    email_key = str(email or "").strip().casefold()
+    person_pk = _optional_pk(person_id)
+    email_record_pk = _optional_pk(email_record_id)
+    if email_key and email_key in matches["emails"]:
+        return True
+    if person_pk and person_pk in matches["person_ids"]:
+        return True
+    if email_record_pk and email_record_pk in matches["email_record_ids"]:
+        return True
+    return False
+
+
+def annotate_staff_locked_contacts(rows):
+    rows = list(rows)
+    matches = staff_locked_contact_matches(
+        emails=[_contact_attr(row, "email") for row in rows],
+        person_ids=[_contact_attr(row, "person_id") for row in rows],
+        email_record_ids=[_contact_attr(row, "email_record_id") for row in rows],
+    )
+    for row in rows:
+        locked = contact_fields_are_staff_locked(
+            email=_contact_attr(row, "email"),
+            person_id=_contact_attr(row, "person_id"),
+            email_record_id=_contact_attr(row, "email_record_id"),
+            matches=matches,
+        )
+        if isinstance(row, dict):
+            row["contact_fields_locked"] = locked
+        else:
+            row.contact_fields_locked = locked
+    return rows
+
+
+def staff_employee_for_dispatch_contact(*, email="", person_id=None, email_record_id=None):
+    from .models import Employee
+
+    queryset = Employee.objects.select_related(
+        "user",
+        "person_record",
+        "managed_email_record",
+        "managed_position_record",
+    ).filter(user__is_staff=True)
+    normalized_email = str(email or "").strip()
+    if normalized_email:
+        match = queryset.filter(user__email__iexact=normalized_email).first()
+        if match is not None:
+            return match
+    email_record_pk = _optional_pk(email_record_id)
+    if email_record_pk:
+        match = queryset.filter(managed_email_record_id=email_record_pk).first()
+        if match is not None:
+            return match
+    person_pk = _optional_pk(person_id)
+    if person_pk:
+        match = queryset.filter(person_record_id=person_pk).first()
+        if match is not None:
+            return match
+    if normalized_email:
+        match = queryset.filter(managed_email_record__email__iexact=normalized_email).first()
+        if match is not None:
+            return match
+    return None
 
 
 def detach_employee_contacts(employee, *, previous_person_id=None):

@@ -12002,6 +12002,114 @@ class ReportSubmissionTests(TestCase):
         self.assertIn("1\u201325 из 26", narrowed.content.decode())
         self.assertIn('value="25" selected', narrowed.content.decode())
 
+    def test_report_asset_filter_lists_assets_and_limits_rows(self):
+        from urllib.parse import urlencode
+
+        self._create_multi_asset_performers()
+        Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name="",
+            typical_section=self.mrk,
+            position=3,
+        )
+        Performer.objects.create(
+            registration=self.project,
+            executor=self.executor,
+            asset_name="Карьер, Южный",
+            typical_section=self.ecn,
+            position=4,
+        )
+        other = ProjectRegistration.objects.create(
+            number=8103,
+            type=self.product,
+            name="Чужой проект",
+            year=2026,
+            status="В работе",
+        )
+        Performer.objects.create(
+            registration=other,
+            executor=self.executor,
+            asset_name="Другой актив",
+            typical_section=self.mrk,
+        )
+
+        partial = self.client.get(reverse("performers_partial"))
+        self.assertEqual(partial.status_code, 200)
+        section = self._report_section_html(partial)
+        self.assertLess(
+            section.index('id="report-submission-project-filter-toggle"'),
+            section.index('id="report-submission-asset-filter-toggle"'),
+        )
+        self.assertLess(
+            section.index('id="report-submission-asset-filter-toggle"'),
+            section.index('id="report-submission-colpicker-btn"'),
+        )
+        self.assertIn("Активы: <span", section)
+        self.assertIn("Все активы", section)
+        self.assertIn('id="report-submission-asset-list"', section)
+        self.assertIn('value="__all__"', section)
+        names = self._report_json(section, "report-submission-asset-names")
+        self.assertEqual(names, ["Карьер", "Карьер, Южный", "Фабрика", "Другой актив"])
+        self.assertEqual(self._report_json(section, "report-submission-selected-assets"), [])
+        self.assertIn('data-asset-name=""', section)
+
+        filtered = self.client.get(reverse("report_submission_table"), {"asset": "Фабрика"})
+        filtered_html = filtered.content.decode()
+        self.assertIn('data-asset-name="Фабрика"', filtered_html)
+        self.assertNotIn('data-asset-name="Карьер"', filtered_html)
+        self.assertNotIn('data-asset-name=""', filtered_html)
+        self.assertNotIn('data-asset-name="Другой актив"', filtered_html)
+        self.assertEqual(self._report_json(filtered_html, "report-submission-asset-names"), names)
+        self.assertEqual(self._report_json(filtered_html, "report-submission-selected-assets"), ["Фабрика"])
+        self.assertIn('value="100" selected', filtered_html)
+        self.assertIn(urlencode([("asset", "Фабрика")]), filtered_html)
+
+        comma = self.client.get(reverse("report_submission_table"), {"asset": "Карьер, Южный"})
+        comma_html = comma.content.decode()
+        self.assertIn('data-asset-name="Карьер, Южный"', comma_html)
+        self.assertNotIn('data-asset-name="Фабрика"', comma_html)
+        self.assertNotIn('data-asset-name="Карьер"', comma_html)
+
+        unknown = self.client.get(reverse("report_submission_table"), {"asset": "Нет такого"})
+        unknown_html = unknown.content.decode()
+        self.assertIn('data-asset-name="Карьер"', unknown_html)
+        self.assertIn('data-asset-name="Фабрика"', unknown_html)
+        self.assertEqual(self._report_json(unknown_html, "report-submission-selected-assets"), [])
+        self.assertIn('value="25" selected', unknown_html)
+
+        scoped = self.client.get(
+            reverse("report_submission_table"),
+            {"project": self.project.pk, "asset": "Другой актив"},
+        )
+        scoped_html = scoped.content.decode()
+        self.assertIn('data-asset-name="Карьер"', scoped_html)
+        self.assertNotIn("Другой актив", scoped_html)
+        self.assertEqual(
+            self._report_json(scoped_html, "report-submission-asset-names"),
+            ["Карьер", "Карьер, Южный", "Фабрика"],
+        )
+
+        kept = self.client.get(
+            reverse("performers_partial"),
+            {"reports_asset": json.dumps(["Фабрика"], ensure_ascii=False)},
+        )
+        kept_section = self._report_section_html(kept)
+        self.assertIn('data-asset-name="Фабрика"', kept_section)
+        self.assertNotIn('data-asset-name="Карьер"', kept_section)
+        self.assertEqual(
+            self._report_json(kept_section, "report-submission-selected-assets"),
+            ["Фабрика"],
+        )
+
+    def _report_json(self, html, element_id):
+        match = re.search(
+            rf'<script id="{element_id}" type="application/json">(.*?)</script>',
+            html,
+        )
+        self.assertIsNotNone(match, element_id)
+        return json.loads(match.group(1))
+
     def test_workspace_folders_save_rejects_duplicate_reports_role(self):
         response = self.client.post(
             reverse("workspace_folders_save"),
@@ -12398,6 +12506,8 @@ class ReportSubmissionTests(TestCase):
         self.assertIn('id="report-submission-source"', html)
         self.assertIn("Локальная папка", html)
         self.assertIn('id="report-submission-local-path"', html)
+        self.assertNotIn('for="report-submission-local-path"', html)
+        self.assertNotIn("Абсолютный путь к папке", html)
 
     @override_settings(REPORT_CHECK_ALLOW_LOCAL_FOLDER=False)
     def test_performers_partial_hides_local_folder_source_when_disabled(self):

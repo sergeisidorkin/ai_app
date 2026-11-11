@@ -26,12 +26,186 @@ from core.cloud_storage import (
 PROPOSAL_DOCUMENTS_SUBDIR = "proposal_documents"
 PROPOSAL_DOCX_SOURCE_TOKEN_SALT = "proposals_app.proposal_docx_source"
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+LOCAL_PROPOSAL_PATH_PREFIX = "local:"
 
 # CI can import this module through either `proposals_app.document_generation`
 # or `ai_app.proposals_app.document_generation`. Keep both names bound to the
 # same module object so patch() targets stay stable.
 sys.modules.setdefault("proposals_app.document_generation", sys.modules[__name__])
 sys.modules.setdefault("ai_app.proposals_app.document_generation", sys.modules[__name__])
+
+
+class LocalProposalFolderError(Exception):
+    """Путь локальной папки нельзя использовать для генерации ТКП."""
+
+
+def local_proposal_folder_enabled() -> bool:
+    return bool(getattr(settings, "PROPOSAL_ALLOW_LOCAL_FOLDER", False))
+
+
+def local_proposal_folder_placeholder() -> str:
+    return str(Path.home() / "Desktop")
+
+
+def encode_local_proposal_path(path: Path) -> str:
+    return f"{LOCAL_PROPOSAL_PATH_PREFIX}{path}"
+
+
+def parse_local_proposal_path(stored_path: str) -> str:
+    raw = stored_path or ""
+    if not raw.startswith(LOCAL_PROPOSAL_PATH_PREFIX):
+        return ""
+    return raw[len(LOCAL_PROPOSAL_PATH_PREFIX):]
+
+
+def is_local_proposal_path(stored_path: str) -> bool:
+    return stored_path.startswith(LOCAL_PROPOSAL_PATH_PREFIX) if stored_path else False
+
+
+def _local_proposal_roots():
+    roots = getattr(settings, "REPORT_CHECK_LOCAL_ROOTS", ()) or ()
+    if not roots:
+        roots = getattr(settings, "DSH_SORT_LOCAL_ROOTS", ()) or ()
+    return roots
+
+
+def _local_proposal_path_is_allowed(resolved: Path) -> bool:
+    for raw in _local_proposal_roots():
+        try:
+            root = Path(raw).expanduser().resolve()
+        except OSError:
+            continue
+        try:
+            resolved.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _normalize_local_folder_text(raw_path) -> str:
+    text = str(raw_path or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        text = text[1:-1].strip()
+    return text
+
+
+def resolve_local_proposal_folder(raw_path) -> Path:
+    if not local_proposal_folder_enabled():
+        raise LocalProposalFolderError("Локальная папка на этом стенде выключена.")
+    text = _normalize_local_folder_text(raw_path)
+    if not text:
+        raise LocalProposalFolderError("Укажите путь к локальной папке.")
+    try:
+        resolved = Path(text).expanduser().resolve()
+    except OSError as exc:
+        raise LocalProposalFolderError(f"Не удалось прочитать путь: {exc}") from exc
+    if resolved.exists() and not resolved.is_dir():
+        raise LocalProposalFolderError("Укажите путь к папке, а не к файлу.")
+    if not _local_proposal_path_is_allowed(resolved):
+        raise LocalProposalFolderError(
+            "Путь вне разрешённых корней локального тестирования. "
+            "Укажите каталог внутри домашней папки пользователя или папки проекта."
+        )
+    if not resolved.is_dir():
+        raise LocalProposalFolderError(f"Папка не найдена: {resolved}")
+    return resolved
+
+
+def resolve_proposal_generation_source(request):
+    source_kind = (request.POST.get("source_kind") or "cloud").strip() or "cloud"
+    if source_kind not in {"cloud", "local"}:
+        source_kind = "cloud"
+    if source_kind != "local":
+        return "cloud", None
+    return "local", resolve_local_proposal_folder(request.POST.get("local_folder_path") or "")
+
+
+def resolve_stored_local_proposal_file(stored_path: str) -> Path | None:
+    if not local_proposal_folder_enabled():
+        return None
+    raw = parse_local_proposal_path(stored_path)
+    if not raw:
+        return None
+    try:
+        path = Path(raw).expanduser().resolve()
+    except OSError:
+        return None
+    if not path.is_file() or not _local_proposal_path_is_allowed(path):
+        return None
+    return path
+
+
+def _checked_local_proposal_file(stored_path: str) -> Path:
+    if not local_proposal_folder_enabled():
+        raise LocalProposalFolderError("Локальная папка на этом стенде выключена.")
+    raw = parse_local_proposal_path(stored_path)
+    if not raw:
+        raise LocalProposalFolderError("Некорректный путь к локальному файлу ТКП.")
+    try:
+        path = Path(raw).expanduser().resolve()
+    except OSError as exc:
+        raise LocalProposalFolderError(f"Не удалось прочитать путь: {exc}") from exc
+    if not _local_proposal_path_is_allowed(path):
+        raise LocalProposalFolderError(
+            "Путь вне разрешённых корней локального тестирования. "
+            "Укажите каталог внутри домашней папки пользователя или папки проекта."
+        )
+    if path.exists() and not path.is_file():
+        raise LocalProposalFolderError("Укажите путь к файлу, а не к папке.")
+    if not path.parent.is_dir():
+        raise LocalProposalFolderError(f"Папка не найдена: {path.parent}")
+    return path
+
+
+def _local_file_in_folder(folder: Path, file_name: str) -> Path:
+    name = Path(str(file_name or "").replace("\\", "/")).name
+    if not name or name in {".", ".."}:
+        raise LocalProposalFolderError("Некорректное имя файла ТКП.")
+    try:
+        path = (Path(folder) / name).resolve()
+        path.relative_to(Path(folder).resolve())
+    except (OSError, ValueError) as exc:
+        raise LocalProposalFolderError("Некорректный путь к локальному файлу ТКП.") from exc
+    if not _local_proposal_path_is_allowed(path):
+        raise LocalProposalFolderError(
+            "Путь вне разрешённых корней локального тестирования. "
+            "Укажите каталог внутри домашней папки пользователя или папки проекта."
+        )
+    return path
+
+
+def store_generated_documents_locally(
+    proposal,
+    docx_bytes: bytes,
+    folder: Path,
+    pdf_bytes: bytes | None = None,
+) -> dict[str, str]:
+    output_dir = Path(folder).expanduser().resolve()
+    base_name = build_proposal_document_base_name(proposal)
+    docx_name = f"{base_name}.docx"
+    docx_path = _local_file_in_folder(output_dir, docx_name)
+    try:
+        docx_path.write_bytes(docx_bytes)
+    except OSError as exc:
+        raise LocalProposalFolderError(f"Не удалось сохранить файл в локальную папку: {exc}") from exc
+    result = {
+        "docx_name": docx_name,
+        "docx_path": encode_local_proposal_path(docx_path),
+        "output_dir": str(output_dir),
+        "pdf_name": "",
+        "pdf_path": "",
+    }
+    if pdf_bytes is not None:
+        pdf_name = f"{base_name}.pdf"
+        pdf_path = _local_file_in_folder(output_dir, pdf_name)
+        try:
+            pdf_path.write_bytes(pdf_bytes)
+        except OSError as exc:
+            raise LocalProposalFolderError(f"Не удалось сохранить файл в локальную папку: {exc}") from exc
+        result["pdf_name"] = pdf_name
+        result["pdf_path"] = encode_local_proposal_path(pdf_path)
+    return result
 
 
 def ensure_proposal_documents_root() -> Path:
@@ -145,6 +319,9 @@ def _get_cloud_upload_user(user):
 
 
 def get_generated_docx_path(proposal) -> Path | None:
+    stored_link = str(getattr(proposal, "docx_file_link", "") or "")
+    if is_local_proposal_path(stored_link):
+        return resolve_stored_local_proposal_file(stored_link)
     if not proposal.docx_file_name:
         return None
     root = ensure_proposal_documents_root()
@@ -315,16 +492,26 @@ def convert_docx_source_to_pdf(*, source_url: str, source_name: str = "proposal.
     return pdf_bytes
 
 
+def get_generated_pdf_path(proposal) -> Path | None:
+    return resolve_stored_local_proposal_file(str(getattr(proposal, "pdf_file_link", "") or ""))
+
+
 def load_existing_proposal_docx_bytes(user, proposal) -> bytes:
     docx_name = str(getattr(proposal, "docx_file_name", "") or "").strip()
     if not docx_name:
         raise RuntimeError("Для ТКП не указан DOCX-файл.")
 
+    raw_link = str(getattr(proposal, "docx_file_link", "") or "").strip()
+    if is_local_proposal_path(raw_link):
+        local_path = resolve_stored_local_proposal_file(raw_link)
+        if local_path is None:
+            raise RuntimeError("Локальная копия DOCX-файла не найдена.")
+        return local_path.read_bytes()
+
     local_docx_path = get_generated_docx_path(proposal)
     if local_docx_path and local_docx_path.exists():
         return local_docx_path.read_bytes()
 
-    raw_link = str(getattr(proposal, "docx_file_link", "") or "").strip()
     if not raw_link:
         raise RuntimeError("Для ТКП не задан путь к DOCX-файлу.")
 
@@ -347,6 +534,22 @@ def load_existing_proposal_docx_bytes(user, proposal) -> bytes:
 
 
 def store_generated_pdf_document(user, proposal, pdf_bytes: bytes) -> dict[str, str]:
+    raw_docx_link = str(getattr(proposal, "docx_file_link", "") or "").strip()
+    if is_local_proposal_path(raw_docx_link):
+        docx_path = _checked_local_proposal_file(raw_docx_link)
+        docx_name = str(getattr(proposal, "docx_file_name", "") or "").strip() or docx_path.name
+        pdf_name = f"{Path(docx_name).stem}.pdf"
+        pdf_path = _local_file_in_folder(docx_path.parent, pdf_name)
+        try:
+            pdf_path.write_bytes(pdf_bytes)
+        except OSError as exc:
+            raise LocalProposalFolderError(f"Не удалось сохранить файл в локальную папку: {exc}") from exc
+        return {
+            "pdf_name": pdf_name,
+            "pdf_path": encode_local_proposal_path(pdf_path),
+            "output_dir": str(docx_path.parent),
+        }
+
     paths = build_proposal_workspace_pdf_paths(proposal)
     cloud_user = _get_cloud_upload_user(user)
     if not cloud_user:
@@ -370,6 +573,18 @@ def store_existing_proposal_docx_bytes(user, proposal, docx_bytes: bytes) -> dic
     docx_name = str(getattr(proposal, "docx_file_name", "") or "").strip()
     raw_link = str(getattr(proposal, "docx_file_link", "") or "").strip()
     media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+
+    if is_local_proposal_path(raw_link):
+        path = _checked_local_proposal_file(raw_link)
+        try:
+            path.write_bytes(docx_bytes)
+        except OSError as exc:
+            raise LocalProposalFolderError(f"Не удалось сохранить файл в локальную папку: {exc}") from exc
+        return {
+            "docx_name": docx_name or path.name,
+            "docx_path": encode_local_proposal_path(path),
+            "output_dir": str(path.parent),
+        }
 
     if raw_link:
         if media_url and raw_link.startswith(media_url):

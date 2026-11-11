@@ -29,6 +29,7 @@ from experts_app.models import (
 )
 from experts_app.project_permissions import (
     DEFAULT_PROJECT_PERMISSIONS,
+    PERM_NEXTCLOUD_EDITOR,
     PERM_REVIEW_KP,
     PERM_REVIEW_RP,
     PERM_UPLOAD_FREE_SECTIONS,
@@ -78,11 +79,328 @@ class ExpertProfileUiTests(TestCase):
         self.assertNotContains(response, "Яндекс Почта")
         self.assertNotContains(response, 'name="yandex_mail"', html=False)
 
+    def test_experts_partial_paginates_with_page_size_choices(self):
+        User = get_user_model()
+        for index in range(26):
+            user = User.objects.create_user(
+                username=f"epr-page-{index}",
+                password="secret",
+                email=f"epr-page-{index}@example.com",
+                is_staff=True,
+                last_name=f"Page{index:02d}",
+            )
+            Employee.objects.create(user=user)
+
+        first_page = self.client.get(reverse("experts_partial"))
+        self.assertEqual(first_page.status_code, 200)
+        self.assertContains(first_page, "1–25 из 27")
+        self.assertContains(first_page, 'id="policy-page-size-experts-profiles"', html=False)
+        self.assertContains(first_page, '<option value="25" selected>', html=False)
+        self.assertContains(first_page, '<option value="50">', html=False)
+        self.assertContains(first_page, '<option value="100">', html=False)
+        self.assertContains(first_page, '<option value="all">Все</option>', html=False)
+        self.assertContains(first_page, 'hx-target="#experts-pane"', html=False)
+        self.assertContains(first_page, 'hx-swap="outerHTML"', html=False)
+        self.assertEqual(first_page.content.decode().count('id="epr-sel-'), 25)
+
+        second_page = self.client.get(reverse("experts_partial"), {"page": 2})
+        self.assertContains(second_page, "26–27 из 27")
+        self.assertEqual(second_page.content.decode().count('id="epr-sel-'), 2)
+
+        fifty = self.client.get(reverse("experts_partial"), {"page_size": 50})
+        self.assertEqual(fifty.content.decode().count('id="epr-sel-'), 27)
+        self.assertContains(fifty, '<option value="50" selected>', html=False)
+
+        everything = self.client.get(reverse("experts_partial"), {"page_size": "all", "page": 3})
+        self.assertEqual(everything.context["policy_page_size"], "all")
+        self.assertEqual(everything.context["page_obj"].number, 1)
+        self.assertEqual(everything.content.decode().count('id="epr-sel-'), 27)
+        self.assertContains(everything, '<option value="all" selected>Все</option>', html=False)
+
+        invalid = self.client.get(reverse("experts_partial"), {"page_size": "27"})
+        self.assertEqual(invalid.context["policy_page_size"], 25)
+        self.assertEqual(invalid.content.decode().count('id="epr-sel-'), 25)
+
+    def test_experts_partial_full_name_sort_orders_before_pagination(self):
+        User = get_user_model()
+        for last_name, position in (("Яковлев", 2), ("Борисов", 3)):
+            user = User.objects.create_user(
+                username=f"epr-sort-{position}",
+                password="secret",
+                last_name=last_name,
+                is_staff=True,
+            )
+            employee = Employee.objects.create(user=user)
+            ExpertProfile.objects.create(employee=employee, position=position)
+
+        endpoint = reverse("experts_partial")
+
+        def names(response):
+            return [profile.full_name for profile in response.context["profiles"]]
+
+        plain = self.client.get(endpoint)
+        plain_html = plain.content.decode()
+        self.assertEqual(names(plain), ["Иванов Иван Иванович", "Яковлев", "Борисов"])
+        self.assertIn('data-experts-full-name-sort=""', plain_html)
+        self.assertIn("Сортировка выключена", plain_html)
+        self.assertIn("experts-full-name-sort-idle", plain_html)
+        self.assertIn("bi-caret-up", plain_html)
+        self.assertIn("bi-caret-down", plain_html)
+        self.assertNotIn("bi-caret-up-fill", plain_html)
+        self.assertNotIn("bi-caret-down-fill", plain_html)
+        plain_button = re.search(
+            r'data-full-name-sort-btn="1"\s+hx-get="([^"]+)"',
+            plain_html,
+        )
+        self.assertIsNotNone(plain_button)
+        self.assertIn("full_name_sort=asc", plain_button.group(1))
+        self.assertIn("page=1", plain_button.group(1))
+
+        ascending = self.client.get(endpoint, {"full_name_sort": "asc", "page_size": 25})
+        ascending_html = ascending.content.decode()
+        self.assertEqual(names(ascending), ["Борисов", "Иванов Иван Иванович", "Яковлев"])
+        self.assertIn('data-experts-full-name-sort="asc"', ascending_html)
+        self.assertIn("bi-caret-up-fill", ascending_html)
+        self.assertIn("Сортировка по возрастанию", ascending_html)
+        self.assertIn("full_name_sort=asc", ascending_html)
+        self.assertIn('hx-get="/experts/partial/?page=1&amp;full_name_sort=asc"', ascending_html)
+        ascending_button = re.search(
+            r'data-full-name-sort-btn="1"\s+hx-get="([^"]+)"',
+            ascending_html,
+        )
+        self.assertIsNotNone(ascending_button)
+        self.assertIn("full_name_sort=desc", ascending_button.group(1))
+
+        descending = self.client.get(endpoint, {"full_name_sort": "desc"})
+        descending_html = descending.content.decode()
+        self.assertEqual(names(descending), ["Яковлев", "Иванов Иван Иванович", "Борисов"])
+        self.assertIn("bi-caret-down-fill", descending_html)
+        self.assertIn("Сортировка по убыванию", descending_html)
+        descending_button = re.search(
+            r'data-full-name-sort-btn="1"\s+hx-get="([^"]+)"',
+            descending_html,
+        )
+        self.assertIsNotNone(descending_button)
+        self.assertNotIn("full_name_sort=", descending_button.group(1))
+
+        invalid = self.client.get(endpoint, {"full_name_sort": "sideways"})
+        self.assertEqual(names(invalid), names(plain))
+        self.assertNotIn("full_name_sort=sideways", invalid.content.decode())
+
+        experts_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "experts-panels.js"
+        ).read_text()
+        self.assertIn("params.set('full_name_sort', sort);", experts_js)
+
+    def test_experts_specialty_column_edits_like_classifier_executor(self):
+        geology = ExpertSpecialty.objects.create(specialty="Геология ячейки", position=1)
+        mining = ExpertSpecialty.objects.create(specialty="Горное дело ячейки", position=2)
+        ExpertProfileSpecialty.objects.create(profile=self.profile, specialty=geology, rank=1)
+
+        response = self.client.get(reverse("experts_partial"))
+        html = response.content.decode()
+        self.assertIn('data-policy-table-key="expert-profiles"', html)
+        self.assertIn('data-inline-type="specialties"', html)
+        self.assertIn('class="inline-specialty-label">Геология ячейки<', html)
+        self.assertIn('data-specialty-action="add"', html)
+        self.assertIn('data-specialty-action="remove"', html)
+        self.assertIn('data-specialty-action="move"', html)
+        self.assertIn(reverse("epr_profile_specialties_save", args=[self.profile.pk]), html)
+        self.assertIn('"label": "Геология ячейки"', html)
+        self.assertIn('"label": "Горное дело ячейки"', html)
+
+        save = self.client.post(
+            reverse("epr_profile_specialties_save", args=[self.profile.pk]),
+            {"specialty_id": [str(mining.pk), str(geology.pk)]},
+        )
+        self.assertEqual(save.status_code, 200)
+        self.assertTrue(save.json()["ok"])
+        self.assertEqual(
+            list(
+                ExpertProfileSpecialty.objects.filter(profile=self.profile)
+                .order_by("rank")
+                .values_list("specialty_id", "rank")
+            ),
+            [(mining.pk, 1), (geology.pk, 2)],
+        )
+
+        cleared = self.client.post(reverse("epr_profile_specialties_save", args=[self.profile.pk]))
+        self.assertEqual(cleared.status_code, 200)
+        self.assertFalse(ExpertProfileSpecialty.objects.filter(profile=self.profile).exists())
+
+        experts_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "experts-panels.js"
+        ).read_text()
+        self.assertIn("function bindExpertProfileSpecialties(section)", experts_js)
+        self.assertNotIn("item.expertise_direction", experts_js)
+        self.assertIn("Не удалось сохранить специальности.", experts_js)
+        site_css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertIn(
+            "table.clf-truncated td.epr-spec-cell .inline-specialty-row ~ .inline-specialty-row",
+            site_css,
+        )
+        self.assertIn("min-height: 0;", site_css)
+        self.assertIn("#experts-pane #epr-table td.epr-spec-cell .inline-specialty-row", site_css)
+        self.assertNotIn("function lockExpertsProfileColumns(table)", experts_js)
+        self.assertIn('class="epr-spec-sizer"', html)
+
+    def test_experts_partial_specialty_filter_matches_column_values(self):
+        User = get_user_model()
+        geology = ExpertSpecialty.objects.create(specialty="Геология фильтра", position=1)
+        mining = ExpertSpecialty.objects.create(specialty="Горное дело фильтра", position=2)
+
+        def add_profile(last_name, specialties):
+            slug = f"epr-spec-{ExpertProfile.objects.count() + 1}"
+            user = User.objects.create_user(
+                username=slug,
+                password="secret",
+                last_name=last_name,
+                email=f"{slug}@example.com",
+                is_staff=True,
+            )
+            employee = Employee.objects.create(user=user)
+            profile = ExpertProfile.objects.create(employee=employee, position=10)
+            for rank, specialty in enumerate(specialties, start=1):
+                ExpertProfileSpecialty.objects.create(profile=profile, specialty=specialty, rank=rank)
+            return profile
+
+        add_profile("Шахтеров", [mining])
+        for index in range(26):
+            add_profile(f"Геолог{index:02d}", [geology])
+
+        endpoint = reverse("experts_partial")
+
+        def names(response):
+            return [profile.full_name for profile in response.context["profiles"]]
+
+        plain = self.client.get(endpoint, {"page_size": 25})
+        plain_html = plain.content.decode()
+        self.assertEqual(plain.context["policy_page_size"], 25)
+        self.assertEqual(len(names(plain)), 25)
+        self.assertIn("Специальность:", plain_html)
+        self.assertIn("Все специальности", plain_html)
+        self.assertIn('js-experts-specialty-filter-label">Все<', plain_html)
+        self.assertIn(">Геология фильтра<", plain_html)
+        self.assertIn(">Горное дело фильтра<", plain_html)
+        self.assertIn('id="experts-specialty-filter-all"', plain_html)
+        self.assertIn('data-bs-auto-close="outside"', plain_html)
+
+        by_geology = self.client.get(
+            endpoint,
+            {"page_size": 25, "page": 3, "specialty": geology.pk},
+        )
+        geology_names = names(by_geology)
+        geology_html = by_geology.content.decode()
+        self.assertEqual(by_geology.context["policy_page_size"], "all")
+        self.assertEqual(by_geology.context["page_obj"].number, 1)
+        self.assertEqual(len(geology_names), 26)
+        self.assertEqual(by_geology.context["paginator"].count, 26)
+        self.assertNotIn("Иванов Иван Иванович", geology_names)
+        self.assertNotIn("Шахтеров", geology_names)
+        self.assertIn('js-experts-specialty-filter-label">Геология фильтра<', geology_html)
+        self.assertIn("1–26 из 26", geology_html)
+        self.assertContains(by_geology, '<option value="all" selected>Все</option>', html=False)
+        self.assertIn(f"specialty={geology.pk}", geology_html)
+        self.assertIn(f"specialty={geology.pk}", by_geology.context["experts_csv_query"])
+
+        by_mining = self.client.get(endpoint, {"specialty": mining.pk})
+        self.assertEqual(names(by_mining), ["Шахтеров"])
+
+        both = self.client.get(endpoint, {"specialty": [geology.pk, mining.pk]})
+        both_names = names(both)
+        self.assertEqual(len(both_names), 27)
+        self.assertIn("Шахтеров", both_names)
+        self.assertNotIn("Иванов Иван Иванович", both_names)
+        self.assertIn('js-experts-specialty-filter-label">2 выбрано<', both.content.decode())
+
+        invalid = self.client.get(endpoint, {"specialty": 999999})
+        self.assertEqual(len(names(invalid)), 25)
+        self.assertNotIn("specialty=999999", invalid.content.decode())
+        self.assertIn('js-experts-specialty-filter-label">Все<', invalid.content.decode())
+
+        sorted_filtered = self.client.get(
+            endpoint,
+            {"specialty": geology.pk, "full_name_sort": "asc"},
+        )
+        self.assertEqual(names(sorted_filtered)[0], "Геолог00")
+        sort_button = re.search(
+            r'data-full-name-sort-btn="1"\s+hx-get="([^"]+)"',
+            sorted_filtered.content.decode(),
+        )
+        self.assertIsNotNone(sort_button)
+        self.assertIn(f"specialty={geology.pk}", sort_button.group(1))
+        self.assertIn("full_name_sort=desc", sort_button.group(1))
+
+        csv_response = self.client.get(reverse("epr_csv_download"), {"specialty": mining.pk})
+        csv_text = csv_response.content.decode("utf-8-sig")
+        self.assertIn("Шахтеров", csv_text)
+        self.assertNotIn("Геолог00", csv_text)
+        self.assertNotIn("Иванов Иван Иванович", csv_text)
+
+        experts_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "experts-panels.js"
+        ).read_text()
+        self.assertIn("params.append('specialty', specialtyId);", experts_js)
+        self.assertIn("params.append('specialty', checkbox.value);", experts_js)
+        experts_css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertIn(
+            "#experts-pane .table-section-header:has([data-experts-specialty-filter] .dropdown-menu.show)",
+            experts_css,
+        )
+
+    def test_experts_table_view_state_is_saved_in_user_local_storage(self):
+        panel = (
+            Path(__file__).resolve().parent / "templates" / "experts_app" / "panel.html"
+        ).read_text()
+        experts_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "experts-panels.js"
+        ).read_text()
+        prefs_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "ui-prefs.js"
+        ).read_text()
+
+        self.assertIn('prefKey: \'experts:hiddenCols\'', panel)
+        self.assertIn("hx-swap=\"outerHTML\"", panel)
+        self.assertIn("P.get('experts:wrapActive', true)", experts_js)
+        self.assertIn("P.set('experts:wrapActive', active)", experts_js)
+        self.assertIn("var EXPERTS_SORT_PREF_KEY = 'experts:fullNameSort';", experts_js)
+        self.assertIn("var EXPERTS_SPECIALTY_PREF_KEY = 'experts:specialtyFilter';", experts_js)
+        self.assertIn("P.set(EXPERTS_SORT_PREF_KEY, sort === 'asc' || sort === 'desc' ? sort : '');", experts_js)
+        self.assertIn("P.set(EXPERTS_SPECIALTY_PREF_KEY, specialties);", experts_js)
+        self.assertIn("params.append('specialty', specialtyId);", experts_js)
+        self.assertIn("params.set('full_name_sort', sort);", experts_js)
+        self.assertIn("persistExpertsTableView(e.target);", experts_js)
+        self.assertIn("window.__uiPrefScope", prefs_js)
+        self.assertIn("return PREFIX + scope() + ':' + key;", prefs_js)
+
     def test_experts_partial_does_not_render_yandex_mail_column(self):
         response = self.client.get(reverse("experts_partial"))
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "Яндекс Почта")
+
+    def test_experts_partial_email_column_has_gray_quick_edit(self):
+        response = self.client.get(reverse("experts_partial"))
+        html = response.content.decode()
+        email_at = html.index('class="text-nowrap epr-email-cell" data-col="2"')
+        email_cell = html[email_at:html.index("</td>", email_at)]
+
+        self.assertIn("epr-email-cell", email_cell)
+        self.assertIn("epr-quick-edit", email_cell)
+        self.assertIn("expert@example.com", email_cell)
+        experts_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "experts-panels.js"
+        ).read_text()
+        experts_css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertIn("e.target.closest('.epr-quick-edit')", experts_js)
+        self.assertIn("#experts-pane #epr-table tbody td.epr-email-cell", experts_css)
+        self.assertIn("color: #a1a9b1 !important;", experts_css)
 
     def test_experts_partial_no_longer_renders_contract_details_table(self):
         response = self.client.get(reverse("experts_partial"))
@@ -978,6 +1296,8 @@ class ProjectCoordinatorSpecialtySeedTests(TestCase):
         self.assertNotIn(PERM_REVIEW_KP, manager.project_permissions)
         self.assertIn(PERM_REVIEW_KP, coordinator.project_permissions)
         self.assertNotIn(PERM_REVIEW_RP, coordinator.project_permissions)
+        self.assertIn(PERM_NEXTCLOUD_EDITOR, manager.project_permissions)
+        self.assertIn(PERM_NEXTCLOUD_EDITOR, coordinator.project_permissions)
 
 
 class ExpertSpecialtyCsvTests(TestCase):
@@ -1760,8 +2080,19 @@ class ExpertProfileCsvTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "База физлиц-исполнителей")
+        self.assertContains(response, 'class="experts-table-editor"', html=False)
+        self.assertContains(response, 'class="policy-table-footer"', html=False)
+        self.assertContains(response, 'class="policy-table-footer-actions products-actions-row"', html=False)
         self.assertContains(response, 'id="epr-csv-download-btn"', html=False)
         self.assertContains(response, 'id="epr-csv-upload-btn"', html=False)
+        experts_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "experts-panels.js"
+        ).read_text()
+        experts_css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertIn("function initExpertsTableFooterStickyState(", experts_js)
+        self.assertIn("#experts-pane .policy-table-footer.is-stuck", experts_css)
 
     def test_epr_csv_download_exports_table_columns(self):
         response = self.client.get(reverse("epr_csv_download"))

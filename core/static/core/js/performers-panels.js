@@ -3399,18 +3399,81 @@
     panel.classList.toggle('d-flex', any);
   }
 
+  function readReportJson(id, fallback) {
+    const node = document.getElementById(id);
+    if (!node) return fallback;
+    try {
+      const parsed = JSON.parse(node.textContent || 'null');
+      return parsed == null ? fallback : parsed;
+    } catch (error) {
+      return fallback;
+    }
+  }
+
+  function reportAssetFilterIsSpecific(values) {
+    return Array.isArray(values) && values.length > 0 && values.indexOf('__all__') === -1;
+  }
+
+  function assetSelectionKey(values) {
+    if (!reportAssetFilterIsSpecific(values)) return '__all__';
+    return values.map(String).slice().sort().join('\n');
+  }
+
+  function loadReportAssetFilter() {
+    if (!window.__reportSubmissionAssetFilter && window.UIPref) {
+      const saved = UIPref.get('reports:assetFilter', null);
+      if (saved && Array.isArray(saved)) window.__reportSubmissionAssetFilter = saved.map(String);
+    }
+    window.__reportSubmissionAssetFilter = window.__reportSubmissionAssetFilter || ['__all__'];
+  }
+
+  function saveReportAssetFilter() {
+    if (window.UIPref) UIPref.set('reports:assetFilter', window.__reportSubmissionAssetFilter);
+  }
+
+  function availableReportAssetNames() {
+    const names = readReportJson('report-submission-asset-names', []);
+    return Array.isArray(names) ? names.map(String).filter(Boolean) : [];
+  }
+
+  function renderedReportAssetSelection() {
+    if (!document.getElementById('report-submission-selected-assets')) return ['__all__'];
+    const selected = readReportJson('report-submission-selected-assets', []);
+    return Array.isArray(selected) && selected.length ? selected.map(String) : ['__all__'];
+  }
+
+  function currentReportAssetFilter() {
+    loadReportAssetFilter();
+    const known = new Set(availableReportAssetNames());
+    const current = window.__reportSubmissionAssetFilter || ['__all__'];
+    let pruned = ['__all__'];
+    if (reportAssetFilterIsSpecific(current)) {
+      const kept = current.filter((name) => known.has(String(name)));
+      if (kept.length) pruned = kept;
+    }
+    if (assetSelectionKey(current) !== assetSelectionKey(pruned)) {
+      window.__reportSubmissionAssetFilter = pruned;
+      saveReportAssetFilter();
+    } else {
+      window.__reportSubmissionAssetFilter = pruned;
+    }
+    return pruned;
+  }
+
   function initReportSubmissionProjectFilter() {
     const root = pane();
     if (!root) return;
     const FILTER_ALL = '__all__';
+    loadReportAssetFilter();
     window.__reportSubmissionProjectFilter = window.__reportSubmissionProjectFilter || [FILTER_ALL];
 
     const dropdown = root.querySelector('#report-submission-project-filter-toggle')?.closest('.dropdown');
     const checks = root.querySelectorAll('.js-report-submission-filter');
     const label = root.querySelector('.js-report-submission-filter-label');
-    if (!dropdown || !checks.length || !label || dropdown.dataset.bound === '1') return;
-    dropdown.dataset.bound = '1';
-    if (window.bindProjectFilterMenuWidth) window.bindProjectFilterMenuWidth(dropdown);
+    const assetDropdown = root.querySelector('#report-submission-asset-filter-dropdown');
+    const assetLabel = root.querySelector('.js-report-submission-asset-label');
+    const assetList = root.querySelector('#report-submission-asset-list');
+    if (!dropdown || !checks.length || !label) return;
 
     function syncCheckboxes(values) {
       const set = new Set(values);
@@ -3432,6 +3495,60 @@
       label.textContent = values.length + ' выбрано';
     }
 
+    function assetChecks() {
+      return assetDropdown
+        ? Array.from(assetDropdown.querySelectorAll('.js-report-submission-asset-filter'))
+        : [];
+    }
+
+    function syncAssetChecks(values) {
+      const set = new Set(values);
+      assetChecks().forEach((cb) => { cb.checked = set.has(cb.value); });
+    }
+
+    function updateAssetLabel(values) {
+      if (!assetLabel) return;
+      if (!reportAssetFilterIsSpecific(values)) {
+        assetLabel.textContent = 'Все';
+        return;
+      }
+      if (values.length === 1) {
+        const selected = assetChecks().find((cb) => cb.value === values[0]);
+        assetLabel.textContent = window.getProjectFilterSummaryLabel
+          ? window.getProjectFilterSummaryLabel(selected, '1 актив')
+          : '1 актив';
+        return;
+      }
+      assetLabel.textContent = values.length + ' выбрано';
+    }
+
+    function rebuildAssetList() {
+      const names = availableReportAssetNames();
+      if (assetList) {
+        assetList.replaceChildren();
+        names.forEach((name, index) => {
+          const row = document.createElement('div');
+          row.className = 'form-check';
+          const id = 'report-submission-asset-' + index;
+          const input = document.createElement('input');
+          input.className = 'form-check-input js-report-submission-asset-filter';
+          input.type = 'checkbox';
+          input.value = name;
+          input.id = id;
+          input.dataset.summaryLabel = name;
+          const caption = document.createElement('label');
+          caption.className = 'form-check-label';
+          caption.htmlFor = id;
+          caption.textContent = name;
+          row.append(input, caption);
+          assetList.append(row);
+        });
+      }
+      const selected = currentReportAssetFilter();
+      syncAssetChecks(selected);
+      updateAssetLabel(selected);
+    }
+
     function scopedReportFilter(values) {
       const filter = values || window.__reportSubmissionProjectFilter || [FILTER_ALL];
       return typeof window.__projectsMasterScopedValues === 'function'
@@ -3439,7 +3556,7 @@
         : filter;
     }
 
-    function reportFilterIsSpecific(values) {
+    function reportProjectsAreSpecific(values) {
       const filter = scopedReportFilter(values);
       return filter.length > 0 && !filter.includes(FILTER_ALL);
     }
@@ -3451,7 +3568,9 @@
     }
 
     function reportPageSizeForRequest() {
-      if (reportFilterIsSpecific()) return maxReportPageSize();
+      if (reportProjectsAreSpecific() || reportAssetFilterIsSpecific(currentReportAssetFilter())) {
+        return maxReportPageSize();
+      }
       return window.__reportSubmissionPageSize || '25';
     }
 
@@ -3462,8 +3581,12 @@
       params.set('page', String(page || '1'));
       params.set('page_size', reportPageSizeForRequest());
       const filter = scopedReportFilter();
-      if (reportFilterIsSpecific(filter)) {
+      if (reportProjectsAreSpecific(filter)) {
         filter.forEach((id) => params.append('project', id));
+      }
+      const assets = currentReportAssetFilter();
+      if (reportAssetFilterIsSpecific(assets)) {
+        assets.forEach((name) => params.append('asset', name));
       }
       return (block.dataset.reportsTableUrl || '') + '?' + params.toString();
     }
@@ -3471,6 +3594,8 @@
     function reloadReportSubmissionTable(page) {
       const url = reportSubmissionTableUrl(page || '1');
       if (!url || !window.htmx) return;
+      if (window.__reportTableReloadUrl === url) return;
+      window.__reportTableReloadUrl = url;
       window.htmx.ajax('GET', url, {
         target: '#report-submission-table-block',
         swap: 'outerHTML',
@@ -3485,20 +3610,31 @@
       const wanted = (!scoped.length || scoped.includes(FILTER_ALL))
         ? [FILTER_ALL]
         : scoped.map(String).slice().sort();
-      return rendered.length === wanted.length && rendered.every((value, index) => value === wanted[index]);
+      const projectsMatch = rendered.length === wanted.length && rendered.every((value, index) => value === wanted[index]);
+      const assetsMatch = !document.getElementById('report-submission-selected-assets')
+        || assetSelectionKey(currentReportAssetFilter()) === assetSelectionKey(renderedReportAssetSelection());
+      const matches = projectsMatch && assetsMatch;
+      if (matches) window.__reportTableReloadUrl = '';
+      return matches;
+    }
+
+    function rememberUnfilteredPageSize() {
+      const block = document.querySelector('#report-submission-table-block');
+      if (!block || !block.dataset.reportsPageSize) return;
+      if ((block.dataset.reportsProjects || FILTER_ALL) !== FILTER_ALL) return;
+      if (document.getElementById('report-submission-selected-assets')
+          && reportAssetFilterIsSpecific(renderedReportAssetSelection())) return;
+      window.__reportSubmissionPageSize = block.dataset.reportsPageSize;
     }
 
     function applyFilter(values, options) {
       options = options || {};
-      const block = document.querySelector('#report-submission-table-block');
-      const rendered = block?.dataset.reportsProjects || FILTER_ALL;
-      if (block && rendered === FILTER_ALL && block.dataset.reportsPageSize) {
-        window.__reportSubmissionPageSize = block.dataset.reportsPageSize;
-      }
+      rememberUnfilteredPageSize();
       window.__reportSubmissionProjectFilter = values.slice();
       updateLabel(values);
       hideProjectOptionsOutsideMaster(checks);
-      if (options.reload) reloadReportSubmissionTable('1');
+      rebuildAssetList();
+      if (options.reload && !reportBlockMatchesFilter(values)) reloadReportSubmissionTable('1');
     }
 
     function normalizeSelection() {
@@ -3511,40 +3647,76 @@
       return values;
     }
 
-    checks.forEach((cb) => {
-      cb.addEventListener('change', (event) => {
-        const value = event.target.value;
-        if (value === FILTER_ALL && event.target.checked) {
-          syncCheckboxes([FILTER_ALL]);
-          applyFilter([FILTER_ALL], { reload: true });
-          return;
-        }
-        if (value === FILTER_ALL && !event.target.checked) {
-          const firstProject = Array.from(checks).find((item) => (
-            item.value !== FILTER_ALL && !item.closest('.form-check')?.classList.contains('d-none')
-          ));
-          if (firstProject) firstProject.checked = true;
-        } else {
-          const allCheckbox = root.querySelector('#report-submission-filter-all');
-          if (allCheckbox && allCheckbox.checked) allCheckbox.checked = false;
-        }
-        applyFilter(normalizeSelection(), { reload: true });
-      });
-    });
+    function normalizeAssetSelection() {
+      let values = assetChecks()
+        .filter((cb) => cb.checked)
+        .map((cb) => cb.value);
+      if (!values.length) values = [FILTER_ALL];
+      if (values.includes(FILTER_ALL)) values = [FILTER_ALL];
+      window.__reportSubmissionAssetFilter = values;
+      saveReportAssetFilter();
+      syncAssetChecks(values);
+      updateAssetLabel(values);
+      return values;
+    }
 
-    window.__syncReportSubmissionProjectFilter = function() {
-      checks.forEach(function(cb) {
-        cb.checked = cb.value === FILTER_ALL;
-        cb.disabled = false;
+    if (dropdown.dataset.bound !== '1') {
+      dropdown.dataset.bound = '1';
+      if (window.bindProjectFilterMenuWidth) window.bindProjectFilterMenuWidth(dropdown);
+
+      checks.forEach((cb) => {
+        cb.addEventListener('change', (event) => {
+          const value = event.target.value;
+          if (value === FILTER_ALL && event.target.checked) {
+            syncCheckboxes([FILTER_ALL]);
+            applyFilter([FILTER_ALL], { reload: true });
+            return;
+          }
+          if (value === FILTER_ALL && !event.target.checked) {
+            const firstProject = Array.from(checks).find((item) => (
+              item.value !== FILTER_ALL && !item.closest('.form-check')?.classList.contains('d-none')
+            ));
+            if (firstProject) firstProject.checked = true;
+          } else {
+            const allCheckbox = root.querySelector('#report-submission-filter-all');
+            if (allCheckbox && allCheckbox.checked) allCheckbox.checked = false;
+          }
+          applyFilter(normalizeSelection(), { reload: true });
+        });
       });
-      applyFilter([FILTER_ALL], { reload: !reportBlockMatchesFilter([FILTER_ALL]) });
-    };
+
+      if (assetDropdown && assetDropdown.dataset.bound !== '1') {
+        assetDropdown.dataset.bound = '1';
+        assetDropdown.addEventListener('change', (event) => {
+          if (!event.target.classList.contains('js-report-submission-asset-filter')) return;
+          if (event.target.value === FILTER_ALL && event.target.checked) {
+            syncAssetChecks([FILTER_ALL]);
+          } else if (event.target.value === FILTER_ALL && !event.target.checked) {
+            const firstAsset = assetChecks().find((item) => item.value !== FILTER_ALL);
+            if (firstAsset) firstAsset.checked = true;
+          } else {
+            const allAssets = root.querySelector('#report-submission-asset-all');
+            if (allAssets && allAssets.checked) allAssets.checked = false;
+          }
+          normalizeAssetSelection();
+          applyFilter(window.__reportSubmissionProjectFilter || [FILTER_ALL], { reload: true });
+        });
+      }
+
+      window.__syncReportSubmissionProjectFilter = function() {
+        checks.forEach(function(cb) {
+          cb.checked = cb.value === FILTER_ALL;
+          cb.disabled = false;
+        });
+        applyFilter([FILTER_ALL], { reload: true });
+      };
+    }
 
     const initialValues = window.__reportSubmissionProjectFilter && window.__reportSubmissionProjectFilter.length
       ? window.__reportSubmissionProjectFilter
       : [FILTER_ALL];
     syncCheckboxes(initialValues);
-    applyFilter(initialValues, { reload: !reportBlockMatchesFilter(initialValues) });
+    applyFilter(initialValues, { reload: true });
   }
 
   function ensureReportUploadProgressModal() {
@@ -7996,6 +8168,7 @@
     }
     const reports = document.querySelector('#report-submission-table-block');
     if (reports) {
+      window.__reportTableReloadUrl = '';
       const localFilter = window.__reportSubmissionProjectFilter || [];
       const filter = typeof window.__projectsMasterScopedValues === 'function'
         ? window.__projectsMasterScopedValues(localFilter, document.querySelectorAll('.js-report-submission-filter'))
@@ -8003,16 +8176,20 @@
       const filtered = filter.length && filter.indexOf('__all__') === -1;
       const rendered = (reports.dataset.reportsProjects || '__all__').split(',').filter(Boolean).sort();
       const wanted = filtered ? filter.map(String).slice().sort() : ['__all__'];
-      const sameFilter = rendered.length === wanted.length && rendered.every(function (value, index) {
+      const sameProjects = rendered.length === wanted.length && rendered.every(function (value, index) {
         return value === wanted[index];
       });
+      const assets = currentReportAssetFilter();
+      const assetsSpecific = reportAssetFilterIsSpecific(assets);
+      const sameAssets = assetSelectionKey(assets) === assetSelectionKey(renderedReportAssetSelection());
+      const sameFilter = sameProjects && sameAssets;
       evt.detail.parameters.reports_page = sameFilter ? (reports.dataset.reportsPage || '1') : '1';
-      if (filtered && !sameFilter) {
+      if ((filtered || assetsSpecific) && !sameFilter) {
         const select = document.querySelector('#policy-page-size-report-submission');
         evt.detail.parameters.reports_page_size = (select && select.options.length)
           ? select.options[select.options.length - 1].value
           : '100';
-      } else if (!filtered) {
+      } else if (!filtered && !assetsSpecific) {
         const blockUnfiltered = (reports.dataset.reportsProjects || '__all__') === '__all__';
         if (blockUnfiltered && reports.dataset.reportsPageSize) {
           window.__reportSubmissionPageSize = reports.dataset.reportsPageSize;
@@ -8022,6 +8199,7 @@
         evt.detail.parameters.reports_page_size = reports.dataset.reportsPageSize || '100';
       }
       if (filtered) evt.detail.parameters.reports_project = filter.join(',');
+      if (assetsSpecific) evt.detail.parameters.reports_asset = JSON.stringify(assets);
     }
   });
 

@@ -6,7 +6,7 @@
          hx-get="{% url 'experts_partial' %}"
          hx-trigger="load"
          hx-target="#experts-pane"
-         hx-swap="innerHTML">
+         hx-swap="outerHTML">
       <div class="text-muted htmx-indicator">Загрузка данных экспертов…</div>
     </div>
 
@@ -203,7 +203,7 @@
 
       document.body.addEventListener('htmx:afterSettle', function(e) {
         var pane = document.getElementById('experts-pane');
-        if (pane && pane.contains(e.target)) initAllPickers();
+        if (pane && (pane === e.target || pane.contains(e.target))) initAllPickers();
       });
     })();
     </script>

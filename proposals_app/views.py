@@ -14,6 +14,7 @@ from django.db import transaction
 from django.db.models import Max, Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -49,10 +50,16 @@ from policy_app.models import (
 )
 from projects_app.models import ProjectRegistration, ProjectRegistrationProduct, _sync_project_registration_primary_product
 from smtp_app.models import ExternalSMTPAccount
+from users_app.contact_sync import (
+    annotate_staff_locked_contacts,
+    contact_fields_are_staff_locked,
+    staff_employee_for_dispatch_contact,
+)
 from users_app.models import Employee
 
 from .cbr import get_cbr_eur_rate_for_today, get_cbr_eur_rate_text
 from .forms import (
+    DispatchRecipientFormRow,
     ProposalDispatchForm,
     ProposalRegistrationForm,
     ProposalTemplateForm,
@@ -63,16 +70,30 @@ from .forms import (
 )
 from .document_generation import (
     DOCX_CONTENT_TYPE,
+    LOCAL_PROPOSAL_PATH_PREFIX,
+    LocalProposalFolderError,
     build_proposal_docx_source_url,
     generate_and_store_proposal_pdf,
     get_generated_docx_path,
+    get_generated_pdf_path,
     get_proposal_docx_source_token_payload,
+    is_local_proposal_path,
     is_onlyoffice_conversion_configured,
     load_existing_proposal_docx_bytes,
+    local_proposal_folder_enabled,
+    local_proposal_folder_placeholder,
+    resolve_proposal_generation_source,
     store_existing_proposal_docx_bytes,
     store_generated_documents,
+    store_generated_documents_locally,
 )
-from .models import ProposalRegistration, ProposalTemplate, ProposalVariable
+from .models import (
+    ProposalDispatchRecipient,
+    ProposalRegistration,
+    ProposalTemplate,
+    ProposalVariable,
+    mirror_primary_dispatch_recipient,
+)
 from .services import normalize_proposal_delivery_channels, send_proposal_dispatch_emails
 from .variable_resolver import resolve_variables
 from .xlsx_export import build_commercial_xlsx
@@ -493,11 +514,46 @@ def _remember_proposal_party_links(proposal, request):
     proposal.save(update_fields=["customer_identifier_record", "asset_owner_identifier_record"])
 
 
-def _attach_related_registry_links(rows, user, business_entity_source):
-    for item in rows or []:
+def _proposal_related_row_has_identity(item):
+    return bool((item.get("short_name") or "").strip())
+
+
+def _same_registry_identity(left, right):
+    left_name = (left.get("short_name") or "").strip()
+    right_name = (right.get("short_name") or "").strip()
+    if not left_name or left_name != right_name:
+        return False
+    left_number = (left.get("registration_number") or "").strip()
+    right_number = (right.get("registration_number") or "").strip()
+    if left_number and right_number and left_number != right_number:
+        return False
+    return True
+
+
+def _row_reuses_linked_identifier(item):
+    """Строка, заполненная из другой уже связанной строки, не открывает новую цепочку справочника."""
+    if not _proposal_related_row_has_identity(item):
+        return False
+    if item.get("selected_from_autocomplete") or item.get("selected_identifier_record_id"):
+        return False
+    if item.get("user_edited"):
+        return False
+    return bool(item.get("copied_from_owner") or item.get("copied_from_asset"))
+
+
+def _attach_related_registry_links(rows, user, business_entity_source, reuse_identifier_for=None):
+    for index, item in enumerate(rows or []):
+        reused = reuse_identifier_for(item, index) if reuse_identifier_for else None
+        if reused is not None and _row_reuses_linked_identifier(item):
+            item["identifier_record"] = reused
+            continue
         if not _should_sync_proposal_related_row(item):
             item["identifier_record"] = None
             continue
+        selected_identifier_record_id = item.get("selected_identifier_record_id")
+        selected_from_autocomplete = bool(item.get("selected_from_autocomplete"))
+        if selected_identifier_record_id and not selected_from_autocomplete:
+            selected_from_autocomplete = True
         item["identifier_record"] = _sync_to_legal_entity_record(
             item["short_name"],
             item["country"],
@@ -505,10 +561,49 @@ def _attach_related_registry_links(rows, user, business_entity_source):
             item["registration_number"],
             item["registration_date"],
             user,
-            selected_identifier_record_id=item.get("selected_identifier_record_id"),
-            selected_from_autocomplete=item.get("selected_from_autocomplete", False),
+            selected_identifier_record_id=selected_identifier_record_id,
+            selected_from_autocomplete=selected_from_autocomplete,
             business_entity_source=business_entity_source,
         )
+
+
+def _link_proposal_service_volume(proposal, form, user):
+    assets = getattr(form, "cleaned_assets", [])
+    legal_entities = getattr(form, "cleaned_legal_entities", [])
+    owner_identifier = proposal.asset_owner_identifier_record
+
+    def reuse_owner(item, index):
+        if item.get("copied_from_owner"):
+            return owner_identifier
+        return None
+
+    def reuse_asset(item, index):
+        if not item.get("copied_from_asset"):
+            return None
+        if 0 <= index < len(assets) and _same_registry_identity(assets[index], item):
+            linked = assets[index].get("identifier_record")
+            if linked is not None:
+                return linked
+        for asset in assets:
+            if not _same_registry_identity(asset, item):
+                continue
+            linked = asset.get("identifier_record")
+            if linked is not None:
+                return linked
+        return None
+
+    _attach_related_registry_links(
+        assets,
+        user,
+        "[ТКП / Объем услуг: активы]",
+        reuse_identifier_for=reuse_owner,
+    )
+    _attach_related_registry_links(
+        legal_entities,
+        user,
+        "[ТКП / Объем услуг: юрлица]",
+        reuse_identifier_for=reuse_asset,
+    )
 
 
 def _autocomplete_link_state(form, prefix, stored_id):
@@ -652,6 +747,8 @@ def _is_nextcloud_cloud_path(path: str) -> bool:
     if not clean_path:
         return False
     if clean_path.startswith(("http://", "https://")):
+        return False
+    if clean_path.startswith(LOCAL_PROPOSAL_PATH_PREFIX):
         return False
     media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
     if media_url and clean_path.startswith(media_url):
@@ -800,6 +897,13 @@ def _resolve_proposal_file_open_url(
     stored_file_id = _stored_proposal_file_id(proposal, file_id_attr)
     if not raw_link and not file_name:
         return ""
+    if is_local_proposal_path(raw_link):
+        download_name = (
+            "proposal_generated_pdf_download"
+            if file_link_attr == "pdf_file_link"
+            else "proposal_generated_docx_download"
+        )
+        return reverse(download_name, args=[proposal.pk])
     if raw_link.startswith(("http://", "https://")):
         return raw_link
     media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
@@ -890,10 +994,9 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
     def _assign_fallback_urls_without_share_resolution():
         for proposal in proposals:
             path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
-            if not path:
-                continue
-            folder_cache.setdefault(path, build_folder_url(path))
-            proposal.proposal_workspace_folder_url = _stored_public(proposal) or folder_cache.get(path, "")
+            if path:
+                folder_cache.setdefault(path, build_folder_url(path))
+                proposal.proposal_workspace_folder_url = _stored_public(proposal) or folder_cache.get(path, "")
             proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(proposal)
             proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(proposal)
 
@@ -1146,6 +1249,9 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     client=client,
                     owner_file_id=owner_pdf_file_id,
                 )
+        else:
+            proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(proposal, client=client)
+            proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(proposal, client=client)
 
 
 def _proposal_schedule_decimal(value):
@@ -1559,7 +1665,13 @@ def _proposals_context(
         "asset_owner_country",
         "type",
         "currency",
-    ).prefetch_related("product_links__product").all()
+    ).prefetch_related(
+        "product_links__product",
+        Prefetch(
+            "dispatch_recipients",
+            queryset=ProposalDispatchRecipient.objects.order_by("position", "id"),
+        ),
+    ).all()
     proposals = _annotate_proposal_number_groups(proposals)
     try:
         _attach_proposal_folder_urls(
@@ -1627,6 +1739,8 @@ def _proposals_context(
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "proposal_request_sent_initial": timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M"),
         "has_active_smtp_connection": has_active_smtp_connection,
+        "allow_local_proposal_folder": local_proposal_folder_enabled(),
+        "local_proposal_folder_placeholder": local_proposal_folder_placeholder(),
     }
 
 
@@ -2201,13 +2315,67 @@ def _render_proposal_form(request, *, form, action, proposal=None):
     )
 
 
+def _attach_dispatch_form_file_urls(proposal, user) -> None:
+    """Build DOCX/PDF open links from persisted file ids and the stored mount path.
+
+    The dispatch form only displays those two links. Listing every Nextcloud
+    share (or PROPFINDing a folder) would grow with the registry size, so this
+    path never calls the share or WebDAV APIs and never writes back to the DB.
+    """
+    client = None
+    viewer_has_nextcloud_link = False
+    stored_target_path = ""
+    if is_nextcloud_primary():
+        configured_client = NextcloudApiClient()
+        if configured_client.is_configured:
+            client = configured_client
+            stored_target_path = _normalize_viewer_target_path(
+                str(getattr(proposal, "proposal_workspace_target_path", "") or "").strip(),
+            )
+            if user is not None and getattr(user, "is_authenticated", False):
+                link = NextcloudUserLink.objects.filter(user=user).first()
+                viewer_has_nextcloud_link = bool(
+                    link
+                    and link.nextcloud_user_id
+                    and link.nextcloud_user_id != client.username
+                )
+
+    proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
+        proposal,
+        client=client,
+        viewer_has_nextcloud_link=viewer_has_nextcloud_link,
+        resolved_workspace_target_path=stored_target_path,
+        owner_file_id=_stored_proposal_file_id(proposal, "docx_file_id"),
+    )
+    proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(
+        proposal,
+        client=client,
+        viewer_has_nextcloud_link=viewer_has_nextcloud_link,
+        resolved_workspace_target_path=stored_target_path,
+        owner_file_id=_stored_proposal_file_id(proposal, "pdf_file_id"),
+    )
+
+
 def _render_dispatch_form(request, *, form, proposal):
-    _attach_proposal_folder_urls([proposal], user=request.user, request=request)
+    _attach_dispatch_form_file_urls(proposal, request.user)
     recipient_identifier_record_id, recipient_identifier_selected = _autocomplete_link_state(
         form,
         "recipient_autocomplete",
         getattr(proposal, "recipient_identifier_record_id", None),
     )
+    dispatch_recipients = form.display_recipients()
+    ordered_recipients = [
+        row
+        for row in dispatch_recipients
+        if getattr(row, "role", "") == ProposalDispatchRecipient.Role.TO
+    ] + [
+        row
+        for row in dispatch_recipients
+        if getattr(row, "role", "") == ProposalDispatchRecipient.Role.BCC
+    ]
+    for index, row in enumerate(ordered_recipients, start=1):
+        row.contact_index = index
+    dispatch_recipients = annotate_staff_locked_contacts(dispatch_recipients)
     return render(
         request,
         PROPOSAL_DISPATCH_FORM_TEMPLATE,
@@ -2217,6 +2385,14 @@ def _render_dispatch_form(request, *, form, proposal):
             "docx_download_available": bool(proposal.docx_file_name),
             "recipient_identifier_record_id": recipient_identifier_record_id,
             "recipient_identifier_selected": recipient_identifier_selected,
+            "dispatch_recipients": dispatch_recipients,
+            "has_bcc_recipients": any(
+                getattr(row, "role", "") == ProposalDispatchRecipient.Role.BCC and (getattr(row, "email", "") or "")
+                for row in dispatch_recipients
+            ),
+            "empty_dispatch_recipient": DispatchRecipientFormRow({}),
+            "recipient_countries": form.fields["recipient_country"].queryset,
+            "default_recipient_country_id": form.fields["recipient_country"].initial or "",
         },
     )
 
@@ -2391,16 +2567,7 @@ def proposal_form_create(request):
     proposal.save()
     form._save_ranked_products(proposal)
     _remember_proposal_party_links(proposal, request)
-    _attach_related_registry_links(
-        getattr(form, "cleaned_assets", []),
-        request.user,
-        "[ТКП / Объем услуг: активы]",
-    )
-    _attach_related_registry_links(
-        getattr(form, "cleaned_legal_entities", []),
-        request.user,
-        "[ТКП / Объем услуг: юрлица]",
-    )
+    _link_proposal_service_volume(proposal, form, request.user)
     form.save_assets(proposal, request.user)
     form.save_legal_entities(proposal, request.user)
     form.save_objects(proposal, request.user)
@@ -2499,21 +2666,194 @@ def proposal_form_edit(request, pk: int):
 
     proposal = form.save()
     _remember_proposal_party_links(proposal, request)
-    _attach_related_registry_links(
-        getattr(form, "cleaned_assets", []),
-        request.user,
-        "[ТКП / Объем услуг: активы]",
-    )
-    _attach_related_registry_links(
-        getattr(form, "cleaned_legal_entities", []),
-        request.user,
-        "[ТКП / Объем услуг: юрлица]",
-    )
+    _link_proposal_service_volume(proposal, form, request.user)
     form.save_assets(proposal, request.user)
     form.save_legal_entities(proposal, request.user)
     form.save_objects(proposal, request.user)
     form.save_commercial_offers(proposal, request.user)
     return _render_proposals_updated(request)
+
+
+def _upsert_dispatch_recipient_email(person, email, email_record_id):
+    from contacts_app.models import EmailRecord
+
+    record = None
+    if email_record_id:
+        record = EmailRecord.objects.filter(pk=email_record_id, person=person).first()
+    if record is None and email:
+        record = (
+            EmailRecord.objects.filter(person=person, email__iexact=email)
+            .order_by("position", "id")
+            .first()
+        )
+    if not email:
+        return record
+    if record is None:
+        next_position = (EmailRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
+        return EmailRecord.objects.create(
+            person=person,
+            email=email,
+            valid_from=dt_date.today(),
+            record_date=dt_date.today(),
+            position=next_position,
+        )
+    if record.email != email:
+        record.email = email
+        record.save(update_fields=["email"])
+    return record
+
+
+def _upsert_dispatch_recipient_position(person, organization, job_title, position_record_id):
+    from contacts_app.models import PositionRecord
+
+    record = None
+    if position_record_id:
+        record = PositionRecord.objects.filter(pk=position_record_id, person=person).first()
+    if not organization and not job_title:
+        if record is not None:
+            record.organization_short_name = ""
+            record.job_title = ""
+            record.save(update_fields=["organization_short_name", "job_title"])
+        return record
+    if record is None:
+        record = (
+            PositionRecord.objects.filter(person=person, is_active=True)
+            .order_by("position", "id")
+            .first()
+        )
+    if record is None:
+        next_position = (PositionRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
+        return PositionRecord.objects.create(
+            person=person,
+            organization_short_name=organization,
+            job_title=job_title,
+            record_date=dt_date.today(),
+            position=next_position,
+        )
+    record.organization_short_name = organization
+    record.job_title = job_title
+    record.save(update_fields=["organization_short_name", "job_title"])
+    return record
+
+
+def _sync_dispatch_recipient_person(payload, user=None):
+    from contacts_app.models import EmailRecord, PersonRecord
+    from contacts_app.views import _ensure_person_phone_record, _refresh_person_position_sources
+
+    email = (payload.get("email") or "").strip()
+    last_name = (payload.get("last_name") or "").strip()
+    first_name = (payload.get("first_name") or "").strip()
+    middle_name = (payload.get("middle_name") or "").strip()
+    organization = (payload.get("organization_short_name") or "").strip()
+    job_title = (payload.get("job_title") or "").strip()
+    if not any([email, last_name, first_name, middle_name, organization, job_title]):
+        return None, None, None
+
+    person = None
+    person_id = payload.get("person_id")
+    if person_id:
+        person = PersonRecord.objects.filter(pk=person_id).first()
+    if person is None and email:
+        existing_email = (
+            EmailRecord.objects.filter(email__iexact=email)
+            .select_related("person")
+            .order_by("position", "id")
+            .first()
+        )
+        if existing_email is not None:
+            person = existing_email.person
+    if person is None:
+        next_position = (PersonRecord.objects.aggregate(mx=Max("position")).get("mx") or 0) + 1
+        person = PersonRecord.objects.create(
+            last_name=last_name,
+            first_name=first_name,
+            middle_name=middle_name,
+            position=next_position,
+        )
+        _ensure_person_phone_record(person, user=user)
+    else:
+        person.last_name = last_name
+        person.first_name = first_name
+        person.middle_name = middle_name
+        person.save(update_fields=["last_name", "first_name", "middle_name"])
+
+    email_record = _upsert_dispatch_recipient_email(person, email, payload.get("email_record_id"))
+    position_record = _upsert_dispatch_recipient_position(
+        person,
+        organization,
+        job_title,
+        payload.get("position_record_id"),
+    )
+    _refresh_person_position_sources(person)
+    return person, email_record, position_record
+
+
+def _apply_staff_dispatch_recipient(row):
+    employee = staff_employee_for_dispatch_contact(
+        email=row.email,
+        person_id=row.person_id,
+        email_record_id=row.email_record_id,
+    )
+    if employee is None:
+        return contact_fields_are_staff_locked(
+            email=row.email,
+            person_id=row.person_id,
+            email_record_id=row.email_record_id,
+        )
+    row.last_name = employee.user.last_name or ""
+    row.first_name = employee.user.first_name or ""
+    row.middle_name = employee.patronymic or ""
+    row.email = employee.user.email or ""
+    position = employee.managed_position_record
+    if position is not None:
+        row.organization_short_name = position.organization_short_name or ""
+        row.job_title = position.job_title or ""
+    row.person = employee.person_record
+    row.email_record = employee.managed_email_record
+    row.position_record = position
+    row.save(
+        update_fields=[
+            "last_name",
+            "first_name",
+            "middle_name",
+            "email",
+            "organization_short_name",
+            "job_title",
+            "person",
+            "email_record",
+            "position_record",
+        ]
+    )
+    return True
+
+
+def _sync_dispatch_recipient_registry(proposal, payloads, user):
+    rows = list(proposal.dispatch_recipients.order_by("position", "id"))
+    for row, payload in zip(rows, payloads):
+        if _apply_staff_dispatch_recipient(row):
+            continue
+        selected_identifier_record_id = payload.get("identifier_record_id")
+        selected_from_autocomplete = bool(payload.get("selected_from_autocomplete"))
+        if selected_identifier_record_id and not selected_from_autocomplete:
+            selected_from_autocomplete = True
+        identifier = _sync_to_legal_entity_record(
+            row.organization_short_name,
+            row.country,
+            row.identifier,
+            row.registration_number,
+            row.registration_date,
+            user,
+            selected_identifier_record_id=selected_identifier_record_id,
+            selected_from_autocomplete=selected_from_autocomplete,
+            business_entity_source="[ТКП / Отправка ТКП / Наименование организации]",
+        )
+        person, email_record, position_record = _sync_dispatch_recipient_person(payload, user=user)
+        row.identifier_record = identifier
+        row.person = person
+        row.email_record = email_record
+        row.position_record = position_record
+        row.save(update_fields=["identifier_record", "person", "email_record", "position_record"])
+    mirror_primary_dispatch_recipient(proposal)
 
 
 @login_required
@@ -2532,23 +2872,13 @@ def proposal_dispatch_form_edit(request, pk: int):
     if not form.is_valid():
         return _render_dispatch_form(request, form=form, proposal=proposal)
 
-    proposal = form.save()
-    proposal.recipient_identifier_record = _sync_to_legal_entity_record(
-        proposal.recipient,
-        proposal.recipient_country,
-        proposal.recipient_identifier,
-        proposal.recipient_registration_number,
-        proposal.recipient_registration_date,
-        request.user,
-        business_entity_source="[ТКП / Отправка ТКП / Наименование организации]",
-        **_sync_selection_kwargs(request, "recipient_autocomplete"),
-    )
-    proposal.save(update_fields=["recipient_identifier_record"])
-    _sync_dispatch_contact_to_person_registry(
-        last_name=form.cleaned_data.get("contact_last_name", ""),
-        first_name=form.cleaned_data.get("contact_first_name", ""),
-        middle_name=form.cleaned_data.get("contact_middle_name", ""),
-    )
+    with transaction.atomic():
+        proposal = form.save()
+        _sync_dispatch_recipient_registry(
+            proposal,
+            form.cleaned_dispatch_recipients,
+            request.user,
+        )
     return _render_proposals_updated(request)
 
 
@@ -2580,6 +2910,12 @@ def proposal_dispatch_send(request):
         ProposalRegistration.objects
         .filter(pk__in=proposal_ids)
         .select_related("type")
+        .prefetch_related(
+            Prefetch(
+                "dispatch_recipients",
+                queryset=ProposalDispatchRecipient.objects.order_by("position", "id"),
+            )
+        )
         .order_by("position", "id")
     )
     if len(selected_proposals) != len(proposal_ids):
@@ -2909,6 +3245,11 @@ def proposal_dispatch_create_documents(request):
         return JsonResponse({"ok": False, "error": "Не выбраны строки для создания ТКП."}, status=400)
 
     try:
+        _source_kind, local_folder = resolve_proposal_generation_source(request)
+    except LocalProposalFolderError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    try:
         proposal_ids = sorted({int(value) for value in raw_ids if str(value).strip()})
     except (TypeError, ValueError):
         return JsonResponse({"ok": False, "error": "Передан некорректный список строк."}, status=400)
@@ -2965,21 +3306,31 @@ def proposal_dispatch_create_documents(request):
                 list_replacements=list_replacements or None,
                 default_language_code="ru-RU",
             )
-            stored = store_generated_documents(request.user, proposal, docx_bytes, None)
+            if local_folder is not None:
+                stored = store_generated_documents_locally(proposal, docx_bytes, local_folder)
+            else:
+                stored = store_generated_documents(request.user, proposal, docx_bytes, None)
         except Exception as exc:
             errors.append(f"{proposal.short_uid}: {exc}")
             continue
 
-        ProposalRegistration.objects.filter(pk=proposal.pk).update(
-            docx_file_name=stored["docx_name"],
-            docx_file_link=stored["docx_path"],
-            pdf_file_name=stored["pdf_name"],
-            pdf_file_link=stored["pdf_path"],
-        )
+        stored_fields = {
+            "docx_file_name": stored["docx_name"],
+            "docx_file_link": stored["docx_path"],
+            "pdf_file_name": stored["pdf_name"],
+            "pdf_file_link": stored["pdf_path"],
+        }
+        if local_folder is not None:
+            stored_fields["docx_file_id"] = ""
+            stored_fields["pdf_file_id"] = ""
+        ProposalRegistration.objects.filter(pk=proposal.pk).update(**stored_fields)
         proposal.docx_file_name = stored["docx_name"]
         proposal.docx_file_link = stored["docx_path"]
         proposal.pdf_file_name = stored["pdf_name"]
         proposal.pdf_file_link = stored["pdf_path"]
+        if local_folder is not None:
+            proposal.docx_file_id = ""
+            proposal.pdf_file_id = ""
         generated_updates.append(proposal)
         generated_count += 1
 
@@ -3064,6 +3415,8 @@ def proposal_generated_docx_download(request, pk: int):
     proposal = get_object_or_404(ProposalRegistration, pk=pk)
     file_path = get_generated_docx_path(proposal)
     if not file_path:
+        if is_local_proposal_path(getattr(proposal, "docx_file_link", "")):
+            raise Http404("Файл DOCX не найден")
         _attach_proposal_folder_urls([proposal], user=request.user, request=request)
         proposal_docx_file_url = str(getattr(proposal, "proposal_docx_file_url", "") or "").strip()
         if proposal_docx_file_url:
@@ -3075,6 +3428,26 @@ def proposal_generated_docx_download(request, pk: int):
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
     response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(proposal.docx_file_name)}"
+    return response
+
+
+@login_required
+@require_GET
+def proposal_generated_pdf_download(request, pk: int):
+    proposal = get_object_or_404(ProposalRegistration, pk=pk)
+    file_path = get_generated_pdf_path(proposal)
+    if not file_path:
+        if is_local_proposal_path(getattr(proposal, "pdf_file_link", "")):
+            raise Http404("Файл PDF не найден")
+        _attach_proposal_folder_urls([proposal], user=request.user, request=request)
+        proposal_pdf_file_url = str(getattr(proposal, "proposal_pdf_file_url", "") or "").strip()
+        if proposal_pdf_file_url:
+            return redirect(proposal_pdf_file_url)
+        raise Http404("Файл PDF не найден")
+
+    file_name = str(getattr(proposal, "pdf_file_name", "") or "").strip() or file_path.name
+    response = FileResponse(open(file_path, "rb"), content_type="application/pdf")
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(file_name)}"
     return response
 
 

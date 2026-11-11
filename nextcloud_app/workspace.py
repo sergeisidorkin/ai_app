@@ -497,6 +497,66 @@ def _project_permission_editor_employees(project, manager_employee=None) -> list
     return holders
 
 
+def grant_existing_project_workspace_editor_access(project_id, *, client: NextcloudApiClient | None = None) -> int:
+    """Выдаёт редакторам рабочей папки доступ к уже созданному пространству проекта.
+
+    Состав такой же, как при создании пространства: назначенные на проект держатели
+    права «Редактор рабочей папки проекта в Nextcloud». Руководитель и координатор
+    попадают сюда, если это право есть у их специальности.
+    """
+    from projects_app.models import ProjectRegistration
+
+    if not project_id or not is_nextcloud_primary():
+        return 0
+
+    project = ProjectRegistration.objects.filter(pk=project_id).first()
+    if project is None:
+        return 0
+    workspace = ProjectWorkspace.objects.filter(project_id=project.pk).first()
+    disk_path = (getattr(workspace, "disk_path", "") or "").strip()
+    if not disk_path:
+        return 0
+
+    client = client or NextcloudApiClient()
+    if not client.is_configured:
+        return 0
+
+    manager_employee = _resolve_project_manager_employee(project)
+    employees = _project_permission_editor_employees(project, manager_employee)
+    granted = 0
+    for employee in employees:
+        user = getattr(employee, "user", None)
+        if user is None or not _should_manage_in_nextcloud(user):
+            continue
+        try:
+            link = _ensure_nextcloud_link_for_user(
+                user,
+                client=client,
+                display_name=_employee_full_name(employee),
+            )
+            if not link or not link.nextcloud_user_id:
+                logger.warning(
+                    "Skip Nextcloud workspace share for project %s: employee %s has no Nextcloud user.",
+                    project.pk,
+                    employee.pk,
+                )
+                continue
+            client.ensure_user_share(
+                client.username,
+                disk_path,
+                link.nextcloud_user_id,
+                permissions=NextcloudApiClient.EDITOR_PERMISSIONS,
+            )
+            granted += 1
+        except NextcloudApiError:
+            logger.exception(
+                "Failed to share Nextcloud workspace %s with employee %s",
+                disk_path,
+                employee.pk,
+            )
+    return granted
+
+
 def grant_project_workspace_editor_access_for_performers(
     performer_ids,
     *,

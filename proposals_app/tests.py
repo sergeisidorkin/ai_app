@@ -25,7 +25,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from classifiers_app.models import BusinessEntityRecord, BusinessEntityIdentifierRecord, LegalEntityRecord, OKSMCountry, OKVCurrency
-from contacts_app.models import CitizenshipRecord, PersonRecord
+from contacts_app.models import CitizenshipRecord, EmailRecord, PersonRecord, PositionRecord
 from core.models import CloudStorageSettings
 from core.proposal_registry_columns import (
     get_proposal_payment_schedule_ui_columns,
@@ -71,6 +71,7 @@ from .forms import ProposalVariableForm
 from .models import (
     ProposalAsset,
     ProposalCommercialOffer,
+    ProposalDispatchRecipient,
     ProposalLegalEntity,
     ProposalObject,
     ProposalRegistration,
@@ -1903,6 +1904,122 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("рабочая папка", payload["error"])
 
+    @patch("proposals_app.document_generation.cloud_upload_file", return_value=True)
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=True)
+    def test_create_documents_writes_docx_to_local_folder(self, mocked_cloud_upload):
+        from proposals_app.document_generation import (
+            store_existing_proposal_docx_bytes,
+            store_generated_pdf_document,
+        )
+
+        self.proposal.proposal_workspace_disk_path = ""
+        self.proposal.save(update_fields=["proposal_workspace_disk_path"])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                response = self.client.post(
+                    reverse("proposal_dispatch_create_documents"),
+                    {
+                        "proposal_ids[]": [self.proposal.pk],
+                        "source_kind": "local",
+                        "local_folder_path": tmp,
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.content)
+                payload = response.json()
+                self.assertTrue(payload["ok"], payload)
+                self.assertEqual(payload["generated"], 1)
+                self.proposal.refresh_from_db()
+                self.assertTrue(self.proposal.docx_file_name.endswith(".docx"))
+                self.assertTrue(self.proposal.docx_file_link.startswith("local:"))
+                self.assertEqual(self.proposal.pdf_file_name, "")
+                self.assertEqual(self.proposal.pdf_file_link, "")
+                self.assertEqual(self.proposal.docx_file_id, "")
+                docx_path = Path(self.proposal.docx_file_link[len("local:"):])
+                self.assertEqual(docx_path.parent.resolve(), Path(tmp).resolve())
+                self.assertTrue(docx_path.is_file())
+                generated_doc = Document(docx_path)
+                full_text = "\n".join(paragraph.text for paragraph in generated_doc.paragraphs)
+                self.assertIn('Заказчик: ООО "Приморское"', full_text)
+                mocked_cloud_upload.assert_not_called()
+                self.assertIn(
+                    reverse("proposal_generated_docx_download", args=[self.proposal.pk]),
+                    payload["updates"][0]["proposal_docx_file_url"],
+                )
+
+                download = self.client.get(
+                    reverse("proposal_generated_docx_download", args=[self.proposal.pk])
+                )
+                self.assertEqual(download.status_code, 200)
+                self.assertEqual(b"".join(download.streaming_content), docx_path.read_bytes())
+
+                stored_pdf = store_generated_pdf_document(self.user, self.proposal, b"%PDF-local")
+                self.proposal.pdf_file_name = stored_pdf["pdf_name"]
+                self.proposal.pdf_file_link = stored_pdf["pdf_path"]
+                self.proposal.save(update_fields=["pdf_file_name", "pdf_file_link"])
+                pdf_path = Path(stored_pdf["pdf_path"][len("local:"):])
+                self.assertEqual(pdf_path.parent.resolve(), Path(tmp).resolve())
+                self.assertEqual(pdf_path.read_bytes(), b"%PDF-local")
+                attachment = _load_proposal_pdf_attachment(self.proposal, sender=self.user)
+                self.assertEqual(attachment[0], stored_pdf["pdf_name"])
+                self.assertEqual(attachment[1], b"%PDF-local")
+
+                pdf_download = self.client.get(
+                    reverse("proposal_generated_pdf_download", args=[self.proposal.pk])
+                )
+                self.assertEqual(pdf_download.status_code, 200)
+                self.assertEqual(b"".join(pdf_download.streaming_content), b"%PDF-local")
+
+                updated = store_existing_proposal_docx_bytes(self.user, self.proposal, b"signed-docx-bytes")
+                self.assertEqual(updated["docx_path"], self.proposal.docx_file_link)
+                self.assertEqual(docx_path.read_bytes(), b"signed-docx-bytes")
+                mocked_cloud_upload.assert_not_called()
+
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=False)
+    def test_create_documents_rejects_local_folder_when_disabled(self):
+        response = self.client.post(
+            reverse("proposal_dispatch_create_documents"),
+            {
+                "proposal_ids[]": [self.proposal.pk],
+                "source_kind": "local",
+                "local_folder_path": "/tmp/proposal-local",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("выключена", response.json()["error"])
+
+    @override_settings(
+        PROPOSAL_ALLOW_LOCAL_FOLDER=True,
+        REPORT_CHECK_LOCAL_ROOTS=("/tmp/allowed-proposals",),
+    )
+    def test_create_documents_rejects_local_folder_outside_allowlist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            response = self.client.post(
+                reverse("proposal_dispatch_create_documents"),
+                {
+                    "proposal_ids[]": [self.proposal.pk],
+                    "source_kind": "local",
+                    "local_folder_path": tmp,
+                },
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("разрешённых корней", response.json()["error"])
+
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=True)
+    def test_create_documents_rejects_missing_local_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = str(Path(tmp) / "missing-tkp")
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                response = self.client.post(
+                    reverse("proposal_dispatch_create_documents"),
+                    {
+                        "proposal_ids[]": [self.proposal.pk],
+                        "source_kind": "local",
+                        "local_folder_path": missing,
+                    },
+                )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("не найдена", response.json()["error"])
+
     @override_settings(
         ONLYOFFICE_DOCUMENT_SERVER_URL="https://docs.example.com",
         ONLYOFFICE_VERIFY_SSL=True,
@@ -2430,6 +2547,61 @@ class ProposalDispatchSendTests(TestCase):
         self.assertNotEqual(self.failed_proposal.status, ProposalRegistration.ProposalStatus.SENT)
         self.assertEqual(self.successful_proposal.pdf_file_name, self.successful_pdf_name)
         self.assertEqual(self.successful_proposal.pdf_file_link, self.successful_pdf_link)
+
+    @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_puts_several_addresses_in_one_message(self, mocked_send_notification_email):
+        mocked_send_notification_email.return_value = {
+            "recipient_email": "first@example.com",
+            "subject": "ignored",
+            "is_html": True,
+        }
+        ProposalDispatchRecipient.objects.create(
+            proposal=self.successful_proposal,
+            role=ProposalDispatchRecipient.Role.TO,
+            position=1,
+            email="first@example.com",
+            last_name="Иванов",
+        )
+        ProposalDispatchRecipient.objects.create(
+            proposal=self.successful_proposal,
+            role=ProposalDispatchRecipient.Role.TO,
+            position=2,
+            email="second@example.com",
+            last_name="Петров",
+        )
+        ProposalDispatchRecipient.objects.create(
+            proposal=self.successful_proposal,
+            role=ProposalDispatchRecipient.Role.BCC,
+            position=3,
+            email="hidden@example.com",
+        )
+        ProposalDispatchRecipient.objects.create(
+            proposal=self.successful_proposal,
+            role=ProposalDispatchRecipient.Role.BCC,
+            position=4,
+            email="first@example.com",
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mocked_send_notification_email.call_count, 1)
+        self.assertEqual(
+            mocked_send_notification_email.call_args.kwargs["to_emails"],
+            ["first@example.com", "second@example.com"],
+        )
+        self.assertEqual(
+            mocked_send_notification_email.call_args.kwargs["bcc"],
+            ["hidden@example.com"],
+        )
 
     @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
     @patch("proposals_app.services.send_notification_email")
@@ -2990,13 +3162,14 @@ class ProposalDispatchFormTests(TestCase):
         opened = self.client.get(reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]))
         self.assertContains(
             opened,
-            f'name="recipient_autocomplete_identifier_record_id"',
+            'name="dispatch_recipient_identifier_record_id"',
             html=False,
         )
         self.assertContains(opened, f'value="{stored_id}"', html=False)
-        self.assertRegex(
-            opened.content.decode(),
-            r'id="proposal-dispatch-recipient-autocomplete-selected"\s+value="1"',
+        self.assertContains(
+            opened,
+            'name="dispatch_recipient_selected_from_autocomplete" value="1"',
+            html=False,
         )
 
         payload["recipient_job_title"] = "Директор"
@@ -3011,6 +3184,61 @@ class ProposalDispatchFormTests(TestCase):
         self.proposal.refresh_from_db()
         self.assertEqual(self.proposal.recipient_job_title, "Директор")
         self.assertEqual(self.proposal.recipient_identifier_record_id, stored_id)
+
+    @override_settings(ROOT_URLCONF="urls")
+    def test_dispatch_organization_selected_from_directory_does_not_create_entity(self):
+        entity = BusinessEntityRecord.objects.create(name='АО «Полиметалл УК»', position=1)
+        identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=entity,
+            identifier_type="ОГРН",
+            registration_country=self.country,
+            number="1047808011899",
+            registration_date=date(2004, 3, 4),
+            position=1,
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=identifier,
+            short_name='АО «Полиметалл УК»',
+            registration_country=self.country,
+            identifier="ОГРН",
+            registration_number="1047808011899",
+            registration_date=date(2004, 3, 4),
+            name_received_date=date(2004, 3, 4),
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._recipient_payload(
+                [
+                    {
+                        "role": "to",
+                        "email": "contact@example.com",
+                        "last_name": "Иванов",
+                        "first_name": "Иван",
+                        "organization": 'АО «Полиметалл УК»',
+                        "country": str(self.country.pk),
+                        "identifier": "ОГРН",
+                        "registration_number": "1047808011899",
+                        "registration_date": "04.03.2004",
+                        "identifier_record_id": str(identifier.pk),
+                        "selected": "0",
+                    }
+                ]
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        self.assertEqual(
+            LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).count(),
+            1,
+        )
+        self.proposal.refresh_from_db()
+        recipient = self.proposal.dispatch_recipients.get()
+        self.assertEqual(recipient.identifier_record_id, identifier.pk)
+        self.assertEqual(self.proposal.recipient_identifier_record_id, identifier.pk)
 
     def test_dispatch_form_defaults_recipient_country_to_russia(self):
         form = ProposalDispatchForm()
@@ -3088,6 +3316,355 @@ class ProposalDispatchFormTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.proposal.refresh_from_db()
         self.assertEqual(self.proposal.transfer_to_contract_date, "08.04.2026 11:00")
+
+    def _recipient_payload(self, rows):
+        payload = {
+            "dispatch_recipients_form": "1",
+            "docx_file_name": "",
+            "docx_file_link": "",
+            "pdf_file_name": "",
+            "pdf_file_link": "",
+            "sent_date": "",
+        }
+        fields = {
+            "dispatch_recipient_role": "role",
+            "dispatch_recipient_email": "email",
+            "dispatch_recipient_last_name": "last_name",
+            "dispatch_recipient_first_name": "first_name",
+            "dispatch_recipient_middle_name": "middle_name",
+            "dispatch_recipient_organization": "organization",
+            "dispatch_recipient_country": "country",
+            "dispatch_recipient_identifier": "identifier",
+            "dispatch_recipient_registration_number": "registration_number",
+            "dispatch_recipient_registration_date": "registration_date",
+            "dispatch_recipient_job_title": "job_title",
+            "dispatch_recipient_person_id": "person_id",
+            "dispatch_recipient_email_record_id": "email_record_id",
+            "dispatch_recipient_position_record_id": "position_record_id",
+            "dispatch_recipient_identifier_record_id": "identifier_record_id",
+            "dispatch_recipient_selected_from_autocomplete": "selected",
+        }
+        for key, source in fields.items():
+            payload[key] = [str(row.get(source, "") or "") for row in rows]
+        return payload
+
+    @override_settings(ROOT_URLCONF="urls")
+    def test_dispatch_contact_search_finds_person_by_last_name_and_email(self):
+        person = PersonRecord.objects.create(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            position=1,
+        )
+        EmailRecord.objects.create(person=person, email="ivanov@example.com", position=1)
+        PositionRecord.objects.create(
+            person=person,
+            organization_short_name='ООО "Альфа"',
+            job_title="Директор",
+            position=1,
+        )
+
+        by_first_name_person = PersonRecord.objects.create(
+            last_name="Кузнецов",
+            first_name="Сергей",
+            middle_name="Петрович",
+            position=2,
+        )
+        EmailRecord.objects.create(person=by_first_name_person, email="kuznetsov@example.com", position=1)
+
+        by_name = self.client.get(reverse("prs_dispatch_search"), {"q": "иванов"})
+        by_email = self.client.get(reverse("prs_dispatch_search"), {"q": "ivanov@"})
+        by_first_name = self.client.get(reverse("prs_dispatch_search"), {"q": "сергей"})
+        by_full_name = self.client.get(reverse("prs_dispatch_search"), {"q": "кузнецов сергей"})
+        form = self.client.get(reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]))
+
+        self.assertEqual(by_name.status_code, 200)
+        self.assertEqual(by_email.status_code, 200)
+        self.assertEqual(by_name.json()["results"][0]["email"], "ivanov@example.com")
+        self.assertFalse(by_name.json()["results"][0]["contact_fields_locked"])
+        self.assertEqual(by_name.json()["results"][0]["job_title"], "Директор")
+        self.assertEqual(by_name.json()["results"][0]["organization_short_name"], 'ООО "Альфа"')
+        self.assertEqual(by_email.json()["results"][0]["person_id"], person.pk)
+        self.assertIn("Иванов", by_email.json()["results"][0]["label"])
+        self.assertEqual(
+            [item["email"] for item in by_first_name.json()["results"]],
+            ["kuznetsov@example.com"],
+        )
+        self.assertEqual(
+            [item["email"] for item in by_full_name.json()["results"]],
+            ["kuznetsov@example.com"],
+        )
+        self.assertContains(form, 'placeholder="Фамилия Имя или эл. почта"', count=2, html=False)
+        self.assertNotContains(form, 'placeholder="Фамилия или эл. почта"', html=False)
+
+    @override_settings(ROOT_URLCONF="urls")
+    def test_staff_user_dispatch_contact_fields_are_locked(self):
+        from users_app.contact_sync import sync_employee_contacts
+
+        staff = get_user_model().objects.create_user(
+            username="locked-staff@example.com",
+            email="locked-staff@example.com",
+            password="secret",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Сотрудников",
+        )
+        employee = Employee.objects.create(
+            user=staff,
+            patronymic="Иванович",
+            employment="IMC Montan",
+            job_title="Геолог",
+        )
+        sync_employee_contacts(employee)
+        employee.refresh_from_db()
+        person = employee.person_record
+        email = employee.managed_email_record
+        position = employee.managed_position_record
+        self.assertEqual(position.organization_short_name, "IMC Montan")
+
+        external = get_user_model().objects.create_user(
+            username="external-locked@example.com",
+            email="external-locked@example.com",
+            password="secret",
+            is_staff=False,
+            first_name="Петр",
+            last_name="Внешний",
+        )
+        external_employee = Employee.objects.create(
+            user=external,
+            patronymic="Петрович",
+            organization='ООО "Внешние"',
+            job_title="Консультант",
+        )
+        sync_employee_contacts(external_employee)
+        external_employee.refresh_from_db()
+
+        ProposalDispatchRecipient.objects.create(
+            proposal=self.proposal,
+            role=ProposalDispatchRecipient.Role.TO,
+            position=1,
+            person=person,
+            email_record=email,
+            position_record=position,
+            last_name="Сотрудников",
+            first_name="Иван",
+            middle_name="Иванович",
+            email="locked-staff@example.com",
+            organization_short_name="IMC Montan",
+            country=self.country,
+            identifier="ОГРН",
+            registration_number="1234567890123",
+            registration_date=date(2020, 1, 15),
+            job_title="Геолог",
+        )
+        ProposalDispatchRecipient.objects.create(
+            proposal=self.proposal,
+            role=ProposalDispatchRecipient.Role.BCC,
+            position=2,
+            person=external_employee.person_record,
+            email_record=external_employee.managed_email_record,
+            position_record=external_employee.managed_position_record,
+            last_name="Внешний",
+            first_name="Петр",
+            middle_name="Петрович",
+            email="external-locked@example.com",
+            organization_short_name='ООО "Внешние"',
+            job_title="Консультант",
+        )
+
+        by_staff_email = self.client.get(reverse("prs_dispatch_search"), {"q": "locked-staff@"})
+        by_external_email = self.client.get(reverse("prs_dispatch_search"), {"q": "external-locked@"})
+        self.assertTrue(by_staff_email.json()["results"][0]["contact_fields_locked"])
+        self.assertFalse(by_external_email.json()["results"][0]["contact_fields_locked"])
+
+        opened = self.client.get(reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]))
+        html = opened.content.decode()
+        self.assertIn('data-email="locked-staff@example.com"', html)
+        self.assertIn('data-contact-fields-locked="1"', html)
+        self.assertIn(
+            'class="form-control readonly-field" name="dispatch_recipient_last_name" value="Сотрудников" readonly tabindex="-1"',
+            html,
+        )
+        self.assertIn(
+            'class="form-control readonly-field" name="dispatch_recipient_first_name" value="Иван" readonly tabindex="-1"',
+            html,
+        )
+        self.assertIn(
+            'class="form-control readonly-field" name="dispatch_recipient_middle_name" value="Иванович" readonly tabindex="-1"',
+            html,
+        )
+        self.assertIn(
+            'class="form-control readonly-field js-dispatch-block-email" name="dispatch_recipient_email" value="locked-staff@example.com" readonly tabindex="-1"',
+            html,
+        )
+        self.assertIn('class="form-control readonly-field js-dispatch-organization"', html)
+        self.assertIn("js-dispatch-recipient-country readonly-field", html)
+        self.assertIn('class="form-select js-dispatch-recipient-country readonly-field" disabled tabindex="-1"', html)
+        self.assertIn('class="form-control readonly-field js-dispatch-registration-number"', html)
+        self.assertIn('class="form-control readonly-field js-date js-dispatch-registration-date"', html)
+        self.assertIn(
+            'class="form-control readonly-field" name="dispatch_recipient_job_title" value="Геолог" readonly tabindex="-1"',
+            html,
+        )
+        self.assertIn(
+            'class="form-control" name="dispatch_recipient_last_name" value="Внешний"',
+            html,
+        )
+        self.assertIn(
+            'class="form-control js-dispatch-block-email" name="dispatch_recipient_email" value="external-locked@example.com"',
+            html,
+        )
+        self.assertEqual(html.count("js-dispatch-recipient-country readonly-field"), 1)
+        self.assertEqual(html.count('class="form-control readonly-field js-dispatch-organization"'), 1)
+
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._recipient_payload(
+                [
+                    {
+                        "role": "to",
+                        "email": "changed-staff@example.com",
+                        "last_name": "Чужой",
+                        "first_name": "Чужое",
+                        "middle_name": "Чужович",
+                        "organization": 'ООО "Чужое"',
+                        "country": str(self.country.pk),
+                        "identifier": "ИНН",
+                        "registration_number": "999",
+                        "registration_date": "01.02.2024",
+                        "job_title": "Директор",
+                        "person_id": person.pk,
+                        "email_record_id": email.pk,
+                        "position_record_id": position.pk,
+                    }
+                ]
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        person.refresh_from_db()
+        email.refresh_from_db()
+        position.refresh_from_db()
+        staff.refresh_from_db()
+        self.assertEqual(person.last_name, "Сотрудников")
+        self.assertEqual(person.first_name, "Иван")
+        self.assertEqual(person.middle_name, "Иванович")
+        self.assertEqual(email.email, "locked-staff@example.com")
+        self.assertEqual(position.organization_short_name, "IMC Montan")
+        self.assertEqual(position.job_title, "Геолог")
+        self.assertEqual(staff.email, "locked-staff@example.com")
+        self.assertEqual(staff.last_name, "Сотрудников")
+        self.assertFalse(EmailRecord.objects.filter(email="changed-staff@example.com").exists())
+        self.assertFalse(PersonRecord.objects.filter(last_name="Чужой").exists())
+        self.assertFalse(BusinessEntityRecord.objects.filter(name='ООО "Чужое"').exists())
+        recipient = self.proposal.dispatch_recipients.get()
+        self.assertEqual(recipient.email, "locked-staff@example.com")
+        self.assertEqual(recipient.last_name, "Сотрудников")
+        self.assertEqual(recipient.first_name, "Иван")
+        self.assertEqual(recipient.middle_name, "Иванович")
+        self.assertEqual(recipient.organization_short_name, "IMC Montan")
+        self.assertEqual(recipient.job_title, "Геолог")
+
+    @override_settings(ROOT_URLCONF="urls")
+    def test_dispatch_form_creates_person_for_unknown_email_without_last_name(self):
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._recipient_payload(
+                [
+                    {"role": "to", "email": "new-person@example.com"},
+                    {
+                        "role": "bcc",
+                        "email": "hidden@example.com",
+                        "last_name": "Смирнов",
+                        "first_name": "Семен",
+                        "job_title": "Инженер",
+                        "organization": 'ООО "Бета"',
+                    },
+                ]
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.contact_email, "new-person@example.com")
+        self.assertEqual(self.proposal.contact_full_name, "")
+        recipients = list(self.proposal.dispatch_recipients.order_by("position", "id"))
+        self.assertEqual([(item.role, item.email) for item in recipients], [
+            ("to", "new-person@example.com"),
+            ("bcc", "hidden@example.com"),
+        ])
+        created = PersonRecord.objects.get(emails__email="new-person@example.com")
+        self.assertEqual(created.last_name, "")
+        self.assertTrue(EmailRecord.objects.filter(person=created, email="new-person@example.com").exists())
+        hidden = PersonRecord.objects.get(last_name="Смирнов")
+        self.assertEqual(hidden.first_name, "Семен")
+        self.assertTrue(
+            PositionRecord.objects.filter(
+                person=hidden,
+                job_title="Инженер",
+                organization_short_name='ООО "Бета"',
+            ).exists()
+        )
+
+    @override_settings(ROOT_URLCONF="urls")
+    def test_dispatch_form_updates_linked_contact_fields(self):
+        person = PersonRecord.objects.create(last_name="Орлов", first_name="Олег", middle_name="Олегович", position=1)
+        email = EmailRecord.objects.create(person=person, email="orlov@example.com", position=1)
+        position = PositionRecord.objects.create(
+            person=person,
+            organization_short_name='ООО "Гамма"',
+            job_title="Менеджер",
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._recipient_payload(
+                [
+                    {
+                        "role": "to",
+                        "email": "orlov-new@example.com",
+                        "last_name": "Орлов",
+                        "first_name": "Олег",
+                        "middle_name": "Петрович",
+                        "organization": 'ООО "Дельта"',
+                        "job_title": "Директор",
+                        "person_id": person.pk,
+                        "email_record_id": email.pk,
+                        "position_record_id": position.pk,
+                    }
+                ]
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        person.refresh_from_db()
+        email.refresh_from_db()
+        position.refresh_from_db()
+        self.assertEqual(person.middle_name, "Петрович")
+        self.assertEqual(email.email, "orlov-new@example.com")
+        self.assertEqual(position.job_title, "Директор")
+        self.assertEqual(position.organization_short_name, 'ООО "Дельта"')
+        self.assertEqual(PersonRecord.objects.filter(last_name="Орлов").count(), 1)
+
+    @override_settings(ROOT_URLCONF="urls")
+    def test_dispatch_form_drops_bcc_address_already_listed_as_to(self):
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._recipient_payload(
+                [
+                    {"role": "to", "email": "same@example.com", "last_name": "Один"},
+                    {"role": "bcc", "email": "same@example.com", "last_name": "Два"},
+                    {"role": "bcc", "email": "other@example.com", "last_name": "Три"},
+                ]
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        self.assertEqual(
+            list(self.proposal.dispatch_recipients.order_by("position", "id").values_list("role", "email")),
+            [("to", "same@example.com"), ("bcc", "other@example.com")],
+        )
 
 
 class ProposalRegistrationFormTests(TestCase):
@@ -6719,13 +7296,61 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(
             response,
             (
-                '<td data-col="tkp-id" class="proposal-id-cell">'
+                '<td data-col="tkp-id" class="proposal-id-cell" rowspan="1">'
                 '<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" '
                 'role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>'
                 f'<span class="clf-id-droid-mono">{proposal.short_uid}</span></td>'
             ),
             html=False,
         )
+        self.assertContains(response, 'id="proposal-dispatch-groups-toggle"', html=False)
+        self.assertNotContains(response, "data-proposal-dispatch-group-toggle", html=False)
+
+    def test_dispatch_table_groups_summary_columns_for_several_recipients(self):
+        proposal = ProposalRegistration.objects.create(
+            number=4444,
+            sub_number=0,
+            group_member=self.group_member,
+            name="Несколько адресатов",
+            year=2026,
+        )
+        ProposalDispatchRecipient.objects.create(
+            proposal=proposal,
+            role=ProposalDispatchRecipient.Role.TO,
+            position=1,
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            email="ivanov@example.com",
+            job_title="Директор",
+            organization_short_name='ООО "Альфа"',
+        )
+        ProposalDispatchRecipient.objects.create(
+            proposal=proposal,
+            role=ProposalDispatchRecipient.Role.BCC,
+            position=2,
+            last_name="Петров",
+            first_name="Петр",
+            email="petrov@example.com",
+            job_title="Инженер",
+            organization_short_name='ООО "Бета"',
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('rowspan="2"', content)
+        self.assertEqual(content.count(f'id="proposal-dispatch-sel-{proposal.pk}"'), 1)
+        self.assertIn("ivanov@example.com", content)
+        self.assertIn("petrov@example.com", content)
+        self.assertIn("Иванов И.И.", content)
+        self.assertIn("Петров П.", content)
+        self.assertIn(f'<td data-col="number" rowspan="2">{proposal.formatted_number}</td>', content)
+        self.assertIn('id="proposal-dispatch-groups-toggle"', content)
+        self.assertIn(f'data-proposal-dispatch-group-toggle="{proposal.pk}"', content)
+        self.assertIn("bi-caret-down-fill", content)
+        self.assertIn("proposal-dispatch-contact-has-next", content)
 
     def test_proposals_partial_renders_collapsible_dispatch_and_template_section_toggles(self):
         response = self.client.get(reverse("proposals_partial"))
@@ -6740,6 +7365,22 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-template-section-body"', html=False)
         self.assertContains(response, "Развернуть раздел «Образцы шаблонов ТКП»")
         self.assertContains(response, "bi-plus-square", html=False)
+
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=True)
+    def test_proposals_partial_renders_local_folder_source(self):
+        response = self.client.get(reverse("proposals_partial"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="proposal-dispatch-source"', html=False)
+        self.assertContains(response, "Источник:", html=False)
+        self.assertContains(response, "Локальная папка", html=False)
+        self.assertContains(response, 'id="proposal-dispatch-local-path"', html=False)
+
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=False)
+    def test_proposals_partial_hides_local_folder_source_when_disabled(self):
+        response = self.client.get(reverse("proposals_partial"))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'id="proposal-dispatch-source"', html=False)
+        self.assertNotContains(response, 'id="proposal-dispatch-local-path"', html=False)
 
     def test_proposals_partial_renders_payment_schedule_table_by_product_stage(self):
         first_product = Product.objects.create(
@@ -8474,6 +9115,224 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
         self.assertEqual(proposal.assets.get().identifier_record_id, asset.identifier_record_id)
         self.assertEqual(proposal.legal_entities.get().identifier_record_id, legal_entity.identifier_record_id)
 
+    def _directory_company(self, *, country, name, number):
+        entity = BusinessEntityRecord.objects.create(name=name, source="[Справочник]", position=1)
+        identifier = BusinessEntityIdentifierRecord.objects.create(
+            business_entity=entity,
+            identifier_type="ОГРН",
+            registration_country=country,
+            number=number,
+            registration_date=date(2004, 3, 4),
+            position=1,
+        )
+        LegalEntityRecord.objects.create(
+            attribute=LegalEntityRecord.ATTRIBUTE_NAME,
+            identifier_record=identifier,
+            short_name=name,
+            registration_country=country,
+            identifier="ОГРН",
+            registration_number=number,
+            registration_date=date(2004, 3, 4),
+            name_received_date=date(2004, 3, 4),
+            position=1,
+        )
+        return identifier
+
+    def test_directory_selection_and_asset_copy_do_not_create_registry_rows(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        existing = self._directory_company(
+            country=country,
+            name='АО «Полиметалл УК»',
+            number="1047808011899",
+        )
+
+        response = self.client.post(
+            reverse("proposal_form_create"),
+            self._payload(
+                assets_payload=json.dumps(
+                    [
+                        {
+                            "short_name": 'АО «Полиметалл УК»',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "1047808011899",
+                            "registration_date": "04.03.2004",
+                            "selected_identifier_record_id": str(existing.pk),
+                            "selected_from_autocomplete": True,
+                            "user_edited": False,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                legal_entities_payload=json.dumps(
+                    [
+                        {
+                            "asset_short_name": 'АО «Полиметалл УК»',
+                            "short_name": 'АО «Полиметалл УК»',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "1047808011899",
+                            "registration_date": "04.03.2004",
+                            "selected_identifier_record_id": "",
+                            "selected_from_autocomplete": False,
+                            "user_edited": False,
+                            "copied_from_asset": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        self.assertEqual(
+            LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).count(),
+            1,
+        )
+        proposal = ProposalRegistration.objects.get()
+        self.assertEqual(proposal.assets.get().identifier_record_id, existing.pk)
+        self.assertEqual(proposal.legal_entities.get().identifier_record_id, existing.pk)
+
+    def test_owner_checkbox_and_automatic_rows_reuse_customer_identifier(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        existing = self._directory_company(
+            country=country,
+            name='АО «Воркутауголь»',
+            number="1021100807452",
+        )
+
+        response = self.client.post(
+            reverse("proposal_form_create"),
+            self._payload(
+                customer='АО «Воркутауголь»',
+                country=str(country.pk),
+                identifier="ОГРН",
+                registration_number="1021100807452",
+                registration_date="02.12.1996",
+                customer_autocomplete_identifier_record_id=str(existing.pk),
+                customer_autocomplete_selected_from_autocomplete="1",
+                asset_owner_matches_customer="on",
+                assets_payload=json.dumps(
+                    [
+                        {
+                            "short_name": 'АО «Воркутауголь»',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "1021100807452",
+                            "registration_date": "02.12.1996",
+                            "selected_identifier_record_id": "",
+                            "selected_from_autocomplete": False,
+                            "user_edited": False,
+                            "copied_from_owner": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                legal_entities_payload=json.dumps(
+                    [
+                        {
+                            "asset_short_name": 'АО «Воркутауголь»',
+                            "short_name": 'АО «Воркутауголь»',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "1021100807452",
+                            "registration_date": "02.12.1996",
+                            "selected_identifier_record_id": "",
+                            "selected_from_autocomplete": False,
+                            "user_edited": False,
+                            "copied_from_asset": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        proposal = ProposalRegistration.objects.get()
+        self.assertEqual(proposal.customer_identifier_record_id, existing.pk)
+        self.assertEqual(proposal.asset_owner_identifier_record_id, existing.pk)
+        self.assertEqual(proposal.assets.get().identifier_record_id, existing.pk)
+        self.assertEqual(proposal.legal_entities.get().identifier_record_id, existing.pk)
+
+    def test_manual_asset_creates_one_chain_and_copied_legal_entity_reuses_it(self):
+        country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("proposal_form_create"),
+            self._payload(
+                assets_payload=json.dumps(
+                    [
+                        {
+                            "short_name": 'ООО "Новый актив"',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "555",
+                            "registration_date": "01.04.2026",
+                            "selected_identifier_record_id": "",
+                            "selected_from_autocomplete": False,
+                            "user_edited": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                legal_entities_payload=json.dumps(
+                    [
+                        {
+                            "asset_short_name": 'ООО "Новый актив"',
+                            "short_name": 'ООО "Новый актив"',
+                            "country_id": str(country.pk),
+                            "identifier": "ОГРН",
+                            "registration_number": "555",
+                            "registration_date": "01.04.2026",
+                            "selected_identifier_record_id": "",
+                            "selected_from_autocomplete": False,
+                            "user_edited": False,
+                            "copied_from_asset": True,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+        self.assertEqual(
+            LegalEntityRecord.objects.filter(attribute=LegalEntityRecord.ATTRIBUTE_NAME).count(),
+            1,
+        )
+        proposal = ProposalRegistration.objects.get()
+        asset_identifier_id = proposal.assets.get().identifier_record_id
+        self.assertIsNotNone(asset_identifier_id)
+        self.assertEqual(proposal.legal_entities.get().identifier_record_id, asset_identifier_id)
+
     def test_create_view_syncs_customer_region_into_registry_chain(self):
         country = OKSMCountry.objects.create(
             number=643,
@@ -9243,6 +10102,57 @@ class ProposalDispatchDiskColumnTests(TestCase):
         self.assertContains(response, f'href="{expected_url}"', html=False)
         self.assertNotContains(response, f'href="{guessed_url}"', html=False)
         self.assertNotContains(response, f'href="{owner_url}"', html=False)
+        mocked_list_user_shares.assert_not_called()
+        mocked_get_user_share.assert_not_called()
+        mocked_list_resources.assert_not_called()
+
+    @override_settings(NEXTCLOUD_LIVE_SHARE_LOOKUP_ON_READ=True, ROOT_URLCONF="urls")
+    @patch("nextcloud_app.api.NextcloudApiClient.list_resources")
+    @patch("nextcloud_app.api.NextcloudApiClient.get_user_share", return_value=None)
+    @patch("nextcloud_app.api.NextcloudApiClient.list_user_shares", return_value={})
+    def test_dispatch_form_edit_uses_stored_file_urls_without_live_share_api(
+        self,
+        mocked_list_user_shares,
+        mocked_get_user_share,
+        mocked_list_resources,
+    ):
+        self.proposal.proposal_workspace_target_path = "/Shared/333300RU DD Тестовое ТКП"
+        self.proposal.docx_file_name = "ТКП_333300RU_DD_Тестовое_ТКП.docx"
+        self.proposal.docx_file_link = (
+            f"{self.proposal.proposal_workspace_disk_path}/{self.proposal.docx_file_name}"
+        )
+        self.proposal.docx_file_id = "2068"
+        self.proposal.pdf_file_name = "ТКП_333300RU_DD_Тестовое_ТКП.pdf"
+        self.proposal.pdf_file_link = (
+            f"{self.proposal.proposal_workspace_disk_path}/{self.proposal.pdf_file_name}"
+        )
+        self.proposal.pdf_file_id = "2069"
+        self.proposal.save(
+            update_fields=[
+                "proposal_workspace_target_path",
+                "docx_file_name",
+                "docx_file_link",
+                "docx_file_id",
+                "pdf_file_name",
+                "pdf_file_link",
+                "pdf_file_id",
+            ]
+        )
+
+        response = self.client.get(reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        target_query = quote("/Shared/333300RU DD Тестовое ТКП", safe="/")
+        docx_url = (
+            "https://cloud.example.com/apps/files/files/2068?dir="
+            f"{target_query}&amp;openfile=true"
+        )
+        pdf_url = (
+            "https://cloud.example.com/apps/files/files/2069?dir="
+            f"{target_query}&amp;openfile=true"
+        )
+        self.assertContains(response, docx_url, html=False)
+        self.assertContains(response, pdf_url, html=False)
         mocked_list_user_shares.assert_not_called()
         mocked_get_user_share.assert_not_called()
         mocked_list_resources.assert_not_called()

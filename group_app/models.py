@@ -29,6 +29,14 @@ class GroupMember(models.Model):
         default="",
     )
     is_management_company = models.BooleanField("Управляющая компания", default=False)
+    business_entity = models.ForeignKey(
+        "classifiers_app.BusinessEntityRecord",
+        verbose_name="Бизнес-сущность",
+        on_delete=models.PROTECT,
+        related_name="group_members",
+        null=True,
+        blank=True,
+    )
     position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

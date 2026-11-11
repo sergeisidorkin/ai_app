@@ -44,6 +44,7 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DSH_SORT_ALLOW_LOCAL_INBOX = env.bool("DSH_SORT_ALLOW_LOCAL_INBOX", default=False)
 REPORT_CHECK_ALLOW_LOCAL_FOLDER = env.bool("REPORT_CHECK_ALLOW_LOCAL_FOLDER", default=False)
 CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER = env.bool("CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER", default=False)
+PROPOSAL_ALLOW_LOCAL_FOLDER = env.bool("PROPOSAL_ALLOW_LOCAL_FOLDER", default=False)
 if not (DSH_COMPOSE_DIR or "").strip():
     DSH_COMPOSE_DIR = "/opt/dsh"
 _dsh_compose_dir = Path(DSH_COMPOSE_DIR)

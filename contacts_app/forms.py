@@ -32,7 +32,28 @@ from .models import (
     SpecialtyRecord,
     USER_KIND_EMPLOYEE,
     USER_KIND_EXTERNAL,
+    parse_prs_id,
 )
+
+
+def clean_new_prs_id(raw_value, instance):
+    if getattr(instance, "pk", None):
+        return None
+    raw = (raw_value or "").strip()
+    if not raw:
+        return None
+    parsed = parse_prs_id(raw)
+    if parsed is None:
+        raise forms.ValidationError("Укажите ID-PRS в виде 00027-PRS.")
+    if PersonRecord.objects.filter(pk=parsed).exists():
+        raise forms.ValidationError(f"{parsed:05d}-PRS уже есть в реестре лиц.")
+    return parsed
+
+
+def apply_explicit_prs_id(instance, desired_pk):
+    if desired_pk and not instance.pk:
+        instance.pk = desired_pk
+    return instance
 
 
 class LegacyCompatibleTypedChoiceField(forms.TypedChoiceField):

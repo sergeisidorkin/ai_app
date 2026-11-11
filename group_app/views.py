@@ -2,6 +2,7 @@ import json
 import os
 
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db import transaction
 from django.db.models import Max
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, render
@@ -11,6 +12,7 @@ from classifiers_app.models import LegalEntityIdentifier
 from .expertise_management import sync_missing_modes
 from .forms import ExpertiseManagementModeForm, GroupMemberForm, OrgUnitForm
 from .models import ExpertiseManagementMode, GroupMember, OrgUnit, resequence_group_members
+from .registry_sync import delete_linked_business_entity, sync_group_member_registry
 
 PARTIAL_TEMPLATE = "group_app/group_partial.html"
 TABLE_TEMPLATE = "group_app/group_table_partial.html"
@@ -135,10 +137,12 @@ def member_form_create(request):
     if uploaded_seal:
         obj.seal_file = ""
     obj.position = _next_position()
-    obj.save()
-    if uploaded_seal:
-        obj.seal_file = uploaded_seal
-        obj.save(update_fields=["seal_file"])
+    with transaction.atomic():
+        obj.save()
+        if uploaded_seal:
+            obj.seal_file = uploaded_seal
+            obj.save(update_fields=["seal_file"])
+        sync_group_member_registry(obj, request.user)
     resequence_group_members()
     return _render_updated(request)
 
@@ -158,7 +162,9 @@ def member_form_edit(request, pk: int):
     form = GroupMemberForm(request.POST, request.FILES, instance=member, current_order_number=current_order_number)
     if not form.is_valid():
         return render(request, FORM_TEMPLATE, _member_form_context(form, "edit", member))
-    saved_member = form.save()
+    with transaction.atomic():
+        saved_member = form.save()
+        sync_group_member_registry(saved_member, request.user)
     new_seal_name = saved_member.seal_file.name if saved_member.seal_file else ""
     if old_seal_name and (clear_seal or (has_new_seal and old_seal_name != new_seal_name)):
         _delete_member_seal_file(saved_member, old_seal_name)
@@ -172,7 +178,10 @@ def member_form_edit(request, pk: int):
 def member_delete(request, pk: int):
     member = get_object_or_404(GroupMember, pk=pk)
     old_seal_name = member.seal_file.name if member.seal_file else ""
-    member.delete()
+    entity_id = member.business_entity_id
+    with transaction.atomic():
+        member.delete()
+        delete_linked_business_entity(entity_id)
     _delete_member_seal_file(member, old_seal_name)
     _normalize_positions()
     return _render_updated(request)

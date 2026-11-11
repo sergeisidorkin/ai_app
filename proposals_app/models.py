@@ -323,6 +323,73 @@ class ProposalRegistration(models.Model):
         initials = "".join(f"{part[0]}." for part in parts[1:] if part)
         return f"{last_name} {initials}".strip()
 
+    def _stored_dispatch_recipients(self):
+        if not self.pk:
+            return []
+        prefetched = getattr(self, "_prefetched_objects_cache", {})
+        if "dispatch_recipients" in prefetched:
+            return list(prefetched["dispatch_recipients"])
+        return list(self.dispatch_recipients.order_by("position", "id"))
+
+    def legacy_dispatch_recipient(self):
+        full_name = (self.contact_full_name or "").strip()
+        email = (self.contact_email or "").strip()
+        organization = (self.recipient or "").strip()
+        job_title = (self.recipient_job_title or "").strip()
+        has_contact = any(
+            [
+                full_name,
+                email,
+                organization,
+                job_title,
+                self.recipient_country_id,
+                (self.recipient_identifier or "").strip(),
+                (self.recipient_registration_number or "").strip(),
+                self.recipient_registration_date,
+            ]
+        )
+        if not has_contact:
+            return None
+        parts = [part for part in full_name.split() if part]
+        return ProposalDispatchRecipient(
+            role=ProposalDispatchRecipient.Role.TO,
+            last_name=parts[0] if parts else "",
+            first_name=parts[1] if len(parts) > 1 else "",
+            middle_name=" ".join(parts[2:]) if len(parts) > 2 else "",
+            email=email,
+            organization_short_name=organization,
+            country_id=self.recipient_country_id,
+            identifier=self.recipient_identifier or "",
+            registration_number=self.recipient_registration_number or "",
+            registration_date=self.recipient_registration_date,
+            identifier_record_id=self.recipient_identifier_record_id,
+            job_title=job_title,
+        )
+
+    def dispatch_contact_rows(self):
+        rows = self._stored_dispatch_recipients()
+        if rows:
+            return rows
+        legacy = self.legacy_dispatch_recipient()
+        if legacy is not None:
+            return [legacy]
+        return [ProposalDispatchRecipient(role=ProposalDispatchRecipient.Role.TO)]
+
+    @property
+    def dispatch_to_emails(self):
+        emails = []
+        seen = set()
+        for row in self.dispatch_contact_rows():
+            if getattr(row, "role", "") != ProposalDispatchRecipient.Role.TO:
+                continue
+            email = (getattr(row, "email", "") or "").strip()
+            key = email.casefold()
+            if not email or key in seen:
+                continue
+            seen.add(key)
+            emails.append(email)
+        return " ".join(emails)
+
     @property
     def group_alpha2(self):
         member = self._resolved_group_member()
@@ -463,6 +530,154 @@ class ProposalRegistration(models.Model):
     @property
     def type_short_display(self):
         return "-".join(self.type_short_names)
+
+
+class ProposalDispatchRecipient(models.Model):
+    class Role(models.TextChoices):
+        TO = "to", "Кому"
+        BCC = "bcc", "Скрытая копия"
+
+    proposal = models.ForeignKey(
+        ProposalRegistration,
+        verbose_name="ТКП",
+        on_delete=models.CASCADE,
+        related_name="dispatch_recipients",
+    )
+    role = models.CharField("Роль", max_length=8, choices=Role.choices, default=Role.TO, db_index=True)
+    position = models.PositiveIntegerField("Позиция", default=0, db_index=True)
+    person = models.ForeignKey(
+        "contacts_app.PersonRecord",
+        verbose_name="Лицо",
+        on_delete=models.SET_NULL,
+        related_name="proposal_dispatch_recipients",
+        null=True,
+        blank=True,
+    )
+    email_record = models.ForeignKey(
+        "contacts_app.EmailRecord",
+        verbose_name="Эл. почта контакта",
+        on_delete=models.SET_NULL,
+        related_name="proposal_dispatch_recipients",
+        null=True,
+        blank=True,
+    )
+    position_record = models.ForeignKey(
+        "contacts_app.PositionRecord",
+        verbose_name="Должность контакта",
+        on_delete=models.SET_NULL,
+        related_name="proposal_dispatch_recipients",
+        null=True,
+        blank=True,
+    )
+    last_name = models.CharField("Фамилия", max_length=255, blank=True, default="")
+    first_name = models.CharField("Имя", max_length=255, blank=True, default="")
+    middle_name = models.CharField("Отчество", max_length=255, blank=True, default="")
+    email = models.CharField("Эл. почта", max_length=254, blank=True, default="")
+    organization_short_name = models.CharField(
+        "Наименование организации (краткое)",
+        max_length=512,
+        blank=True,
+        default="",
+    )
+    country = models.ForeignKey(
+        OKSMCountry,
+        verbose_name="Страна",
+        on_delete=models.SET_NULL,
+        related_name="dispatch_recipient_countries",
+        null=True,
+        blank=True,
+    )
+    identifier = models.CharField("Идентификатор", max_length=64, blank=True, default="")
+    registration_number = models.CharField("Регистрационный номер", max_length=100, blank=True, default="")
+    registration_date = models.DateField("Дата регистрации", null=True, blank=True)
+    identifier_record = models.ForeignKey(
+        "classifiers_app.BusinessEntityIdentifierRecord",
+        verbose_name="Идентификатор организации",
+        on_delete=models.SET_NULL,
+        related_name="proposal_dispatch_recipient_rows",
+        null=True,
+        blank=True,
+    )
+    job_title = models.CharField("Должность", max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "proposals_app"
+        ordering = ["position", "id"]
+        verbose_name = "Адресат отправки ТКП"
+        verbose_name_plural = "Адресаты отправки ТКП"
+
+    def __str__(self):
+        return f"{self.get_role_display()} {self.email}".strip()
+
+    @property
+    def contact_full_name(self):
+        return " ".join(
+            part
+            for part in [self.last_name, self.first_name, self.middle_name]
+            if (part or "").strip()
+        ).strip()
+
+    @property
+    def contact_short_name(self):
+        parts = [part for part in self.contact_full_name.split() if part]
+        if not parts:
+            return ""
+        initials = "".join(f"{part[0]}." for part in parts[1:] if part)
+        return f"{parts[0]} {initials}".strip()
+
+    @property
+    def registration_date_display(self):
+        if not self.registration_date:
+            return ""
+        return self.registration_date.strftime("%d.%m.%Y")
+
+    @property
+    def autocomplete_selected_value(self):
+        return "1" if self.identifier_record_id else "0"
+
+
+def mirror_primary_dispatch_recipient(proposal):
+    primary = (
+        proposal.dispatch_recipients.filter(role=ProposalDispatchRecipient.Role.TO)
+        .select_related("country", "identifier_record")
+        .order_by("position", "id")
+        .first()
+    )
+    if primary is None:
+        proposal.contact_full_name = ""
+        proposal.contact_email = ""
+        proposal.recipient = ""
+        proposal.recipient_country = None
+        proposal.recipient_identifier = ""
+        proposal.recipient_registration_number = ""
+        proposal.recipient_registration_date = None
+        proposal.recipient_identifier_record = None
+        proposal.recipient_job_title = ""
+    else:
+        proposal.contact_full_name = primary.contact_full_name[:255]
+        proposal.contact_email = (primary.email or "")[:255]
+        proposal.recipient = (primary.organization_short_name or "")[:255]
+        proposal.recipient_country = primary.country
+        proposal.recipient_identifier = primary.identifier or ""
+        proposal.recipient_registration_number = primary.registration_number or ""
+        proposal.recipient_registration_date = primary.registration_date
+        proposal.recipient_identifier_record = primary.identifier_record
+        proposal.recipient_job_title = primary.job_title or ""
+    proposal.save(
+        update_fields=[
+            "contact_full_name",
+            "contact_email",
+            "recipient",
+            "recipient_country",
+            "recipient_identifier",
+            "recipient_registration_number",
+            "recipient_registration_date",
+            "recipient_identifier_record",
+            "recipient_job_title",
+        ]
+    )
 
 
 class ProposalRegistrationProduct(models.Model):

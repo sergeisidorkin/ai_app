@@ -3,6 +3,7 @@
   const HOST_ID = 'inline-table-editor-host';
 
   let activeSession = null;
+  const attachedSessions = new Set();
   let host = null;
   let selectEl = null;
   let ownersEl = null;
@@ -121,7 +122,16 @@
     const options = specialtyOptionsFor(cell);
     const list = normalizeSpecialtyIds(ids);
     const display = list.length ? list : [''];
+    const reserveWidth = !!(cell.closest && cell.closest('#epr-table'));
     let html = '<div class="inline-specialties" data-count="' + list.length + '">';
+    if (reserveWidth) {
+      html += '<div class="epr-spec-sizer" aria-hidden="true">';
+      display.forEach(function (id) {
+        const item = options.find(function (entry) { return String(entry.id) === String(id); });
+        html += '<span>' + escapeHtml(item ? item.label : (id || '—')) + '</span>';
+      });
+      html += '</div>';
+    }
     display.forEach(function (id, index) {
       const item = options.find(function (entry) { return String(entry.id) === String(id); });
       const label = item ? item.label : (id || '—');
@@ -564,7 +574,9 @@
   function getNumberCell(target) {
     if (!target || !target.closest) return null;
     const cell = target.closest('td[data-inline-type="number"]');
-    if (!cell || !activeSession || !activeSession.hasSection(cell.closest('[data-policy-table-key]'))) {
+    const section = cell && cell.closest('[data-policy-table-key]');
+    const session = useSessionFor(section);
+    if (!cell || !session || !session.hasSection(section)) {
       return null;
     }
     return cell;
@@ -672,6 +684,21 @@
 
   function sessionAdapter(tableKey) {
     return activeSession && activeSession.getAdapter(tableKey);
+  }
+
+  function useSessionFor(section) {
+    if (!section) return activeSession;
+    if (activeSession && activeSession.hasSection(section)) return activeSession;
+    for (const session of attachedSessions) {
+      if (!session.hasSection(section)) continue;
+      if (activeSession !== session) {
+        closeEditors({ commitText: true });
+        clearSelection();
+        activeSession = session;
+      }
+      return session;
+    }
+    return activeSession;
   }
 
   function applyCellValue(cell, value, options) {
@@ -1278,6 +1305,8 @@
   }
 
   function handlePointerDown(event) {
+    const section = event.target.closest && event.target.closest('[data-policy-table-key]');
+    if (section) useSessionFor(section);
     if (!activeSession) return;
     if (richEdit) {
       richPointerStartedInEditor = isRichEditorEvent(event);
@@ -1289,6 +1318,8 @@
   }
 
   function handleDocumentClick(event) {
+    const section = event.target.closest && event.target.closest('[data-policy-table-key]');
+    if (section) useSessionFor(section);
     if (!activeSession) return;
     if (richEdit) {
       const richAction = event.target.closest && event.target.closest('[data-rich-edit-action]');
@@ -1390,6 +1421,8 @@
   }
 
   function handleDocumentDblClick(event) {
+    const section = event.target.closest && event.target.closest('[data-policy-table-key]');
+    if (section) useSessionFor(section);
     if (!activeSession) return;
     const cell = event.target.closest && event.target.closest(
       'td[data-inline-type="text"], td[data-inline-type="number"], td[data-inline-type="rich"]'
@@ -2302,16 +2335,18 @@
   }
 
   function attach(session) {
+    if (session) attachedSessions.add(session);
     activeSession = session;
     bindGlobalListeners();
     ensureHost();
   }
 
   function detach(session) {
+    if (session) attachedSessions.delete(session);
     if (session && activeSession !== session) return;
     closeEditors();
     clearSelection();
-    activeSession = null;
+    activeSession = attachedSessions.values().next().value || null;
   }
 
   global.WorkspaceInlineEditor = {

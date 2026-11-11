@@ -555,7 +555,16 @@
   function updateRowHighlight(name) {
     getRowChecks(name).forEach((box) => {
       const row = box.closest('tr');
-      if (row) row.classList.toggle('table-active', !!box.checked);
+      if (!row) return;
+      const active = !!box.checked;
+      row.classList.toggle('table-active', active);
+      if (name !== 'proposal-dispatch-select') return;
+      const groupId = row.dataset.dispatchGroup || '';
+      const table = row.closest('table');
+      if (!groupId || !table) return;
+      qa('tr[data-dispatch-continuation="1"][data-dispatch-group="' + groupId + '"]', table).forEach((continuation) => {
+        continuation.classList.toggle('table-active', active);
+      });
     });
   }
 
@@ -672,6 +681,30 @@
       });
     });
     initProposalMasterFilters();
+  }
+
+  function syncProposalLocalSourceUi() {
+    const root = pane();
+    if (!root) return;
+    const sourceSel = root.querySelector('#proposal-dispatch-source');
+    const wrap = root.querySelector('#proposal-dispatch-local-wrap');
+    const isLocal = Boolean(sourceSel && sourceSel.value === 'local');
+    if (wrap) wrap.classList.toggle('d-none', !isLocal);
+  }
+
+  function initProposalLocalSource() {
+    const root = pane();
+    if (!root) return;
+    const sourceSel = root.querySelector('#proposal-dispatch-source');
+    const pathInput = root.querySelector('#proposal-dispatch-local-path');
+    if (!sourceSel) return;
+    if (window.UIPref) {
+      const savedSource = UIPref.get('proposals:source', 'cloud');
+      if (savedSource === 'local') sourceSel.value = 'local';
+      const savedPath = UIPref.get('proposals:localFolder', '');
+      if (pathInput && !pathInput.value && savedPath) pathInput.value = savedPath;
+    }
+    syncProposalLocalSourceUi();
   }
 
   function applyCreatedDocumentsState(updates) {
@@ -1637,6 +1670,9 @@
       node.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
     });
     if (body) body.classList.toggle('d-none', collapsed);
+    if (body && !collapsed && cfg.bodyId === 'proposal-dispatch-section-body') {
+      applyDispatchContactCollapse(root);
+    }
 
     toggle.classList.toggle('active', collapsed);
     toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -2153,15 +2189,208 @@
     });
   }
 
+  const DISPATCH_GROUP_COLLAPSE_KEY = 'proposal-dispatch-groups-collapsed';
+
+  function loadDispatchGroupCollapsed() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(DISPATCH_GROUP_COLLAPSE_KEY) || '[]');
+      return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    } catch (err) {
+      return new Set();
+    }
+  }
+
+  function saveDispatchGroupCollapsed(collapsed) {
+    try {
+      window.localStorage.setItem(DISPATCH_GROUP_COLLAPSE_KEY, JSON.stringify(Array.from(collapsed)));
+    } catch (err) {
+      // The table still collapses for this page view.
+    }
+  }
+
+  function dispatchCountLabel(count, one, few, many) {
+    const number = Math.abs(parseInt(count, 10) || 0);
+    const lastTwo = number % 100;
+    const last = number % 10;
+    let word = many;
+    if (last === 1 && lastTwo !== 11) word = one;
+    else if ([2, 3, 4].includes(last) && ![12, 13, 14].includes(lastTwo)) word = few;
+    return number + ' ' + word;
+  }
+
+  function dispatchGroups(table) {
+    const groups = new Map();
+    qa('tr[data-dispatch-group]', table).forEach((row) => {
+      const id = String(row.dataset.dispatchGroup || '');
+      if (!id) return;
+      if (!groups.has(id)) groups.set(id, []);
+      groups.get(id).push(row);
+    });
+    return groups;
+  }
+
+  function uniqueDispatchValues(rows, column, casefold) {
+    const seen = new Set();
+    const values = [];
+    rows.forEach((row) => {
+      const node = row.querySelector('td[data-col="' + column + '"] .proposal-dispatch-contact-value');
+      const raw = String(node?.dataset.dispatchValue || '').trim();
+      if (!raw) return;
+      const key = casefold ? raw.toLowerCase() : raw;
+      if (seen.has(key)) return;
+      seen.add(key);
+      values.push(raw);
+    });
+    return values;
+  }
+
+  function dispatchSummaryText(values, one, few, many) {
+    if (!values.length) return '';
+    if (values.length === 1) return values[0];
+    return dispatchCountLabel(values.length, one, few, many);
+  }
+
+  function applyDispatchContactSummary(rows, collapsed) {
+    const specs = [
+      { column: 'contact-name', casefold: false, one: 'адресат', few: 'адресата', many: 'адресатов' },
+      { column: 'contact-email', casefold: true, one: 'адрес', few: 'адреса', many: 'адресов' },
+      { column: 'job-title', blank: true },
+      { column: 'organization', casefold: false, one: 'организация', few: 'организации', many: 'организаций' },
+    ];
+    const head = rows.find((row) => row.dataset.dispatchGroupHead === '1') || rows[0];
+    specs.forEach((spec) => {
+      const summary = spec.blank
+        ? ''
+        : dispatchSummaryText(uniqueDispatchValues(rows, spec.column, spec.casefold), spec.one, spec.few, spec.many);
+      rows.forEach((row) => {
+        const node = row.querySelector('td[data-col="' + spec.column + '"] .proposal-dispatch-contact-value');
+        if (!node) return;
+        node.textContent = collapsed && row === head ? summary : (node.dataset.dispatchValue || '');
+      });
+    });
+  }
+
+  function syncDispatchGroupsToggle(table, collapsed) {
+    const button = table?.querySelector('#proposal-dispatch-groups-toggle');
+    if (!button) return;
+    const ids = Array.from(dispatchGroups(table).entries())
+      .filter((entry) => entry[1].length > 1)
+      .map((entry) => entry[0]);
+    const allCollapsed = ids.length > 0 && ids.every((id) => collapsed.has(id));
+    button.classList.toggle('active', allCollapsed);
+    const icon = button.querySelector('i');
+    if (icon) icon.className = allCollapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+  }
+
+  function syncDispatchGroupRowspan(head, span, collapsed) {
+    if (!head) return;
+    // A hidden continuation row still counts toward rowspan, so the next
+    // proposal's cells slide into later columns. Collapse the span to 1.
+    head.querySelectorAll('td[rowspan]').forEach((cell) => {
+      if (!cell.dataset.dispatchRowspan) {
+        cell.dataset.dispatchRowspan = String(cell.rowSpan || span);
+      }
+      cell.rowSpan = collapsed ? 1 : (Number(cell.dataset.dispatchRowspan) || span);
+    });
+  }
+
+  function lockDispatchColumnWidths(table) {
+    if (!table || table.dataset.dispatchWidthsLocked === '1') return;
+    if (table.getBoundingClientRect().width < 1) return;
+    dispatchGroups(table).forEach((rows) => {
+      rows.forEach((row) => {
+        row.classList.remove('proposal-dispatch-group-collapsed');
+        row.querySelectorAll('.proposal-dispatch-contact-value').forEach((node) => {
+          if (node.dataset.dispatchValue != null) node.textContent = node.dataset.dispatchValue;
+        });
+      });
+      const head = rows.find((row) => row.dataset.dispatchGroupHead === '1') || rows[0];
+      head?.querySelectorAll('td[rowspan]').forEach((cell) => {
+        const span = Number(cell.dataset.dispatchRowspan) || rows.length;
+        if (span > 1) cell.rowSpan = span;
+      });
+    });
+    const headers = [...table.querySelectorAll(':scope > thead > tr > th')];
+    const cols = [...table.querySelectorAll(':scope > colgroup > col')];
+    if (!headers.length || headers.length !== cols.length) return;
+    const widths = headers.map((header) => (
+      getComputedStyle(header).display === 'none' ? 0 : header.getBoundingClientRect().width
+    ));
+    if (widths.every((width) => width < 1)) return;
+    const total = widths.reduce((sum, width) => sum + width, 0);
+    headers.forEach((header, index) => {
+      if (widths[index] < 1) return;
+      const px = widths[index].toFixed(2) + 'px';
+      cols[index].style.setProperty('width', px, 'important');
+      cols[index].style.setProperty('min-width', px, 'important');
+      cols[index].style.setProperty('max-width', px, 'important');
+      header.style.setProperty('width', px, 'important');
+      header.style.setProperty('min-width', px, 'important');
+      header.style.setProperty('max-width', px, 'important');
+    });
+    table.style.setProperty('table-layout', 'fixed', 'important');
+    table.style.setProperty('width', total.toFixed(2) + 'px', 'important');
+    table.style.setProperty('min-width', total.toFixed(2) + 'px', 'important');
+    table.dataset.dispatchWidthsLocked = '1';
+  }
+
+  function applyDispatchContactCollapse(root) {
+    const table = (root || pane())?.querySelector('#proposal-dispatch-table');
+    if (!table) return;
+    lockDispatchColumnWidths(table);
+    const collapsed = loadDispatchGroupCollapsed();
+    dispatchGroups(table).forEach((rows, id) => {
+      const isCollapsed = rows.length > 1 && collapsed.has(id);
+      rows.forEach((row, index) => {
+        const isContinuation = row.dataset.dispatchContinuation === '1';
+        row.classList.toggle('proposal-dispatch-group-collapsed', isCollapsed && isContinuation);
+        row.classList.toggle('proposal-dispatch-contact-has-next', !isCollapsed && index < rows.length - 1);
+      });
+      const head = rows.find((row) => row.dataset.dispatchGroupHead === '1') || rows[0];
+      syncDispatchGroupRowspan(head, rows.length, isCollapsed);
+      const toggle = head?.querySelector('[data-proposal-dispatch-group-toggle]');
+      if (toggle) toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+      applyDispatchContactSummary(rows, isCollapsed);
+    });
+    syncDispatchGroupsToggle(table, collapsed);
+  }
+
+  function toggleDispatchGroup(groupId) {
+    const collapsed = loadDispatchGroupCollapsed();
+    const id = String(groupId || '');
+    if (!id) return;
+    if (collapsed.has(id)) collapsed.delete(id);
+    else collapsed.add(id);
+    saveDispatchGroupCollapsed(collapsed);
+    applyDispatchContactCollapse(pane());
+  }
+
+  function toggleVisibleDispatchGroups() {
+    const table = pane()?.querySelector('#proposal-dispatch-table');
+    if (!table) return;
+    const collapsed = loadDispatchGroupCollapsed();
+    const ids = Array.from(dispatchGroups(table).entries())
+      .filter((entry) => entry[1].length > 1)
+      .map((entry) => entry[0]);
+    const allCollapsed = ids.length > 0 && ids.every((id) => collapsed.has(id));
+    ids.forEach((id) => {
+      if (allCollapsed) collapsed.delete(id);
+      else collapsed.add(id);
+    });
+    saveDispatchGroupCollapsed(collapsed);
+    applyDispatchContactCollapse(pane());
+  }
+
   function syncProposalRelatedTablesOrder() {
     const root = pane();
     if (!root) return;
     const proposalIds = getProposalRegistryOrderIds();
-    if (!proposalIds.length) return;
-
-    applyProposalOrderToGroupedTable(root.querySelector('#proposal-payment-schedule-table'), proposalIds);
-    applyProposalOrderToSingleRowTable(root.querySelector('#proposal-dispatch-table'), proposalIds);
-    syncProposalRegistryNumberGroups();
+    if (proposalIds.length) {
+      applyProposalOrderToGroupedTable(root.querySelector('#proposal-payment-schedule-table'), proposalIds);
+      applyProposalOrderToGroupedTable(root.querySelector('#proposal-dispatch-table'), proposalIds);
+      syncProposalRegistryNumberGroups();
+    }
+    applyDispatchContactCollapse(root);
     syncSelectionState('proposal-select');
     syncSelectionState('proposal-dispatch-select');
     scheduleProposalTableScrollGapsUpdate();
@@ -2587,12 +2816,13 @@
 
   function attachGuillemets(root) {
     if (!root) return;
-    ['customer', 'asset_owner', 'recipient'].forEach(function (fieldName) {
-      const input = root.querySelector('input[name="' + fieldName + '"]');
-      if (!input || input.dataset.guillBound === '1') return;
-      input.dataset.guillBound = '1';
-      input.addEventListener('input', function () {
-        replaceQuotes(input);
+    ['customer', 'asset_owner', 'recipient', 'dispatch_recipient_organization'].forEach(function (fieldName) {
+      root.querySelectorAll('input[name="' + fieldName + '"]').forEach(function (input) {
+        if (input.dataset.guillBound === '1') return;
+        input.dataset.guillBound = '1';
+        input.addEventListener('input', function () {
+          replaceQuotes(input);
+        });
       });
     });
   }
@@ -3140,21 +3370,28 @@
     }
 
     function pick(item) {
-      input.value = item.short_name || '';
-      row.dataset.countryId = item.country_id || '';
-      row.dataset.countryName = item.country_name || '';
-      row.dataset.region = item.region || '';
-      row.dataset.selectedIdentifierRecordId = item.identifier_record_id || '';
-      row.dataset.selectedFromAutocomplete = '1';
-      row.dataset.userEdited = '1';
-      const country = row.querySelector(selectors.country);
-      const identifier = row.querySelector(selectors.identifier);
-      const regNumber = row.querySelector(selectors.regNumber);
-      const regDate = row.querySelector(selectors.regDate);
-      if (country) country.value = item.country_id || '';
-      if (identifier) identifier.value = item.identifier || '';
-      if (regNumber) regNumber.value = item.registration_number || '';
-      setDateFieldValue(regDate, item.registration_date);
+      row.dataset.suppressSelectionClear = '1';
+      try {
+        input.value = item.short_name || '';
+        row.dataset.countryId = item.country_id || '';
+        row.dataset.countryName = item.country_name || '';
+        row.dataset.region = item.region || '';
+        const country = row.querySelector(selectors.country);
+        const identifier = row.querySelector(selectors.identifier);
+        const regNumber = row.querySelector(selectors.regNumber);
+        const regDate = row.querySelector(selectors.regDate);
+        if (country) country.value = item.country_id || '';
+        if (identifier) identifier.value = item.identifier || '';
+        if (regNumber) regNumber.value = item.registration_number || '';
+        setDateFieldValue(regDate, item.registration_date);
+        row.dataset.selectedIdentifierRecordId = item.identifier_record_id || '';
+        row.dataset.selectedFromAutocomplete = item.identifier_record_id ? '1' : '0';
+        row.dataset.userEdited = '0';
+        row.dataset.copiedFromOwner = '0';
+        row.dataset.copiedFromAsset = '0';
+      } finally {
+        delete row.dataset.suppressSelectionClear;
+      }
       hideList();
       updatePayload({
         reason: 'autofill',
@@ -4072,14 +4309,18 @@
     }
 
     function clearRowAutocompleteSelection(row) {
-      if (!row) return;
+      if (!row || row.dataset.suppressSelectionClear === '1') return;
       row.dataset.selectedIdentifierRecordId = '';
       row.dataset.selectedFromAutocomplete = '0';
     }
 
     function markRowUserEdited(row, edited) {
-      if (!row) return;
+      if (!row || (edited && row.dataset.suppressSelectionClear === '1')) return;
       row.dataset.userEdited = edited ? '1' : '0';
+      if (edited) {
+        row.dataset.copiedFromOwner = '0';
+        row.dataset.copiedFromAsset = '0';
+      }
     }
 
     function syncActions() {
@@ -4100,6 +4341,8 @@
         selected_identifier_record_id: row.dataset.selectedIdentifierRecordId || '',
         selected_from_autocomplete: row.dataset.selectedFromAutocomplete === '1',
         user_edited: row.dataset.userEdited === '1',
+        copied_from_owner: row.dataset.copiedFromOwner === '1',
+        copied_from_asset: row.dataset.copiedFromAsset === '1',
       };
       if (config.withAssetSelect) {
         data.asset_short_name = (row.querySelector(config.selectors.assetSelect)?.value || '').trim();
@@ -4118,47 +4361,44 @@
 
     function setRowData(row, data) {
       if (!row || !data) return;
-      if (config.withAssetSelect) {
-        const assetSelect = row.querySelector(config.selectors.assetSelect);
-        if (assetSelect) {
-          syncProposalAssetNameSelect(assetSelect, form, data.asset_short_name || '');
-          assetSelect.value = data.asset_short_name || '';
+      row.dataset.suppressSelectionClear = '1';
+      try {
+        if (config.withAssetSelect) {
+          const assetSelect = row.querySelector(config.selectors.assetSelect);
+          if (assetSelect) {
+            syncProposalAssetNameSelect(assetSelect, form, data.asset_short_name || '');
+            assetSelect.value = data.asset_short_name || '';
+          }
         }
+
+        row.dataset.countryId = data.country_id || '';
+        row.dataset.countryName = data.country_name || '';
+        row.dataset.region = data.region || '';
+        row.dataset.selectedIdentifierRecordId = data.selected_identifier_record_id || '';
+        row.dataset.selectedFromAutocomplete = data.selected_from_autocomplete ? '1' : '0';
+        row.dataset.userEdited = data.user_edited ? '1' : '0';
+        row.dataset.copiedFromOwner = data.copied_from_owner ? '1' : '0';
+        row.dataset.copiedFromAsset = data.copied_from_asset ? '1' : '0';
+
+        const shortInput = row.querySelector(config.selectors.shortInput);
+        const countrySelect = row.querySelector(config.selectors.country);
+        const identifierInput = row.querySelector(config.selectors.identifier);
+        const regNumberInput = row.querySelector(config.selectors.regNumber);
+        const regDateInput = row.querySelector(config.selectors.regDate);
+
+        if (shortInput) shortInput.value = data.short_name || '';
+        if (countrySelect) countrySelect.value = data.country_id || '';
+        if (identifierInput) identifierInput.value = data.identifier || '';
+        if (regNumberInput) regNumberInput.value = data.registration_number || '';
+        setDateFieldValue(regDateInput, data.registration_date || '');
+      } finally {
+        delete row.dataset.suppressSelectionClear;
       }
-
-      row.dataset.countryId = data.country_id || '';
-      row.dataset.countryName = data.country_name || '';
-      row.dataset.region = data.region || '';
-      row.dataset.selectedIdentifierRecordId = data.selected_identifier_record_id || '';
-      row.dataset.selectedFromAutocomplete = data.selected_from_autocomplete ? '1' : '0';
-      row.dataset.userEdited = data.user_edited ? '1' : '0';
-
-      const shortInput = row.querySelector(config.selectors.shortInput);
-      const countrySelect = row.querySelector(config.selectors.country);
-      const identifierInput = row.querySelector(config.selectors.identifier);
-      const regNumberInput = row.querySelector(config.selectors.regNumber);
-      const regDateInput = row.querySelector(config.selectors.regDate);
-
-      if (shortInput) shortInput.value = data.short_name || '';
-      if (countrySelect) countrySelect.value = data.country_id || '';
-      if (identifierInput) identifierInput.value = data.identifier || '';
-      if (regNumberInput) regNumberInput.value = data.registration_number || '';
-      setDateFieldValue(regDateInput, data.registration_date || '');
     }
 
     function createRow(data, options) {
       const sourceData = data && typeof data === 'object' ? data : {};
       const skipDefaultPrefill = options?.skipDefaultPrefill === true;
-      const hasExplicitSourceData = Boolean(
-        (sourceData.short_name || '').trim()
-        || (sourceData.country_id || '').trim()
-        || (sourceData.country_name || '').trim()
-        || (sourceData.identifier || '').trim()
-        || (sourceData.registration_number || '').trim()
-        || (sourceData.registration_date || '').trim()
-        || (sourceData.region || '').trim()
-        || (sourceData.selected_identifier_record_id || '').trim()
-      );
       data = skipDefaultPrefill ? { ...sourceData } : mergeWithDefaultRowData(sourceData);
       const row = document.createElement('tr');
       row.dataset.countryId = data.country_id || '';
@@ -4166,7 +4406,9 @@
       row.dataset.region = data.region || '';
       row.dataset.selectedIdentifierRecordId = data.selected_identifier_record_id || '';
       row.dataset.selectedFromAutocomplete = data.selected_from_autocomplete ? '1' : '0';
-      row.dataset.userEdited = data.user_edited ? '1' : (hasExplicitSourceData ? '1' : '0');
+      row.dataset.userEdited = data.user_edited ? '1' : '0';
+      row.dataset.copiedFromOwner = data.copied_from_owner ? '1' : '0';
+      row.dataset.copiedFromAsset = data.copied_from_asset ? '1' : '0';
 
       const checkTd = createProposalTableCell('proposal-asset-check-cell');
       const checkWrap = document.createElement('div');
@@ -4435,6 +4677,16 @@
               ? normalizePrefillValue(defaults.region)
               : serialized.region,
           };
+          const nameFromDefault = shouldOverwritePrefilledValue(serialized.short_name, lastDefaultRowData?.short_name)
+            && normalizePrefillValue(defaults.short_name)
+            && merged.short_name === normalizePrefillValue(defaults.short_name);
+          if (nameFromDefault) {
+            merged.user_edited = false;
+            merged.copied_from_owner = true;
+            merged.copied_from_asset = false;
+            merged.selected_identifier_record_id = defaults.selected_identifier_record_id || '';
+            merged.selected_from_autocomplete = !!defaults.selected_from_autocomplete;
+          }
           if (
             merged.short_name !== serialized.short_name
             || merged.country_id !== serialized.country_id
@@ -4443,8 +4695,9 @@
             || merged.registration_number !== serialized.registration_number
             || merged.registration_date !== serialized.registration_date
             || merged.region !== serialized.region
+            || merged.copied_from_owner !== serialized.copied_from_owner
+            || merged.selected_identifier_record_id !== serialized.selected_identifier_record_id
           ) {
-            merged.user_edited = false;
             setRowData(row, merged);
             changed = true;
           }
@@ -4487,6 +4740,9 @@
         const ownerIdentifier = form.querySelector('#proposal-asset-owner-identifier-field');
         const ownerRegistrationNumber = form.querySelector('input[name="asset_owner_registration_number"]');
         const ownerRegistrationDate = form.querySelector('input[name="asset_owner_registration_date"]');
+        const ownerSelectedId = form.querySelector('#proposal-asset-owner-autocomplete-identifier-record-id');
+        const ownerSelectedFlag = form.querySelector('#proposal-asset-owner-autocomplete-selected');
+        const selectedFromAutocomplete = ownerSelectedFlag?.value === '1' && !!(ownerSelectedId?.value || '').trim();
         return {
           short_name: ownerInput ? (ownerInput.value || '').trim() : '',
           country_id: ownerCountry ? (ownerCountry.value || '').trim() : '',
@@ -4494,6 +4750,8 @@
           identifier: ownerIdentifier ? (ownerIdentifier.value || '').trim() : '',
           registration_number: ownerRegistrationNumber ? (ownerRegistrationNumber.value || '').trim() : '',
           registration_date: ownerRegistrationDate ? (ownerRegistrationDate.value || '').trim() : '',
+          selected_identifier_record_id: selectedFromAutocomplete ? (ownerSelectedId.value || '').trim() : '',
+          selected_from_autocomplete: selectedFromAutocomplete,
         };
       },
       rowsChangedEvent: 'proposal-assets-changed',
@@ -4797,15 +5055,21 @@
       legalEntitiesApi.syncAssetSelectionsByRows(rows);
 
       if (meta.reason === 'autofill' && typeof meta.rowIndex === 'number' && rows[meta.rowIndex]) {
+        const source = rows[meta.rowIndex];
         legalEntitiesApi.setRowDataByIndex(meta.rowIndex, {
-          asset_short_name: rows[meta.rowIndex].short_name || '',
-          short_name: rows[meta.rowIndex].short_name || '',
-          country_id: rows[meta.rowIndex].country_id || '',
-          country_name: rows[meta.rowIndex].country_name || '',
-          identifier: rows[meta.rowIndex].identifier || '',
-          registration_number: rows[meta.rowIndex].registration_number || '',
-          registration_date: rows[meta.rowIndex].registration_date || '',
-          region: rows[meta.rowIndex].region || '',
+          asset_short_name: source.short_name || '',
+          short_name: source.short_name || '',
+          country_id: source.country_id || '',
+          country_name: source.country_name || '',
+          identifier: source.identifier || '',
+          registration_number: source.registration_number || '',
+          registration_date: source.registration_date || '',
+          region: source.region || '',
+          selected_identifier_record_id: source.selected_identifier_record_id || '',
+          selected_from_autocomplete: !!source.selected_from_autocomplete,
+          copied_from_asset: true,
+          copied_from_owner: false,
+          user_edited: false,
         });
       }
     }
@@ -11518,17 +11782,588 @@
 
   function initProposalDispatchForm() {
     const form = document.querySelector('#proposals-modal form[data-proposal-dispatch-form]');
-    if (!form) return;
+    if (!form || form.dataset.dispatchEditorBound === '1') return;
+    form.dataset.dispatchEditorBound = '1';
     attachGuillemets(form);
-    attachCountryIdentifierSync(form);
-    attachLerAutocomplete(form);
-    attachDispatchPersonAutocomplete(form);
-    initProposalDateInput(form.querySelector('input[name="recipient_registration_date"]'));
-    const countrySelect = form.querySelector('#proposal-dispatch-recipient-country-select');
-    const identifierField = form.querySelector('#proposal-dispatch-recipient-identifier-field');
-    if (countrySelect && identifierField && countrySelect.value && !String(identifierField.value || '').trim()) {
-      countrySelect.dispatchEvent(new Event('change', { bubbles: true }));
+    initDispatchRecipientEditor(form);
+  }
+
+  function initDispatchRecipientEditor(form) {
+    const searchUrl = form.dataset.prsSearchUrl || '';
+    const template = form.querySelector('#proposal-dispatch-contact-block-template');
+    const toggle = form.querySelector('#proposal-dispatch-contacts-toggle');
+    const contactsBody = form.querySelector('#proposal-dispatch-contacts-body');
+
+    function emailKey(value) {
+      return String(value || '').trim().toLowerCase();
     }
+
+    function isEmail(value) {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function fieldRoot(role) {
+      return form.querySelector('[data-dispatch-email-field="' + role + '"]');
+    }
+
+    function tagsRoot(role) {
+      return form.querySelector('[data-dispatch-email-tags="' + role + '"]');
+    }
+
+    function blocksRoot(role) {
+      return form.querySelector('[data-dispatch-contact-blocks="' + role + '"]');
+    }
+
+    function emailsIn(role) {
+      return Array.from(tagsRoot(role)?.querySelectorAll('[data-email]') || [])
+        .map(function (chip) { return emailKey(chip.dataset.email); })
+        .filter(Boolean);
+    }
+
+    function findChip(role, email) {
+      const key = emailKey(email);
+      return Array.from(tagsRoot(role)?.querySelectorAll('[data-email]') || [])
+        .find(function (chip) { return emailKey(chip.dataset.email) === key; }) || null;
+    }
+
+    function findBlock(role, email) {
+      const key = emailKey(email);
+      return Array.from(blocksRoot(role)?.querySelectorAll('[data-dispatch-contact-block]') || [])
+        .find(function (block) { return emailKey(block.dataset.email) === key; }) || null;
+    }
+
+    function syncBccCaption() {
+      const caption = blocksRoot('bcc')?.querySelector('.proposal-dispatch-bcc-caption');
+      if (!caption) return;
+      const hasBlocks = !!blocksRoot('bcc')?.querySelector('[data-dispatch-contact-block]');
+      caption.classList.toggle('d-none', !hasBlocks);
+    }
+
+    function setBlockValue(block, selector, value) {
+      const field = block.querySelector(selector);
+      if (field) field.value = value == null ? '' : value;
+    }
+
+    function rememberOrganizationSelection(block, identifierRecordId) {
+      const linkedId = String(identifierRecordId || '').trim();
+      setBlockValue(block, '[name="dispatch_recipient_identifier_record_id"]', linkedId);
+      setBlockValue(block, '[name="dispatch_recipient_selected_from_autocomplete"]', linkedId ? '1' : '0');
+    }
+
+    function lockDispatchContactFields(block) {
+      if (!block) return;
+      block.dataset.contactFieldsLocked = '1';
+      block.querySelectorAll('input, select, textarea').forEach(function (field) {
+        if (field.type === 'hidden') return;
+        field.classList.add('readonly-field');
+        field.tabIndex = -1;
+        if (field.tagName === 'SELECT') {
+          if (field.name) {
+            const hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = field.name;
+            hidden.value = field.value || '';
+            field.insertAdjacentElement('afterend', hidden);
+            field.removeAttribute('name');
+          }
+          field.disabled = true;
+          return;
+        }
+        field.readOnly = true;
+        if (field._flatpickr) {
+          field._flatpickr.set('clickOpens', false);
+          field._flatpickr.set('allowInput', false);
+        }
+      });
+    }
+
+    function fillDispatchBlock(block, data) {
+      const email = String(data.email || '').trim();
+      block.dataset.suppressOrganizationClear = '1';
+      try {
+        block.dataset.email = email;
+        if (data.contact_fields_locked) block.dataset.contactFieldsLocked = '1';
+        block.dataset.dispatchRole = data.role || block.dataset.dispatchRole || 'to';
+        setBlockValue(block, '[name="dispatch_recipient_role"]', block.dataset.dispatchRole);
+        setBlockValue(block, '[name="dispatch_recipient_person_id"]', data.person_id || '');
+        setBlockValue(block, '[name="dispatch_recipient_email_record_id"]', data.email_record_id || '');
+        setBlockValue(block, '[name="dispatch_recipient_position_record_id"]', data.position_record_id || '');
+        setBlockValue(block, '[name="dispatch_recipient_last_name"]', data.last_name || '');
+        setBlockValue(block, '[name="dispatch_recipient_first_name"]', data.first_name || '');
+        setBlockValue(block, '[name="dispatch_recipient_middle_name"]', data.middle_name || '');
+        setBlockValue(block, '[name="dispatch_recipient_email"]', email);
+        setBlockValue(block, '[name="dispatch_recipient_organization"]', data.organization_short_name || '');
+        setBlockValue(block, '[name="dispatch_recipient_country"]', data.country_id || '');
+        setBlockValue(block, '[name="dispatch_recipient_identifier"]', data.identifier || '');
+        setBlockValue(block, '[name="dispatch_recipient_registration_number"]', data.registration_number || '');
+        setBlockValue(block, '[name="dispatch_recipient_job_title"]', data.job_title || '');
+        const dateField = block.querySelector('.js-dispatch-registration-date');
+        if (dateField) setDateFieldValue(dateField, data.registration_date || '');
+        rememberOrganizationSelection(block, data.identifier_record_id);
+        updateDispatchContactTitle(block);
+      } finally {
+        delete block.dataset.suppressOrganizationClear;
+      }
+    }
+
+    function updateDispatchContactTitle(block) {
+      const title = block.querySelector('.proposal-dispatch-contact-title');
+      if (!title) return;
+      const name = [
+        '[name="dispatch_recipient_last_name"]',
+        '[name="dispatch_recipient_first_name"]',
+        '[name="dispatch_recipient_middle_name"]',
+      ].map(function (selector) {
+        return String(block.querySelector(selector)?.value || '').trim();
+      }).filter(Boolean).join(' ');
+      const email = String(block.querySelector('[name="dispatch_recipient_email"]')?.value || '').trim();
+      title.replaceChildren();
+      if (!name && !email) {
+        title.textContent = 'Новый адресат';
+        return;
+      }
+      if (name) {
+        const nameNode = document.createElement('span');
+        nameNode.className = 'proposal-dispatch-contact-title-name';
+        nameNode.textContent = name;
+        title.appendChild(nameNode);
+      }
+      if (name && email) title.appendChild(document.createTextNode(' — '));
+      if (email) title.appendChild(document.createTextNode(email));
+    }
+
+    function clearOrganizationSelection(block) {
+      if (!block || block.dataset.suppressOrganizationClear === '1') return;
+      setBlockValue(block, '[name="dispatch_recipient_identifier_record_id"]', '');
+      setBlockValue(block, '[name="dispatch_recipient_selected_from_autocomplete"]', '0');
+    }
+
+    function bindDispatchBlock(block) {
+      if (!block || block.dataset.dispatchBlockBound === '1') return;
+      block.dataset.dispatchBlockBound = '1';
+      const role = block.dataset.dispatchRole || 'to';
+      const emailInput = block.querySelector('.js-dispatch-block-email');
+      const country = block.querySelector('.js-dispatch-recipient-country');
+      const identifier = block.querySelector('.js-dispatch-recipient-identifier');
+      const registrationNumber = block.querySelector('.js-dispatch-registration-number');
+      const registrationDate = block.querySelector('.js-dispatch-registration-date');
+      initProposalDateInput(registrationDate);
+      attachGuillemets(block);
+
+      ['dispatch_recipient_last_name', 'dispatch_recipient_first_name', 'dispatch_recipient_middle_name'].forEach(function (name) {
+        block.querySelector(`[name="${name}"]`)?.addEventListener('input', function () {
+          updateDispatchContactTitle(block);
+        });
+      });
+
+      emailInput?.addEventListener('change', function () {
+        if (block.dataset.contactFieldsLocked === '1') {
+          emailInput.value = block.dataset.email || '';
+          return;
+        }
+        const nextEmail = String(emailInput.value || '').trim();
+        const previousEmail = block.dataset.email || '';
+        const nextKey = emailKey(nextEmail);
+        const duplicateInRole = nextKey !== emailKey(previousEmail) && emailsIn(role).includes(nextKey);
+        const hiddenByTo = role === 'bcc' && emailsIn('to').includes(nextKey);
+        if (!isEmail(nextEmail) || duplicateInRole || hiddenByTo) {
+          emailInput.value = previousEmail;
+          return;
+        }
+        if (role === 'to') removeDispatchRecipient('bcc', nextEmail);
+        block.dataset.email = nextEmail;
+        updateDispatchContactTitle(block);
+        const chip = findChip(role, previousEmail);
+        if (chip) {
+          const removeButton = chip.querySelector('button');
+          chip.textContent = nextEmail;
+          chip.dataset.email = nextEmail;
+          if (removeButton) chip.appendChild(removeButton);
+        }
+      });
+
+      country?.addEventListener('change', function () {
+        if (block.dataset.contactFieldsLocked === '1') return;
+        clearOrganizationSelection(block);
+        if (!country.value) {
+          if (identifier) identifier.value = '';
+          return;
+        }
+        const url = form.dataset.countryIdentifierUrl || '';
+        if (!url || !identifier) return;
+        fetch(url + '?country_id=' + encodeURIComponent(country.value))
+          .then(function (response) { return response.json(); })
+          .then(function (data) { identifier.value = data.identifier || ''; })
+          .catch(function () {});
+      });
+      registrationNumber?.addEventListener('input', function () {
+        if (block.dataset.contactFieldsLocked === '1') return;
+        clearOrganizationSelection(block);
+      });
+      registrationDate?.addEventListener('input', function () {
+        if (block.dataset.contactFieldsLocked === '1') return;
+        clearOrganizationSelection(block);
+      });
+      registrationDate?.addEventListener('change', function () {
+        if (block.dataset.contactFieldsLocked === '1') return;
+        clearOrganizationSelection(block);
+      });
+      if (block.dataset.contactFieldsLocked === '1') {
+        lockDispatchContactFields(block);
+      } else {
+        bindDispatchOrganizationAutocomplete(block);
+      }
+    }
+
+    function bindDispatchOrganizationAutocomplete(block) {
+      const input = block.querySelector('.js-dispatch-organization');
+      const list = block.querySelector('.js-dispatch-organization-list');
+      const searchUrl = form.dataset.lerSearchUrl || '';
+      if (!input || !list || !searchUrl || input.dataset.lerBound === '1') return;
+      input.dataset.lerBound = '1';
+      let debounce = null;
+      let results = [];
+      let picking = false;
+
+      function render(data, query, totalCount) {
+        results = data || [];
+        if (!results.length) {
+          list.classList.remove('show');
+          return;
+        }
+        list.innerHTML = results.slice(0, 3).map(function (item, index) {
+          const parts = [item.full_name, item.identifier, item.registration_number].filter(Boolean);
+          return '<div class="ler-ac-item" data-idx="' + index + '">'
+            + '<div class="ler-ac-main">' + escapeHtml(item.short_name || '') + '</div>'
+            + (parts.length ? '<div class="ler-ac-sub">' + escapeHtml(parts.join(' · ')) + '</div>' : '')
+            + '</div>';
+        }).join('') + (totalCount > 3 ? '<div class="ler-ac-item ler-ac-more">Найдено ещё ' + (totalCount - 3) + ' юрлиц</div>' : '');
+        list.classList.add('show');
+      }
+
+      function pick(item) {
+        if (block.dataset.contactFieldsLocked === '1') return;
+        const country = block.querySelector('.js-dispatch-recipient-country');
+        const identifier = block.querySelector('.js-dispatch-recipient-identifier');
+        const registrationNumber = block.querySelector('.js-dispatch-registration-number');
+        const registrationDate = block.querySelector('.js-dispatch-registration-date');
+        block.dataset.suppressOrganizationClear = '1';
+        try {
+          input.value = item.short_name || '';
+          if (country && item.country_id) country.value = String(item.country_id);
+          if (identifier) identifier.value = item.identifier || '';
+          if (registrationNumber) registrationNumber.value = item.registration_number || '';
+          if (registrationDate) setDateFieldValue(registrationDate, item.registration_date || '');
+          rememberOrganizationSelection(block, item.identifier_record_id);
+        } finally {
+          delete block.dataset.suppressOrganizationClear;
+        }
+        list.classList.remove('show');
+      }
+
+      input.addEventListener('input', function () {
+        if (block.dataset.contactFieldsLocked === '1') return;
+        clearOrganizationSelection(block);
+        const query = input.value.trim();
+        clearTimeout(debounce);
+        if (!query) {
+          list.classList.remove('show');
+          return;
+        }
+        debounce = setTimeout(function () {
+          fetch(searchUrl + '?q=' + encodeURIComponent(query))
+            .then(function (response) { return response.json(); })
+            .then(function (data) { render(data.results || [], query, data.total_count || 0); })
+            .catch(function () { list.classList.remove('show'); });
+        }, 200);
+      });
+      list.addEventListener('mousedown', function (event) {
+        event.preventDefault();
+        picking = true;
+        const item = event.target.closest('.ler-ac-item');
+        const index = parseInt(item?.dataset?.idx || '', 10);
+        if (results[index]) pick(results[index]);
+      });
+      input.addEventListener('blur', function () {
+        if (picking) {
+          picking = false;
+          return;
+        }
+        setTimeout(function () { list.classList.remove('show'); }, 200);
+      });
+    }
+
+    function renumberDispatchContacts() {
+      form.querySelectorAll('#proposal-dispatch-contacts-body [data-dispatch-contact-block]').forEach(function (block, index) {
+        const badge = block.querySelector('.proposal-dispatch-contact-index');
+        if (badge) badge.textContent = String(index + 1);
+      });
+    }
+
+    function removeDispatchRecipient(role, email) {
+      findChip(role, email)?.remove();
+      findBlock(role, email)?.remove();
+      syncBccCaption();
+      renumberDispatchContacts();
+    }
+
+    function addDispatchRecipient(role, data) {
+      const email = String(data?.email || '').trim();
+      if (!isEmail(email) || emailsIn(role).includes(emailKey(email))) return;
+      if (role === 'bcc' && emailsIn('to').includes(emailKey(email))) return;
+      if (role === 'to') removeDispatchRecipient('bcc', email);
+      const tags = tagsRoot(role);
+      const input = tags?.querySelector('.js-dispatch-email-input');
+      if (!tags || !input || !template) return;
+      const chip = document.createElement('span');
+      chip.className = 'badge fw-normal d-inline-flex align-items-center gap-1 py-2 px-2 letter-cc-badge letter-cc-tag';
+      chip.dataset.email = email;
+      chip.appendChild(document.createTextNode(email));
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'btn-close btn-close-white ms-1 js-dispatch-email-remove';
+      removeButton.style.fontSize = '.55em';
+      removeButton.setAttribute('aria-label', 'Удалить');
+      chip.appendChild(removeButton);
+      tags.insertBefore(chip, input);
+
+      const fragment = template.content.cloneNode(true);
+      const block = fragment.querySelector('[data-dispatch-contact-block]');
+      if (!block) return;
+      block.dataset.suppressOrganizationClear = '1';
+      try {
+        fillDispatchBlock(block, Object.assign({}, data, { email: email, role: role }));
+        if (
+          block.dataset.contactFieldsLocked !== '1'
+          && !data.country_id
+          && form.dataset.defaultCountryId
+        ) {
+          const country = block.querySelector('.js-dispatch-recipient-country');
+          if (country) country.value = form.dataset.defaultCountryId;
+        }
+        blocksRoot(role)?.appendChild(block);
+        bindDispatchBlock(block);
+        renumberDispatchContacts();
+        if (
+          block.dataset.contactFieldsLocked !== '1'
+          && !data.country_id
+          && form.dataset.defaultCountryId
+        ) {
+          block.querySelector('.js-dispatch-recipient-country')?.dispatchEvent(new Event('change'));
+        }
+        rememberOrganizationSelection(block, data.identifier_record_id);
+      } finally {
+        delete block.dataset.suppressOrganizationClear;
+      }
+      syncBccCaption();
+    }
+
+    function bindEmailField(role) {
+      const root = fieldRoot(role);
+      const input = root?.querySelector('.js-dispatch-email-input');
+      const dropdown = root?.querySelector('.js-dispatch-email-dropdown');
+      if (!root || !input || !dropdown || input.dataset.dispatchEmailBound === '1') return;
+      input.dataset.dispatchEmailBound = '1';
+      let debounce = null;
+      let results = [];
+
+      function closeDropdown() {
+        dropdown.classList.remove('show');
+      }
+
+      function escapeHtml(value) {
+        return String(value || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function highlight(text, query) {
+        const source = String(text || '');
+        const tokens = String(query || '').trim().split(/\s+/).filter(Boolean);
+        if (!tokens.length) return escapeHtml(source);
+        const lower = source.toLocaleLowerCase('ru');
+        const ranges = [];
+        tokens.forEach(function (token) {
+          const needle = token.toLocaleLowerCase('ru');
+          if (!needle) return;
+          let from = 0;
+          while (from < lower.length) {
+            const index = lower.indexOf(needle, from);
+            if (index < 0) break;
+            ranges.push([index, index + needle.length]);
+            from = index + Math.max(needle.length, 1);
+          }
+        });
+        if (!ranges.length) return escapeHtml(source);
+        ranges.sort(function (left, right) {
+          return left[0] - right[0] || right[1] - left[1];
+        });
+        const merged = [];
+        ranges.forEach(function (range) {
+          const last = merged[merged.length - 1];
+          if (!last || range[0] > last[1]) {
+            merged.push([range[0], range[1]]);
+            return;
+          }
+          last[1] = Math.max(last[1], range[1]);
+        });
+        let html = '';
+        let cursor = 0;
+        merged.forEach(function (range) {
+          html += escapeHtml(source.slice(cursor, range[0]));
+          html += '<mark>' + escapeHtml(source.slice(range[0], range[1])) + '</mark>';
+          cursor = range[1];
+        });
+        html += escapeHtml(source.slice(cursor));
+        return html;
+      }
+
+      function render(items, query) {
+        results = items || [];
+        dropdown.innerHTML = '';
+        if (!results.length) {
+          closeDropdown();
+          return;
+        }
+        results.forEach(function (item, index) {
+          const option = document.createElement('button');
+          option.type = 'button';
+          option.className = 'dropdown-item js-dispatch-email-option';
+          option.dataset.index = String(index);
+          option.innerHTML = highlight(item.label || item.email || '', query);
+          dropdown.appendChild(option);
+        });
+        dropdown.classList.add('show');
+      }
+
+      function pickResult(item) {
+        if (!item) return;
+        addDispatchRecipient(role, item);
+        input.value = '';
+        closeDropdown();
+      }
+
+      function resolveTypedStaffContact(email) {
+        if (!searchUrl) return;
+        fetch(searchUrl + '?q=' + encodeURIComponent(email))
+          .then(function (response) { return response.json(); })
+          .then(function (data) {
+            const exact = (data.results || []).find(function (item) {
+              return emailKey(item.email) === emailKey(email) && item.contact_fields_locked;
+            });
+            const block = findBlock(role, email);
+            if (!exact || !block || block.dataset.contactFieldsLocked === '1') return;
+            fillDispatchBlock(block, Object.assign({}, exact, { email: email, role: role }));
+            lockDispatchContactFields(block);
+          })
+          .catch(function () {});
+      }
+
+      function commitTypedEmail() {
+        const typed = input.value.trim();
+        const exact = results.find(function (item) { return emailKey(item.email) === emailKey(typed); });
+        if (exact) {
+          pickResult(exact);
+          return;
+        }
+        if (isEmail(typed)) {
+          addDispatchRecipient(role, { email: typed });
+          input.value = '';
+          closeDropdown();
+          resolveTypedStaffContact(typed);
+        }
+      }
+
+      input.addEventListener('input', function () {
+        const query = input.value.trim();
+        clearTimeout(debounce);
+        if (query.length < 1 || !searchUrl) {
+          closeDropdown();
+          return;
+        }
+        debounce = setTimeout(function () {
+          fetch(searchUrl + '?q=' + encodeURIComponent(query))
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+              const existing = new Set(emailsIn(role));
+              render((data.results || []).filter(function (item) {
+                return item.email && !existing.has(emailKey(item.email));
+              }), query);
+            })
+            .catch(closeDropdown);
+        }, 250);
+      });
+      input.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        commitTypedEmail();
+      });
+      input.addEventListener('blur', function () {
+        setTimeout(function () {
+          if (document.activeElement && dropdown.contains(document.activeElement)) return;
+          commitTypedEmail();
+          closeDropdown();
+        }, 200);
+      });
+      dropdown.addEventListener('mousedown', function (event) {
+        const option = event.target.closest('.js-dispatch-email-option');
+        if (!option) return;
+        event.preventDefault();
+        pickResult(results[parseInt(option.dataset.index || '', 10)]);
+      });
+      root.querySelector('[data-dispatch-email-tags]')?.addEventListener('click', function (event) {
+        if (event.target === event.currentTarget) input.focus();
+      });
+    }
+
+    toggle?.addEventListener('click', function () {
+      if (!contactsBody) return;
+      const willExpand = contactsBody.classList.contains('d-none');
+      contactsBody.classList.toggle('d-none', !willExpand);
+      const icon = toggle.querySelector('i');
+      if (icon) icon.className = willExpand ? 'bi bi-dash-square' : 'bi bi-plus-square';
+      const label = willExpand ? 'Свернуть контактные данные' : 'Развернуть контактные данные';
+      toggle.setAttribute('aria-expanded', willExpand ? 'true' : 'false');
+      toggle.setAttribute('aria-label', label);
+      toggle.title = label;
+    });
+    form.addEventListener('click', function (event) {
+      const removeButton = event.target.closest('.js-dispatch-email-remove');
+      if (!removeButton || !form.contains(removeButton)) return;
+      const chip = removeButton.closest('[data-email]');
+      const field = removeButton.closest('[data-dispatch-email-field]');
+      if (!chip || !field) return;
+      removeDispatchRecipient(field.getAttribute('data-dispatch-email-field'), chip.dataset.email);
+    });
+    if (!window.__dispatchEmailOutsideBound) {
+      window.__dispatchEmailOutsideBound = true;
+      document.addEventListener('click', function (event) {
+        if (event.target.closest('[data-dispatch-email-field]')) return;
+        document.querySelectorAll('.js-dispatch-email-dropdown.show').forEach(function (dropdown) {
+          dropdown.classList.remove('show');
+        });
+      });
+    }
+    form.querySelectorAll('[data-dispatch-contact-block]').forEach(function (block) {
+      block.dataset.suppressOrganizationClear = '1';
+      bindDispatchBlock(block);
+      delete block.dataset.suppressOrganizationClear;
+    });
+    renumberDispatchContacts();
+    bindEmailField('to');
+    bindEmailField('bcc');
+    syncBccCaption();
   }
 
   function getProposalDispatchFormForRequest(target) {
@@ -11746,6 +12581,17 @@
 
       const formData = new FormData();
       checked.forEach((cb) => formData.append('proposal_ids[]', cb.value));
+      const sourceSel = root.querySelector('#proposal-dispatch-source');
+      if (sourceSel && sourceSel.value === 'local') {
+        const pathInput = root.querySelector('#proposal-dispatch-local-path');
+        const localPath = pathInput ? pathInput.value.trim() : '';
+        if (!localPath) {
+          alert('Укажите путь к локальной папке.');
+          return;
+        }
+        formData.append('source_kind', 'local');
+        formData.append('local_folder_path', localPath);
+      }
 
       const originalHtml = createBtn.innerHTML;
       createBtn.disabled = true;
@@ -12237,6 +13083,7 @@
     initProposalPaymentScheduleViewSwitch();
     initProposalSectionToggles();
     initProposalForm();
+    initProposalLocalSource();
     restoreProposalSendSettings();
     restoreVariableCollapseState();
     scheduleProposalTableScrollGapsUpdate();
@@ -12515,6 +13362,33 @@
     event.returnValue = '';
   });
 
+  document.addEventListener('change', function (event) {
+    const root = pane();
+    if (!root || !root.contains(event.target)) return;
+    if (event.target.id === 'proposal-dispatch-source') {
+      if (window.UIPref) UIPref.set('proposals:source', event.target.value);
+      syncProposalLocalSourceUi();
+    }
+    if (event.target.id === 'proposal-dispatch-local-path' && window.UIPref) {
+      UIPref.set('proposals:localFolder', event.target.value.trim());
+    }
+  });
+
+  document.addEventListener('click', function (event) {
+    const groupsToggle = event.target.closest('#proposal-dispatch-groups-toggle');
+    if (groupsToggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleVisibleDispatchGroups();
+      return;
+    }
+    const button = event.target.closest('[data-proposal-dispatch-group-toggle]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleDispatchGroup(button.getAttribute('data-proposal-dispatch-group-toggle') || '');
+  });
+
   document.addEventListener('DOMContentLoaded', function () {
     updateHeaderPath();
     syncAllSelectionStates();
@@ -12523,6 +13397,7 @@
     initProposalPaymentScheduleViewSwitch();
     initProposalSectionToggles();
     initProposalForm();
+    initProposalLocalSource();
     restoreProposalSendSettings();
     scheduleProposalTableScrollGapsUpdate();
     if (typeof window.__proposalVarsExpanded === 'undefined') {
