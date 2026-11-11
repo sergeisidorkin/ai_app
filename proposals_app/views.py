@@ -2771,7 +2771,7 @@ def _sync_dispatch_recipient_person(payload, user=None):
             position=next_position,
         )
         _ensure_person_phone_record(person, user=user)
-    else:
+    elif person_id or any([last_name, first_name, middle_name]):
         person.last_name = last_name
         person.first_name = first_name
         person.middle_name = middle_name

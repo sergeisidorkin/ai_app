@@ -3648,6 +3648,48 @@ class ProposalDispatchFormTests(TestCase):
         self.assertEqual(PersonRecord.objects.filter(last_name="Орлов").count(), 1)
 
     @override_settings(ROOT_URLCONF="urls")
+    def test_dispatch_form_keeps_existing_name_for_email_only_recipient(self):
+        person = PersonRecord.objects.create(
+            last_name="Орлов",
+            first_name="Олег",
+            middle_name="Олегович",
+            position=1,
+        )
+        EmailRecord.objects.create(person=person, email="orlov@example.com", position=1)
+
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._recipient_payload(
+                [
+                    {"role": "to", "email": "orlov@example.com"},
+                ]
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        person.refresh_from_db()
+        self.assertEqual(person.last_name, "Орлов")
+        self.assertEqual(person.first_name, "Олег")
+        self.assertEqual(person.middle_name, "Олегович")
+        recipient = self.proposal.dispatch_recipients.get()
+        self.assertEqual(recipient.person_id, person.pk)
+        self.assertEqual(recipient.email, "orlov@example.com")
+
+    def test_dispatch_email_is_committed_before_htmx_serializes_the_form(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "proposals-panels.js"
+        ).read_text()
+
+        self.assertIn("input.commitTypedDispatchEmail = commitTypedEmail;", source)
+        self.assertIn("form.addEventListener('submit', function () {", source)
+        self.assertIn("emailInput.commitTypedDispatchEmail()", source)
+
+    @override_settings(ROOT_URLCONF="urls")
     def test_dispatch_form_drops_bcc_address_already_listed_as_to(self):
         response = self.client.post(
             reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),

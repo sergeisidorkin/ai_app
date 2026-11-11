@@ -12285,6 +12285,8 @@
         }
       }
 
+      input.commitTypedDispatchEmail = commitTypedEmail;
+
       input.addEventListener('input', function () {
         const query = input.value.trim();
         clearTimeout(debounce);
@@ -12364,6 +12366,16 @@
     bindEmailField('to');
     bindEmailField('bcc');
     syncBccCaption();
+    if (form.dataset.dispatchEmailFlushBound !== '1') {
+      form.dataset.dispatchEmailFlushBound = '1';
+      form.addEventListener('submit', function () {
+        form.querySelectorAll('.js-dispatch-email-input').forEach(function (emailInput) {
+          if (typeof emailInput.commitTypedDispatchEmail === 'function') {
+            emailInput.commitTypedDispatchEmail();
+          }
+        });
+      }, true);
+    }
   }
 
   function getProposalDispatchFormForRequest(target) {
