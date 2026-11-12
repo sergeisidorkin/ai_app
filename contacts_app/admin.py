@@ -1,5 +1,7 @@
+from django import forms
 from django.contrib import admin
 
+from .forms import apply_explicit_prs_id, clean_new_prs_id
 from .models import (
     CitizenshipRecord,
     EmailRecord,
@@ -11,11 +13,58 @@ from .models import (
 )
 
 
+class PersonRecordAdminForm(forms.ModelForm):
+    prs_id = forms.CharField(
+        label="ID-PRS",
+        required=False,
+        help_text="Оставьте пустым, чтобы выдать следующий номер. Чтобы вернуть удалённый номер, укажите его, например 00027-PRS.",
+    )
+
+    class Meta:
+        model = PersonRecord
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields["prs_id"].initial = self.instance.formatted_id
+            self.fields["prs_id"].disabled = True
+            self.fields["prs_id"].help_text = "Номер уже выдан, его нельзя изменить."
+
+    def clean_prs_id(self):
+        return clean_new_prs_id(self.cleaned_data.get("prs_id"), self.instance)
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        apply_explicit_prs_id(instance, self.cleaned_data.get("prs_id"))
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
+
+
 @admin.register(PersonRecord)
 class PersonRecordAdmin(admin.ModelAdmin):
-    list_display = ("id", "last_name", "first_name", "middle_name", "full_name_genitive", "gender", "birth_date")
+    form = PersonRecordAdminForm
+    fields = (
+        "prs_id",
+        "last_name",
+        "first_name",
+        "middle_name",
+        "full_name_genitive",
+        "gender",
+        "birth_date",
+        "citizenship",
+        "user_kind",
+        "position",
+    )
+    list_display = ("prs_label", "last_name", "first_name", "middle_name", "full_name_genitive", "gender", "birth_date")
     search_fields = ("last_name", "first_name", "middle_name", "full_name_genitive")
     list_filter = ("citizenship", "gender")
+
+    @admin.display(description="ID-PRS", ordering="id")
+    def prs_label(self, obj):
+        return obj.formatted_id
 
 
 @admin.register(PositionRecord)

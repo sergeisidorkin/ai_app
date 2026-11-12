@@ -1197,16 +1197,19 @@ body .second-sidebar + .flex-grow-1 {
   white-space: nowrap;
   text-align: left;
 }
-#policy-pane .typical-sections-table > thead > tr > th.typical-section-short-name-ru-head {
+#policy-pane .typical-sections-table > thead > tr > th.typical-section-short-name-ru-head,
+#experts-pane #epr-table > thead > tr > th.experts-full-name-head {
   height: 1px;
   vertical-align: middle;
 }
-#policy-pane .typical-section-short-name-ru-head-line {
+#policy-pane .typical-section-short-name-ru-head-line,
+#experts-pane .experts-full-name-head-line {
   display: flex;
   align-items: center;
   height: 100%;
 }
-#policy-pane .typical-section-short-name-ru-sort {
+#policy-pane .typical-section-short-name-ru-sort,
+#experts-pane .experts-full-name-sort {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -1224,25 +1227,30 @@ body .second-sidebar + .flex-grow-1 {
   line-height: 1;
   cursor: pointer;
 }
-#policy-pane .typical-section-short-name-ru-sort:hover {
+#policy-pane .typical-section-short-name-ru-sort:hover,
+#experts-pane .experts-full-name-sort:hover {
   background: #f8f9fa;
   border-color: #9ca5ae;
   color: #9ca5ae;
 }
-#policy-pane .typical-section-short-name-ru-sort.active {
+#policy-pane .typical-section-short-name-ru-sort.active,
+#experts-pane .experts-full-name-sort.active {
   background: #adb5bd;
   border-color: #adb5bd;
   color: #fff;
 }
-#policy-pane .typical-section-short-name-ru-sort.active:hover {
+#policy-pane .typical-section-short-name-ru-sort.active:hover,
+#experts-pane .experts-full-name-sort.active:hover {
   background: #9ca5ae;
   border-color: #9ca5ae;
   color: #fff;
 }
-#policy-pane .typical-section-short-name-ru-sort .bi-caret-down-fill {
+#policy-pane .typical-section-short-name-ru-sort .bi-caret-down-fill,
+#experts-pane .experts-full-name-sort .bi-caret-down-fill {
   transform: translateY(1px);
 }
-#policy-pane .typical-section-short-name-ru-sort-idle {
+#policy-pane .typical-section-short-name-ru-sort-idle,
+#experts-pane .experts-full-name-sort-idle {
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -1250,17 +1258,20 @@ body .second-sidebar + .flex-grow-1 {
   font-size: .62rem;
   line-height: 1;
 }
-#policy-pane .typical-section-short-name-ru-sort-idle .bi {
+#policy-pane .typical-section-short-name-ru-sort-idle .bi,
+#experts-pane .experts-full-name-sort-idle .bi {
   display: block;
   height: 1em;
   line-height: 1;
 }
-#policy-pane .typical-section-short-name-ru-sort-idle .bi::before {
+#policy-pane .typical-section-short-name-ru-sort-idle .bi::before,
+#experts-pane .experts-full-name-sort-idle .bi::before {
   display: block;
   line-height: 1;
   vertical-align: top;
 }
-#policy-pane .typical-section-short-name-ru-sort-idle .bi-caret-down {
+#policy-pane .typical-section-short-name-ru-sort-idle .bi-caret-down,
+#experts-pane .experts-full-name-sort-idle .bi-caret-down {
   margin-top: -0.566em;
 }
 #policy-pane[data-policy-workspace="1"] #policy-typical-sections-section td.typical-section-code-col[data-inline-type="select"] {
@@ -1869,7 +1880,8 @@ body .second-sidebar + .flex-grow-1 {
 
 #policy-pane .policy-sticky-actions-marker,
 #report-submission-section .policy-sticky-actions-marker,
-#users-pane .policy-sticky-actions-marker {
+#users-pane .policy-sticky-actions-marker,
+#experts-pane .policy-sticky-actions-marker {
   display: block;
   height: 1px;
   margin-top: -1px;
@@ -3792,6 +3804,15 @@ section#templates .alert.alert-info .text-muted {
   --experts-table-scroll-action-gap: 11.75px;
 }
 
+#experts-pane .table-section-header {
+  position: relative;
+  z-index: 4;
+  overflow: visible;
+}
+#experts-pane .table-section-header:has([data-experts-specialty-filter] .dropdown-menu.show) {
+  z-index: 30;
+}
+
 #experts-pane .registration-table-wrap,
 #policy-expert-specialties-section .registration-table-wrap {
   overflow-x: auto;
@@ -3802,6 +3823,16 @@ section#templates .alert.alert-info .text-muted {
 #experts-pane .experts-profiles-table-wrap,
 #policy-expert-specialties-section .experts-specialties-table-wrap {
   padding-bottom: var(--experts-table-scroll-offset-top);
+}
+
+#experts-pane #epr-table tbody td.epr-email-cell {
+  color: #a1a9b1 !important;
+}
+
+#experts-pane #epr-table tbody td.epr-email-cell .epr-quick-edit {
+  padding-top: 0;
+  position: relative;
+  top: -2px;
 }
 
 #experts-pane .experts-profiles-table-wrap > table,
@@ -3866,12 +3897,28 @@ section#templates .alert.alert-info .text-muted {
   }
 }
 
-#experts-pane .experts-profiles-table-wrap + .products-actions-row {
-  margin-top: var(--experts-table-action-gap) !important;
+#experts-pane .experts-table-editor {
+  overflow: visible;
+  position: relative;
 }
 
-#experts-pane .experts-profiles-table-wrap.has-horizontal-scroll + .products-actions-row {
-  margin-top: var(--experts-table-scroll-action-gap) !important;
+#experts-pane .policy-table-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  margin-top: calc(var(--experts-table-action-gap) - .75rem);
+  padding-top: .75rem;
+  padding-bottom: .75rem;
+  border-top: 1px solid transparent;
+}
+
+#experts-pane .experts-profiles-table-wrap.has-horizontal-scroll + .policy-table-footer {
+  margin-top: calc(var(--experts-table-scroll-action-gap) - .75rem);
+}
+
+#experts-pane .policy-table-footer.is-stuck {
+  background: #fff;
+  border-top-color: #e9ecef;
 }
 
 #proposals-pane .registration-table-wrap > table#proposal-registry-table {
@@ -6624,6 +6671,110 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   min-width: 100%;
 }
 
+#proposals-pane .proposal-dispatch-table td[rowspan],
+#proposals-pane .proposal-dispatch-table > tbody tr > :first-child[rowspan] {
+  vertical-align: top !important;
+}
+
+#proposals-pane {
+  --dispatch-group-toggle-size: 1rem;
+  --dispatch-group-toggle-gap: 6px;
+  --dispatch-group-toggle-inset: 1px;
+}
+
+#proposals-pane table.proposal-dispatch-table > thead tr > th.proposal-dispatch-contact-name-col,
+#proposals-pane table.proposal-dispatch-table > tbody tr > td.proposal-dispatch-contact-name-cell {
+  position: relative;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  text-align: left !important;
+  padding-right: var(--bs-table-cell-padding-x, .25rem) !important;
+  padding-left: calc(
+    var(--dispatch-group-toggle-inset)
+    + var(--dispatch-group-toggle-size)
+    + var(--dispatch-group-toggle-gap)
+  ) !important;
+}
+
+#proposals-pane #proposal-dispatch-groups-toggle {
+  position: absolute;
+  left: var(--dispatch-group-toggle-inset);
+  top: auto;
+  right: auto;
+  bottom: calc(var(--bs-table-cell-padding-y) + (1.5rem - 1rem) / 2);
+  width: 16px;
+  height: 16px;
+  margin-left: 0;
+  transform: none;
+  box-sizing: border-box;
+  font-size: .65rem;
+  border-radius: 3px;
+  vertical-align: text-top;
+}
+
+#proposals-pane .proposal-dispatch-group-toggle {
+  position: absolute;
+  left: var(--dispatch-group-toggle-inset);
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dispatch-group-toggle-size);
+  height: var(--dispatch-group-toggle-size);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #ced4da;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+#proposals-pane .proposal-dispatch-group-toggle:hover,
+#proposals-pane .proposal-dispatch-group-toggle:active {
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+}
+
+#proposals-pane .proposal-dispatch-group-toggle .bi {
+  transition: transform .12s ease-out;
+}
+
+#proposals-pane .proposal-dispatch-group-toggle[aria-expanded="false"] .bi {
+  transform: rotate(-90deg);
+}
+
+#proposals-pane tr.proposal-dispatch-group-collapsed {
+  display: none !important;
+}
+
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-contact-has-next > td[data-col="contact-name"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-contact-has-next > td[data-col="contact-email"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-contact-has-next > td[data-col="job-title"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-contact-has-next > td[data-col="organization"] {
+  border-bottom: 0 !important;
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#proposals-pane .proposal-dispatch-table tr[data-dispatch-continuation="1"] > td[data-col="contact-name"],
+#proposals-pane .proposal-dispatch-table tr[data-dispatch-continuation="1"] > td[data-col="contact-email"],
+#proposals-pane .proposal-dispatch-table tr[data-dispatch-continuation="1"] > td[data-col="job-title"],
+#proposals-pane .proposal-dispatch-table tr[data-dispatch-continuation="1"] > td[data-col="organization"] {
+  border-top: 0 !important;
+}
+
 #proposals-pane .proposal-assets-editor {
   border: 1px solid #dee2e6;
   border-radius: .5rem;
@@ -8449,6 +8600,61 @@ html.table-action-progress * {
   padding-top: 1.25rem;
 }
 
+#proposals-modal .proposal-dispatch-contacts {
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+}
+
+#proposals-modal .proposal-dispatch-contacts-body:has(.proposal-dispatch-contact-block) {
+  margin-top: 1rem;
+}
+
+#proposals-modal .proposal-dispatch-contact-block + .proposal-dispatch-contact-block {
+  margin-top: 1.5rem;
+}
+
+#proposals-modal .proposal-dispatch-contact-card {
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  padding: 1rem;
+}
+
+#proposals-modal .proposal-dispatch-contact-heading {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-bottom: .5rem;
+}
+
+#proposals-modal .proposal-dispatch-contact-index {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #6c757d;
+  border-radius: 50%;
+  background: transparent;
+  color: #6c757d;
+  font-size: .65rem;
+  font-weight: 400;
+  line-height: 1;
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+#proposals-modal .proposal-dispatch-contact-title {
+  display: block;
+  margin: 0;
+  min-width: 0;
+  font-weight: 400;
+}
+
+#proposals-modal .proposal-dispatch-contact-title-name {
+  font-weight: 700;
+}
+
 #proposals-pane .proposal-payment-stage-block + .proposal-payment-stage-block {
   margin-top: 2rem !important;
 }
@@ -8872,7 +9078,8 @@ html.table-action-progress * {
 .proposal-dispatch-quick-edit,
 .project-quick-edit,
 .contracts-payment-quick-edit,
-.product-quick-edit {
+.product-quick-edit,
+.epr-quick-edit {
   display: inline-block;
   vertical-align: middle;
   line-height: 1;
@@ -8885,7 +9092,8 @@ html.table-action-progress * {
 .proposal-dispatch-quick-edit:hover,
 .project-quick-edit:hover,
 .contracts-payment-quick-edit:hover,
-.product-quick-edit:hover { opacity: .85; }
+.product-quick-edit:hover,
+.epr-quick-edit:hover { opacity: .85; }
 #policy-pane table .product-workspace-edit-cell .product-quick-edit {
   padding-top: 0;
   position: relative;
@@ -11990,6 +12198,7 @@ td.product-map-stats-hist .product-map-stats-hist-track {
 #participation-section-toggle,
 #participation-asset-toggle,
 #registration-groups-toggle,
+#proposal-dispatch-groups-toggle,
 #performer-groups-toggle,
 #contract-section-toggle,
 #contract-asset-toggle,
@@ -12040,14 +12249,78 @@ td.product-map-stats-hist .product-map-stats-hist-track {
   text-overflow: ellipsis;
 }
 
-/* Expert profiles wrap/truncate toggle */
-#epr-table-wrap table.clf-truncated td {
+/* Ширина остальных столбцов не зависит от свёрнутости специальностей. */
+#epr-table-wrap #epr-table > tbody > tr > td:not([data-col="6"]):not([data-col="7"]) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 200px;
 }
+/* Направление экспертизы занимает свободную ширину таблицы, а не обрезку в 200px. */
+#epr-table-wrap #epr-table > tbody > tr > td[data-col="6"],
+#epr-table-wrap #epr-table > tbody > tr > td[data-col="7"] {
+  max-width: none;
+  width: auto;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+#experts-pane #epr-table .epr-spec-cell {
+  min-width: 17rem;
+  vertical-align: top;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* Каждая специальность — той же высоты, что и обычная ячейка таблицы. */
+#experts-pane #epr-table td.epr-spec-cell .inline-specialties {
+  min-height: 0;
+}
+#experts-pane #epr-table td.epr-spec-cell .inline-specialty-row {
+  min-height: 0;
+  padding-top: var(--bs-table-cell-padding-y, 0.25rem);
+  padding-bottom: var(--bs-table-cell-padding-y, 0.25rem);
+  padding-left: 0;
+}
+#experts-pane #epr-table > thead > tr > th {
+  white-space: nowrap;
+}
+#experts-pane #epr-table > tbody > tr:hover > td {
+  --bs-table-accent-bg: rgba(0, 0, 0, 0.04);
+  box-shadow: inset 0 0 0 9999px var(--bs-table-accent-bg);
+}
+#experts-pane #epr-table > tbody > tr.table-active > td,
+#experts-pane #epr-table > tbody > tr.table-active:hover > td {
+  --bs-table-accent-bg: var(--bs-table-active-bg);
+  box-shadow: inset 0 0 0 9999px var(--bs-table-accent-bg);
+}
 #epr-table-wrap table.clf-truncated .epr-spec-rest { display: none; }
+/* Дополнительные специальности не занимают высоту, но сохраняют свою ширину, чтобы столбец не сжимался.
+   Селектор сильнее правила отступов строки, иначе свёрнутые строки оставляют пустой зазор снизу. */
+#experts-pane #epr-table-wrap table.clf-truncated td.epr-spec-cell .inline-specialty-row ~ .inline-specialty-row {
+  height: 0;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin: 0;
+  border: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+#epr-table-wrap table.clf-truncated td.epr-spec-cell .inline-specialty-row {
+  background-image: none;
+}
+#experts-pane #epr-table .epr-spec-sizer {
+  height: 0;
+  min-height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+#experts-pane #epr-table .epr-spec-sizer > span {
+  display: block;
+  white-space: nowrap;
+}
 
 #typical-service-compositions-table {
   table-layout: auto;
@@ -14339,7 +14612,8 @@ body.proposal-service-text-modal-open {
   font-size: .9rem;
   border-radius: .375rem;
 }
-.letter-cc-badge .js-cc-remove {
+.letter-cc-badge .js-cc-remove,
+.letter-cc-badge .js-dispatch-email-remove {
   background: rgba(0,0,0,.25) url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23fff'%3e%3cpath d='M.293.293a1 1 0 0 1 1.414 0L8 6.586 14.293.293a1 1 0 1 1 1.414 1.414L9.414 8l6.293 6.293a1 1 0 0 1-1.414 1.414L8 9.414l-6.293 6.293a1 1 0 0 1-1.414-1.414L6.586 8 .293 1.707a1 1 0 0 1 0-1.414z'/%3e%3c/svg%3e") center/.6em auto no-repeat;
   border-radius: 50%;
   width: 1.9em;
@@ -14348,7 +14622,8 @@ body.proposal-service-text-modal-open {
   filter: none;
   opacity: .85;
 }
-.letter-cc-badge .js-cc-remove:hover {
+.letter-cc-badge .js-cc-remove:hover,
+.letter-cc-badge .js-dispatch-email-remove:hover {
   opacity: 1;
 }
 
@@ -14383,6 +14658,12 @@ body.proposal-service-text-modal-open {
   max-height: 220px;
   overflow-y: auto;
   box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+}
+.letter-cc-dropdown .dropdown-item mark {
+  background: transparent;
+  font-weight: 700;
+  padding: 0;
+  color: inherit;
 }
 
 /* Workspace creation progress indicator */
@@ -15395,7 +15676,8 @@ body.proposal-service-text-modal-open {
 }
 
 #report-submission-section .report-source-group,
-#contract-conclusion-section .report-source-group {
+#contract-conclusion-section .report-source-group,
+#proposal-dispatch-section-header .report-source-group {
   display: inline-flex;
   align-items: center;
   gap: .5rem;
@@ -15405,8 +15687,49 @@ body.proposal-service-text-modal-open {
 #report-submission-section .report-source-group select,
 #report-submission-section #report-submission-local-path,
 #contract-conclusion-section .report-source-group select,
-#contract-conclusion-section #contract-draft-local-path {
+#contract-conclusion-section #contract-draft-local-path,
+#proposal-dispatch-section-header .report-source-group select,
+#proposal-dispatch-section-header #proposal-dispatch-local-path {
   min-width: 16rem;
+}
+
+#report-submission-section > .table-section-header,
+#report-submission-section > .table-section-header > .d-flex:first-child {
+  flex-wrap: nowrap;
+}
+
+#report-submission-section .report-source-group select {
+  width: 16rem;
+  max-width: 16rem;
+  flex: 0 0 16rem;
+}
+
+#report-submission-section #report-submission-local-wrap {
+  flex: 0 0 16rem;
+  width: 16rem;
+  max-width: 16rem;
+}
+
+#report-submission-section #report-submission-local-path {
+  width: 100%;
+  max-width: 100%;
+}
+
+#proposal-dispatch-section-header .report-source-group select {
+  width: 16rem;
+  max-width: 16rem;
+  flex: 0 0 16rem;
+}
+
+#proposal-dispatch-section-header #proposal-dispatch-local-wrap {
+  flex: 0 0 16rem;
+  width: 16rem;
+  max-width: 16rem;
+}
+
+#proposal-dispatch-section-header #proposal-dispatch-local-path {
+  width: 100%;
+  max-width: 100%;
 }
 
 .report-file-name-link {

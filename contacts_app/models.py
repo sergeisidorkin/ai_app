@@ -29,6 +29,48 @@ def _normalize_compare_value(value: str) -> str:
     return " ".join((value or "").strip().lower().split())
 
 
+def parse_prs_id(raw_value):
+    value = (raw_value or "").strip().upper()
+    if not value:
+        return None
+    if value.endswith("-PRS"):
+        value = value[:-4].strip()
+    if not value.isdigit():
+        return None
+    number = int(value)
+    if number <= 0:
+        return None
+    return number
+
+
+def sync_person_pk_sequence():
+    """Keep the next automatic ID-PRS above any explicitly restored number."""
+    from django.db import connection
+    from django.db.models import Max
+
+    max_pk = PersonRecord.objects.aggregate(mx=Max("pk")).get("mx")
+    if not max_pk:
+        return
+    table = PersonRecord._meta.db_table
+    column = PersonRecord._meta.pk.column
+    with connection.cursor() as cursor:
+        if connection.vendor == "postgresql":
+            cursor.execute("SELECT pg_get_serial_sequence(%s, %s)", [table, column])
+            sequence = cursor.fetchone()[0]
+            if sequence:
+                cursor.execute("SELECT setval(%s, %s, true)", [sequence, max_pk])
+        elif connection.vendor == "sqlite":
+            cursor.execute(
+                "UPDATE sqlite_sequence SET seq = CASE WHEN seq < %s THEN %s ELSE seq END WHERE name = %s",
+                [max_pk, max_pk, table],
+            )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    "INSERT INTO sqlite_sequence (name, seq) VALUES (%s, %s)",
+                    [table, max_pk],
+                )
+
+
 class PersonRecord(models.Model):
     last_name = models.CharField("Фамилия", max_length=255, blank=True, default="")
     first_name = models.CharField("Имя", max_length=255, blank=True, default="")
@@ -57,6 +99,12 @@ class PersonRecord(models.Model):
 
     def __str__(self):
         return self.display_name or f"{self.pk:05d}-PRS"
+
+    def save(self, *args, **kwargs):
+        restoring_deleted_id = bool(self._state.adding and self.pk)
+        super().save(*args, **kwargs)
+        if restoring_deleted_id:
+            sync_person_pk_sequence()
 
     @property
     def formatted_id(self):
@@ -139,14 +187,18 @@ class PositionRecord(models.Model):
         return result
 
     def resolve_source(self) -> str:
-        from proposals_app.models import ProposalRegistration
+        from proposals_app.models import ProposalDispatchRecipient, ProposalRegistration
 
         title = _normalize_compare_value(self.job_title)
         surname = _normalize_compare_value(self.person.last_name if self.person_id else "")
         if not title or not surname:
             return ""
-        qs = ProposalRegistration.objects.exclude(contact_full_name="").order_by("position", "id")
-        for proposal in qs.iterator():
+        for row in ProposalDispatchRecipient.objects.exclude(last_name="").iterator():
+            if _normalize_compare_value(row.job_title) != title:
+                continue
+            if _normalize_compare_value(row.last_name) == surname:
+                return CONTACT_POSITION_SOURCE
+        for proposal in ProposalRegistration.objects.exclude(contact_full_name="").order_by("position", "id").iterator():
             if _normalize_compare_value(proposal.recipient_job_title) != title:
                 continue
             full_name = _normalize_compare_value(proposal.contact_full_name)

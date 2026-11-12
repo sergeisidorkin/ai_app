@@ -14,6 +14,7 @@ urlpatterns = [
     path("specialty/csv-upload/", views.esp_csv_upload, name="esp_csv_upload"),
     # ExpertProfile
     path("profile/<int:pk>/edit/", views.profile_form_edit, name="epr_form_edit"),
+    path("profile/<int:pk>/specialties/", views.profile_specialties_save, name="epr_profile_specialties_save"),
     path("profile/<int:pk>/move-up/", views.profile_move_up, name="epr_move_up"),
     path("profile/<int:pk>/move-down/", views.profile_move_down, name="epr_move_down"),
     path("profile/csv-download/", views.epr_csv_download, name="epr_csv_download"),

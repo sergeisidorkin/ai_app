@@ -1,6 +1,9 @@
+import csv
+import io
 import os
 import shutil
 import tempfile
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
@@ -9,7 +12,16 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 
-from classifiers_app.models import OKSMCountry
+from classifiers_app.models import (
+    OKSMCountry,
+    BusinessEntityIdentifierRecord,
+    BusinessEntityRecord,
+    LegalEntityIdentifier,
+    LegalEntityRecord,
+)
+from classifiers_app.name_history_csv import NAME_HISTORY_CSV_FIELDS
+from classifiers_app.views import BUSINESS_REGISTRY_CSV_FIELDS
+from group_app.registry_sync import GROUP_BUSINESS_ENTITY_SOURCE, backfill_group_member_registries
 from policy_app.models import DEPARTMENT_HEAD_GROUP, ExpertiseDirection, Product, TypicalSection
 from projects_app.models import Performer, ProjectRegistration
 from users_app.models import Employee
@@ -349,3 +361,445 @@ class ExpertiseManagementModeTests(TestCase):
         named = _attach_contract_responsible_names([performer])[0]
         self.assertEqual(named.responsible_name, Performer.employee_full_name(self.too_head))
         self.assertEqual(_direction_head_by_performer([performer])[performer.pk], self.too_head)
+
+
+class GroupMemberRegistrySyncTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="registry-admin",
+            password="secret",
+            is_staff=True,
+            first_name="Иван",
+            last_name="Петров",
+        )
+        self.client.force_login(self.user)
+        self.russia = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.kazakhstan = OKSMCountry.objects.create(
+            number=398,
+            code="398",
+            short_name="Казахстан",
+            full_name="Республика Казахстан",
+            alpha2="KZ",
+            alpha3="KAZ",
+            position=2,
+        )
+        LegalEntityIdentifier.objects.create(
+            identifier="ОГРН",
+            full_name="Основной государственный регистрационный номер",
+            code=self.russia.code,
+            country=self.russia,
+            position=1,
+        )
+        LegalEntityIdentifier.objects.create(
+            identifier="БИН",
+            full_name="Бизнес-идентификационный номер",
+            code=self.kazakhstan.code,
+            country=self.kazakhstan,
+            position=2,
+        )
+
+    def _create_member(self, **overrides):
+        data = {
+            "short_name": 'ООО "Альфа"',
+            "full_name": 'Общество с ограниченной ответственностью "Альфа"',
+            "name_en": "Alpha LLC",
+            "country": str(self.russia.pk),
+            "identifier": "",
+            "registration_number": "1027700132195",
+            "registration_date": "2020-01-15",
+        }
+        data.update(overrides)
+        response = self.client.post(reverse("gm_form_create"), data)
+        self.assertEqual(response.status_code, 200)
+        return GroupMember.objects.get(short_name=data["short_name"])
+
+    def _chain(self, member):
+        entity = member.business_entity
+        identifier = entity.identifiers.get()
+        name = identifier.legal_entity_records.get(attribute=LegalEntityRecord.ATTRIBUTE_NAME)
+        address = identifier.legal_entity_records.get(attribute=LegalEntityRecord.ATTRIBUTE_LEGAL_ADDRESS)
+        return entity, identifier, name, address
+
+    def test_create_makes_separate_chain_even_when_number_matches(self):
+        first = self._create_member()
+        second = self._create_member(
+            short_name='ООО "Бета"',
+            full_name='Общество с ограниченной ответственностью "Бета"',
+            name_en="Beta LLC",
+        )
+
+        self.assertNotEqual(first.business_entity_id, second.business_entity_id)
+        entity, identifier, name, address = self._chain(first)
+        self.assertEqual(entity.name, 'ООО "Альфа"')
+        self.assertEqual(entity.source, GROUP_BUSINESS_ENTITY_SOURCE)
+        self.assertEqual(entity.record_author, "Иван Петров")
+        self.assertEqual(identifier.identifier_type, "ОГРН")
+        self.assertEqual(identifier.number, "1027700132195")
+        self.assertEqual(identifier.registration_country, self.russia)
+        self.assertEqual(identifier.registration_date, date(2020, 1, 15))
+        self.assertEqual(identifier.valid_from, date(2020, 1, 15))
+        self.assertEqual(name.short_name, 'ООО "Альфа"')
+        self.assertEqual(name.full_name, 'Общество с ограниченной ответственностью "Альфа"')
+        self.assertEqual(name.name_received_date, date(2020, 1, 15))
+        self.assertEqual(address.registration_country, self.russia)
+        self.assertEqual(address.street, "")
+        self.assertEqual(address.valid_from, date(2020, 1, 15))
+        self.assertEqual(BusinessEntityRecord.objects.count(), 2)
+
+    def test_edit_overwrites_only_group_fields(self):
+        member = self._create_member()
+        entity, identifier, name, address = self._chain(member)
+        entity.comment = "заметка"
+        entity.save(update_fields=["comment"])
+        identifier.registration_region = "Москва"
+        identifier.save()
+        name.registration_region = "Москва"
+        name.save()
+        address.street = "Ленина"
+        address.registration_region = "Москва"
+        address.save()
+
+        response = self.client.post(
+            reverse("gm_form_edit", args=[member.pk]),
+            {
+                "short_name": 'ООО "Гамма"',
+                "full_name": 'Общество с ограниченной ответственностью "Гамма"',
+                "name_en": "Gamma LLC",
+                "country": str(self.kazakhstan.pk),
+                "identifier": "ОГРН",
+                "registration_number": "123456789012",
+                "registration_date": "2024-03-01",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        entity.refresh_from_db()
+        identifier.refresh_from_db()
+        name.refresh_from_db()
+        address.refresh_from_db()
+        self.assertEqual(entity.name, 'ООО "Гамма"')
+        self.assertEqual(entity.comment, "заметка")
+        self.assertEqual(entity.source, GROUP_BUSINESS_ENTITY_SOURCE)
+        self.assertEqual(identifier.identifier_type, "БИН")
+        self.assertEqual(identifier.number, "123456789012")
+        self.assertEqual(identifier.registration_country, self.kazakhstan)
+        self.assertEqual(identifier.registration_date, date(2024, 3, 1))
+        self.assertEqual(identifier.registration_region, "Москва")
+        self.assertEqual(identifier.valid_from, date(2020, 1, 15))
+        self.assertEqual(name.short_name, 'ООО "Гамма"')
+        self.assertEqual(name.full_name, 'Общество с ограниченной ответственностью "Гамма"')
+        self.assertEqual(name.registration_region, "Москва")
+        self.assertEqual(name.name_received_date, date(2020, 1, 15))
+        self.assertEqual(name.registration_country, self.kazakhstan)
+        self.assertEqual(address.street, "Ленина")
+        self.assertEqual(address.registration_region, "Москва")
+        self.assertEqual(address.registration_country, self.kazakhstan)
+        self.assertEqual(address.valid_from, date(2020, 1, 15))
+
+    def test_delete_member_deletes_registry_chain(self):
+        member = self._create_member()
+        entity_id = member.business_entity_id
+
+        response = self.client.post(reverse("gm_delete", args=[member.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(GroupMember.objects.filter(pk=member.pk).exists())
+        self.assertFalse(BusinessEntityRecord.objects.filter(pk=entity_id).exists())
+        self.assertFalse(BusinessEntityIdentifierRecord.objects.filter(business_entity_id=entity_id).exists())
+        self.assertFalse(LegalEntityRecord.objects.exists())
+
+    def test_directory_keeps_group_fields_locked(self):
+        member = self._create_member()
+        entity, identifier, name, address = self._chain(member)
+
+        name_response = self.client.get(reverse("ber_form_edit", args=[entity.pk]))
+        self.assertContains(name_response, "readonly-field")
+        edit_response = self.client.post(
+            reverse("ber_form_edit", args=[entity.pk]),
+            {"name": 'ООО "Чужое"', "comment": "новая заметка"},
+        )
+        self.assertEqual(edit_response.status_code, 200)
+        entity.refresh_from_db()
+        self.assertEqual(entity.name, 'ООО "Альфа"')
+        self.assertEqual(entity.comment, "новая заметка")
+
+        identifier_response = self.client.post(
+            reverse("bei_form_edit", args=[identifier.pk]),
+            {
+                "business_entity": str(entity.pk),
+                "registration_country": str(self.kazakhstan.pk),
+                "registration_region": "",
+                "identifier_type": "БИН",
+                "number": "999",
+                "registration_date": "01.02.2022",
+                "valid_from": "2019-05-01",
+                "valid_to": "",
+            },
+        )
+        self.assertEqual(identifier_response.status_code, 200, identifier_response.content[:500])
+        identifier.refresh_from_db()
+        self.assertEqual(identifier.number, "1027700132195")
+        self.assertEqual(identifier.identifier_type, "ОГРН")
+        self.assertEqual(identifier.registration_country, self.russia)
+        self.assertEqual(identifier.registration_date, date(2020, 1, 15))
+        self.assertEqual(identifier.valid_from, date(2019, 5, 1))
+
+        address.street = "Старая"
+        address.save(update_fields=["street"])
+        address_response = self.client.post(
+            reverse("bea_form_edit", args=[address.pk]),
+            {
+                "identifier_record": str(identifier.pk),
+                "registration_country": str(self.kazakhstan.pk),
+                "registration_region": "",
+                "postal_code": "101000",
+                "municipality": "",
+                "settlement": "",
+                "locality": "",
+                "district": "",
+                "street": "Новая",
+                "building": "",
+                "premise": "",
+                "premise_part": "",
+                "valid_from": "2020-01-15",
+                "valid_to": "",
+            },
+        )
+        self.assertEqual(address_response.status_code, 200, address_response.content[:500])
+        address.refresh_from_db()
+        self.assertEqual(address.street, "Новая")
+        self.assertEqual(address.postal_code, "101000")
+        self.assertEqual(address.registration_country, self.russia)
+
+        record_response = self.client.post(
+            reverse("ler_form_edit", args=[name.pk]),
+            {
+                "identifier_record": str(identifier.pk),
+                "short_name": 'ООО "Чужое"',
+                "full_name": "Чужое полное",
+                "registration_region": "",
+                "name_received_date": "2020-01-15",
+                "name_changed_date": "2021-01-01",
+            },
+        )
+        self.assertEqual(record_response.status_code, 200, record_response.content[:500])
+        name.refresh_from_db()
+        self.assertEqual(name.short_name, 'ООО "Альфа"')
+        self.assertEqual(name.full_name, 'Общество с ограниченной ответственностью "Альфа"')
+        self.assertEqual(name.name_changed_date, date(2021, 1, 1))
+
+        for url_name, pk in (
+            ("ber_delete", entity.pk),
+            ("bei_delete", identifier.pk),
+            ("ler_delete", name.pk),
+        ):
+            response = self.client.post(reverse(url_name, args=[pk]))
+            self.assertEqual(response.status_code, 409, url_name)
+            self.assertIn("Состав группы", response.content.decode())
+        self.assertTrue(BusinessEntityRecord.objects.filter(pk=entity.pk).exists())
+        self.assertTrue(BusinessEntityIdentifierRecord.objects.filter(pk=identifier.pk).exists())
+        self.assertTrue(LegalEntityRecord.objects.filter(pk=name.pk).exists())
+
+    def test_backfill_creates_chain_for_existing_member(self):
+        member = GroupMember.objects.create(
+            short_name='ООО "Уже было"',
+            full_name="Полное уже было",
+            country_name=self.russia.short_name,
+            country_code=self.russia.code,
+            country_alpha2=self.russia.alpha2,
+            identifier="ОГРН",
+            registration_number="555",
+            registration_date=date(2019, 6, 1),
+            position=1,
+        )
+
+        backfill_group_member_registries()
+        backfill_group_member_registries()
+
+        member.refresh_from_db()
+        entity, identifier, name, address = self._chain(member)
+        self.assertEqual(entity.name, 'ООО "Уже было"')
+        self.assertEqual(entity.source, GROUP_BUSINESS_ENTITY_SOURCE)
+        self.assertEqual(entity.record_author, "")
+        self.assertEqual(identifier.number, "555")
+        self.assertEqual(identifier.valid_from, date(2019, 6, 1))
+        self.assertEqual(name.full_name, "Полное уже было")
+        self.assertEqual(name.name_received_date, date(2019, 6, 1))
+        self.assertEqual(address.registration_country, self.russia)
+        self.assertEqual(BusinessEntityRecord.objects.count(), 1)
+
+    def _registry_csv(self, rows):
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=BUSINESS_REGISTRY_CSV_FIELDS, delimiter=";", lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            payload = {field: "" for field in BUSINESS_REGISTRY_CSV_FIELDS}
+            payload.update(row)
+            writer.writerow(payload)
+        return SimpleUploadedFile(
+            "business-registry.csv",
+            ("\ufeff" + buffer.getvalue()).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+    def test_business_registry_csv_keeps_group_chain(self):
+        member = self._create_member()
+        entity, identifier, name, address = self._chain(member)
+        address.street = "Ленина"
+        address.save(update_fields=["street"])
+        BusinessEntityRecord.objects.create(name="Чужая", position=50)
+        upload = self._registry_csv(
+            [
+                {
+                    "section": "business_entity",
+                    "business_entity_ref": f"{entity.pk:05d}-BSN",
+                    "position": "1",
+                    "business_entity_name": 'ООО "Подмена"',
+                    "comment": "из csv",
+                    "source": "csv",
+                },
+                {
+                    "section": "identifier",
+                    "business_entity_ref": f"{entity.pk:05d}-BSN",
+                    "identifier_ref": f"{identifier.pk:05d}-IDN",
+                    "position": "1",
+                    "identifier_type": "ИНН",
+                    "registration_country_code": "398",
+                    "registration_number": "000",
+                    "registration_region": "Казань",
+                    "registration_date": "2024-01-01",
+                    "valid_from": "2018-01-01",
+                },
+                {
+                    "section": "name",
+                    "business_entity_ref": f"{entity.pk:05d}-BSN",
+                    "identifier_ref": f"{identifier.pk:05d}-IDN",
+                    "position": "1",
+                    "short_name": 'ООО "Подмена"',
+                    "full_name": "Подмена",
+                },
+                {
+                    "section": "address",
+                    "business_entity_ref": f"{entity.pk:05d}-BSN",
+                    "identifier_ref": f"{identifier.pk:05d}-IDN",
+                    "position": "1",
+                    "street": "CSV улица",
+                    "registration_country_code": "398",
+                },
+                {
+                    "section": "business_entity",
+                    "business_entity_ref": "00999-BSN",
+                    "position": "2",
+                    "business_entity_name": "Новая компания",
+                },
+            ]
+        )
+
+        response = self.client.post(reverse("business_registry_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()["ok"])
+        entity.refresh_from_db()
+        identifier.refresh_from_db()
+        name.refresh_from_db()
+        address.refresh_from_db()
+        self.assertEqual(entity.name, 'ООО "Альфа"')
+        self.assertEqual(entity.comment, "из csv")
+        self.assertEqual(identifier.number, "1027700132195")
+        self.assertEqual(identifier.identifier_type, "ОГРН")
+        self.assertEqual(identifier.registration_country, self.russia)
+        self.assertEqual(identifier.registration_region, "Казань")
+        self.assertEqual(identifier.valid_from, date(2018, 1, 1))
+        self.assertEqual(name.short_name, 'ООО "Альфа"')
+        self.assertEqual(address.street, "Ленина")
+        self.assertEqual(address.registration_country, self.russia)
+        self.assertFalse(BusinessEntityRecord.objects.filter(name="Чужая").exists())
+        self.assertTrue(BusinessEntityRecord.objects.filter(name="Новая компания").exists())
+
+    def test_name_csv_does_not_change_group_name(self):
+        member = self._create_member()
+        _entity, _identifier, name, _address = self._chain(member)
+        row = [
+            name.short_name,
+            "Новое полное",
+            "Россия",
+            "Татарстан",
+            "ИНН",
+            "000",
+            "01.02.2022",
+            "",
+            "",
+            "",
+            "",
+        ]
+        header = "краткое;полное;страна;регион;идентификатор;номер;дата;запись;автор;получено;смена\n"
+        upload = SimpleUploadedFile(
+            "names.csv",
+            ("\ufeff" + header + ";".join(row) + "\n").encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("ler_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        name.refresh_from_db()
+        self.assertEqual(name.short_name, 'ООО "Альфа"')
+        self.assertEqual(name.full_name, 'Общество с ограниченной ответственностью "Альфа"')
+        self.assertEqual(name.registration_region, "Татарстан")
+        self.assertEqual(name.identifier, "ОГРН")
+        self.assertEqual(name.registration_number, "1027700132195")
+
+    def test_name_history_csv_does_not_change_group_name(self):
+        member = self._create_member()
+        entity, identifier, name, _address = self._chain(member)
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=NAME_HISTORY_CSV_FIELDS, delimiter=";", lineterminator="\n")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "ID-BSN": f"{entity.pk:05d}-BSN",
+                "Наименование бизнес-сущности": 'ООО "Подмена"',
+                "ID-IDN": f"{identifier.pk:05d}-IDN",
+                "ID-ATR": f"{name.pk:05d}-ATR",
+                "Идентификатор": "ИНН",
+                "Регистрационный номер": "1027700132195",
+                "Код страны": "398",
+                "Страна": "Казахстан",
+                "Регион": "Алматы",
+                "Дата регистрации": "2020-01-15",
+                "Идентификатор действителен от": "2020-01-15",
+                "Идентификатор действителен до": "",
+                "Наименование (краткое)": 'ООО "Подмена"',
+                "Наименование (полное)": "Подмена",
+                "Дата получения наименования": "2020-01-15",
+                "Дата смены наименования": "",
+            }
+        )
+        upload = SimpleUploadedFile(
+            "name-history.csv",
+            ("\ufeff" + buffer.getvalue()).encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("ler_history_csv_upload"), {"csv_file": upload})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()["ok"], response.content)
+        entity.refresh_from_db()
+        identifier.refresh_from_db()
+        name.refresh_from_db()
+        self.assertEqual(entity.name, 'ООО "Альфа"')
+        self.assertEqual(identifier.identifier_type, "ОГРН")
+        self.assertEqual(identifier.number, "1027700132195")
+        self.assertEqual(identifier.registration_country, self.russia)
+        self.assertEqual(name.short_name, 'ООО "Альфа"')
+        self.assertEqual(name.full_name, 'Общество с ограниченной ответственностью "Альфа"')
+        self.assertEqual(name.registration_region, "Алматы")

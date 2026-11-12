@@ -13,6 +13,7 @@ from core.cloud_storage import (
     is_nextcloud_primary,
 )
 from letters_app.services import get_effective_template, render_subject, render_template
+from .document_generation import is_local_proposal_path, resolve_stored_local_proposal_file
 from notifications_app.email_delivery import EmailDeliveryError, send_notification_email
 from notifications_app.services import (
     DELIVERY_CHANNEL_CONNECTED_EMAIL,
@@ -131,6 +132,15 @@ def _load_proposal_pdf_attachment(proposal, *, sender):
     if not pdf_name or not raw_link:
         raise EmailDeliveryError("Для ТКП не указан PDF-файл для вложения.")
 
+    if is_local_proposal_path(raw_link):
+        local_pdf_path = resolve_stored_local_proposal_file(raw_link)
+        if local_pdf_path is None:
+            raise EmailDeliveryError("Локальная копия PDF-файла ТКП для вложения не найдена.")
+        pdf_bytes = local_pdf_path.read_bytes()
+        if not pdf_bytes:
+            raise EmailDeliveryError("PDF-файл ТКП для вложения пустой или недоступен.")
+        return (pdf_name, pdf_bytes, "application/pdf")
+
     media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
     if media_url and raw_link.startswith(media_url):
         relative_path = raw_link[len(media_url):].lstrip("/")
@@ -168,6 +178,35 @@ def _append_error(aggregate, *, channel, recipient_label, error_message):
     channel_summary = aggregate["channels"][channel]
     channel_summary["failed"] += 1
     channel_summary["errors"].append(error_payload)
+
+
+def _proposal_dispatch_addresses(proposal):
+    from .models import ProposalDispatchRecipient
+
+    to_emails = []
+    bcc_emails = []
+    seen_to = set()
+    seen_bcc = set()
+    rows = list(proposal.dispatch_recipients.all())
+    for row in rows:
+        email = (getattr(row, "email", "") or "").strip()
+        key = email.casefold()
+        if not email:
+            continue
+        if row.role == ProposalDispatchRecipient.Role.BCC:
+            if key in seen_to or key in seen_bcc:
+                continue
+            seen_bcc.add(key)
+            bcc_emails.append(email)
+            continue
+        if key in seen_to:
+            continue
+        seen_to.add(key)
+        to_emails.append(email)
+    if rows:
+        return to_emails, [email for email in bcc_emails if email.casefold() not in seen_to]
+    fallback = (getattr(proposal, "contact_email", "") or "").strip()
+    return ([fallback] if fallback else []), []
 
 
 def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
@@ -212,8 +251,9 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
 
     for proposal in proposals:
         message_payload = _build_proposal_email(proposal, sender=sender)
-        recipient_email = (getattr(proposal, "contact_email", "") or "").strip()
-        recipient_label = f"{message_payload['tkp_id']} -> {recipient_email or 'без email'}"
+        to_emails, bcc_emails = _proposal_dispatch_addresses(proposal)
+        recipient_email = to_emails[0] if to_emails else ""
+        recipient_label = f"{message_payload['tkp_id']} -> {', '.join(to_emails) or 'без email'}"
         recipient = SimpleNamespace(email=recipient_email)
         proposal_sent = False
         try:
@@ -257,6 +297,8 @@ def send_proposal_dispatch_emails(*, proposals, sender, delivery_channels):
                     connection=delivery_options.get("connection"),
                     reply_to=delivery_options.get("reply_to"),
                     attachments=attachments,
+                    to_emails=to_emails,
+                    bcc=bcc_emails,
                 )
                 email_delivery["sent"] += 1
                 channel_summary["sent"] += 1

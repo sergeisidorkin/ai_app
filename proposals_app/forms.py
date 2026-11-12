@@ -4,7 +4,9 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django import forms
-from django.db import models
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
+from django.db import models, transaction
 from django.db.models import Max
 from django.utils import timezone
 
@@ -28,12 +30,14 @@ sys.modules.setdefault("ai_app.proposals_app.forms", sys.modules[__name__])
 from .models import (
     ProposalAsset,
     ProposalCommercialOffer,
+    ProposalDispatchRecipient,
     ProposalLegalEntity,
     ProposalObject,
     ProposalRegistration,
     ProposalRegistrationProduct,
     ProposalTemplate,
     ProposalVariable,
+    mirror_primary_dispatch_recipient,
 )
 from .cbr import get_cbr_eur_rate_for_today, get_cbr_eur_rate_text
 
@@ -3327,6 +3331,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             selected_identifier_record_id = str(row.get("selected_identifier_record_id") or "").strip()
             selected_from_autocomplete_raw = str(row.get("selected_from_autocomplete") or "").strip().lower()
             user_edited_raw = str(row.get("user_edited") or "").strip().lower()
+            copied_from_owner_raw = str(row.get("copied_from_owner") or "").strip().lower()
+            copied_from_asset_raw = str(row.get("copied_from_asset") or "").strip().lower()
 
             row_has_data = any(
                 [
@@ -3370,6 +3376,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "selected_identifier_record_id": selected_identifier_record_id,
                     "selected_from_autocomplete": selected_from_autocomplete_raw in {"1", "true", "yes", "on"},
                     "user_edited": user_edited_raw in {"1", "true", "yes", "on"},
+                    "copied_from_owner": copied_from_owner_raw in {"1", "true", "yes", "on"},
+                    "copied_from_asset": copied_from_asset_raw in {"1", "true", "yes", "on"},
                 }
             )
         return cleaned_rows
@@ -3394,6 +3402,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     "selected_identifier_record_id": item.get("selected_identifier_record_id", ""),
                     "selected_from_autocomplete": bool(item.get("selected_from_autocomplete")),
                     "user_edited": bool(item.get("user_edited")),
+                    "copied_from_owner": bool(item.get("copied_from_owner")),
+                    "copied_from_asset": bool(item.get("copied_from_asset")),
                 }
                 for item in items
             ],
@@ -3523,6 +3533,34 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         )
 
 
+class DispatchRecipientFormRow:
+    def __init__(self, payload):
+        self.role = payload.get("role") or ProposalDispatchRecipient.Role.TO
+        self.email = payload.get("email") or ""
+        self.last_name = payload.get("last_name") or ""
+        self.first_name = payload.get("first_name") or ""
+        self.middle_name = payload.get("middle_name") or ""
+        self.organization_short_name = payload.get("organization_short_name") or ""
+        self.country_id = payload.get("country_id") or None
+        self.identifier = payload.get("identifier") or ""
+        self.registration_number = payload.get("registration_number") or ""
+        self.registration_date_display = payload.get("registration_date_display") or ""
+        self.job_title = payload.get("job_title") or ""
+        self.person_id = payload.get("person_id") or ""
+        self.email_record_id = payload.get("email_record_id") or ""
+        self.position_record_id = payload.get("position_record_id") or ""
+        self.identifier_record_id = payload.get("identifier_record_id") or ""
+        self.autocomplete_selected_value = "1" if payload.get("selected_from_autocomplete") else "0"
+
+    @property
+    def contact_full_name(self):
+        return " ".join(
+            (part or "").strip()
+            for part in (self.last_name, self.first_name, self.middle_name)
+            if (part or "").strip()
+        )
+
+
 class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
     recipient_country = forms.ModelChoiceField(
         label="Страна",
@@ -3601,10 +3639,16 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
         country_qs = OKSMCountry.objects.filter(
             models.Q(expiry_date__isnull=True) | models.Q(expiry_date__gte=today)
         ).order_by("short_name")
-        if self.instance and self.instance.pk and self.instance.recipient_country_id:
-            country_qs = (country_qs | OKSMCountry.objects.filter(pk=self.instance.recipient_country_id)).distinct().order_by(
-                "short_name"
+        if self.instance and self.instance.pk:
+            extra_country_ids = list(
+                self.instance.dispatch_recipients.exclude(country_id=None).values_list("country_id", flat=True)
             )
+            if self.instance.recipient_country_id:
+                extra_country_ids.append(self.instance.recipient_country_id)
+            if extra_country_ids:
+                country_qs = (country_qs | OKSMCountry.objects.filter(pk__in=extra_country_ids)).distinct().order_by(
+                    "short_name"
+                )
         self.fields["recipient_country"].queryset = country_qs
         self.fields["recipient_country"].label_from_instance = lambda obj: obj.short_name
         if not self.is_bound and not getattr(self.instance, "recipient_country_id", None):
@@ -3624,17 +3668,261 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
             self.fields["contact_middle_name"].initial = middle_name
         self._bootstrapify()
 
+    def display_recipients(self):
+        posted = getattr(self, "_posted_recipients", None)
+        if self.is_bound and posted is not None:
+            return posted
+        if self.instance and self.instance.pk:
+            rows = list(self.instance.dispatch_recipients.order_by("position", "id"))
+            if rows:
+                return rows
+            legacy = self.instance.legacy_dispatch_recipient()
+            if legacy is not None:
+                return [legacy]
+        return []
+
+    @staticmethod
+    def _posted_values(data, key):
+        if hasattr(data, "getlist"):
+            return [str(value or "") for value in data.getlist(key)]
+        value = data.get(key, [])
+        if isinstance(value, (list, tuple)):
+            return [str(item or "") for item in value]
+        if value in (None, ""):
+            return []
+        return [str(value)]
+
+    @staticmethod
+    def _optional_int(value):
+        raw = str(value or "").strip()
+        if raw.isdigit():
+            return int(raw)
+        return None
+
+    @staticmethod
+    def _flag_is_set(value):
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _parse_registration_date(self, value):
+        raw = str(value or "").strip()
+        if not raw:
+            return None, ""
+        for fmt in DATE_INPUT_FORMATS:
+            try:
+                parsed = datetime.strptime(raw, fmt).date()
+            except ValueError:
+                continue
+            return parsed, parsed.strftime("%d.%m.%Y")
+        return False, raw
+
+    def _country_from_raw(self, raw_value):
+        raw = str(raw_value or "").strip()
+        if not raw:
+            return None, None
+        country_id = self._optional_int(raw)
+        if country_id is None:
+            return False, None
+        country = self.fields["recipient_country"].queryset.filter(pk=country_id).first()
+        if country is None:
+            return False, country_id
+        return country, country.pk
+
+    def _recipient_payload(self, **values):
+        registration_date, registration_date_display = self._parse_registration_date(
+            values.get("registration_date")
+        )
+        country, country_id = self._country_from_raw(values.get("country"))
+        email = str(values.get("email") or "").strip()
+        return {
+            "role": values.get("role") or ProposalDispatchRecipient.Role.TO,
+            "email": email,
+            "last_name": str(values.get("last_name") or "").strip(),
+            "first_name": str(values.get("first_name") or "").strip(),
+            "middle_name": str(values.get("middle_name") or "").strip(),
+            "organization_short_name": str(values.get("organization") or "").strip(),
+            "country": country if country is not False else None,
+            "country_id": country.pk if country not in (None, False) else country_id,
+            "country_invalid": country is False,
+            "identifier": str(values.get("identifier") or "").strip(),
+            "registration_number": str(values.get("registration_number") or "").strip(),
+            "registration_date": registration_date if registration_date is not False else None,
+            "registration_date_display": registration_date_display,
+            "registration_date_invalid": registration_date is False,
+            "job_title": str(values.get("job_title") or "").strip(),
+            "person_id": self._optional_int(values.get("person_id")),
+            "email_record_id": self._optional_int(values.get("email_record_id")),
+            "position_record_id": self._optional_int(values.get("position_record_id")),
+            "identifier_record_id": self._optional_int(values.get("identifier_record_id")),
+            "selected_from_autocomplete": self._flag_is_set(values.get("selected_from_autocomplete")),
+        }
+
+    def _payload_is_empty(self, payload):
+        return not any(
+            [
+                payload["email"],
+                payload["last_name"],
+                payload["first_name"],
+                payload["middle_name"],
+                payload["organization_short_name"],
+                payload["identifier"],
+                payload["registration_number"],
+                payload["registration_date_display"],
+                payload["job_title"],
+            ]
+        )
+
+    def _parse_legacy_recipient(self):
+        data = self.data
+        payload = self._recipient_payload(
+            role=ProposalDispatchRecipient.Role.TO,
+            email=data.get("contact_email"),
+            last_name=data.get("contact_last_name"),
+            first_name=data.get("contact_first_name"),
+            middle_name=data.get("contact_middle_name"),
+            organization=data.get("recipient"),
+            country=data.get("recipient_country"),
+            identifier=data.get("recipient_identifier"),
+            registration_number=data.get("recipient_registration_number"),
+            registration_date=data.get("recipient_registration_date"),
+            job_title=data.get("recipient_job_title"),
+            identifier_record_id=data.get("recipient_autocomplete_identifier_record_id"),
+            selected_from_autocomplete=data.get("recipient_autocomplete_selected_from_autocomplete"),
+        )
+        if self._payload_is_empty(payload):
+            return []
+        return [payload]
+
+    def _parse_posted_recipient_rows(self):
+        data = self.data
+        roles = self._posted_values(data, "dispatch_recipient_role")
+        length = max(
+            [
+                len(roles),
+                len(self._posted_values(data, "dispatch_recipient_email")),
+                len(self._posted_values(data, "dispatch_recipient_last_name")),
+                len(self._posted_values(data, "dispatch_recipient_organization")),
+            ]
+            or [0]
+        )
+        if not length:
+            return []
+
+        def value_at(key, index):
+            values = self._posted_values(data, key)
+            if index < len(values):
+                return values[index]
+            return ""
+
+        payloads = []
+        for index in range(length):
+            role = value_at("dispatch_recipient_role", index).strip()
+            if role not in {ProposalDispatchRecipient.Role.TO, ProposalDispatchRecipient.Role.BCC}:
+                role = ProposalDispatchRecipient.Role.TO
+            payload = self._recipient_payload(
+                role=role,
+                email=value_at("dispatch_recipient_email", index),
+                last_name=value_at("dispatch_recipient_last_name", index),
+                first_name=value_at("dispatch_recipient_first_name", index),
+                middle_name=value_at("dispatch_recipient_middle_name", index),
+                organization=value_at("dispatch_recipient_organization", index),
+                country=value_at("dispatch_recipient_country", index),
+                identifier=value_at("dispatch_recipient_identifier", index),
+                registration_number=value_at("dispatch_recipient_registration_number", index),
+                registration_date=value_at("dispatch_recipient_registration_date", index),
+                job_title=value_at("dispatch_recipient_job_title", index),
+                person_id=value_at("dispatch_recipient_person_id", index),
+                email_record_id=value_at("dispatch_recipient_email_record_id", index),
+                position_record_id=value_at("dispatch_recipient_position_record_id", index),
+                identifier_record_id=value_at("dispatch_recipient_identifier_record_id", index),
+                selected_from_autocomplete=value_at("dispatch_recipient_selected_from_autocomplete", index),
+            )
+            if self._payload_is_empty(payload):
+                continue
+            payloads.append(payload)
+        return payloads
+
+    def _validate_recipient_payloads(self, payloads):
+        errors = []
+        to_rows = []
+        bcc_rows = []
+        seen_to = set()
+        seen_bcc = set()
+        for payload in payloads:
+            email = payload["email"]
+            if payload["country_invalid"]:
+                errors.append("Укажите страну из списка.")
+            if payload["registration_date_invalid"]:
+                errors.append("Некорректная дата регистрации.")
+            if not email:
+                errors.append("Укажите эл. почту контакта.")
+                continue
+            try:
+                validate_email(email)
+            except ValidationError:
+                errors.append(f"Некорректный адрес эл. почты: {email}.")
+                continue
+            key = email.casefold()
+            if payload["role"] == ProposalDispatchRecipient.Role.BCC:
+                if key in seen_bcc:
+                    errors.append(f"Адрес {email} указан несколько раз.")
+                    continue
+                seen_bcc.add(key)
+                bcc_rows.append(payload)
+                continue
+            payload["role"] = ProposalDispatchRecipient.Role.TO
+            if key in seen_to:
+                errors.append(f"Адрес {email} указан несколько раз.")
+                continue
+            seen_to.add(key)
+            to_rows.append(payload)
+        to_keys = {row["email"].casefold() for row in to_rows}
+        bcc_rows = [row for row in bcc_rows if row["email"].casefold() not in to_keys]
+        return to_rows + bcc_rows, errors
+
+    def clean(self):
+        cleaned = super().clean()
+        if str(self.data.get("dispatch_recipients_form") or "").strip():
+            payloads = self._parse_posted_recipient_rows()
+        else:
+            payloads = self._parse_legacy_recipient()
+        self._posted_recipients = [DispatchRecipientFormRow(payload) for payload in payloads]
+        final_rows, errors = self._validate_recipient_payloads(payloads)
+        for error in errors:
+            self.add_error(None, error)
+        if not errors:
+            self.cleaned_dispatch_recipients = final_rows
+        return cleaned
+
     def save(self, commit=True):
         instance = super().save(commit=False)
-        name_parts = [
-            (self.cleaned_data.get("contact_last_name") or "").strip(),
-            (self.cleaned_data.get("contact_first_name") or "").strip(),
-            (self.cleaned_data.get("contact_middle_name") or "").strip(),
-        ]
-        instance.contact_full_name = " ".join(part for part in name_parts if part).strip()
-        if commit:
+        payloads = list(getattr(self, "cleaned_dispatch_recipients", []) or [])
+        if not commit:
+            return instance
+        with transaction.atomic():
             instance.save()
             self.save_m2m()
+            instance.dispatch_recipients.all().delete()
+            for position, payload in enumerate(payloads, start=1):
+                ProposalDispatchRecipient.objects.create(
+                    proposal=instance,
+                    role=payload["role"],
+                    position=position,
+                    person_id=payload["person_id"],
+                    email_record_id=payload["email_record_id"],
+                    position_record_id=payload["position_record_id"],
+                    last_name=payload["last_name"],
+                    first_name=payload["first_name"],
+                    middle_name=payload["middle_name"],
+                    email=payload["email"],
+                    organization_short_name=payload["organization_short_name"],
+                    country=payload["country"] if payload["country"] is not False else None,
+                    identifier=payload["identifier"],
+                    registration_number=payload["registration_number"],
+                    registration_date=payload["registration_date"] if payload["registration_date"] is not False else None,
+                    identifier_record_id=payload["identifier_record_id"],
+                    job_title=payload["job_title"],
+                )
+            mirror_primary_dispatch_recipient(instance)
         return instance
 
 

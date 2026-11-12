@@ -28,10 +28,10 @@ elif env.bool("READ_DOTENV", False) or (
 ):
     environ.Env.read_env(BASE_DIR / ".env")
 
-# Сканы печати и файлы договоров больше стандартных 2.5 МБ Django.
+# Сканы печати, файлы договоров и отчёты больше стандартных 2.5 МБ Django.
 DATA_UPLOAD_MAX_MEMORY_SIZE = env.int(
     "DATA_UPLOAD_MAX_MEMORY_SIZE",
-    default=32 * 1024 * 1024,
+    default=50 * 1024 * 1024,
 )
 
 # On local macOS development, make Python SMTP TLS use certifi by default.
@@ -513,6 +513,9 @@ REPORT_CHECK_LOCAL_ROOTS = tuple(
 # Локальный корень для кнопки «Создать проект договора» на стенде разработчика.
 # Разрешённые каталоги — те же, что у сдачи отчётов (REPORT_CHECK_LOCAL_ROOTS).
 CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER = env.bool("CONTRACT_PROJECT_ALLOW_LOCAL_FOLDER", default=False)
+# Локальная папка вместо облака для «Сформировать ТКП» на стенде разработчика.
+# Разрешённые каталоги — те же, что у сдачи отчётов (REPORT_CHECK_LOCAL_ROOTS).
+PROPOSAL_ALLOW_LOCAL_FOLDER = env.bool("PROPOSAL_ALLOW_LOCAL_FOLDER", default=False)
 
 # === OIDC Provider ===
 OIDC_RSA_PRIVATE_KEY = _read_text_setting_from_env_or_file("OIDC_RSA_PRIVATE_KEY", default="").strip()

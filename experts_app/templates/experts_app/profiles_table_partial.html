@@ -13,7 +13,39 @@
                 </div>
             {% endif %}
         </th>
-        <th data-col="1" style="min-width:280px">ФИО</th>
+        <th data-col="1" class="text-nowrap experts-full-name-head" style="min-width:280px">
+            <span class="experts-full-name-head-line">
+                ФИО
+                <button type="button"
+                        class="experts-full-name-sort{% if full_name_sort %} active{% endif %}"
+                        data-full-name-sort-btn="1"
+                        hx-get="{{ full_name_sort_url }}"
+                        hx-target="#experts-pane"
+                        hx-swap="outerHTML"
+                        {% if full_name_sort == "asc" %}
+                        title="Сортировка по возрастанию"
+                        aria-label="Сортировка по возрастанию"
+                        {% elif full_name_sort == "desc" %}
+                        title="Сортировка по убыванию"
+                        aria-label="Сортировка по убыванию"
+                        {% else %}
+                        title="Сортировка выключена"
+                        aria-label="Сортировка выключена"
+                        {% endif %}
+                        aria-pressed="{% if full_name_sort %}true{% else %}false{% endif %}">
+                    {% if full_name_sort == "asc" %}
+                        <i class="bi bi-caret-up-fill" aria-hidden="true"></i>
+                    {% elif full_name_sort == "desc" %}
+                        <i class="bi bi-caret-down-fill" aria-hidden="true"></i>
+                    {% else %}
+                        <span class="experts-full-name-sort-idle" aria-hidden="true">
+                            <i class="bi bi-caret-up"></i>
+                            <i class="bi bi-caret-down"></i>
+                        </span>
+                    {% endif %}
+                </button>
+            </span>
+        </th>
         <th data-col="2" style="min-width:260px">Эл. почта (логин)</th>
         <th data-col="3">Дополнительная эл. почта</th>
         <th data-col="4">Телефон</th>
@@ -38,9 +70,14 @@
     </thead>
     <tbody>
     {% for p in profiles %}
-        <tr data-edit-url="{% url 'epr_form_edit' p.pk %}"
-            data-move-up-url="{% url 'epr_move_up' p.pk %}"
-            data-move-down-url="{% url 'epr_move_down' p.pk %}">
+        <tr         data-edit-url="{% url 'epr_form_edit' p.pk %}?{{ experts_row_query }}"
+            data-move-up-url="{% url 'epr_move_up' p.pk %}?{{ experts_row_query }}"
+            data-move-down-url="{% url 'epr_move_down' p.pk %}?{{ experts_row_query }}"
+            {% if request.user.is_authenticated and request.user.is_staff %}
+            data-inline-row-id="{{ p.id }}"
+            data-expertise-direction="{{ p.expertise_direction_id|default_if_none:'' }}"
+            data-specialties-save-url="{% url 'epr_profile_specialties_save' p.pk %}"
+            {% endif %}>
 
             <td class="text-nowrap">
                 {% if request.user.is_authenticated and request.user.is_staff %}
@@ -55,12 +92,45 @@
                 {% endif %}
             </td>
             <td class="text-nowrap" data-col="1">{{ p.full_name }}</td>
-            <td class="text-nowrap" data-col="2">{{ p.employee.user.email }}</td>
+            <td class="text-nowrap epr-email-cell" data-col="2">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary epr-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать строку"></i>{% endif %}{{ p.employee.user.email }}</td>
             <td class="text-nowrap" data-col="3">{{ p.resolved_extra_email|default:"—" }}</td>
             <td class="text-nowrap" data-col="4">{{ p.employee.primary_phone_display }}</td>
             <td class="text-nowrap" data-col="5">{{ p.resolved_extra_phone|default:"—" }}</td>
             <td data-col="6">{% if p.expertise_direction %}{{ p.expertise_direction.department_name }}{% else %}—{% endif %}</td>
-            <td data-col="7" class="epr-spec-cell">{% for rs in p.ranked_specialties.all %}{% if forloop.first %}<span class="epr-spec-item">{{ rs.specialty.specialty }}</span>{% else %}<br class="epr-spec-rest"><span class="epr-spec-rest">{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}</td>
+            <td data-col="7" class="epr-spec-cell inline-specialties-cell"{% if request.user.is_authenticated and request.user.is_staff %} data-inline-field="specialty_ids" data-inline-type="specialties" data-inline-value="[{% for rs in p.ranked_specialties.all %}{% if not forloop.first %},{% endif %}{{ rs.specialty_id }}{% endfor %}]"{% endif %}>
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                    {% with specs=p.ranked_specialties.all %}
+                    <div class="inline-specialties" data-count="{{ specs|length }}">
+                        <div class="epr-spec-sizer" aria-hidden="true">{% for rs in specs %}<span>{{ rs.specialty.specialty }}</span>{% empty %}<span>—</span>{% endfor %}</div>
+                        {% for rs in specs %}
+                        <div class="inline-specialty-row" data-index="{{ forloop.counter0 }}" data-id="{{ rs.specialty_id }}">
+                            <span class="inline-specialty-label">{{ rs.specialty.specialty }}</span>
+                            <span class="inline-specialty-icons">
+                                <span class="inline-specialty-actions">
+                                    <button type="button" class="inline-specialty-btn" data-specialty-action="move" data-dir="-1" title="Выше" aria-label="Выше"{% if forloop.first %} disabled{% endif %}><i class="bi bi-arrow-up"></i></button>
+                                    <button type="button" class="inline-specialty-btn" data-specialty-action="move" data-dir="1" title="Ниже" aria-label="Ниже"{% if forloop.last %} disabled{% endif %}><i class="bi bi-arrow-down"></i></button>
+                                    <button type="button" class="inline-specialty-btn" data-specialty-action="remove" title="Удалить" aria-label="Удалить"><i class="bi bi-x-lg"></i></button>
+                                </span>
+                                <span class="inline-specialty-chevron" aria-hidden="true"></span>
+                                <button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>
+                            </span>
+                        </div>
+                        {% empty %}
+                        <div class="inline-specialty-row" data-index="0" data-id="">
+                            <span class="inline-specialty-label">—</span>
+                            <span class="inline-specialty-icons">
+                                <span class="inline-specialty-actions"></span>
+                                <span class="inline-specialty-chevron" aria-hidden="true"></span>
+                                <button type="button" class="inline-specialty-add" data-specialty-action="add" title="Добавить специальность" aria-label="Добавить специальность"><i class="bi bi-plus-circle"></i></button>
+                            </span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endwith %}
+                {% else %}
+                    {% for rs in p.ranked_specialties.all %}{% if forloop.first %}<span class="epr-spec-item">{{ rs.specialty.specialty }}</span>{% else %}<br class="epr-spec-rest"><span class="epr-spec-rest">{{ rs.specialty.specialty }}</span>{% endif %}{% empty %}—{% endfor %}
+                {% endif %}
+            </td>
             <td data-col="8">{{ p.professional_status|default:"—" }}</td>
             <td data-col="9">{{ p.professional_status_short|default:"—" }}</td>
             <td data-col="10">{% if p.grade %}{{ p.grade.grade_ru }}{% else %}—{% endif %}</td>

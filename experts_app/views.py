@@ -3,12 +3,15 @@ import io
 import json
 import os
 from datetime import date as date_type, datetime
+from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.paginator import Paginator
 from django.db import models
 from django.db.models import Max, Q
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
 from classifiers_app.models import TerritorialDivision
@@ -34,6 +37,9 @@ from .specialty_source import (
 from .models import ExpertContractDetails, ExpertProfile, ExpertProfileSpecialty, ExpertSpecialty
 
 PARTIAL_TEMPLATE = "experts_app/experts_partial.html"
+EXPERTS_PAGE_SIZE = 25
+EXPERTS_PAGE_SIZE_OPTIONS = (25, 50, 100)
+EXPERTS_PAGE_SIZE_ALL = "all"
 CONTRACT_REQUISITES_PARTIAL_TEMPLATE = "experts_app/contract_requisites_partial.html"
 FORM_TEMPLATE = "experts_app/specialty_form.html"
 PROFILE_FORM_TEMPLATE = "experts_app/profile_form.html"
@@ -391,30 +397,225 @@ def _sync_contract_detail_records(profiles):
     ).delete()
 
 
-def _experts_context():
-    _ensure_profiles()
-    profiles = list(
-        ExpertProfile.objects.select_related(
-            "employee", "employee__user", "employee__person_record", "employee__managed_email_record",
-            "expertise_direction",
-            "grade", "country", "region",
-        ).filter(
-            employee__user__is_staff=True,
-        ).prefetch_related(
-            "employee__person_record__emails",
-            "employee__person_record__phones",
-            "employee__person_record__residence_addresses",
-            models.Prefetch(
-                "ranked_specialties",
-                queryset=ExpertProfileSpecialty.objects.select_related(
-                    "specialty", "contact_specialty_record",
-                ).order_by("rank"),
-            ),
-        ).all()
+def _experts_request_value(request, key):
+    if key in request.GET:
+        return request.GET.get(key)
+    return request.POST.get(key, "")
+
+
+def _experts_requested_page_size(request):
+    raw = str(_experts_request_value(request, "page_size") or "").strip().lower()
+    if raw == EXPERTS_PAGE_SIZE_ALL:
+        return EXPERTS_PAGE_SIZE_ALL
+    try:
+        page_size = int(raw or EXPERTS_PAGE_SIZE)
+    except (TypeError, ValueError):
+        page_size = EXPERTS_PAGE_SIZE
+    if page_size not in EXPERTS_PAGE_SIZE_OPTIONS:
+        return EXPERTS_PAGE_SIZE
+    return page_size
+
+
+def _experts_full_name_sort(request):
+    value = str(_experts_request_value(request, "full_name_sort") or "").strip().lower()
+    if value in {"asc", "desc"}:
+        return value
+    return ""
+
+
+def _order_expert_profiles(profiles, sort):
+    if sort not in {"asc", "desc"}:
+        return profiles
+    return sorted(
+        profiles,
+        key=lambda profile: ((profile.full_name or "").casefold(), profile.id),
+        reverse=sort == "desc",
     )
-    _sync_profile_contact_fields(profiles)
-    _sync_profile_specialties_from_contacts(profiles)
-    _sync_contract_detail_records(profiles)
+
+
+def _experts_partial_url(params):
+    encoded = urlencode(params)
+    path = reverse("experts_partial")
+    return f"{path}?{encoded}" if encoded else path
+
+
+def _experts_request_values(request, key):
+    if key in request.GET:
+        return request.GET.getlist(key)
+    return request.POST.getlist(key)
+
+
+def _experts_requested_specialties(request):
+    specialty_ids = []
+    seen = set()
+    for raw in _experts_request_values(request, "specialty"):
+        try:
+            specialty_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if specialty_id <= 0 or specialty_id in seen:
+            continue
+        seen.add(specialty_id)
+        specialty_ids.append(specialty_id)
+    return specialty_ids
+
+
+def _experts_profile_specialty_ids(profile):
+    specialty_ids = []
+    for link in profile.ranked_specialties.all():
+        name = (getattr(link.specialty, "specialty", "") or "").strip()
+        if name and link.specialty_id:
+            specialty_ids.append(link.specialty_id)
+    return specialty_ids
+
+
+def _expert_profile_inline_specialty_options():
+    return _specialty_options()
+
+
+def _experts_specialty_options(profiles):
+    options = {}
+    for profile in profiles:
+        for link in profile.ranked_specialties.all():
+            name = (getattr(link.specialty, "specialty", "") or "").strip()
+            if not name or not link.specialty_id or link.specialty_id in options:
+                continue
+            options[link.specialty_id] = name
+    return sorted(options.items(), key=lambda item: (item[1].casefold(), item[0]))
+
+
+def _filter_expert_profiles(profiles, specialty_ids):
+    if not specialty_ids:
+        return profiles
+    selected = set(specialty_ids)
+    return [
+        profile
+        for profile in profiles
+        if selected.intersection(_experts_profile_specialty_ids(profile))
+    ]
+
+
+def _experts_multi_filter_label(selected_labels):
+    if not selected_labels:
+        return "Все"
+    if len(selected_labels) == 1:
+        return selected_labels[0]
+    return f"{len(selected_labels)} выбрано"
+
+
+def _experts_state_pairs(*, page=None, page_size=None, sort="", specialties=()):
+    pairs = []
+    if page is not None:
+        pairs.append(("page", page))
+    if page_size is not None:
+        pairs.append(("page_size", page_size))
+    if sort:
+        pairs.append(("full_name_sort", sort))
+    for specialty_id in specialties:
+        pairs.append(("specialty", specialty_id))
+    return pairs
+
+
+def _experts_profile_selection(request, profiles):
+    options = _experts_specialty_options(profiles)
+    available = {specialty_id for specialty_id, _name in options}
+    selected = [
+        specialty_id
+        for specialty_id in _experts_requested_specialties(request)
+        if specialty_id in available
+    ]
+    sort = _experts_full_name_sort(request)
+    visible = _order_expert_profiles(_filter_expert_profiles(profiles, selected), sort)
+    return visible, options, selected, sort
+
+
+def _experts_full_name_sort_url(request, sort, specialties=()):
+    next_sort = {"": "asc", "asc": "desc", "desc": ""}.get(sort, "asc")
+    params = _experts_state_pairs(
+        page=1,
+        page_size=_experts_requested_page_size(request),
+        sort=next_sort,
+        specialties=specialties,
+    )
+    return _experts_partial_url(params)
+
+
+def _experts_pagination_context(request, profiles, specialties=()):
+    page_size = _experts_requested_page_size(request)
+    sort = _experts_full_name_sort(request)
+    shown_page_size = page_size
+    if page_size == EXPERTS_PAGE_SIZE_ALL or specialties:
+        paginator = Paginator(profiles, max(len(profiles), 1))
+        page_obj = paginator.get_page(1)
+        shown_page_size = EXPERTS_PAGE_SIZE_ALL
+    else:
+        paginator = Paginator(profiles, page_size)
+        page_obj = paginator.get_page(_experts_request_value(request, "page"))
+
+    def page_url(page_number):
+        params = _experts_state_pairs(
+            page=page_number,
+            page_size=shown_page_size,
+            sort=sort,
+            specialties=specialties,
+        )
+        return _experts_partial_url(params)
+
+    page_size_params = _experts_state_pairs(page=1, sort=sort, specialties=specialties)
+
+    pagination_pages = []
+    for page_number in paginator.get_elided_page_range(page_obj.number):
+        if page_number == paginator.ELLIPSIS:
+            pagination_pages.append({"ellipsis": True})
+        else:
+            pagination_pages.append(
+                {
+                    "number": page_number,
+                    "url": page_url(page_number),
+                    "current": page_number == page_obj.number,
+                }
+            )
+    return {
+        "policy_pagination_enabled": True,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "policy_pagination_pages": pagination_pages,
+        "policy_pagination_previous_url": page_url(page_obj.previous_page_number())
+        if page_obj.has_previous()
+        else "",
+        "policy_pagination_next_url": page_url(page_obj.next_page_number())
+        if page_obj.has_next()
+        else "",
+        "policy_pagination_start": page_obj.start_index(),
+        "policy_pagination_end": page_obj.end_index(),
+        "policy_page_size": shown_page_size,
+        "policy_page_size_options": (
+            *EXPERTS_PAGE_SIZE_OPTIONS,
+            {"value": EXPERTS_PAGE_SIZE_ALL, "label": "Все"},
+        ),
+        "policy_page_size_url": _experts_partial_url(page_size_params),
+    }
+
+
+def _experts_context(request):
+    all_profiles = _profiles_list()
+    _sync_contract_detail_records(all_profiles)
+    profiles, specialty_options, selected_specialties, sort = _experts_profile_selection(
+        request,
+        all_profiles,
+    )
+    pagination = _experts_pagination_context(request, profiles, selected_specialties)
+    profiles = list(pagination["page_obj"].object_list)
+    selected_labels = [
+        name for specialty_id, name in specialty_options if specialty_id in set(selected_specialties)
+    ]
+    row_params = _experts_state_pairs(
+        page=pagination["page_obj"].number,
+        page_size=pagination["policy_page_size"],
+        sort=sort,
+        specialties=selected_specialties,
+    )
+    csv_params = _experts_state_pairs(sort=sort, specialties=selected_specialties)
     contract_details = list(
         ExpertContractDetails.objects.select_related(
             "expert_profile",
@@ -437,6 +638,21 @@ def _experts_context():
     return {
         "profiles": profiles,
         "contract_details": contract_details,
+        "full_name_sort": sort,
+        "full_name_sort_url": _experts_full_name_sort_url(request, sort, selected_specialties),
+        "experts_row_query": urlencode(row_params),
+        "experts_csv_query": urlencode(csv_params),
+        "profile_specialty_options": [
+            {"id": specialty_id, "label": name} for specialty_id, name in specialty_options
+        ],
+        "selected_profile_specialties": selected_specialties,
+        "profile_specialty_filter_label": _experts_multi_filter_label(selected_labels),
+        "experts_specialty_ids": ",".join(str(specialty_id) for specialty_id in selected_specialties),
+        "expert_profile_inline_options_json": json.dumps(
+            {"specialties": _expert_profile_inline_specialty_options()},
+            ensure_ascii=False,
+        ) if getattr(request.user, "is_staff", False) else "",
+        **pagination,
     }
 
 
@@ -476,7 +692,7 @@ def _contract_details_context():
 
 
 def _render_updated(request):
-    response = render(request, PARTIAL_TEMPLATE, _experts_context())
+    response = render(request, PARTIAL_TEMPLATE, _experts_context(request))
     response[HX_TRIGGER_HEADER] = HX_EVENT
     return response
 
@@ -543,7 +759,7 @@ def _normalize_positions():
 @login_required
 @require_http_methods(["GET"])
 def experts_partial(request):
-    return render(request, PARTIAL_TEMPLATE, _experts_context())
+    return render(request, PARTIAL_TEMPLATE, _experts_context(request))
 
 
 @login_required
@@ -986,7 +1202,8 @@ def epr_csv_download(request):
     writer = csv.writer(output, delimiter=";", lineterminator="\n")
     writer.writerow(EPR_CSV_HEADERS)
 
-    for profile in _profiles_list():
+    visible_profiles, _options, _selected, _sort = _experts_profile_selection(request, _profiles_list())
+    for profile in visible_profiles:
         writer.writerow(
             [
                 profile.full_name,
@@ -1130,7 +1347,7 @@ def _specialty_options():
     ]
 
 
-def _profile_form_context(form, profile):
+def _profile_form_context(form, profile, request=None):
     grades_map = _build_grades_map()
     regions_map = _build_regions_map()
     spec_options = _specialty_options()
@@ -1194,6 +1411,10 @@ def _profile_form_context(form, profile):
         "specialty_options": spec_options,
         "specialty_options_json": json.dumps(spec_options, ensure_ascii=False),
         "ranked_specialties": ranked_specialties,
+        "experts_return_page": _experts_request_value(request, "page") if request else "1",
+        "experts_return_page_size": _experts_requested_page_size(request) if request else EXPERTS_PAGE_SIZE,
+        "experts_return_full_name_sort": _experts_full_name_sort(request) if request else "",
+        "experts_return_specialty_ids": _experts_requested_specialties(request) if request else [],
     }
 
 
@@ -1307,6 +1528,19 @@ def _sync_ranked_specialties_to_contact_records(profile, rows, *, user=None):
         ExpertProfileSpecialty.objects.bulk_create(to_create)
 
 
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def profile_specialties_save(request, pk: int):
+    profile = get_object_or_404(ExpertProfile, pk=pk)
+    rows = [
+        {"specialty_id": specialty_id, "contact_specialty_record_id": ""}
+        for specialty_id in request.POST.getlist("specialty_id")
+    ]
+    _sync_ranked_specialties_to_contact_records(profile, rows, user=request.user)
+    return JsonResponse({"ok": True})
+
+
 def _save_ranked_specialties(profile, post_data, *, user=None):
     specialty_ids = post_data.getlist("specialty_id")
     contact_record_ids = post_data.getlist("contact_specialty_record_id")
@@ -1328,10 +1562,10 @@ def profile_form_edit(request, pk: int):
     profile = get_object_or_404(ExpertProfile, pk=pk)
     if request.method == "GET":
         form = ExpertProfileForm(instance=profile)
-        return render(request, PROFILE_FORM_TEMPLATE, _profile_form_context(form, profile))
+        return render(request, PROFILE_FORM_TEMPLATE, _profile_form_context(form, profile, request))
     form = ExpertProfileForm(request.POST, instance=profile)
     if not form.is_valid():
-        return render(request, PROFILE_FORM_TEMPLATE, _profile_form_context(form, profile))
+        return render(request, PROFILE_FORM_TEMPLATE, _profile_form_context(form, profile, request))
     form.save()
     _save_ranked_specialties(profile, request.POST, user=request.user)
     return _render_updated(request)

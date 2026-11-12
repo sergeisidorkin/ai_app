@@ -1913,6 +1913,35 @@ class PersonCsvTests(TestCase):
         self.assertTrue(person.phones.exists())
         self.assertTrue(person.emails.exists())
 
+    def test_person_admin_create_restores_deleted_prs_id(self):
+        admin = get_user_model().objects.create_superuser(
+            username="contacts-prs-admin",
+            email="prs-admin@example.com",
+            password="secret123",
+        )
+        self.client.force_login(admin)
+
+        response = self.client.post(
+            reverse("admin:contacts_app_personrecord_add"),
+            {
+                "prs_id": "00027-PRS",
+                "last_name": "Шевченко",
+                "first_name": "Павел",
+                "middle_name": "Валерьевич",
+                "full_name_genitive": "",
+                "gender": "",
+                "birth_date": "",
+                "citizenship": "",
+                "user_kind": "",
+                "position": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        person = PersonRecord.objects.get(pk=27)
+        self.assertEqual(person.last_name, "Шевченко")
+        self.assertEqual(person.formatted_id, "00027-PRS")
+
     def test_prs_csv_upload_reports_validation_warnings(self):
         csv_file = SimpleUploadedFile(
             "persons.csv",

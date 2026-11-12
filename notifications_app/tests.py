@@ -94,6 +94,21 @@ class NotificationEmailDeliveryTests(SimpleTestCase):
         self.assertEqual(len(mail.outbox[0].alternatives), 1)
         self.assertEqual(mail.outbox[0].alternatives[0].mimetype, "text/html")
 
+    def test_send_notification_email_sends_one_message_to_several_recipients(self):
+        recipient = SimpleNamespace(email="expert@example.com", username="expert")
+
+        send_notification_email(
+            recipient=recipient,
+            subject="Нескольким",
+            content="Текст",
+            to_emails=["first@example.com", "second@example.com", "first@example.com"],
+            bcc=["hidden@example.com", "first@example.com"],
+        )
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["first@example.com", "second@example.com"])
+        self.assertEqual(mail.outbox[0].bcc, ["hidden@example.com"])
+
     def test_send_notification_email_requires_recipient_email(self):
         recipient = SimpleNamespace(email="", username="expert")
 

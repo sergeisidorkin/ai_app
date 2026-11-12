@@ -7,43 +7,20 @@
   method="post"
   data-proposal-dispatch-form="1"
   data-ler-search-url="{% url 'ler_search' %}"
-  data-prs-search-url="{% url 'prs_autocomplete' %}"
+  data-prs-search-url="{% url 'prs_dispatch_search' %}"
   data-country-identifier-url="{% url 'identifier_for_country' %}"
+  data-default-country-id="{{ default_recipient_country_id|default:'' }}"
   hx-post="{% url 'proposal_dispatch_form_edit' proposal.pk %}"
   hx-target="#proposals-pane"
   hx-swap="outerHTML">
   <div class="modal-body modal-body-scroll">
     {% csrf_token %}
-
-    <div class="row g-2 mb-3">
-      <div class="col-12">
-        <label class="form-label">ТКП ID</label>
-        <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="{{ proposal.short_uid }}">
-      </div>
-    </div>
-
-    <div class="row g-2 mb-3">
-      <div class="col-4">
-        <label class="form-label">Фамилия</label>
-        <div class="ler-ac-wrap">
-          {{ form.contact_last_name }}
-          <div class="ler-ac-list" id="proposal-dispatch-prs-ac-list"></div>
-        </div>
-      </div>
-      <div class="col-4">
-        <label class="form-label">Имя</label>
-        {{ form.contact_first_name }}
-      </div>
-      <div class="col-4">
-        <label class="form-label">Отчество</label>
-        {{ form.contact_middle_name }}
-      </div>
-    </div>
+    <input type="hidden" name="dispatch_recipients_form" value="1">
 
     <div class="row g-2 mb-3">
       <div class="col-8">
-        <label class="form-label">Эл. почта</label>
-        {{ form.contact_email }}
+        <label class="form-label">ТКП ID</label>
+        <input type="text" class="form-control readonly-field" readonly tabindex="-1" value="{{ proposal.short_uid }}">
       </div>
       <div class="col-4">
         <label class="form-label">Дата отправки</label>
@@ -53,47 +30,92 @@
 
     <div class="row g-2 mb-3">
       <div class="col-12">
-        <label class="form-label">Наименование организации (краткое)</label>
-        <div class="ler-ac-wrap">
-          {{ form.recipient }}
-          <input type="hidden"
-                 name="recipient_autocomplete_identifier_record_id"
-                 id="proposal-dispatch-recipient-autocomplete-identifier-record-id"
-                 value="{{ recipient_identifier_record_id }}">
-          <input type="hidden"
-                 name="recipient_autocomplete_selected_from_autocomplete"
-                 id="proposal-dispatch-recipient-autocomplete-selected"
-                 value="{{ recipient_identifier_selected }}">
-          <div class="ler-ac-list" id="proposal-dispatch-ler-ac-list"></div>
+        <label class="form-label">Эл. почта</label>
+        <div class="position-relative" data-dispatch-email-field="to">
+          <div class="border rounded py-2 bg-white d-flex flex-wrap gap-1 align-items-center letter-cc-tags"
+               style="padding-left: .5rem; padding-right: .5rem;"
+               data-dispatch-email-tags="to">
+            {% for row in dispatch_recipients %}
+              {% if row.role == "to" and row.email %}
+                <span class="badge fw-normal d-inline-flex align-items-center gap-1 py-2 px-2 letter-cc-badge letter-cc-tag"
+                      data-email="{{ row.email }}">
+                  {{ row.email }}
+                  <button type="button" class="btn-close btn-close-white ms-1 js-dispatch-email-remove" style="font-size: .55em;" aria-label="Удалить"></button>
+                </span>
+              {% endif %}
+            {% endfor %}
+            <input type="text"
+                   class="border-0 flex-grow-1 letter-cc-input js-dispatch-email-input"
+                   placeholder="Фамилия Имя или эл. почта"
+                   autocomplete="off"
+                   style="outline:none; min-width:120px;">
+          </div>
+          <div class="dropdown-menu w-100 letter-cc-dropdown js-dispatch-email-dropdown"></div>
         </div>
       </div>
     </div>
 
     <div class="row g-2 mb-3">
-      <div class="col-3">
-        <label class="form-label">{{ form.recipient_country.label }}</label>
-        {{ form.recipient_country }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">{{ form.recipient_identifier.label }}</label>
-        {{ form.recipient_identifier }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">{{ form.recipient_registration_number.label }}</label>
-        {{ form.recipient_registration_number }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">{{ form.recipient_registration_date.label }}</label>
-        {{ form.recipient_registration_date }}
+      <div class="col-12">
+        <label class="form-label">Скрытая копия</label>
+        <div class="position-relative" data-dispatch-email-field="bcc">
+          <div class="border rounded py-2 bg-white d-flex flex-wrap gap-1 align-items-center letter-cc-tags"
+               style="padding-left: .5rem; padding-right: .5rem;"
+               data-dispatch-email-tags="bcc">
+            {% for row in dispatch_recipients %}
+              {% if row.role == "bcc" and row.email %}
+                <span class="badge fw-normal d-inline-flex align-items-center gap-1 py-2 px-2 letter-cc-badge letter-cc-tag"
+                      data-email="{{ row.email }}">
+                  {{ row.email }}
+                  <button type="button" class="btn-close btn-close-white ms-1 js-dispatch-email-remove" style="font-size: .55em;" aria-label="Удалить"></button>
+                </span>
+              {% endif %}
+            {% endfor %}
+            <input type="text"
+                   class="border-0 flex-grow-1 letter-cc-input js-dispatch-email-input"
+                   placeholder="Фамилия Имя или эл. почта"
+                   autocomplete="off"
+                   style="outline:none; min-width:120px;">
+          </div>
+          <div class="dropdown-menu w-100 letter-cc-dropdown js-dispatch-email-dropdown"></div>
+        </div>
       </div>
     </div>
 
-    <div class="row g-2 mb-3">
-      <div class="col-12">
-        <label class="form-label">Должность</label>
-        {{ form.recipient_job_title }}
+    <div class="proposal-dispatch-contacts">
+    <div class="d-flex align-items-center gap-2">
+      <div class="form-label mb-0">Контактные данные</div>
+      <button type="button"
+              id="proposal-dispatch-contacts-toggle"
+              class="btn btn-link btn-sm text-secondary text-decoration-none p-0 d-inline-flex align-items-center"
+              aria-expanded="{% if form.errors %}true{% else %}false{% endif %}"
+              aria-label="{% if form.errors %}Свернуть контактные данные{% else %}Развернуть контактные данные{% endif %}"
+              title="{% if form.errors %}Свернуть контактные данные{% else %}Развернуть контактные данные{% endif %}">
+        <i class="bi {% if form.errors %}bi-dash-square{% else %}bi-plus-square{% endif %}"></i>
+      </button>
+    </div>
+    <div id="proposal-dispatch-contacts-body" class="proposal-dispatch-contacts-body{% if not form.errors %} d-none{% endif %}">
+      <div data-dispatch-contact-blocks="to">
+        {% for row in dispatch_recipients %}
+          {% if row.role == "to" %}
+            {% include "proposals_app/_proposal_dispatch_contact_block.html" %}
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div data-dispatch-contact-blocks="bcc">
+        <div class="form-label mb-2 mt-4 proposal-dispatch-bcc-caption{% if not has_bcc_recipients %} d-none{% endif %}">Скрытая копия</div>
+        {% for row in dispatch_recipients %}
+          {% if row.role == "bcc" %}
+            {% include "proposals_app/_proposal_dispatch_contact_block.html" %}
+          {% endif %}
+        {% endfor %}
       </div>
     </div>
+    </div>
+
+    <template id="proposal-dispatch-contact-block-template">
+      {% include "proposals_app/_proposal_dispatch_contact_block.html" with row=empty_dispatch_recipient %}
+    </template>
 
     <div class="row g-2 mb-3">
       <div class="col-6">

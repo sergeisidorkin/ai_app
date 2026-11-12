@@ -6593,6 +6593,49 @@ def _selected_report_project_ids(request):
     return project_ids
 
 
+def _report_row_asset_name(row):
+    return str(getattr(row, "asset_name", None) or "").strip()
+
+
+def _report_asset_names(rows):
+    names = []
+    seen = set()
+    for row in rows:
+        name = _report_row_asset_name(row)
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _selected_report_asset_names(request):
+    if request is None:
+        return []
+    raw_values = []
+    for key in ("asset", "reports_asset"):
+        for value in request.GET.getlist(key):
+            text = str(value or "").strip()
+            if text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    raw_values.extend(str(item) for item in parsed)
+                    continue
+            raw_values.append(text)
+    names = []
+    seen = set()
+    for value in raw_values:
+        name = str(value or "").strip()
+        if not name or name == "__all__" or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
 def _report_page_size_specified(request):
     if request is None:
         return False
@@ -6612,15 +6655,25 @@ def _report_submission_table_context(request, rows):
         options=REPORT_TABLE_PAGE_SIZE_OPTIONS,
     )
     project_ids = _selected_report_project_ids(request)
-    if project_ids and not _report_page_size_specified(request):
-        page_size = REPORT_TABLE_PAGE_SIZE_OPTIONS[-1]
     if project_ids:
         allowed = set(project_ids)
         rows = [row for row in rows if getattr(row, "registration_id", None) in allowed]
+    asset_names = _report_asset_names(rows)
+    available_assets = set(asset_names)
+    selected_assets = [
+        name for name in _selected_report_asset_names(request)
+        if name in available_assets
+    ]
+    if (project_ids or selected_assets) and not _report_page_size_specified(request):
+        page_size = REPORT_TABLE_PAGE_SIZE_OPTIONS[-1]
+    if selected_assets:
+        allowed_assets = set(selected_assets)
+        rows = [row for row in rows if _report_row_asset_name(row) in allowed_assets]
     slots = _report_submission_slots(rows)
     paginator = Paginator(slots, page_size)
     page_obj = paginator.get_page(page_number)
     extra_params = [("project", project_id) for project_id in project_ids]
+    extra_params.extend(("asset", name) for name in selected_assets)
     urls = _catalog_pagination_urls(
         reverse("report_submission_table"),
         page_size,
@@ -6642,6 +6695,8 @@ def _report_submission_table_context(request, rows):
         "reports_page_size_options": REPORT_TABLE_PAGE_SIZE_OPTIONS,
         "reports_page_size_url": urls["page_size_url"],
         "reports_project_ids": project_ids,
+        "reports_asset_names": asset_names,
+        "reports_selected_assets": selected_assets,
     }
 
 

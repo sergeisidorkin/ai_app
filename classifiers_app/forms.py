@@ -5,7 +5,12 @@ import re
 from django import forms
 from django.db.models import Max, Q
 
-from core.forms import locked_attrs
+from core.forms import lock_field, locked_attrs
+from group_app.registry_sync import (
+    is_group_owned_business_entity,
+    is_group_owned_name_record,
+    is_group_primary_identifier,
+)
 
 from .models import (
     OKSMCountry,
@@ -494,7 +499,14 @@ class RussianFederationSubjectCodeForm(forms.ModelForm):
 
 
 class BusinessEntityRecordForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk and is_group_owned_business_entity(self.instance.pk):
+            lock_field(self.fields["name"], disabled=True)
+
     def clean_name(self):
+        if self.fields["name"].disabled and self.instance and self.instance.pk:
+            return self.instance.name
         return _normalize_guillemets(self.cleaned_data.get("name"))
 
     class Meta:
@@ -594,8 +606,15 @@ class BusinessEntityIdentifierRecordForm(forms.ModelForm):
         elif self.instance and self.instance.pk:
             registration_date = self.instance.registration_date
 
+        group_locked = bool(self.instance and self.instance.pk and is_group_primary_identifier(self.instance))
+        if group_locked:
+            country_id = self.instance.registration_country_id
+            registration_date = self.instance.registration_date
+
         current_value = ""
-        if self.is_bound:
+        if group_locked:
+            current_value = self.instance.identifier_type or ""
+        elif self.is_bound:
             current_value = self.data.get("identifier_type") or ""
         elif self.instance and self.instance.pk:
             current_value = self.instance.identifier_type or ""
@@ -618,6 +637,12 @@ class BusinessEntityIdentifierRecordForm(forms.ModelForm):
         elif self.instance and self.instance.pk:
             valid_to_value = self.instance.valid_to
         self.fields["is_active"].initial = "true" if not valid_to_value else "false"
+        if group_locked:
+            lock_field(self.fields["business_entity"], disabled=True, use_disabled_attr=True)
+            lock_field(self.fields["registration_country"], disabled=True, use_disabled_attr=True)
+            lock_field(self.fields["identifier_type"], disabled=True, use_disabled_attr=True)
+            lock_field(self.fields["number"], disabled=True)
+            lock_field(self.fields["registration_date"], disabled=True)
 
     def clean(self):
         cleaned_data = super().clean()
@@ -748,6 +773,14 @@ class BusinessEntityLegalAddressRecordForm(forms.ModelForm):
             country_id = self.instance.registration_country_id
         elif default_country is not None:
             country_id = default_country.pk
+        address_group_locked = bool(
+            self.instance
+            and self.instance.pk
+            and self.instance.identifier_record_id
+            and is_group_primary_identifier(self.instance.identifier_record)
+        )
+        if address_group_locked:
+            country_id = self.instance.registration_country_id
         valid_from_date = None
         if self.is_bound:
             valid_from_date = _parse_form_date(self.data.get("valid_from"))
@@ -772,6 +805,8 @@ class BusinessEntityLegalAddressRecordForm(forms.ModelForm):
         elif self.instance and self.instance.pk:
             valid_to_value = self.instance.valid_to
         self.fields["is_active"].initial = "true" if not valid_to_value else "false"
+        if address_group_locked:
+            lock_field(self.fields["registration_country"], disabled=True, use_disabled_attr=True)
 
     def clean(self):
         cleaned_data = super().clean()
@@ -1268,6 +1303,9 @@ class LegalEntityRecordForm(forms.ModelForm):
         region_choices = [("", "---------")]
         region_choices.extend((name, name) for name in region_suggestions)
         self.fields["registration_region"].choices = region_choices
+        if self.instance and self.instance.pk and is_group_owned_name_record(self.instance):
+            lock_field(self.fields["short_name"], disabled=True)
+            lock_field(self.fields["full_name"], disabled=True)
 
     def clean(self):
         cleaned_data = super().clean()

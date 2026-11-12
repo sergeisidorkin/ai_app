@@ -339,7 +339,7 @@
   </div>
   </div>
 
-  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
+  <div id="proposal-dispatch-section-header" class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap" style="margin-top: 24px;">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <h5 class="table-section-title mb-0 d-flex align-items-center gap-2">
         <i class="bi bi-envelope-at"></i> Отправка ТКП
@@ -354,6 +354,22 @@
               title="Развернуть раздел «Отправка ТКП»">
         <i class="bi bi-plus-square"></i>
       </button>
+      {% if allow_local_proposal_folder and request.user.is_authenticated and request.user.is_staff %}
+      <div class="report-source-group">
+        <span class="small text-muted">Источник:</span>
+        <select id="proposal-dispatch-source" class="form-select form-select-sm">
+          <option value="cloud">Облако проекта</option>
+          <option value="local">Локальная папка</option>
+        </select>
+      </div>
+      <div id="proposal-dispatch-local-wrap" class="d-none">
+        <input type="text" id="proposal-dispatch-local-path" class="form-control form-control-sm"
+               placeholder="{{ local_proposal_folder_placeholder }}"
+               spellcheck="false"
+               autocomplete="off"
+               aria-label="Локальная папка">
+      </div>
+      {% endif %}
     </div>
     <div class="d-flex align-items-center justify-content-end gap-2 flex-wrap ms-auto classifiers-section-controls-hidden" id="proposal-dispatch-header-controls" aria-hidden="true">
       <span class="small text-muted text-nowrap">Отображаемые поля:</span>
@@ -412,23 +428,44 @@
             {% endif %}
           </th>
           {% for column in proposal_dispatch_ui_columns %}
-            <th data-col="{{ column.data_col }}">{{ column.label }}</th>
+            <th data-col="{{ column.data_col }}"{% if column.data_col == "contact-name" %} class="proposal-dispatch-contact-name-col"{% endif %}>
+              {% if column.data_col == "contact-name" %}
+                <button type="button"
+                        class="clf-wrap-btn"
+                        id="proposal-dispatch-groups-toggle"
+                        title="Свернуть/развернуть строки"
+                        aria-label="Свернуть/развернуть строки">
+                  <i class="bi bi-arrows-collapse"></i>
+                </button>
+              {% endif %}
+              {{ column.label }}
+            </th>
           {% endfor %}
         </tr>
       </thead>
       <tbody>
         {% for proposal in proposals %}
+          {% with rows=proposal.dispatch_contact_rows %}
+          {% for row in rows %}
           <tr data-proposal-id="{{ proposal.id }}"
+              data-dispatch-group="{{ proposal.id }}"
               data-kind="{{ proposal.kind }}"
               data-kind-label="{{ proposal.get_kind_display }}"
               data-status="{{ proposal.status }}"
               data-status-label="{{ proposal.get_status_display }}"
               data-tkp-id="{{ proposal.short_uid }}"
-              data-contact-email="{{ proposal.contact_email|default:'' }}"
+              {% if not forloop.last %}class="proposal-dispatch-contact-has-next"{% endif %}
+              {% if forloop.first %}
+              data-dispatch-group-head="1"
+              data-contact-email="{{ proposal.dispatch_to_emails }}"
               data-edit-url="{% url 'proposal_dispatch_form_edit' proposal.pk %}"
               data-send-ready="{% if proposal.docx_file_name %}1{% else %}0{% endif %}"
-              data-transfer-ready="{% if proposal.sent_date %}1{% else %}0{% endif %}">
-            <td class="text-nowrap">
+              data-transfer-ready="{% if proposal.sent_date %}1{% else %}0{% endif %}"
+              {% else %}
+              data-dispatch-continuation="1"
+              {% endif %}>
+            {% if forloop.first %}
+            <td class="text-nowrap" rowspan="{{ rows|length }}">
               {% if request.user.is_authenticated and request.user.is_staff %}
                 <div class="form-check">
                   <input class="form-check-input"
@@ -440,13 +477,13 @@
                 </div>
               {% endif %}
             </td>
-            <td data-col="number">{{ proposal.formatted_number }}</td>
-            <td data-col="sub-number">{{ proposal.sub_number }}</td>
-            <td data-col="group">{{ proposal.group_display }}</td>
-            <td data-col="tkp-id" class="proposal-id-cell">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
-            <td data-col="type">{{ proposal.type_short_display }}</td>
-            <td data-col="name">{{ proposal.name }}</td>
-            <td class="text-nowrap" data-col="cloud">
+            <td data-col="number" rowspan="{{ rows|length }}">{{ proposal.formatted_number }}</td>
+            <td data-col="sub-number" rowspan="{{ rows|length }}">{{ proposal.sub_number }}</td>
+            <td data-col="group" rowspan="{{ rows|length }}">{{ proposal.group_display }}</td>
+            <td data-col="tkp-id" class="proposal-id-cell" rowspan="{{ rows|length }}">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
+            <td data-col="type" rowspan="{{ rows|length }}">{{ proposal.type_short_display }}</td>
+            <td data-col="name" rowspan="{{ rows|length }}">{{ proposal.name }}</td>
+            <td class="text-nowrap" data-col="cloud" rowspan="{{ rows|length }}">
               {% with folder_url=proposal.proposal_workspace_folder_url %}
               {% if folder_url %}
                 <a href="{{ folder_url }}" target="_blank" rel="noopener" title="Открыть папку на {{ primary_cloud_storage_label }}">
@@ -457,7 +494,7 @@
               {% endif %}
               {% endwith %}
             </td>
-            <td class="proposal-docx-cell" data-col="docx-name">
+            <td class="proposal-docx-cell" data-col="docx-name" rowspan="{{ rows|length }}">
               {% if proposal.proposal_docx_file_url or proposal.docx_file_name %}
                 {% if proposal.proposal_docx_file_url %}
                   <a href="{{ proposal.proposal_docx_file_url }}"
@@ -476,7 +513,7 @@
                 {% endif %}
               {% endif %}
             </td>
-            <td class="proposal-pdf-cell" data-col="pdf-name">
+            <td class="proposal-pdf-cell" data-col="pdf-name" rowspan="{{ rows|length }}">
               {% if proposal.proposal_pdf_file_url or proposal.pdf_file_name %}
                 {% if proposal.proposal_pdf_file_url %}
                   <a href="{{ proposal.proposal_pdf_file_url }}"
@@ -495,13 +532,29 @@
                 {% endif %}
               {% endif %}
             </td>
-            <td class="proposal-sent-date-cell" data-col="sent-date">{{ proposal.sent_date }}</td>
-            <td data-col="contact-name">{{ proposal.contact_short_name }}</td>
-            <td data-col="contact-email">{{ proposal.contact_email }}</td>
-            <td data-col="job-title">{{ proposal.recipient_job_title }}</td>
-            <td data-col="organization">{{ proposal.recipient }}</td>
-            <td class="proposal-transfer-date-cell" data-col="transfer-date">{{ proposal.transfer_to_contract_date }}</td>
+            <td class="proposal-sent-date-cell" data-col="sent-date" rowspan="{{ rows|length }}">{{ proposal.sent_date }}</td>
+            {% endif %}
+            <td data-col="contact-name" class="proposal-dispatch-contact-name-cell">
+              {% if forloop.first and rows|length > 1 %}
+                <button type="button"
+                        class="proposal-dispatch-group-toggle"
+                        data-proposal-dispatch-group-toggle="{{ proposal.id }}"
+                        aria-expanded="true"
+                        aria-label="Свернуть/развернуть адресатов">
+                  <i class="bi bi-caret-down-fill"></i>
+                </button>
+              {% endif %}
+              <span class="proposal-dispatch-contact-value" data-dispatch-value="{{ row.contact_short_name }}">{{ row.contact_short_name }}</span>
+            </td>
+            <td data-col="contact-email"><span class="proposal-dispatch-contact-value" data-dispatch-value="{{ row.email }}">{{ row.email }}</span></td>
+            <td data-col="job-title"><span class="proposal-dispatch-contact-value" data-dispatch-value="{{ row.job_title }}">{{ row.job_title }}</span></td>
+            <td data-col="organization"><span class="proposal-dispatch-contact-value" data-dispatch-value="{{ row.organization_short_name }}">{{ row.organization_short_name }}</span></td>
+            {% if forloop.first %}
+            <td class="proposal-transfer-date-cell" data-col="transfer-date" rowspan="{{ rows|length }}">{{ proposal.transfer_to_contract_date }}</td>
+            {% endif %}
           </tr>
+          {% endfor %}
+          {% endwith %}
         {% empty %}
           <tr><td colspan="{{ proposal_dispatch_empty_colspan }}" class="text-muted">Пока нет данных.</td></tr>
         {% endfor %}

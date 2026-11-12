@@ -25,10 +25,11 @@
           type="text"
           id="id_business_entity_autocomplete"
           name="business_entity_autocomplete"
-          class="form-control"
+          class="form-control{% if form.fields.business_entity.disabled %} readonly-field{% endif %}"
           value="{{ form.business_entity_autocomplete_label }}"
           placeholder="Искать по ID-BSN и наименованию"
-          autocomplete="off">
+          autocomplete="off"
+          {% if form.fields.business_entity.disabled %}readonly tabindex="-1"{% endif %}>
         <input type="hidden" id="id_business_entity" name="business_entity" value="{{ form.business_entity_autocomplete_value }}">
         <div id="id_business_entity_autocomplete_list" class="ler-ac-list"></div>
       </div>
@@ -179,6 +180,7 @@
 
   function bindBusinessEntityAutocomplete() {
     if (!businessEntityInput || !businessEntityHidden || !businessEntityList) return;
+    if (businessEntityInput.hasAttribute('readonly')) return;
     var debounce = null;
     var results = [];
     var picking = false;

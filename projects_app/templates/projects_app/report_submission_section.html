@@ -10,8 +10,8 @@
      data-report-check-resume-url="{% url 'report_check_resume' 0 %}"
      data-report-finding-correction-url="{% url 'report_finding_correction' 0 %}"
      data-report-delete-url="{% url 'report_file_delete' 0 %}">
-  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap">
-    <div class="d-flex align-items-center gap-3 flex-wrap">
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header">
+    <div class="d-flex align-items-center gap-3">
       <h5 class="table-section-title mb-0">
         <i class="bi bi-table me-2"></i> Отчеты
       </h5>
@@ -42,6 +42,21 @@
           {% endfor %}
         </div>
       </div>
+      <div class="dropdown" id="report-submission-asset-filter-dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="report-submission-asset-filter-toggle" data-bs-toggle="dropdown"
+                data-bs-auto-close="outside" aria-expanded="false">
+          Активы: <span class="js-report-submission-asset-label">Все</span>
+        </button>
+        <div class="dropdown-menu p-3" aria-labelledby="report-submission-asset-filter-toggle" style="max-height: 240px; overflow-y: auto; white-space: nowrap;">
+          <div class="form-check mb-2">
+            <input class="form-check-input js-report-submission-asset-filter" type="checkbox" value="__all__" id="report-submission-asset-all">
+            <label class="form-check-label" for="report-submission-asset-all">Все активы</label>
+          </div>
+          <hr class="dropdown-divider">
+          <div id="report-submission-asset-list"></div>
+        </div>
+      </div>
       {% if allow_local_report_folder %}
       <div class="report-source-group">
         <span class="small text-muted">Источник:</span>
@@ -49,6 +64,13 @@
           <option value="cloud">Облако проекта</option>
           <option value="local">Локальная папка</option>
         </select>
+      </div>
+      <div id="report-submission-local-wrap" class="d-none">
+        <input type="text" id="report-submission-local-path" class="form-control form-control-sm"
+               placeholder="{{ local_report_folder_placeholder }}"
+               spellcheck="false"
+               autocomplete="off"
+               aria-label="Локальная папка">
       </div>
       {% endif %}
     </div>
@@ -85,22 +107,6 @@
       </div>
     </div>
   </div>
-  {% if allow_local_report_folder %}
-  <div id="report-submission-local-wrap" class="mb-3 d-none">
-    <label class="small text-muted mb-1" for="report-submission-local-path">Локальная папка</label>
-    <input type="text" id="report-submission-local-path" class="form-control form-control-sm"
-           placeholder="{{ local_report_folder_placeholder }}"
-           spellcheck="false"
-           autocomplete="off">
-    <div class="form-text">
-      Абсолютный путь к папке, которая локально имитирует папку с ролью «Отчеты» в Nextcloud.
-      После клика на иконку загрузки выберите файл в диалоге — он будет сохранён сюда.
-      Комментарии проверки записываются в копию с суффиксом «_check» в той же папке после нажатия «Отправить», исходный файл не меняется.
-      Системный диалог выбора папки браузер серверу не отдаёт — путь вставьте вручную.
-    </div>
-  </div>
-  {% endif %}
-
   {% include "projects_app/report_submission_table.html" %}
 
   {% if can_manage_report_checks %}

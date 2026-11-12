@@ -11,6 +11,12 @@
     style="display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:0;">
   <div class="modal-body">
     {% csrf_token %}
+    <input type="hidden" name="page" value="{{ experts_return_page|default:'1' }}">
+    <input type="hidden" name="page_size" value="{{ experts_return_page_size|default:'25' }}">
+    <input type="hidden" name="full_name_sort" value="{{ experts_return_full_name_sort|default:'' }}">
+    {% for specialty_id in experts_return_specialty_ids %}
+    <input type="hidden" name="specialty" value="{{ specialty_id }}">
+    {% endfor %}
 
     <div class="mb-3">
       <label class="form-label">ФИО</label>

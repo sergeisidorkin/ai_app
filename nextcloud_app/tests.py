@@ -10,6 +10,7 @@ from checklists_app.models import ProjectWorkspace, SourceDataWorkspace
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import Client, SimpleTestCase, TestCase, override_settings
+from django.urls import reverse
 
 from contacts_app.models import PersonRecord
 from core.models import CloudStorageSettings
@@ -1119,7 +1120,14 @@ class NextcloudWorkspaceTests(TestCase):
             nextcloud_username=f"ncstaff-{coordinator_user.pk}",
             nextcloud_email="coordinator@example.com",
         )
-        grant_coordinator_specialty(coordinator_employee)
+        grant_coordinator_specialty(
+            coordinator_employee,
+            permissions=tuple(
+                code
+                for code in DEFAULT_PROJECT_PERMISSIONS[PROJECT_COORDINATOR_SPECIALTY]
+                if code != PERM_NEXTCLOUD_EDITOR
+            ),
+        )
         self.project.project_coordinator = "Координатова Ольга Олеговна"
         self.project.save(update_fields=["project_coordinator"])
         project_path = f"/Corporate Root/03 Проекты/2026/{_build_project_folder_name(self.project)}"
@@ -1132,7 +1140,7 @@ class NextcloudWorkspaceTests(TestCase):
 
         grant_coordinator_specialty(
             coordinator_employee,
-            permissions=DEFAULT_PROJECT_PERMISSIONS[PROJECT_COORDINATOR_SPECIALTY] + (PERM_NEXTCLOUD_EDITOR,),
+            permissions=DEFAULT_PROJECT_PERMISSIONS[PROJECT_COORDINATOR_SPECIALTY],
         )
         client = self._workspace_client()
         items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
@@ -1141,6 +1149,157 @@ class NextcloudWorkspaceTests(TestCase):
             call("cloud-admin", project_path, f"ncstaff-{coordinator_user.pk}", permissions=15),
             client.ensure_user_share.call_args_list,
         )
+
+    def _nextcloud_client(self, client_cls):
+        client_cls.EDITOR_PERMISSIONS = NextcloudApiClient.EDITOR_PERMISSIONS
+        client = client_cls.return_value
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_user_share.return_value = Mock()
+        return client
+
+    def _assign_registry_position(self, url_name, field_name, value):
+        http = Client()
+        http.force_login(self.creator)
+        with self.captureOnCommitCallbacks(execute=True):
+            return http.post(reverse(url_name, args=[self.project.pk]), {field_name: value})
+
+    @patch("nextcloud_app.workspace.NextcloudApiClient")
+    def test_registry_coordinator_assignment_shares_existing_workspace(self, client_cls):
+        coordinator_user = User.objects.create_user(
+            username="assigned-coordinator@example.com",
+            email="assigned-coordinator@example.com",
+            password="Secret123!",
+            first_name="Ольга",
+            last_name="Координатова",
+            is_staff=True,
+            is_active=True,
+        )
+        coordinator_employee = Employee.objects.create(user=coordinator_user, patronymic="Олеговна")
+        grant_coordinator_specialty(coordinator_employee)
+        NextcloudUserLink.objects.create(
+            user=coordinator_user,
+            nextcloud_user_id=f"ncstaff-{coordinator_user.pk}",
+            nextcloud_username=f"ncstaff-{coordinator_user.pk}",
+            nextcloud_email=coordinator_user.email,
+        )
+        workspace_path = "/Corporate Root/03 Проекты/2026/assigned-coordinator"
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path=workspace_path,
+            created_by=self.creator,
+        )
+        client = self._nextcloud_client(client_cls)
+
+        response = self._assign_registry_position(
+            "registration_coordinator_update",
+            "project_coordinator",
+            "Координатова Ольга Олеговна",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        client.ensure_user_share.assert_has_calls(
+            [
+                call("cloud-admin", workspace_path, f"ncstaff-{coordinator_user.pk}", permissions=15),
+                call("cloud-admin", workspace_path, f"ncstaff-{self.manager.pk}", permissions=15),
+            ],
+            any_order=True,
+        )
+
+    @patch("nextcloud_app.workspace.NextcloudApiClient")
+    def test_registry_manager_assignment_shares_existing_workspace(self, client_cls):
+        self.project.project_manager = ""
+        self.project.project_manager_prs_id = ""
+        self.project.save(update_fields=["project_manager", "project_manager_prs_id"])
+        workspace_path = "/Corporate Root/03 Проекты/2026/assigned-manager"
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path=workspace_path,
+            created_by=self.creator,
+        )
+        client = self._nextcloud_client(client_cls)
+
+        response = self._assign_registry_position(
+            "registration_manager_update",
+            "project_manager",
+            "Иванов Иван Иванович",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        client.ensure_user_share.assert_called_once_with(
+            "cloud-admin",
+            workspace_path,
+            f"ncstaff-{self.manager.pk}",
+            permissions=15,
+        )
+
+    @patch("nextcloud_app.workspace.NextcloudApiClient")
+    def test_registry_coordinator_without_editor_right_is_not_shared(self, client_cls):
+        coordinator_user = User.objects.create_user(
+            username="plain-coordinator@example.com",
+            email="plain-coordinator@example.com",
+            password="Secret123!",
+            first_name="Ольга",
+            last_name="Координатова",
+            is_staff=True,
+            is_active=True,
+        )
+        coordinator_employee = Employee.objects.create(user=coordinator_user, patronymic="Олеговна")
+        grant_coordinator_specialty(
+            coordinator_employee,
+            permissions=tuple(
+                code
+                for code in DEFAULT_PROJECT_PERMISSIONS[PROJECT_COORDINATOR_SPECIALTY]
+                if code != PERM_NEXTCLOUD_EDITOR
+            ),
+        )
+        NextcloudUserLink.objects.create(
+            user=coordinator_user,
+            nextcloud_user_id=f"ncstaff-{coordinator_user.pk}",
+            nextcloud_username=f"ncstaff-{coordinator_user.pk}",
+            nextcloud_email=coordinator_user.email,
+        )
+        ProjectWorkspace.objects.create(
+            project=self.project,
+            disk_path="/Corporate Root/03 Проекты/2026/plain-coordinator",
+            created_by=self.creator,
+        )
+        client = self._nextcloud_client(client_cls)
+
+        response = self._assign_registry_position(
+            "registration_coordinator_update",
+            "project_coordinator",
+            "Координатова Ольга Олеговна",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        shared_ids = [item.args[2] for item in client.ensure_user_share.call_args_list]
+        self.assertNotIn(f"ncstaff-{coordinator_user.pk}", shared_ids)
+        self.assertIn(f"ncstaff-{self.manager.pk}", shared_ids)
+
+    @patch("nextcloud_app.workspace.NextcloudApiClient")
+    def test_registry_assignment_without_workspace_does_not_call_nextcloud(self, client_cls):
+        coordinator_user = User.objects.create_user(
+            username="noworkspace-coordinator@example.com",
+            email="noworkspace-coordinator@example.com",
+            password="Secret123!",
+            first_name="Ольга",
+            last_name="Координатова",
+            is_staff=True,
+            is_active=True,
+        )
+        grant_coordinator_specialty(Employee.objects.create(user=coordinator_user, patronymic="Олеговна"))
+
+        response = self._assign_registry_position(
+            "registration_coordinator_update",
+            "project_coordinator",
+            "Координатова Ольга Олеговна",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        client_cls.assert_not_called()
 
     def test_create_basic_project_workspace_grants_access_to_confirmed_performer(self):
         direction, direction_head_user, _direction_head = self._create_direction_head()

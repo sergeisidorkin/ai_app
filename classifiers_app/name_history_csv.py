@@ -114,7 +114,11 @@ def import_name_history_rows(rows, *, user):
     if plan_errors:
         raise NameHistoryImportError(plan_errors)
     with transaction.atomic():
-        return _apply_plan(plan, user)
+        result = _apply_plan(plan, user)
+        from group_app.registry_sync import reapply_all_group_locked_fields
+
+        reapply_all_group_locked_fields()
+        return result
 
 
 def _csv_date(value):
@@ -523,12 +527,20 @@ def _apply_plan(groups, user):
             _prepare_name_dates(number_plan["names"])
             identifier = _keeper_identifier(number_plan, entity, author, today)
             previous_entity_id = identifier.business_entity_id
+            from group_app.registry_sync import is_group_primary_identifier
+
+            keep_group_entity = is_group_primary_identifier(identifier)
             _assign_identifier_fields(identifier, number_plan)
-            identifier.business_entity = entity
+            if not keep_group_entity:
+                identifier.business_entity = entity
             identifier.save()
             if previous_entity_id and previous_entity_id != entity.pk:
                 removed_entity_ids.add(previous_entity_id)
             duplicates = [item for item in number_plan["candidates"] if item.pk != identifier.pk]
+            from group_app.registry_sync import is_group_primary_identifier
+
+            kept_group_identifiers = [item for item in duplicates if is_group_primary_identifier(item)]
+            duplicates = [item for item in duplicates if item not in kept_group_identifiers]
             _collapse_addresses([identifier, *duplicates], identifier)
             for duplicate in duplicates:
                 removed_entity_ids.add(duplicate.business_entity_id)
@@ -848,6 +860,10 @@ def _ensure_address(identifier, author, today):
 
 def _delete_entity_if_empty(entity_id, keeper_id):
     if not entity_id or entity_id == keeper_id:
+        return False
+    from group_app.registry_sync import is_group_owned_business_entity
+
+    if is_group_owned_business_entity(entity_id):
         return False
     if BusinessEntityIdentifierRecord.objects.filter(business_entity_id=entity_id).exists():
         return False

@@ -42,6 +42,19 @@ def build_plain_text_body(content: str) -> str:
     return plain.strip()
 
 
+def _clean_email_list(values) -> list[str]:
+    cleaned = []
+    seen = set()
+    for value in values or []:
+        address = str(value or "").strip()
+        key = address.casefold()
+        if not address or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(address)
+    return cleaned
+
+
 def send_notification_email(
     *,
     recipient,
@@ -51,10 +64,20 @@ def send_notification_email(
     connection=None,
     reply_to: list[str] | None = None,
     attachments: list[tuple[str, bytes] | tuple[str, bytes, str]] | None = None,
+    to_emails: list[str] | None = None,
+    bcc: list[str] | None = None,
 ) -> dict:
+    clean_to = _clean_email_list(to_emails)
     recipient_email = (getattr(recipient, "email", "") or "").strip()
-    if not recipient_email:
+    if not clean_to and recipient_email:
+        clean_to = [recipient_email]
+    if not clean_to:
         raise EmailDeliveryError("У получателя не указан email.")
+    to_keys = {address.casefold() for address in clean_to}
+    clean_bcc = [
+        address for address in _clean_email_list(bcc)
+        if address.casefold() not in to_keys
+    ]
 
     clean_subject = str(subject or "").strip()
     if not clean_subject:
@@ -70,7 +93,8 @@ def send_notification_email(
         subject=clean_subject,
         body=text_body,
         from_email=effective_from_email,
-        to=[recipient_email],
+        to=clean_to,
+        bcc=clean_bcc or None,
         reply_to=reply_to,
         connection=connection,
         headers={
@@ -96,7 +120,9 @@ def send_notification_email(
         raise EmailDeliveryError("Почтовый backend не подтвердил отправку письма.")
 
     return {
-        "recipient_email": recipient_email,
+        "recipient_email": clean_to[0],
+        "to": clean_to,
+        "bcc": clean_bcc,
         "subject": clean_subject,
         "is_html": looks_like_html(clean_content),
     }

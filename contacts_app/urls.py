@@ -5,6 +5,7 @@ from . import views
 
 urlpatterns = [
     path("prs/autocomplete/", views.prs_autocomplete, name="prs_autocomplete"),
+    path("prs/dispatch-search/", views.prs_dispatch_search, name="prs_dispatch_search"),
     path("prs/filter-options/", views.prs_filter_options, name="prs_filter_options"),
     path("prs/birth-date/", views.prs_birth_date, name="prs_birth_date"),
     path("adr/registration-autofill/", views.adr_registration_autofill, name="adr_registration_autofill"),
