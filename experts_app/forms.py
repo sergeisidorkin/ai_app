@@ -13,7 +13,11 @@ from policy_app.models import (
     Grade,
 )
 from .models import ExpertContractDetails, ExpertProfile, ExpertSpecialty
-from .project_permissions import PROJECT_PERMISSIONS, normalize_project_permissions
+from .project_permissions import (
+    PERM_UPLOAD_DIRECTION_SECTIONS,
+    PROJECT_PERMISSIONS,
+    normalize_project_permissions,
+)
 
 OWNER_GROUP_VALUE = "__group__"
 SPECIALIZATION_AREA_PREFIX = "Специалист по"
@@ -147,6 +151,7 @@ class ExpertSpecialtyForm(forms.ModelForm):
         **kwargs,
     ):
         self.lock_expertise = lock_expertise
+        self.lock_project_rights = lock_project_rights
         self.locked_expertise_dir = locked_expertise_dir
         self.allowed_expertise_dirs = list(allowed_expertise_dirs or [])
         self.missing_locked_direction = bool(
@@ -229,6 +234,40 @@ class ExpertSpecialtyForm(forms.ModelForm):
                 "is_group": d.is_group_owner,
             }
         self.dir_owners_json = json.dumps(dir_owners, ensure_ascii=False)
+        self.upload_direction_options = list(direction_qs)
+        self.selected_upload_direction_ids = self._selected_upload_direction_ids()
+        selected_ids = set(self.selected_upload_direction_ids)
+        self.upload_direction_label = ", ".join(
+            direction.short_name
+            for direction in self.upload_direction_options
+            if direction.pk in selected_ids
+        )
+
+    def _posted_upload_direction_ids(self):
+        raw_values = self.data.getlist("upload_expertise_direction_ids") if self.is_bound else []
+        posted = []
+        for value in raw_values:
+            try:
+                posted.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return posted
+
+    def _selected_upload_direction_ids(self):
+        option_ids = [direction.pk for direction in self.upload_direction_options]
+        if self.is_bound and not self.lock_project_rights:
+            posted = set(self._posted_upload_direction_ids())
+            return [pk for pk in option_ids if pk in posted]
+        stored = []
+        if self.instance and self.instance.pk:
+            stored = list(self.instance.upload_expertise_direction_ids or [])
+        stored_ids = set()
+        for value in stored:
+            try:
+                stored_ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        return [pk for pk in option_ids if pk in stored_ids]
 
     def _selected_direction_id(self):
         if self.locked_expertise_dir is not None:
@@ -265,10 +304,24 @@ class ExpertSpecialtyForm(forms.ModelForm):
                     "expertise_dir",
                     "Можно выбрать только направление экспертизы своего подразделения.",
                 )
+        if self.lock_project_rights:
+            if cleaned.get("grants_project_rights"):
+                cleaned["project_permissions"] = normalize_project_permissions(cleaned.get("project_permissions"))
+            else:
+                cleaned["project_permissions"] = []
+            return cleaned
         if cleaned.get("grants_project_rights"):
-            cleaned["project_permissions"] = normalize_project_permissions(cleaned.get("project_permissions"))
+            permissions = normalize_project_permissions(cleaned.get("project_permissions"))
+            direction_ids = list(self.selected_upload_direction_ids)
+            if PERM_UPLOAD_DIRECTION_SECTIONS in permissions and direction_ids:
+                cleaned["upload_expertise_direction_ids"] = direction_ids
+            else:
+                permissions = [code for code in permissions if code != PERM_UPLOAD_DIRECTION_SECTIONS]
+                cleaned["upload_expertise_direction_ids"] = []
+            cleaned["project_permissions"] = permissions
         else:
             cleaned["project_permissions"] = []
+            cleaned["upload_expertise_direction_ids"] = []
         return cleaned
 
     def save(self, commit=True):
@@ -277,6 +330,10 @@ class ExpertSpecialtyForm(forms.ModelForm):
         if suffix.startswith(SPECIALIZATION_AREA_PREFIX):
             suffix = suffix[len(SPECIALIZATION_AREA_PREFIX):].strip()
         obj.specialization_area = f"{SPECIALIZATION_AREA_PREFIX} {suffix}" if suffix else ""
+        if not self.lock_project_rights:
+            obj.upload_expertise_direction_ids = list(
+                self.cleaned_data.get("upload_expertise_direction_ids") or []
+            )
         owner_values = self.data.getlist("owner_ids")
         if OWNER_GROUP_VALUE in owner_values:
             obj.is_group_owner = True

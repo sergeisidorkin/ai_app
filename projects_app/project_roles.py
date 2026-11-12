@@ -9,7 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from experts_app.models import ExpertProfileSpecialty, ExpertSpecialty
-from experts_app.project_permissions import PROJECT_COORDINATOR_SPECIALTY, PROJECT_MANAGER_SPECIALTY
+from experts_app.project_permissions import (
+    PERM_UPLOAD_DIRECTION_SECTIONS,
+    PROJECT_COORDINATOR_SPECIALTY,
+    PROJECT_MANAGER_SPECIALTY,
+)
 from users_app.models import Employee
 
 from .models import Performer, ProjectRegistration
@@ -66,7 +70,7 @@ def employee_slot_permissions(employee) -> dict[str, frozenset[str]]:
     if not employee or not getattr(employee, "pk", None):
         return {}
     cached = getattr(employee, "_project_slot_permissions", None)
-    if cached is not None:
+    if cached is not None and getattr(employee, "_project_slot_upload_directions", None) is not None:
         return cached
     slots_by_specialty = {slot.specialty: code for code, slot in PROJECT_SLOTS.items()}
     rows = (
@@ -76,14 +80,31 @@ def employee_slot_permissions(employee) -> dict[str, frozenset[str]]:
             specialty__grants_project_rights=True,
             specialty__specialty__in=list(slots_by_specialty),
         )
-        .values_list("specialty__specialty", "specialty__project_permissions")
+        .values_list(
+            "specialty__specialty",
+            "specialty__project_permissions",
+            "specialty__upload_expertise_direction_ids",
+        )
     )
-    result = {
-        slots_by_specialty[name]: frozenset(permissions or [])
-        for name, permissions in rows
-    }
+    result = {}
+    directions = {}
+    for name, permissions, direction_ids in rows:
+        slot = slots_by_specialty[name]
+        result[slot] = frozenset(permissions or [])
+        directions[slot] = _direction_id_set(direction_ids)
     employee._project_slot_permissions = result
+    employee._project_slot_upload_directions = directions
     return result
+
+
+def _direction_id_set(values) -> frozenset[int]:
+    ids = set()
+    for value in values or []:
+        try:
+            ids.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    return frozenset(ids)
 
 
 def employee_has_slot_specialty(employee, slot) -> bool:
@@ -136,6 +157,23 @@ def employee_project_permissions(employee, registration) -> set[str]:
 
 def user_project_permissions(user, registration) -> set[str]:
     return employee_project_permissions(_employee_of(user), registration)
+
+
+def employee_upload_direction_ids(employee, registration) -> set[int]:
+    """Направления, разделы которых сотрудник может загрузить на своих позициях в проекте."""
+    if not employee or not registration:
+        return set()
+    slots = employee_slot_permissions(employee)
+    stored = getattr(employee, "_project_slot_upload_directions", {})
+    ids = set()
+    for slot in employee_project_slots(employee, registration):
+        if PERM_UPLOAD_DIRECTION_SECTIONS in slots.get(slot, ()):
+            ids |= set(stored.get(slot, ()))
+    return ids
+
+
+def user_upload_direction_ids(user, registration) -> set[int]:
+    return employee_upload_direction_ids(_employee_of(user), registration)
 
 
 def has_project_permission(user, registration, code) -> bool:

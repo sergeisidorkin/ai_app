@@ -32,6 +32,7 @@ from experts_app.project_permissions import (
     PERM_NEXTCLOUD_EDITOR,
     PERM_REVIEW_KP,
     PERM_REVIEW_RP,
+    PERM_UPLOAD_DIRECTION_SECTIONS,
     PERM_UPLOAD_FREE_SECTIONS,
     PROJECT_MANAGER_SPECIALTY,
 )
@@ -1458,6 +1459,66 @@ class ExpertSpecialtyCsvTests(TestCase):
         specialty.refresh_from_db()
         self.assertFalse(specialty.grants_project_rights)
         self.assertEqual(specialty.project_permissions, [])
+
+    def test_specialty_modal_saves_upload_directions_and_clears_them_without_flag(self):
+        eco = ExpertiseDirection.objects.create(name="Экология", short_name="ECO", position=2)
+        soc = ExpertiseDirection.objects.create(name="Социальное", short_name="SOC", position=3)
+        specialty = ExpertSpecialty.objects.create(
+            specialty="Координатор площадки",
+            grants_project_rights=True,
+            position=3,
+        )
+
+        html = self.client.get(reverse("esp_form_edit", args=[specialty.pk])).content.decode()
+        free_at = html.find("Загружать разделы без направления экспертизы")
+        directed_at = html.find("Загружать разделы направления экспертизы")
+        self.assertGreaterEqual(free_at, 0)
+        self.assertGreater(directed_at, free_at)
+        self.assertIn("ECO", html)
+        self.assertIn("Экология", html)
+        self.assertIn("SOC", html)
+        self.assertIn("Социальное", html)
+
+        data = {
+            "specialty": "Координатор площадки",
+            "specialty_en": "",
+            "owner_ids": "__group__",
+            "expertise_dir": "",
+            "specialization_area_suffix": "",
+            "grants_project_rights": "on",
+            "project_permissions": [PERM_UPLOAD_DIRECTION_SECTIONS, PERM_UPLOAD_FREE_SECTIONS],
+            "upload_expertise_direction_ids": [str(soc.pk), str(eco.pk), "999999"],
+        }
+        response = self.client.post(reverse("esp_form_edit", args=[specialty.pk]), data)
+        self.assertEqual(response.status_code, 200)
+        specialty.refresh_from_db()
+        self.assertEqual(
+            specialty.project_permissions,
+            [PERM_UPLOAD_FREE_SECTIONS, PERM_UPLOAD_DIRECTION_SECTIONS],
+        )
+        self.assertEqual(specialty.upload_expertise_direction_ids, [eco.pk, soc.pk])
+
+        saved_html = self.client.get(reverse("esp_form_edit", args=[specialty.pk])).content.decode()
+        self.assertIn('class="js-esp-direction-label">ECO, SOC<', saved_html)
+        self.assertRegex(saved_html, r'value="%s"[^>]*checked' % PERM_UPLOAD_DIRECTION_SECTIONS)
+
+        without_directions = dict(data)
+        without_directions.pop("upload_expertise_direction_ids")
+        self.client.post(reverse("esp_form_edit", args=[specialty.pk]), without_directions)
+        specialty.refresh_from_db()
+        self.assertEqual(specialty.project_permissions, [PERM_UPLOAD_FREE_SECTIONS])
+        self.assertEqual(specialty.upload_expertise_direction_ids, [])
+
+        self.client.post(
+            reverse("esp_form_edit", args=[specialty.pk]),
+            data,
+        )
+        data.pop("grants_project_rights")
+        self.client.post(reverse("esp_form_edit", args=[specialty.pk]), data)
+        specialty.refresh_from_db()
+        self.assertFalse(specialty.grants_project_rights)
+        self.assertEqual(specialty.project_permissions, [])
+        self.assertEqual(specialty.upload_expertise_direction_ids, [])
 
     def test_specialty_table_splits_department_pairs_into_grouped_rows(self):
         OrgUnit.objects.create(
