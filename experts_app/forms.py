@@ -234,9 +234,7 @@ class ExpertSpecialtyForm(forms.ModelForm):
                 "is_group": d.is_group_owner,
             }
         self.dir_owners_json = json.dumps(dir_owners, ensure_ascii=False)
-        self.upload_direction_options = list(
-            ExpertiseDirection.objects.order_by("position", "id")
-        )
+        self.upload_direction_options = list(direction_qs)
         self.selected_upload_direction_ids = self._selected_upload_direction_ids()
         selected_ids = set(self.selected_upload_direction_ids)
         self.upload_direction_label = ", ".join(
