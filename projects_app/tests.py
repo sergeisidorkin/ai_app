@@ -14847,6 +14847,53 @@ class ReportSubmissionAccessTests(TestCase):
         )
         return coordinator_user, free_row, foreign_free_row
 
+    def test_coordinator_uploads_sections_of_selected_expertise_directions(self):
+        from experts_app.project_permissions import PERM_UPLOAD_DIRECTION_SECTIONS
+        from projects_app.report_access import can_mutate_report_slot
+
+        coordinator_user, free_row, _foreign_free_row = self._coordinator_setup()
+        specialty = ExpertSpecialty.objects.get(specialty=PROJECT_COORDINATOR_SPECIALTY)
+        specialty.project_permissions = [PERM_UPLOAD_DIRECTION_SECTIONS]
+        specialty.upload_expertise_direction_ids = [self.mrk.expertise_dir_id]
+        specialty.save(update_fields=["project_permissions", "upload_expertise_direction_ids"])
+        coordinator_user = get_user_model().objects.get(pk=coordinator_user.pk)
+
+        self.assertTrue(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, performer=self.own_mrk)
+        )
+        self.assertFalse(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, performer=self.own_ecn)
+        )
+        self.assertFalse(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, performer=free_row)
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                coordinator_user,
+                project=self.foreign_project,
+                performer=self.foreign_row,
+            )
+        )
+        self.assertFalse(
+            can_mutate_report_slot(
+                coordinator_user,
+                project=self.own_project,
+                performers=[self.own_mrk, self.own_ecn],
+                is_all_sections=True,
+            )
+        )
+        self.assertTrue(
+            can_mutate_report_slot(
+                coordinator_user,
+                project=self.own_project,
+                performers=[self.own_mrk],
+                is_all_sections=True,
+            )
+        )
+        self.assertFalse(
+            can_mutate_report_slot(coordinator_user, project=self.own_project, is_full_report=True)
+        )
+
     def test_project_coordinator_uploads_sections_without_expertise(self):
         from projects_app.report_access import (
             can_mutate_report_slot,

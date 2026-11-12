@@ -8,6 +8,7 @@ PERM_VIEW_PROJECT = "view_project"
 PERM_VIEW_REPORTS = "view_reports"
 PERM_UPLOAD_FULL_REPORT = "upload_full_report"
 PERM_UPLOAD_FREE_SECTIONS = "upload_free_sections"
+PERM_UPLOAD_DIRECTION_SECTIONS = "upload_direction_sections"
 PERM_REVIEW_KP = "review_kp"
 PERM_REVIEW_RP = "review_rp"
 PERM_CHECKLIST_APPROVE = "checklist_approve"
@@ -20,6 +21,7 @@ PROJECT_PERMISSIONS = (
     (PERM_VIEW_REPORTS, "Видеть отчёты проекта"),
     (PERM_UPLOAD_FULL_REPORT, "Загружать и отправлять итоговый отчёт"),
     (PERM_UPLOAD_FREE_SECTIONS, "Загружать разделы без направления экспертизы"),
+    (PERM_UPLOAD_DIRECTION_SECTIONS, "Загружать разделы направления экспертизы"),
     (PERM_REVIEW_KP, "Проверка отчёта на шаге КП"),
     (PERM_REVIEW_RP, "Проверка отчёта на шаге РП"),
     (PERM_CHECKLIST_APPROVE, "Согласование запросов информации и правка всех разделов в Чек-листах"),

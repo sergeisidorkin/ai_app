@@ -25,6 +25,8 @@ def grant_project_specialty(employee, specialty_name, permissions=None):
     ExpertProfileSpecialty.objects.get_or_create(profile=profile, specialty=specialty)
     if hasattr(employee, "_project_slot_permissions"):
         del employee._project_slot_permissions
+    if hasattr(employee, "_project_slot_upload_directions"):
+        del employee._project_slot_upload_directions
     return specialty
 
 

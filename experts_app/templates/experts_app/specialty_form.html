@@ -59,9 +59,35 @@
       <div class="col-12" id="esp-project-permissions"{% if not form.grants_project_rights.value %} hidden{% endif %}>
         <div class="form-label mb-2" style="padding-left: 1.5em;">Права и доступы в проекте:</div>
         {% for choice in form.project_permissions %}
-          <div class="form-check">
+          <div class="form-check{% if choice.data.value == "upload_direction_sections" %} esp-direction-permission{% endif %}">
             {{ choice.tag }}
             <label class="form-check-label" for="{{ choice.id_for_label }}">{{ choice.choice_label }}</label>
+            {% if choice.data.value == "upload_direction_sections" %}
+              <div class="dropdown" id="esp-upload-directions">
+                <button class="dropdown-toggle esp-direction-toggle" type="button"
+                        id="esp-upload-directions-toggle"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                        {% if form.fields.project_permissions.disabled %}disabled{% endif %}>
+                  <span class="js-esp-direction-label">{{ form.upload_direction_label }}</span>
+                </button>
+                <div class="dropdown-menu esp-direction-menu" aria-labelledby="esp-upload-directions-toggle">
+                  {% for direction in form.upload_direction_options %}
+                    <label class="esp-direction-option" for="esp-upload-dir-{{ direction.pk }}">
+                      <input class="form-check-input js-esp-upload-direction" type="checkbox"
+                             name="upload_expertise_direction_ids" value="{{ direction.pk }}"
+                             id="esp-upload-dir-{{ direction.pk }}"
+                             data-short-name="{{ direction.short_name }}"
+                             {% if direction.pk in form.selected_upload_direction_ids %}checked{% endif %}
+                             {% if form.fields.project_permissions.disabled %}disabled{% endif %}>
+                      <span class="esp-direction-short">{{ direction.short_name }}</span>
+                      <span class="esp-direction-name">{{ direction.name }}</span>
+                    </label>
+                  {% empty %}
+                    <div class="text-muted small">Нет направлений экспертизы</div>
+                  {% endfor %}
+                </div>
+              </div>
+            {% endif %}
           </div>
         {% endfor %}
       </div>
@@ -155,6 +181,36 @@
   rightsToggle.addEventListener("change", function() {
     rightsBlock.hidden = !rightsToggle.checked;
   });
+})();
+
+(function() {
+  const permission = document.querySelector('#esp-project-permissions input[value="upload_direction_sections"]');
+  const dropdown = document.getElementById("esp-upload-directions");
+  if (!permission || !dropdown) return;
+  const checks = dropdown.querySelectorAll(".js-esp-upload-direction");
+  const label = dropdown.querySelector(".js-esp-direction-label");
+
+  function updateLabel() {
+    const names = Array.from(checks)
+      .filter(function(box) { return box.checked; })
+      .map(function(box) { return box.getAttribute("data-short-name") || ""; })
+      .filter(Boolean);
+    label.textContent = names.join(", ");
+  }
+
+  checks.forEach(function(box) {
+    box.addEventListener("change", function() {
+      if (box.checked) permission.checked = true;
+      updateLabel();
+    });
+  });
+  permission.addEventListener("change", function() {
+    if (!permission.checked) {
+      checks.forEach(function(box) { box.checked = false; });
+      updateLabel();
+    }
+  });
+  updateLabel();
 })();
 
 (function() {

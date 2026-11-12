@@ -14,7 +14,11 @@ from experts_app.project_permissions import (
 )
 
 from .models import Performer
-from .project_roles import has_project_permission, registration_ids_with_permission
+from .project_roles import (
+    has_project_permission,
+    registration_ids_with_permission,
+    user_upload_direction_ids,
+)
 
 
 def _staff_user(user) -> bool:
@@ -86,6 +90,17 @@ def has_staff_project_permission(user, registration, code) -> bool:
 def _section_without_expertise(performer) -> bool:
     section = getattr(performer, "typical_section", None)
     return section is None or not getattr(section, "expertise_dir_id", None)
+
+
+def _section_in_upload_directions(performer, direction_ids) -> bool:
+    if not direction_ids:
+        return False
+    section = getattr(performer, "typical_section", None)
+    direction_id = getattr(section, "expertise_dir_id", None) if section is not None else None
+    try:
+        return bool(direction_id) and int(direction_id) in direction_ids
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_own_assignment(employee, performer) -> bool:
@@ -201,8 +216,11 @@ def can_mutate_report_slot(
     if not items:
         return False
     free_sections = has_project_permission(user, project, PERM_UPLOAD_FREE_SECTIONS)
+    direction_ids = user_upload_direction_ids(user, project)
     return all(
-        _can_act_on_performer(user, item) or (free_sections and _section_without_expertise(item))
+        _can_act_on_performer(user, item)
+        or (free_sections and _section_without_expertise(item))
+        or _section_in_upload_directions(item, direction_ids)
         for item in items
     )
 

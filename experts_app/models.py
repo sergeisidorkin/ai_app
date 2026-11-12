@@ -69,6 +69,12 @@ class ExpertSpecialty(models.Model):
         db_default=[],
         blank=True,
     )
+    upload_expertise_direction_ids = models.JSONField(
+        "Направления экспертизы для загрузки разделов",
+        default=list,
+        db_default=[],
+        blank=True,
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
