@@ -37,7 +37,7 @@
            class="table table-sm align-top reg-table proposals-table"
            {% if request.user.is_authenticated and request.user.is_staff %}
            data-queued-row-order
-           data-row-order-save-url="{% url 'proposal_row_order' %}"
+           data-row-order-save-url="{% url 'proposal_row_order' %}{% if proposal_registry_years %}?proposals_year={{ proposal_registry_years|join:',' }}{% endif %}"
            data-row-order-signature="{{ proposal_order_signature }}"
            data-row-order-context="proposals-registry"
            data-row-order-payload-field="ordered_proposal_ids"

@@ -56,7 +56,10 @@ from yandexdisk_app.models import YandexDiskAccount
 
 from contracts_app.docx_processor import insert_floating_image_at_placeholder, process_template
 from .document_generation import (
+    build_proposal_document_base_name,
+    build_proposal_documents_paths,
     build_proposal_docx_source_token,
+    build_proposal_workspace_document_paths,
     generate_and_store_proposal_pdf,
     get_proposal_docx_source_token_payload,
     store_generated_documents,
@@ -7529,6 +7532,118 @@ class ProposalRowOrderTests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["current_proposal_ids"], [self.second.pk, self.first.pk, self.third.pk])
 
+    def test_row_order_with_year_filter_merges_into_full_registry(self):
+        self.first.year = 2024
+        self.second.year = 2026
+        self.third.year = 2026
+        ProposalRegistration.objects.bulk_update(
+            [self.first, self.second, self.third],
+            ["year"],
+        )
+        visible_ids = [self.second.pk, self.third.pk]
+
+        response = self.client.post(
+            reverse("proposal_row_order") + "?proposals_year=2026",
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [self.third.pk, self.second.pk],
+                    "base_order_signature": self._signature(visible_ids),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(ProposalRegistration.objects.order_by("position", "id").values_list("pk", flat=True)),
+            [self.first.pk, self.third.pk, self.second.pk],
+        )
+        self.assertEqual(response.json()["order_signature"], self._signature([self.third.pk, self.second.pk]))
+
+    def test_row_order_year_filter_keeps_hidden_rows_and_version_groups(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        older = ProposalRegistration.objects.create(
+            number=201,
+            sub_number=0,
+            group_member=group_member,
+            version=1,
+            year=2024,
+            position=1,
+            name="Старая версия",
+        )
+        newer = ProposalRegistration.objects.create(
+            number=201,
+            sub_number=0,
+            group_member=group_member,
+            version=2,
+            year=2026,
+            position=2,
+            name="Новая версия",
+        )
+        hidden = ProposalRegistration.objects.create(
+            number=202,
+            sub_number=0,
+            group_member=group_member,
+            year=2024,
+            position=3,
+            name="Скрытое ТКП",
+        )
+        visible = ProposalRegistration.objects.create(
+            number=203,
+            sub_number=0,
+            group_member=group_member,
+            year=2026,
+            position=4,
+            name="Видимое ТКП",
+        )
+        self.assertEqual(newer.short_uid, older.short_uid)
+        scoped_ids = [newer.pk, older.pk, visible.pk]
+
+        response = self.client.post(
+            reverse("proposal_row_order") + "?proposals_year=2026",
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [visible.pk, newer.pk, older.pk],
+                    "base_order_signature": self._signature(scoped_ids),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(
+                ProposalRegistration.objects.exclude(
+                    pk__in=[self.first.pk, self.second.pk, self.third.pk]
+                ).order_by("position", "id").values_list("pk", flat=True)
+            ),
+            [visible.pk, hidden.pk, newer.pk, older.pk],
+        )
+
+    def test_row_order_missing_id_returns_conflict(self):
+        response = self.client.post(
+            reverse("proposal_row_order"),
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [self.first.pk, self.second.pk, self.third.pk, 999999],
+                    "base_order_signature": self._signature([self.first.pk, self.second.pk, self.third.pk]),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json()["current_proposal_ids"],
+            [self.first.pk, self.second.pk, self.third.pk],
+        )
+
 
 class ProposalFormContextTests(TestCase):
     def setUp(self):
@@ -9376,6 +9491,10 @@ class ProposalYearFilterTests(TestCase):
         self.assertNotIn("Только 2024", html)
         self.assertNotIn("ТКП без года", html)
         self.assertIn('data-proposal-years="2026"', html)
+        self.assertIn(
+            f'data-row-order-save-url="{reverse("proposal_row_order")}?proposals_year=2026"',
+            html,
+        )
         options_at = html.find('id="proposal-year-options"')
         self.assertGreaterEqual(options_at, 0)
         payload = html[options_at:html.find("</script>", options_at)].split(">", 1)[1]
@@ -12018,6 +12137,20 @@ class ProposalVersionTests(TestCase):
         self.assertEqual(created.name, source.name)
         self.assertEqual(created.proposal_workspace_disk_path, source.proposal_workspace_disk_path)
         self.assertEqual(created.docx_file_name, "")
+        source_paths = build_proposal_workspace_document_paths(source)
+        created_paths = build_proposal_workspace_document_paths(created)
+        self.assertIn("_v01", source_paths["docx_name"])
+        self.assertIn("_v02", created_paths["docx_name"])
+        self.assertNotEqual(source_paths["docx_path"], created_paths["docx_path"])
+        self.assertNotEqual(source_paths["pdf_path"], created_paths["pdf_path"])
+        self.assertNotEqual(
+            build_proposal_document_base_name(source),
+            build_proposal_document_base_name(created),
+        )
+        local_source = build_proposal_documents_paths(source)
+        local_created = build_proposal_documents_paths(created)
+        self.assertNotEqual(local_source["docx_path"], local_created["docx_path"])
+        self.assertNotEqual(local_source["pdf_path"], local_created["pdf_path"])
         self.assertEqual(created.sent_date, "")
         self.assertEqual(created.contact_email, "")
         self.assertEqual(list(created.assets.values_list("short_name", flat=True)), ["Рудник"])

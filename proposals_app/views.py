@@ -1718,6 +1718,51 @@ def _normalize_proposal_version_order(ordered_ids, by_id):
     return normalized
 
 
+def _display_proposal_groups(items):
+    groups = []
+    for proposal in _order_proposals_for_display(items):
+        key = proposal.version_group
+        if not groups or groups[-1][0] != key:
+            groups.append((key, []))
+        groups[-1][1].append(proposal.pk)
+    return groups
+
+
+def _scoped_proposal_display_ids(items, years):
+    """Порядок, который видит таблица: тот же годовой охват, что у реестра, включая версии одного ТКП ID."""
+    groups = _display_proposal_groups(items)
+    full_ids = [proposal_id for _, member_ids in groups for proposal_id in member_ids]
+    if not years:
+        return groups, full_ids
+    scoped_pks = set(
+        _apply_proposal_year_scope(
+            ProposalRegistration.objects.filter(pk__in=full_ids),
+            years,
+        ).values_list("pk", flat=True)
+    )
+    return groups, [proposal_id for proposal_id in full_ids if proposal_id in scoped_pks]
+
+
+def _merge_scoped_proposal_order(full_groups, ordered_scoped_ids, by_id):
+    """Перестановка видимых строк встаёт в их места, скрытые строки и версии одного ТКП ID остаются целыми."""
+    scoped_groups = []
+    seen = set()
+    for proposal_id in ordered_scoped_ids:
+        key = _proposal_version_group_key(by_id[proposal_id])
+        if key not in seen:
+            seen.add(key)
+            scoped_groups.append([])
+        scoped_groups[-1].append(proposal_id)
+    pending = iter(scoped_groups)
+    merged = []
+    for key, member_ids in full_groups:
+        if key in seen:
+            merged.extend(next(pending))
+        else:
+            merged.extend(member_ids)
+    return merged
+
+
 def _persist_proposal_positions(ordered_ids):
     for index, proposal_id in enumerate(ordered_ids, start=1):
         ProposalRegistration.objects.filter(pk=proposal_id).update(position=index)
@@ -4168,15 +4213,14 @@ def proposal_row_order(request):
         return JsonResponse({"ok": False, "error": "Порядок ТКП содержит дубли."}, status=400)
 
     base_signature = str(payload.get("base_order_signature") or "")
+    selected_years = _selected_proposal_years(request)
     with transaction.atomic():
         current_items = list(
             ProposalRegistration.objects.select_for_update().order_by("position", "id")
         )
         by_id = {item.pk: item for item in current_items}
-        current_proposal_ids = [item.pk for item in _order_proposals_for_display(current_items)]
+        full_groups, current_proposal_ids = _scoped_proposal_display_ids(current_items, selected_years)
         current_signature = _proposal_order_signature(current_proposal_ids)
-        normalized_ids = _normalize_proposal_version_order(ordered_proposal_ids, by_id)
-        desired_signature = _proposal_order_signature(normalized_ids)
 
         conflict_payload = {
             "ok": False,
@@ -4188,10 +4232,16 @@ def proposal_row_order(request):
             if ordered_proposal_ids == current_proposal_ids:
                 return JsonResponse({"ok": True, "order_signature": current_signature})
             return JsonResponse(conflict_payload, status=409)
-        if set(ordered_proposal_ids) != set(current_proposal_ids):
+        if (
+            any(proposal_id not in by_id for proposal_id in ordered_proposal_ids)
+            or set(ordered_proposal_ids) != set(current_proposal_ids)
+        ):
             return JsonResponse(conflict_payload, status=409)
 
-        _persist_proposal_positions(normalized_ids)
+        normalized_ids = _normalize_proposal_version_order(ordered_proposal_ids, by_id)
+        merged_ids = _merge_scoped_proposal_order(full_groups, normalized_ids, by_id)
+        desired_signature = _proposal_order_signature(normalized_ids)
+        _persist_proposal_positions(merged_ids)
     return JsonResponse({"ok": True, "order_signature": desired_signature})
 
 

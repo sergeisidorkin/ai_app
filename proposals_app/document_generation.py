@@ -214,6 +214,15 @@ def ensure_proposal_documents_root() -> Path:
     return root
 
 
+def _proposal_document_version_token(proposal) -> str:
+    """Версии одного ТКП ID делят short_uid и рабочую папку, поэтому файл без версии затирает предыдущий."""
+    try:
+        version = int(getattr(proposal, "version", None) or 1)
+    except (TypeError, ValueError):
+        version = 1
+    return f"v{max(version, 1):02d}"
+
+
 def build_proposal_document_base_name(proposal) -> str:
     proposal_id = sanitize_folder_name(proposal.short_uid or f"proposal-{proposal.pk}")
     product = ""
@@ -225,6 +234,7 @@ def build_proposal_document_base_name(proposal) -> str:
         parts.append(product)
     if label:
         parts.append(label)
+    parts.append(_proposal_document_version_token(proposal))
     return "_".join(part for part in parts if part)
 
 
