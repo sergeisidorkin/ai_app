@@ -6,7 +6,7 @@ PROPOSAL_REGISTRY_COLUMNS = [
         "picker_value": "number",
         "data_col": "number",
         "source_column": "number",
-        "label": "Номер",
+        "label": "Запрос",
         "variable_available": True,
     },
     {
@@ -45,9 +45,23 @@ PROPOSAL_REGISTRY_COLUMNS = [
         "variable_available": True,
     },
     {
+        "picker_value": "version",
+        "data_col": "version",
+        "source_column": "version",
+        "label": "Верс.",
+        "variable_available": False,
+    },
+    {
         "picker_value": "kind",
         "data_col": "kind",
         "source_column": "kind",
+        "label": "Категория",
+        "variable_available": True,
+    },
+    {
+        "picker_value": "document-kind",
+        "data_col": "document-kind",
+        "source_column": "document_kind",
         "label": "Вид",
         "variable_available": True,
     },
@@ -335,7 +349,7 @@ PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS = [
         "picker_value": "number",
         "data_col": "number",
         "source_column": "number",
-        "label": "Номер",
+        "label": "Запрос",
     },
     {
         "picker_value": "sub-number",
@@ -366,6 +380,12 @@ PROPOSAL_PAYMENT_SCHEDULE_UI_COLUMNS = [
         "data_col": "name",
         "source_column": "name",
         "label": "Название",
+    },
+    {
+        "picker_value": "version",
+        "data_col": "version",
+        "source_column": "version",
+        "label": "Верс.",
     },
     {
         "picker_value": "stage",
@@ -460,7 +480,7 @@ PROPOSAL_DISPATCH_UI_COLUMNS = [
         "picker_value": "number",
         "data_col": "number",
         "source_column": "number",
-        "label": "Номер",
+        "label": "Запрос",
     },
     {
         "picker_value": "sub-number",
@@ -491,6 +511,12 @@ PROPOSAL_DISPATCH_UI_COLUMNS = [
         "data_col": "name",
         "source_column": "name",
         "label": "Название",
+    },
+    {
+        "picker_value": "version",
+        "data_col": "version",
+        "source_column": "version",
+        "label": "Верс.",
     },
     {
         "picker_value": "cloud",

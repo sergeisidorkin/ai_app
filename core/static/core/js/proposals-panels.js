@@ -22,8 +22,49 @@
     });
   }
 
+  function syncProposalPaymentTypeColumn() {
+    const root = pane();
+    if (!root) return;
+    const registryTable = root.querySelector('#proposal-registry-table');
+    const paymentTable = root.querySelector('#proposal-payment-schedule-table');
+    if (!registryTable || !paymentTable) return;
+    const source = registryTable.querySelector(':scope > thead > tr > th[data-col="type"]');
+    const targets = [
+      paymentTable.querySelector(':scope > colgroup > col[data-col="type"]'),
+      paymentTable.querySelector(':scope > thead > tr > th[data-col="type"]'),
+      ...paymentTable.querySelectorAll(':scope > tbody > tr > td[data-col="type"]'),
+    ].filter(Boolean);
+    if (!source || !targets.length) return;
+    const clear = () => {
+      targets.forEach((node) => {
+        node.style.removeProperty('width');
+        node.style.removeProperty('min-width');
+        node.style.removeProperty('max-width');
+      });
+    };
+    if (getComputedStyle(source).display === 'none' || registryTable.getBoundingClientRect().width < 1) {
+      clear();
+      return;
+    }
+    const width = source.getBoundingClientRect().width;
+    if (width < 1) {
+      clear();
+      return;
+    }
+    const px = width.toFixed(2) + 'px';
+    targets.forEach((node) => {
+      node.style.setProperty('width', '0.01%', 'important');
+      node.style.setProperty('min-width', px, 'important');
+      node.style.setProperty('max-width', px, 'important');
+    });
+  }
+
   function scheduleProposalTableScrollGapsUpdate() {
-    window.requestAnimationFrame(updateProposalTableScrollGaps);
+    window.requestAnimationFrame(() => {
+      relayoutDispatchColumnsForContainer();
+      syncProposalPaymentTypeColumn();
+      updateProposalTableScrollGaps();
+    });
   }
 
   function escapeHtml(value) {
@@ -50,6 +91,7 @@
   const PROPOSAL_SEND_PREF_KEY = 'proposals:dispatch-send-settings';
   const PROPOSAL_KIND_FILTER_PREF_KEY = 'proposals:kind-filter';
   const PROPOSAL_STATUS_FILTER_PREF_KEY = 'proposals:status-filter';
+  const PROPOSAL_YEAR_FILTER_PREF_KEY = 'proposals:yearFilter';
   const PROPOSAL_PAYMENT_VIEW_PREF_KEY = 'proposals:payment-schedule-view';
   const PROPOSAL_PAYMENT_GANTT_SCALE_PREF_KEY = 'proposals:payment-schedule-gantt-scale';
   const PROPOSAL_PAYMENT_GANTT_OPEN_GROUPS_PREF_KEY = 'proposals:payment-schedule-gantt-open-groups';
@@ -125,11 +167,12 @@
   }
   const PROPOSAL_KIND_FILTER_ALL = '__all__';
   const PROPOSAL_STATUS_FILTER_ALL = '__all__';
+  const PROPOSAL_YEAR_FILTER_ALL = '__all__';
   const PROPOSAL_STATUS_FILTER_OPTIONS = [
-    { value: 'preliminary', label: 'Предварительное' },
-    { value: 'final', label: 'Итоговое' },
+    { value: 'draft', label: 'Черновик' },
     { value: 'sent', label: 'Отправленное' },
     { value: 'completed', label: 'Завершённое' },
+    { value: 'postponed', label: 'Отложенное' },
     { value: 'not_held', label: 'Несостоявшееся' },
   ];
   const QUILL_JS = '/static/letters_app/vendor/quill/quill.min.js';
@@ -141,6 +184,7 @@
   let proposalProductAutofillProgressCursorWasActive = false;
   window.__proposalKindFilter = window.__proposalKindFilter || [PROPOSAL_KIND_FILTER_ALL];
   window.__proposalStatusFilter = window.__proposalStatusFilter || [PROPOSAL_STATUS_FILTER_ALL];
+  window.__proposalYearFilter = window.__proposalYearFilter || [PROPOSAL_YEAR_FILTER_ALL];
 
   function beginProposalProductAutofillProgressCursor() {
     const root = document.documentElement;
@@ -204,10 +248,26 @@
     document.body.appendChild(script);
   }
 
+  function escapeProposalHeaderText(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderProposalHeaderLabel(label) {
+    return String(label || '')
+      .split(' / ')
+      .map(escapeProposalHeaderText)
+      .join('<span class="proposal-header-separator"> / </span>');
+  }
+
   function updateHeaderPath() {
     const heading = document.getElementById('proposals-section-heading');
     const kindFilterDropdown = document.getElementById('master-proposal-kind-filter-dropdown');
     const statusFilterDropdown = document.getElementById('master-proposal-status-filter-dropdown');
+    const yearFilterDropdown = document.getElementById('master-proposal-year-filter-dropdown');
     if (!heading) {
       syncProposalFormActions();
       return;
@@ -217,6 +277,7 @@
       heading.textContent = 'ТКП';
       if (kindFilterDropdown) kindFilterDropdown.classList.add('d-none');
       if (statusFilterDropdown) statusFilterDropdown.classList.add('d-none');
+      if (yearFilterDropdown) yearFilterDropdown.classList.add('d-none');
       syncProposalFormActions();
       return;
     }
@@ -228,6 +289,7 @@
 
     if (kindFilterDropdown) kindFilterDropdown.classList.toggle('d-none', !!currentLabel);
     if (statusFilterDropdown) statusFilterDropdown.classList.toggle('d-none', !!currentLabel);
+    if (yearFilterDropdown) yearFilterDropdown.classList.toggle('d-none', !!currentLabel);
 
     if (!currentLabel) {
       heading.textContent = rootLabel;
@@ -243,9 +305,9 @@
       : '';
 
     heading.innerHTML = ''
-      + '<a class="proposal-header-link" ' + rootHrefAttrs + '>' + rootLabel + '</a>'
+      + '<a class="proposal-header-link" ' + rootHrefAttrs + '>' + renderProposalHeaderLabel(rootLabel) + '</a>'
       + '<span class="proposal-header-separator"> / </span>'
-      + '<a class="proposal-header-link" ' + currentHrefAttrs + '>' + currentLabel + '</a>';
+      + '<a class="proposal-header-link" ' + currentHrefAttrs + '>' + renderProposalHeaderLabel(currentLabel) + '</a>';
 
     if (window.htmx) window.htmx.process(heading);
     syncProposalFormActions();
@@ -266,6 +328,10 @@
 
   function proposalFormCancelBtn() {
     return document.querySelector('#proposal-form-actions [data-proposal-form-cancel-btn]');
+  }
+
+  function proposalFormCreateVersionBtn() {
+    return document.querySelector('#proposal-form-actions [data-proposal-form-create-version-btn]');
   }
 
   function getProposalRegistrationForm() {
@@ -319,6 +385,10 @@
     const actions = proposalFormActionsEl();
     const saveBtn = proposalFormSaveBtn();
     const cancelBtn = proposalFormCancelBtn();
+    const createVersionBtn = proposalFormCreateVersionBtn();
+    const form = getProposalRegistrationForm();
+    const locked = form?.dataset?.proposalLocked === '1';
+    const statusEditable = form?.dataset?.proposalStatusEditable === '1';
     const active = !proposalFormActionsHideLock && isProposalFormActive();
     if (actions) {
       actions.classList.toggle('d-none', !active);
@@ -326,8 +396,12 @@
     }
     const dirty = !!(proposalFormSession && proposalFormSession.isDirty());
     const saving = !!(proposalFormSession && proposalFormSession.saving);
-    if (saveBtn && saveBtn.dataset.loading !== '1') saveBtn.disabled = !active || saving || !dirty;
+    if (saveBtn && saveBtn.dataset.loading !== '1') saveBtn.disabled = !active || saving || !dirty || (locked && !statusEditable);
     if (cancelBtn && cancelBtn.dataset.loading !== '1') cancelBtn.disabled = !active || saving;
+    if (createVersionBtn) {
+      createVersionBtn.classList.toggle('d-none', !active || !locked);
+      if (createVersionBtn.dataset.loading !== '1') createVersionBtn.disabled = !active || !locked || saving;
+    }
   }
 
   function destroyProposalFormSession() {
@@ -568,6 +642,23 @@
     });
   }
 
+  function dispatchHoverGroupId(node) {
+    if (!(node instanceof Element)) return '';
+    const row = node.closest('#proposal-dispatch-table tbody tr[data-dispatch-group]');
+    return row ? String(row.dataset.dispatchGroup || '') : '';
+  }
+
+  function setDispatchGroupHover(groupId) {
+    const table = document.getElementById('proposal-dispatch-table');
+    if (!table) return;
+    const next = String(groupId || '');
+    if ((table.dataset.dispatchHoverGroup || '') === next) return;
+    table.dataset.dispatchHoverGroup = next;
+    qa('tr[data-dispatch-group]', table).forEach((row) => {
+      row.classList.toggle('proposal-dispatch-group-hover', next !== '' && row.dataset.dispatchGroup === next);
+    });
+  }
+
   function updateMasterState(name) {
     const master = getMaster(name);
     if (!master) return;
@@ -624,13 +715,23 @@
         row.dataset.status = statusValue || row.dataset.status || '';
         row.dataset.statusLabel = statusLabel || row.dataset.statusLabel || '';
         row.dataset.transferReady = '1';
-        const statusCell = row.querySelector('.proposal-status-cell');
-        if (statusCell && statusLabel) statusCell.textContent = statusLabel;
+        setProposalStatusLabel(row, statusLabel);
         const transferCell = row.querySelector('.proposal-transfer-date-cell');
         if (transferCell) transferCell.textContent = transferDate || '';
       });
     });
     initProposalMasterFilters();
+  }
+
+  function setProposalStatusLabel(row, statusLabel) {
+    if (!row || !statusLabel) return;
+    const label = row.querySelector('.proposal-status-label');
+    if (label) {
+      label.textContent = statusLabel;
+      return;
+    }
+    const statusCell = row.querySelector('.proposal-status-cell');
+    if (statusCell) statusCell.textContent = statusLabel;
   }
 
   function renderProposalFileCell(name, url, iconClass) {
@@ -674,8 +775,7 @@
         row.dataset.status = statusValue;
         row.dataset.statusLabel = statusLabel;
         row.dataset.transferReady = sentDate ? '1' : (row.dataset.transferReady || '0');
-        const statusCell = row.querySelector('.proposal-status-cell');
-        if (statusCell && statusLabel) statusCell.textContent = statusLabel;
+        setProposalStatusLabel(row, statusLabel);
         const sentDateCell = row.querySelector('.proposal-sent-date-cell');
         if (sentDateCell) sentDateCell.textContent = sentDate;
       });
@@ -1765,7 +1865,179 @@
     setProposalPaymentScheduleView(root, initialView);
   }
 
+  function readProposalJson(id, fallback) {
+    const el = document.getElementById(id);
+    if (!el) return fallback;
+    try {
+      return JSON.parse(el.textContent || 'null') ?? fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function proposalYearFilterValues() {
+    let saved = window.UIPref ? UIPref.get(PROPOSAL_YEAR_FILTER_PREF_KEY, null) : null;
+    if (!Array.isArray(saved) || !saved.length) saved = window.__proposalYearFilter;
+    if (!Array.isArray(saved) || !saved.length || saved.includes(PROPOSAL_YEAR_FILTER_ALL)) return [];
+    return saved.map(String).filter((value) => value && value !== PROPOSAL_YEAR_FILTER_ALL);
+  }
+
+  function proposalYearFilterKey(values) {
+    const list = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
+    if (!list.length || list.includes(PROPOSAL_YEAR_FILTER_ALL)) return PROPOSAL_YEAR_FILTER_ALL;
+    return list.slice().sort().join(',');
+  }
+
+  function updateProposalYearLabel(labelNode, checks, values) {
+    if (!labelNode) return;
+    if (!values.length || values.includes(PROPOSAL_YEAR_FILTER_ALL)) {
+      labelNode.textContent = 'Все';
+      return;
+    }
+    if (values.length === 1) {
+      const input = Array.from(checks).find((cb) => cb.value === values[0]);
+      labelNode.textContent = input?.dataset?.summaryLabel?.trim() || values[0];
+      return;
+    }
+    labelNode.textContent = values.length + ' выбрано';
+  }
+
+  function reloadProposalsForYears() {
+    if (!window.htmx) return;
+    const root = pane();
+    const url = root?.dataset?.proposalTablesUrl
+      || root?.dataset?.headerRootUrl
+      || '/proposals/partial/';
+    window.htmx.ajax('GET', proposalCatalogTablesUrl(url), {
+      target: '#proposals-pane',
+      swap: 'outerHTML',
+    });
+  }
+
+  function syncProposalYearChecks(dropdown, values) {
+    const selected = new Set(values);
+    dropdown.querySelectorAll('.js-proposal-year-filter').forEach((cb) => {
+      cb.checked = selected.has(cb.value);
+    });
+  }
+
+  // Год сужает реестр на сервере. Список лет берётся из полной выборки и переживает перезагрузку раздела.
+  function initProposalYearFilter() {
+    const dropdown = document.getElementById('master-proposal-year-filter-dropdown');
+    const list = document.getElementById('proposal-year-filter-list');
+    const label = document.querySelector('.js-proposal-year-filter-label');
+    if (!dropdown || !list) return false;
+    bindProposalFilterMenuWidth(dropdown);
+
+    const options = readProposalJson('proposal-year-options', null);
+    if (Array.isArray(options)) {
+      list.innerHTML = '';
+      options.forEach((option) => {
+        const div = document.createElement('div');
+        div.className = 'form-check';
+        const input = document.createElement('input');
+        input.className = 'form-check-input js-proposal-year-filter';
+        input.type = 'checkbox';
+        input.value = String(option.value);
+        input.id = 'proposal-year-filter-' + option.value;
+        input.dataset.summaryLabel = option.label;
+        input.dataset.fullLabel = option.label;
+        const inputLabel = document.createElement('label');
+        inputLabel.className = 'form-check-label';
+        inputLabel.htmlFor = input.id;
+        inputLabel.textContent = option.label;
+        div.appendChild(input);
+        div.appendChild(inputLabel);
+        list.appendChild(div);
+      });
+    }
+
+    const saved = window.UIPref
+      ? UIPref.get(PROPOSAL_YEAR_FILTER_PREF_KEY, null)
+      : window.__proposalYearFilter;
+    let values = Array.isArray(saved) && saved.length
+      ? saved.map(String)
+      : [PROPOSAL_YEAR_FILTER_ALL];
+    if (values.includes(PROPOSAL_YEAR_FILTER_ALL)) {
+      values = [PROPOSAL_YEAR_FILTER_ALL];
+    } else if (Array.isArray(options)) {
+      const known = new Set(Array.from(dropdown.querySelectorAll('.js-proposal-year-filter')).map((cb) => cb.value));
+      values = values.filter((value) => known.has(value));
+      if (!values.length) values = [PROPOSAL_YEAR_FILTER_ALL];
+    }
+    window.__proposalYearFilter = values.slice();
+    if (Array.isArray(options) && window.UIPref) UIPref.set(PROPOSAL_YEAR_FILTER_PREF_KEY, values);
+    if (Array.isArray(options) || values.includes(PROPOSAL_YEAR_FILTER_ALL)) {
+      syncProposalYearChecks(dropdown, values);
+    }
+    updateProposalYearLabel(label, dropdown.querySelectorAll('.js-proposal-year-filter'), values);
+
+    if (dropdown.dataset.yearFilterBound !== '1') {
+      dropdown.dataset.yearFilterBound = '1';
+      dropdown.addEventListener('change', (event) => {
+        const target = event.target;
+        if (!target?.classList?.contains('js-proposal-year-filter')) return;
+        const checks = Array.from(dropdown.querySelectorAll('.js-proposal-year-filter'));
+        if (target.value === PROPOSAL_YEAR_FILTER_ALL && target.checked) {
+          checks.forEach((cb) => { cb.checked = cb.value === PROPOSAL_YEAR_FILTER_ALL; });
+        } else if (target.value === PROPOSAL_YEAR_FILTER_ALL && !target.checked) {
+          const first = checks.find((cb) => cb.value !== PROPOSAL_YEAR_FILTER_ALL);
+          if (first) first.checked = true;
+          else target.checked = true;
+        } else {
+          const allCb = document.getElementById('proposal-year-filter-all');
+          if (allCb) {
+            allCb.checked = !checks.some((cb) => cb.value !== PROPOSAL_YEAR_FILTER_ALL && cb.checked);
+          }
+        }
+        let next = checks.filter((cb) => cb.checked).map((cb) => cb.value);
+        if (!next.length || next.includes(PROPOSAL_YEAR_FILTER_ALL)) {
+          next = [PROPOSAL_YEAR_FILTER_ALL];
+          checks.forEach((cb) => { cb.checked = cb.value === PROPOSAL_YEAR_FILTER_ALL; });
+        }
+        window.__proposalYearFilter = next.slice();
+        if (window.UIPref) UIPref.set(PROPOSAL_YEAR_FILTER_PREF_KEY, next);
+        updateProposalYearLabel(
+          document.querySelector('.js-proposal-year-filter-label'),
+          dropdown.querySelectorAll('.js-proposal-year-filter'),
+          next
+        );
+        reloadProposalsForYears();
+      });
+    }
+
+    const root = pane();
+    if (!root || !Object.prototype.hasOwnProperty.call(root.dataset, 'proposalYears')) return false;
+    const renderedKey = proposalYearFilterKey((root.dataset.proposalYears || '').split(','));
+    const wantedKey = proposalYearFilterKey(values);
+    if (wantedKey !== renderedKey && window.__proposalsYearReloadKey !== wantedKey) {
+      window.__proposalsYearReloadKey = wantedKey;
+      reloadProposalsForYears();
+      return true;
+    }
+    window.__proposalsYearReloadKey = null;
+    return false;
+  }
+
+  function proposalRequestHasParam(detail, key) {
+    if (detail.parameters[key]) return true;
+    const path = detail.path || '';
+    const queryIndex = path.indexOf('?');
+    return queryIndex !== -1 && new URLSearchParams(path.slice(queryIndex + 1)).has(key);
+  }
+
+  function proposalRequestNeedsYearScope(detail) {
+    const path = detail.path || '';
+    const target = detail.target;
+    const elt = detail.elt;
+    const hxTarget = elt && elt.getAttribute ? elt.getAttribute('hx-target') : '';
+    return path.indexOf('/proposals/partial/') !== -1
+      || (target && target.id === 'proposals-pane')
+      || hxTarget === '#proposals-pane';
+  }
+
   function initProposalMasterFilters() {
+    if (initProposalYearFilter()) return;
     const root = pane();
     if (!root) return;
 
@@ -1960,7 +2232,12 @@
       });
       updateLabel(kindLabel, kindChecks, kindValues, PROPOSAL_KIND_FILTER_ALL);
       updateLabel(statusLabel, statusChecks, normalizedStatusValues, PROPOSAL_STATUS_FILTER_ALL);
+      if (proposalMasterFilterIsActive(kindValues, normalizedStatusValues)) {
+        expandProposalRegistryVersionRows();
+      }
       syncAllSelectionStates();
+      syncProposalRegistryNumberGroups();
+      syncProposalIdentityFieldGroups();
       scheduleProposalTableScrollGapsUpdate();
       if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
         requestAnimationFrame(() => renderProposalPaymentGantt(root));
@@ -2047,8 +2324,35 @@
     );
   }
 
+  const PROPOSAL_STATUS_ONLY_CHANNEL = 'status_without_email';
+
   function getProposalChannels() {
     return qa('.js-proposal-channel', pane());
+  }
+
+  function syncProposalEmailChannelLock() {
+    const channels = getProposalChannels();
+    const statusOnly = channels.some((cb) => cb.value === PROPOSAL_STATUS_ONLY_CHANNEL && cb.checked);
+    channels.forEach((cb) => {
+      if (cb.value === PROPOSAL_STATUS_ONLY_CHANNEL) return;
+      const unavailable = cb.dataset.channelUnavailable === '1';
+      cb.disabled = statusOnly || unavailable;
+      if (statusOnly) cb.checked = false;
+    });
+  }
+
+  function enforceProposalChannelExclusivity(changed) {
+    const channels = getProposalChannels();
+    if (changed?.checked && changed.value === PROPOSAL_STATUS_ONLY_CHANNEL) {
+      channels.forEach((cb) => {
+        if (cb !== changed) cb.checked = false;
+      });
+    } else if (changed?.checked) {
+      channels.forEach((cb) => {
+        if (cb.value === PROPOSAL_STATUS_ONLY_CHANNEL) cb.checked = false;
+      });
+    }
+    syncProposalEmailChannelLock();
   }
 
   function saveProposalSendSettings() {
@@ -2073,9 +2377,10 @@
     }
 
     if (!channels.some((cb) => cb.checked) ) {
-      const firstEnabled = channels.find((cb) => !cb.disabled);
+      const firstEnabled = channels.find((cb) => !cb.disabled && cb.value !== PROPOSAL_STATUS_ONLY_CHANNEL);
       if (firstEnabled) firstEnabled.checked = true;
     }
+    syncProposalEmailChannelLock();
   }
 
   function varsCollapse() {
@@ -2173,20 +2478,119 @@
     });
   }
 
-  function syncProposalRegistryNumberGroups() {
-    const root = pane();
-    const rows = qa('#proposal-registry-table tbody tr[data-proposal-id]', root);
+  function isProposalGroupingRowVisible(row) {
+    return !!row
+      && !row.classList.contains('d-none')
+      && !row.classList.contains('proposal-registry-version-collapsed');
+  }
+
+  function nearestVisibleGroupRow(rows, index, step) {
+    for (let cursor = index + step; cursor >= 0 && cursor < rows.length; cursor += step) {
+      if (isProposalGroupingRowVisible(rows[cursor])) return rows[cursor];
+    }
+    return null;
+  }
+
+  function syncProposalNumberGroups(rows, hasNextClass, continuationClass) {
     rows.forEach((row, index) => {
       const number = String(row.dataset.number || '');
-      const previous = rows[index - 1] || null;
-      const next = rows[index + 1] || null;
-      const isContinuation = !!previous && String(previous.dataset.number || '') === number;
-      const hasNext = !!next && String(next.dataset.number || '') === number;
+      const previous = nearestVisibleGroupRow(rows, index, -1);
+      const next = nearestVisibleGroupRow(rows, index, 1);
+      const visible = isProposalGroupingRowVisible(row);
+      const isContinuation = visible && !!previous && String(previous.dataset.number || '') === number;
+      const hasNext = visible && !!next && String(next.dataset.number || '') === number;
       const numberCell = row.querySelector('td[data-col="number"]');
       if (numberCell) numberCell.textContent = isContinuation ? '' : number;
-      row.classList.toggle('proposal-registry-number-continuation', isContinuation);
-      row.classList.toggle('proposal-registry-number-has-next', hasNext);
+      row.classList.toggle(continuationClass, isContinuation);
+      row.classList.toggle(hasNextClass, hasNext);
     });
+  }
+
+  function syncProposalRegistryNumberGroups() {
+    const root = pane();
+    syncProposalNumberGroups(
+      qa('#proposal-registry-table tbody tr[data-proposal-id]', root),
+      'proposal-registry-number-has-next',
+      'proposal-registry-number-continuation',
+    );
+    syncProposalNumberGroups(
+      qa('#proposal-payment-schedule-table tbody tr[data-proposal-id]', root),
+      'proposal-payment-number-has-next',
+      'proposal-payment-number-continuation',
+    );
+  }
+
+  function proposalIdentityMatches(left, right) {
+    if (!left || !right) return false;
+    return ['identitySubNumber', 'identityGroup', 'identityTkpId', 'identityType', 'identityName']
+      .every((key) => String(left.dataset[key] || '') === String(right.dataset[key] || ''));
+  }
+
+  function setProposalIdentityCell(row, column, value, mono) {
+    const cell = row.querySelector('td[data-col="' + column + '"]');
+    if (!cell) return;
+    if (!value) {
+      cell.textContent = '';
+      return;
+    }
+    if (mono) {
+      let span = cell.querySelector('.clf-id-droid-mono');
+      if (!span) {
+        cell.textContent = '';
+        span = document.createElement('span');
+        span.className = 'clf-id-droid-mono';
+        cell.appendChild(span);
+      }
+      span.textContent = value;
+      return;
+    }
+    cell.textContent = value;
+  }
+
+  function syncProposalIdentityGroups(rows, hasNextClass, continuationClass, numberHasNextClass, numberContinuationClass) {
+    rows.forEach((row, index) => {
+      const visible = isProposalGroupingRowVisible(row);
+      const previous = nearestVisibleGroupRow(rows, index, -1);
+      const next = nearestVisibleGroupRow(rows, index, 1);
+      const show = !visible || !proposalIdentityMatches(previous, row);
+      setProposalIdentityCell(row, 'sub-number', show ? String(row.dataset.identitySubNumber || '') : '');
+      setProposalIdentityCell(row, 'group', show ? String(row.dataset.identityGroup || '') : '');
+      setProposalIdentityCell(row, 'tkp-id', show ? String(row.dataset.identityTkpId || '') : '', true);
+      setProposalIdentityCell(row, 'type', show ? String(row.dataset.identityType || '') : '');
+      setProposalIdentityCell(row, 'name', show ? String(row.dataset.identityName || '') : '');
+      if (hasNextClass) row.classList.toggle(hasNextClass, visible && proposalIdentityMatches(row, next));
+      if (continuationClass) row.classList.toggle(continuationClass, visible && !show);
+      if (numberHasNextClass) {
+        const number = String(row.dataset.number || '');
+        const isContinuation = visible && !!previous && String(previous.dataset.number || '') === number;
+        row.classList.toggle(numberHasNextClass, visible && !!next && String(next.dataset.number || '') === number);
+        row.classList.toggle(numberContinuationClass, isContinuation);
+        const numberCell = row.querySelector('td[data-col="number"]');
+        if (numberCell) numberCell.textContent = isContinuation ? '' : number;
+      }
+    });
+  }
+
+  function syncProposalIdentityFieldGroups() {
+    const root = pane();
+    if (!root) return;
+    syncProposalIdentityGroups(
+      qa('#proposal-registry-table tbody tr[data-proposal-id]', root),
+      'proposal-registry-identity-has-next',
+      'proposal-registry-identity-continuation',
+    );
+    syncProposalIdentityGroups(
+      qa('#proposal-payment-schedule-table tbody tr[data-identity-tkp-id]', root),
+      'proposal-payment-identity-has-next',
+      'proposal-payment-identity-continuation',
+    );
+    syncProposalIdentityGroups(
+      qa('#proposal-dispatch-table tbody tr[data-dispatch-group-head="1"]', root),
+      'proposal-dispatch-identity-has-next',
+      'proposal-dispatch-identity-continuation',
+      'proposal-dispatch-number-has-next',
+      'proposal-dispatch-number-continuation',
+    );
   }
 
   const DISPATCH_GROUP_COLLAPSE_KEY = 'proposal-dispatch-groups-collapsed';
@@ -2294,6 +2698,45 @@
     });
   }
 
+  function setDispatchColumnBox(element, width, minWidth, maxWidth) {
+    if (!element) return;
+    element.style.setProperty('width', width, 'important');
+    element.style.setProperty('min-width', minWidth, 'important');
+    element.style.setProperty('max-width', maxWidth, 'important');
+  }
+
+  function dispatchColumnHidden(cell) {
+    return !!cell && getComputedStyle(cell).display === 'none';
+  }
+
+  function dispatchIntrinsicWidth(cell) {
+    const style = getComputedStyle(cell);
+    const probe = document.createElement('span');
+    probe.textContent = (cell.textContent || '').trim();
+    probe.style.position = 'absolute';
+    probe.style.left = '-9999px';
+    probe.style.top = '0';
+    probe.style.whiteSpace = 'nowrap';
+    probe.style.visibility = 'hidden';
+    probe.style.font = style.font;
+    probe.style.letterSpacing = style.letterSpacing;
+    document.body.appendChild(probe);
+    const textWidth = probe.getBoundingClientRect().width;
+    probe.remove();
+    const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    const border = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+    return Math.ceil(textWidth + padding + border);
+  }
+
+  function dispatchNameFloor(table) {
+    let floor = 0;
+    table.querySelectorAll('thead th[data-col="name"], tbody td[data-col="name"]').forEach((cell) => {
+      if (dispatchColumnHidden(cell)) return;
+      floor = Math.max(floor, dispatchIntrinsicWidth(cell));
+    });
+    return floor;
+  }
+
   function lockDispatchColumnWidths(table) {
     if (!table || table.dataset.dispatchWidthsLocked === '1') return;
     if (table.getBoundingClientRect().width < 1) return;
@@ -2314,24 +2757,132 @@
     const cols = [...table.querySelectorAll(':scope > colgroup > col')];
     if (!headers.length || headers.length !== cols.length) return;
     const widths = headers.map((header) => (
-      getComputedStyle(header).display === 'none' ? 0 : header.getBoundingClientRect().width
+      dispatchColumnHidden(header) ? 0 : header.getBoundingClientRect().width
     ));
     if (widths.every((width) => width < 1)) return;
-    const total = widths.reduce((sum, width) => sum + width, 0);
     headers.forEach((header, index) => {
-      if (widths[index] < 1) return;
+      // Name keeps adapting like the registry and payment tables.
+      if (header.dataset.col === 'name' || widths[index] < 1) return;
       const px = widths[index].toFixed(2) + 'px';
-      cols[index].style.setProperty('width', px, 'important');
-      cols[index].style.setProperty('min-width', px, 'important');
-      cols[index].style.setProperty('max-width', px, 'important');
-      header.style.setProperty('width', px, 'important');
-      header.style.setProperty('min-width', px, 'important');
-      header.style.setProperty('max-width', px, 'important');
+      setDispatchColumnBox(cols[index], px, px, px);
+      setDispatchColumnBox(header, px, px, px);
+      cols[index].dataset.dispatchLockedWidth = String(widths[index]);
+    });
+    table.dataset.dispatchWidthsLocked = '1';
+    fitDispatchNameColumn(table);
+  }
+
+  function fitDispatchNameColumn(table) {
+    if (!table || table.dataset.dispatchWidthsLocked !== '1') return;
+    if (table.getBoundingClientRect().width < 1) return;
+    const headers = [...table.querySelectorAll(':scope > thead > tr > th')];
+    const cols = [...table.querySelectorAll(':scope > colgroup > col')];
+    const nameIndex = headers.findIndex((header) => header.dataset.col === 'name');
+    if (nameIndex < 0 || !cols[nameIndex]) return;
+    let fixed = 0;
+    headers.forEach((header, index) => {
+      if (index === nameIndex || dispatchColumnHidden(header)) return;
+      const stored = parseFloat(cols[index]?.dataset.dispatchLockedWidth || '');
+      const width = Number.isFinite(stored) && stored > 0 ? stored : header.getBoundingClientRect().width;
+      if (width > 0) fixed += width;
     });
     table.style.setProperty('table-layout', 'fixed', 'important');
-    table.style.setProperty('width', total.toFixed(2) + 'px', 'important');
-    table.style.setProperty('min-width', total.toFixed(2) + 'px', 'important');
-    table.dataset.dispatchWidthsLocked = '1';
+    if (dispatchColumnHidden(headers[nameIndex])) {
+      const totalPx = Math.ceil(fixed) + 'px';
+      table.style.setProperty('width', totalPx, 'important');
+      table.style.setProperty('min-width', totalPx, 'important');
+      return;
+    }
+    const floor = dispatchNameFloor(table);
+    const available = Math.max(0, table.parentElement?.clientWidth || 0);
+    const nameWidth = Math.max(floor, available - fixed);
+    const widthPx = nameWidth.toFixed(2) + 'px';
+    const floorPx = Math.ceil(floor) + 'px';
+    setDispatchColumnBox(cols[nameIndex], widthPx, floorPx, widthPx);
+    setDispatchColumnBox(headers[nameIndex], widthPx, floorPx, widthPx);
+    const total = fixed + nameWidth;
+    if (total > available + 1) {
+      const totalPx = Math.ceil(total) + 'px';
+      table.style.setProperty('width', totalPx, 'important');
+      table.style.setProperty('min-width', totalPx, 'important');
+    } else {
+      table.style.setProperty('width', '100%', 'important');
+      table.style.setProperty('min-width', '100%', 'important');
+    }
+  }
+
+  function resetDispatchColumnWidthLock(table) {
+    if (!table) return;
+    delete table.dataset.dispatchWidthsLocked;
+    table.style.removeProperty('table-layout');
+    table.style.removeProperty('width');
+    table.style.removeProperty('min-width');
+    table.querySelectorAll(':scope > colgroup > col, :scope > thead > tr > th').forEach((node) => {
+      node.style.removeProperty('width');
+      node.style.removeProperty('min-width');
+      node.style.removeProperty('max-width');
+      delete node.dataset.dispatchLockedWidth;
+    });
+  }
+
+  let dispatchColumnLayoutObserver = null;
+  let dispatchColumnLayoutObserved = null;
+  let dispatchColumnRelayouting = false;
+
+  function ensureDispatchColumnLayoutObserver() {
+    const wrap = pane()?.querySelector('#proposal-dispatch-table')?.parentElement;
+    if (!wrap || typeof ResizeObserver !== 'function') return;
+    if (dispatchColumnLayoutObserved === wrap) return;
+    if (dispatchColumnLayoutObserver) dispatchColumnLayoutObserver.disconnect();
+    dispatchColumnLayoutObserver = new ResizeObserver(() => {
+      relayoutDispatchColumnsForContainer();
+      updateProposalTableScrollGaps();
+    });
+    dispatchColumnLayoutObserver.observe(wrap);
+    dispatchColumnLayoutObserved = wrap;
+  }
+
+  function dispatchWrapAvailableWidth(table) {
+    return Math.round(table?.parentElement?.clientWidth || 0);
+  }
+
+  // Pixel locks keep contact-group collapse from reshuffling columns, but they
+  // also freeze the table at the width it had when first measured. The main
+  // sidebar does not resize the window, so relock from CSS whenever the wrap
+  // itself changes width. A second pass absorbs the scrollbar that the first
+  // pass may have added; the stored width is the settled one, so the observer
+  // does not loop.
+  function relayoutDispatchColumnsForContainer() {
+    const table = pane()?.querySelector('#proposal-dispatch-table');
+    if (!table) return;
+    ensureDispatchColumnLayoutObserver();
+    if (dispatchColumnRelayouting) return;
+    if (table.getBoundingClientRect().width < 1) return;
+    const available = dispatchWrapAvailableWidth(table);
+    if (available < 1) return;
+    if (available === Number(table.dataset.dispatchLayoutWidth || 0)) return;
+    dispatchColumnRelayouting = true;
+    try {
+      resetDispatchColumnWidthLock(table);
+      applyDispatchContactCollapse(pane());
+      const settled = dispatchWrapAvailableWidth(table);
+      if (settled > 0 && settled !== available) {
+        resetDispatchColumnWidthLock(table);
+        applyDispatchContactCollapse(pane());
+      }
+      const finalWidth = dispatchWrapAvailableWidth(table);
+      if (finalWidth > 0) table.dataset.dispatchLayoutWidth = String(finalWidth);
+    } finally {
+      dispatchColumnRelayouting = false;
+    }
+  }
+
+  function relayoutDispatchColumnsForVisibility() {
+    const table = pane()?.querySelector('#proposal-dispatch-table');
+    if (!table) return;
+    delete table.dataset.dispatchLayoutWidth;
+    resetDispatchColumnWidthLock(table);
+    applyDispatchContactCollapse(pane());
   }
 
   function applyDispatchContactCollapse(root) {
@@ -2353,6 +2904,10 @@
       applyDispatchContactSummary(rows, isCollapsed);
     });
     syncDispatchGroupsToggle(table, collapsed);
+    fitDispatchNameColumn(table);
+    const available = dispatchWrapAvailableWidth(table);
+    if (available > 0) table.dataset.dispatchLayoutWidth = String(available);
+    ensureDispatchColumnLayoutObserver();
   }
 
   function toggleDispatchGroup(groupId) {
@@ -2381,6 +2936,237 @@
     applyDispatchContactCollapse(pane());
   }
 
+  function proposalMasterFilterIsActive(kindValues, statusValues) {
+    const kinds = Array.isArray(kindValues) ? kindValues : [];
+    const statuses = Array.isArray(statusValues) ? statusValues : [];
+    const allKinds = !kinds.length || kinds.includes(PROPOSAL_KIND_FILTER_ALL);
+    const allStatuses = !statuses.length || statuses.includes(PROPOSAL_STATUS_FILTER_ALL);
+    return !(allKinds && allStatuses);
+  }
+
+  function expandProposalRegistryVersionRows() {
+    proposalVersionTables(pane()).forEach((table) => {
+      const collapsed = loadProposalVersionCollapsed(table);
+      if (collapsed.size) saveProposalVersionCollapsed(table, new Set());
+    });
+    applyProposalVersionCollapse(pane());
+  }
+
+  const PROPOSAL_VERSION_COLLAPSE_KEYS = {
+    'proposal-registry-table': 'proposal-registry-versions-collapsed',
+    'proposal-payment-schedule-table': 'proposal-payment-versions-collapsed',
+    'proposal-dispatch-table': 'proposal-dispatch-versions-collapsed',
+  };
+
+  function proposalVersionCollapseKey(table) {
+    return PROPOSAL_VERSION_COLLAPSE_KEYS[table?.id] || '';
+  }
+
+  function loadProposalVersionCollapsed(table) {
+    const key = proposalVersionCollapseKey(table);
+    if (!key) return new Set();
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(key) || '[]');
+      return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    } catch (err) {
+      return new Set();
+    }
+  }
+
+  function saveProposalVersionCollapsed(table, collapsed) {
+    const key = proposalVersionCollapseKey(table);
+    if (!key) return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(Array.from(collapsed)));
+    } catch (err) {
+      // The table still collapses for this page view.
+    }
+  }
+
+  function proposalVersionTables(root) {
+    const scope = root || pane();
+    if (!scope) return [];
+    return [
+      '#proposal-registry-table',
+      '#proposal-payment-schedule-table',
+      '#proposal-dispatch-table',
+    ].map((selector) => scope.querySelector(selector)).filter(Boolean);
+  }
+
+  function proposalVersionGroups(table) {
+    const groups = new Map();
+    qa('tr[data-version-group]', table).forEach((row) => {
+      const id = String(row.dataset.versionGroup || '');
+      if (!id) return;
+      if (!groups.has(id)) groups.set(id, []);
+      groups.get(id).push(row);
+    });
+    return groups;
+  }
+
+  function proposalVersionGroupIsCollapsible(rows) {
+    return rows.some((row) => row.dataset.versionContinuation === '1');
+  }
+
+  function collapsibleProposalVersionIds(table) {
+    const ids = [];
+    proposalVersionGroups(table).forEach((rows, id) => {
+      if (!proposalVersionGroupIsCollapsible(rows)) return;
+      ids.push(id);
+    });
+    return ids;
+  }
+
+  function syncProposalVersionToggle(table, collapsed, ids) {
+    const button = table?.querySelector('.js-proposal-versions-toggle');
+    if (!button) return;
+    const allCollapsed = ids.length > 0 && ids.every((id) => collapsed.has(id));
+    button.classList.toggle('active', allCollapsed);
+    const icon = button.querySelector('i');
+    if (icon) icon.className = allCollapsed ? 'bi bi-arrows-expand' : 'bi bi-arrows-collapse';
+  }
+
+  function applyProposalVersionCollapse(root) {
+    const tables = proposalVersionTables(root);
+    if (!tables.length) return;
+    tables.forEach((table) => {
+      const collapsed = loadProposalVersionCollapsed(table);
+      const ids = collapsibleProposalVersionIds(table);
+      proposalVersionGroups(table).forEach((rows, id) => {
+        const isCollapsed = proposalVersionGroupIsCollapsible(rows) && collapsed.has(id);
+        rows.forEach((row) => {
+          row.classList.toggle(
+            'proposal-registry-version-collapsed',
+            isCollapsed && row.dataset.versionContinuation === '1'
+          );
+          if (row.dataset.versionHead !== '1') return;
+          const toggle = row.querySelector('[data-proposal-version-toggle]');
+          if (toggle) toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+        });
+      });
+      syncProposalVersionToggle(table, collapsed, ids);
+      syncProposalRequestVersionToggles(table, collapsed);
+    });
+    syncProposalPaymentTypeColumn();
+    syncProposalRegistryNumberGroups();
+    syncProposalIdentityFieldGroups();
+  }
+
+  function proposalRowTkpId(row) {
+    return String(row?.dataset?.identityTkpId || row?.dataset?.tkpId || row?.dataset?.versionGroup || '');
+  }
+
+  function proposalVersionToggleButton(groupId, controlledIds, masterOnly) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'proposal-version-group-toggle';
+    button.setAttribute('data-proposal-version-toggle', groupId);
+    button.setAttribute('aria-label', 'Свернуть/развернуть версии');
+    if (controlledIds.length > 1) {
+      button.setAttribute('data-proposal-number-version-toggles', controlledIds.join(' '));
+    }
+    if (masterOnly) button.setAttribute('data-proposal-request-version-master', '1');
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-caret-down-fill';
+    button.appendChild(icon);
+    return button;
+  }
+
+  function syncProposalRequestVersionToggles(table, collapsed) {
+    const groups = [];
+    qa('tbody tr[data-number]', table).forEach((row) => {
+      const number = String(row.dataset.number || '');
+      const last = groups[groups.length - 1];
+      if (!last || last.number !== number) groups.push({ number, rows: [row] });
+      else last.rows.push(row);
+    });
+    groups.forEach((group) => {
+      const visible = group.rows.filter((row) => isProposalGroupingRowVisible(row));
+      const tkpIds = [];
+      visible.forEach((row) => {
+        const tkp = proposalRowTkpId(row);
+        if (tkp && !tkpIds.includes(tkp)) tkpIds.push(tkp);
+      });
+      const buttons = group.rows.flatMap((row) => qa('[data-proposal-version-toggle]', row));
+      const realButtons = buttons.filter((button) => button.dataset.proposalRequestVersionMaster !== '1');
+      const collapsibleIds = [];
+      realButtons.forEach((button) => {
+        const id = button.getAttribute('data-proposal-version-toggle') || '';
+        const tkp = proposalRowTkpId(button.closest('tr'));
+        if (!id || !tkpIds.includes(tkp) || collapsibleIds.includes(id)) return;
+        collapsibleIds.push(id);
+      });
+      const combine = tkpIds.length > 1 && collapsibleIds.length > 0;
+      buttons
+        .filter((button) => button.dataset.proposalRequestVersionMaster === '1')
+        .forEach((button) => button.remove());
+      realButtons.forEach((button) => {
+        button.classList.remove('proposal-version-toggle-suppressed');
+        button.hidden = false;
+        button.removeAttribute('data-proposal-number-version-toggles');
+        const id = button.getAttribute('data-proposal-version-toggle') || '';
+        button.setAttribute('aria-expanded', collapsed.has(id) ? 'false' : 'true');
+      });
+      if (!combine) return;
+      const anchor = visible[0];
+      const cell = anchor?.querySelector('td[data-col="version-toggle"]');
+      if (!cell) return;
+      let master = cell.querySelector('[data-proposal-version-toggle]');
+      if (!master) {
+        master = proposalVersionToggleButton(collapsibleIds[0], collapsibleIds, true);
+        cell.appendChild(master);
+      }
+      master.setAttribute('data-proposal-number-version-toggles', collapsibleIds.join(' '));
+      master.classList.remove('proposal-version-toggle-suppressed');
+      master.hidden = false;
+      const allCollapsed = collapsibleIds.every((id) => collapsed.has(id));
+      master.setAttribute('aria-expanded', allCollapsed ? 'false' : 'true');
+      realButtons.forEach((button) => {
+        if (button === master) return;
+        button.classList.add('proposal-version-toggle-suppressed');
+        button.hidden = true;
+      });
+    });
+  }
+
+  function toggleProposalVersionGroups(ids, table) {
+    if (!table) return;
+    const collapsed = loadProposalVersionCollapsed(table);
+    const keys = (ids || []).map(String).filter(Boolean);
+    if (!keys.length) return;
+    const allCollapsed = keys.every((id) => collapsed.has(id));
+    keys.forEach((id) => {
+      if (allCollapsed) collapsed.delete(id);
+      else collapsed.add(id);
+    });
+    saveProposalVersionCollapsed(table, collapsed);
+    applyProposalVersionCollapse(pane());
+  }
+
+  function toggleProposalVersionGroup(groupId, table) {
+    if (!table) return;
+    const collapsed = loadProposalVersionCollapsed(table);
+    const id = String(groupId || '');
+    if (!id) return;
+    if (collapsed.has(id)) collapsed.delete(id);
+    else collapsed.add(id);
+    saveProposalVersionCollapsed(table, collapsed);
+    applyProposalVersionCollapse(pane());
+  }
+
+  function toggleVisibleProposalVersionGroups(table) {
+    if (!table) return;
+    const collapsed = loadProposalVersionCollapsed(table);
+    const ids = collapsibleProposalVersionIds(table);
+    const allCollapsed = ids.length > 0 && ids.every((id) => collapsed.has(id));
+    ids.forEach((id) => {
+      if (allCollapsed) collapsed.delete(id);
+      else collapsed.add(id);
+    });
+    saveProposalVersionCollapsed(table, collapsed);
+    applyProposalVersionCollapse(pane());
+  }
+
   function syncProposalRelatedTablesOrder() {
     const root = pane();
     if (!root) return;
@@ -2389,7 +3175,9 @@
       applyProposalOrderToGroupedTable(root.querySelector('#proposal-payment-schedule-table'), proposalIds);
       applyProposalOrderToGroupedTable(root.querySelector('#proposal-dispatch-table'), proposalIds);
       syncProposalRegistryNumberGroups();
+      syncProposalIdentityFieldGroups();
     }
+    applyProposalVersionCollapse(root);
     applyDispatchContactCollapse(root);
     syncSelectionState('proposal-select');
     syncSelectionState('proposal-dispatch-select');
@@ -2397,6 +3185,28 @@
     if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
       requestAnimationFrame(() => renderProposalPaymentGantt(root));
     }
+  }
+
+  function proposalVersionMoveIds(checked) {
+    const table = pane()?.querySelector('#proposal-registry-table');
+    const ids = [];
+    const seen = new Set();
+    (checked || []).forEach((box) => {
+      const row = box.closest ? box.closest('tr') : null;
+      let id = String(box.value || '');
+      if (table && row && row.dataset.versionContinuation === '1') {
+        const group = row.dataset.versionGroup || '';
+        const selector = window.CSS && CSS.escape
+          ? 'tr[data-version-head="1"][data-version-group="' + CSS.escape(group) + '"]'
+          : 'tr[data-version-head="1"][data-version-group="' + group + '"]';
+        const head = table.querySelector(selector);
+        if (head?.dataset?.proposalId) id = String(head.dataset.proposalId);
+      }
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    });
+    return ids;
   }
 
   function moveProposalSelectionImmediately(action, checked) {
@@ -2411,7 +3221,7 @@
     if (!root) return false;
     return !!window.__queuedRowOrder.moveSelection(root, action, {
       selectionName: 'proposal-select',
-      selectedIds: checked.map((box) => String(box.value)),
+      selectedIds: proposalVersionMoveIds(checked),
       onAfterMove: syncProposalRelatedTablesOrder,
     });
   }
@@ -9417,6 +10227,26 @@
     replaceFromType: replaceProposalServiceBlockFromType,
   };
 
+  function bindProposalReportLanguagesWidth(form) {
+    const dateField = form.querySelector('.contract-date-terms-field');
+    const languages = form.querySelector('.proposal-report-languages-field');
+    if (!dateField || !languages || languages.dataset.widthBound === '1') return;
+    languages.dataset.widthBound = '1';
+    const sync = () => {
+      const width = dateField.getBoundingClientRect().width;
+      if (width <= 0) return;
+      const style = window.getComputedStyle(languages);
+      const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+      languages.style.width = Math.round(width + padding) + 'px';
+    };
+    sync();
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(sync).observe(dateField);
+    } else {
+      window.addEventListener('resize', sync);
+    }
+  }
+
   function initProposalForm() {
     const root = pane();
     const form = root?.querySelector('form[data-proposal-form]');
@@ -11735,6 +12565,7 @@
         groupByContract: false,
       });
     }
+    bindProposalReportLanguagesWidth(form);
     form.querySelector('[name="asset_owner_matches_customer"]')?.addEventListener('change', function () {
       syncAssetOwnerFromCustomer('customer-sync');
     });
@@ -11777,7 +12608,30 @@
     assetsApi?.fillEmptyRowsFromDefaults();
       applyProposalReportTermsLockState();
     stageProductsApi?.sync();
+    lockProposalRegistrationForm(form);
     ensureProposalFormSession(form);
+  }
+
+  function lockProposalRegistrationForm(form) {
+    if (!form || form.dataset.proposalLocked !== '1') return;
+    const statusEditable = form.dataset.proposalStatusEditable === '1';
+    form.querySelectorAll('input, select, textarea, button').forEach(function (node) {
+      if (node.name === 'csrfmiddlewaretoken') return;
+      if (statusEditable && node.name === 'status') return;
+      node.disabled = true;
+      if ('readOnly' in node) node.readOnly = true;
+      node.tabIndex = -1;
+      node.classList.add('readonly-field');
+    });
+    form.querySelectorAll('[contenteditable="true"]').forEach(function (node) {
+      node.setAttribute('contenteditable', 'false');
+    });
+    if (!statusEditable) {
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }, true);
+    }
   }
 
   function initProposalDispatchForm() {
@@ -12508,6 +13362,20 @@
       await cancelProposalForm();
       return;
     }
+    const createVersionBtn = event.target.closest('#proposal-form-actions [data-proposal-form-create-version-btn]');
+    if (createVersionBtn) {
+      event.preventDefault();
+      if (createVersionBtn.disabled || createVersionBtn.classList.contains('d-none')) return;
+      const form = getProposalRegistrationForm();
+      const url = form?.dataset?.proposalCreateVersionUrl;
+      if (!url || typeof htmx === 'undefined') return;
+      createVersionBtn.disabled = true;
+      try {
+        await htmx.ajax('POST', url, { target: '#proposals-pane', swap: 'outerHTML' });
+      } finally {
+        syncProposalFormActions();
+      }
+    }
   });
 
   document.addEventListener('click', async (event) => {
@@ -12829,12 +13697,13 @@
     const sendUrl = panel?.dataset?.sendUrl;
     const sentAtInput = root.querySelector('#proposal-request-sent-at');
     const selectedChannels = getProposalChannels().filter((cb) => cb.checked).map((cb) => cb.value);
+    const statusOnly = selectedChannels.length === 1 && selectedChannels[0] === PROPOSAL_STATUS_ONLY_CHANNEL;
 
     if (!selectedChannels.length) {
       alert('Выберите хотя бы один способ отправки.');
       return;
     }
-    const rowsWithoutEmail = checked
+    const rowsWithoutEmail = statusOnly ? [] : checked
       .map((cb) => cb.closest('tr'))
       .filter((row) => row && !String(row.dataset.contactEmail || '').trim());
     if (rowsWithoutEmail.length) {
@@ -12859,10 +13728,23 @@
     checked.forEach((cb) => formData.append('proposal_ids[]', cb.value));
     formData.append('sent_at', sentAtInput?.value || '');
     selectedChannels.forEach((value) => formData.append('delivery_channels[]', value));
+    const sourceSel = root.querySelector('#proposal-dispatch-source');
+    if (!statusOnly && sourceSel && sourceSel.value === 'local') {
+      const pathInput = root.querySelector('#proposal-dispatch-local-path');
+      const localPath = pathInput ? pathInput.value.trim() : '';
+      if (!localPath) {
+        alert('Укажите путь к локальной папке.');
+        return;
+      }
+      formData.append('source_kind', 'local');
+      formData.append('local_folder_path', localPath);
+    }
 
     const originalHtml = sendBtn.innerHTML;
     sendBtn.disabled = true;
-    sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Отправка...';
+    sendBtn.innerHTML = statusOnly
+      ? '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Сохранение...'
+      : '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Отправка...';
     try {
       const response = await fetch(sendUrl, {
         method: 'POST',
@@ -13044,6 +13926,7 @@
     if (!root) return;
     const channelCheckbox = event.target.closest('.js-proposal-channel');
     if (!channelCheckbox || !root.contains(channelCheckbox)) return;
+    enforceProposalChannelExclusivity(channelCheckbox);
     saveProposalSendSettings();
   });
 
@@ -13065,6 +13948,15 @@
     scheduleProposalTableScrollGapsUpdate();
     if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
       requestAnimationFrame(() => renderProposalPaymentGantt(root));
+    }
+  });
+
+  document.body.addEventListener('htmx:configRequest', function (event) {
+    const detail = event.detail;
+    if (!detail || !detail.parameters || !proposalRequestNeedsYearScope(detail)) return;
+    const years = proposalYearFilterValues();
+    if (years.length && !proposalRequestHasParam(detail, 'proposals_year')) {
+      detail.parameters.proposals_year = years.join(',');
     }
   });
 
@@ -13162,6 +14054,7 @@
     if (!root) return;
     const input = event.target.closest('#proposal-colpicker-menu input.form-check-input, #proposal-payment-colpicker-menu input.form-check-input, #proposal-dispatch-colpicker-menu input.form-check-input');
     if (!input || !root.contains(input)) return;
+    if (input.closest('#proposal-dispatch-colpicker-menu')) relayoutDispatchColumnsForVisibility();
     scheduleProposalTableScrollGapsUpdate();
   });
 
@@ -13386,12 +14279,47 @@
     }
   });
 
+  document.addEventListener('mouseover', function (event) {
+    if (!(event.target instanceof Element)) return;
+    if (!event.target.closest('#proposal-dispatch-table')) return;
+    setDispatchGroupHover(dispatchHoverGroupId(event.target));
+  });
+
+  document.addEventListener('mouseout', function (event) {
+    if (!(event.target instanceof Element)) return;
+    const table = event.target.closest('#proposal-dispatch-table');
+    if (!table) return;
+    const nextNode = event.relatedTarget instanceof Element ? event.relatedTarget : null;
+    if (nextNode && table.contains(nextNode)) {
+      setDispatchGroupHover(dispatchHoverGroupId(nextNode));
+      return;
+    }
+    setDispatchGroupHover('');
+  });
+
   document.addEventListener('click', function (event) {
     const groupsToggle = event.target.closest('#proposal-dispatch-groups-toggle');
     if (groupsToggle) {
       event.preventDefault();
       event.stopPropagation();
       toggleVisibleDispatchGroups();
+      return;
+    }
+    const versionGroupsToggle = event.target.closest('.js-proposal-versions-toggle');
+    if (versionGroupsToggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleVisibleProposalVersionGroups(versionGroupsToggle.closest('table'));
+      return;
+    }
+    const versionButton = event.target.closest('[data-proposal-version-toggle]');
+    if (versionButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const controlled = (versionButton.getAttribute('data-proposal-number-version-toggles') || '').trim();
+      const versionTable = versionButton.closest('table');
+      if (controlled) toggleProposalVersionGroups(controlled.split(/\s+/), versionTable);
+      else toggleProposalVersionGroup(versionButton.getAttribute('data-proposal-version-toggle') || '', versionTable);
       return;
     }
     const button = event.target.closest('[data-proposal-dispatch-group-toggle]');

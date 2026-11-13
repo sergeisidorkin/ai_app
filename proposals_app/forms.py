@@ -87,7 +87,42 @@ def _proposal_system_dsc_payload(product):
         "code": section.code or SYSTEM_DSC_SECTION_CODE,
     }
 
+def is_proposal_status_admin(user) -> bool:
+    from projects_app.report_access import is_admin_user
+
+    return is_admin_user(user)
+
+
+MANUAL_LOCKED_PROPOSAL_STATUSES = frozenset({
+    ProposalRegistration.ProposalStatus.SENT,
+    ProposalRegistration.ProposalStatus.POSTPONED,
+    ProposalRegistration.ProposalStatus.NOT_HELD,
+})
+
+
+def can_edit_locked_proposal_status(user, current_status) -> bool:
+    if is_proposal_status_admin(user):
+        return True
+    return str(current_status or "") in MANUAL_LOCKED_PROPOSAL_STATUSES
+
+
+def allowed_manual_proposal_statuses(user, current_status) -> set[str]:
+    statuses = ProposalRegistration.ProposalStatus
+    if is_proposal_status_admin(user):
+        return {choice.value for choice in statuses}
+    current = str(current_status or "")
+    if current in MANUAL_LOCKED_PROPOSAL_STATUSES:
+        return set(MANUAL_LOCKED_PROPOSAL_STATUSES)
+    allowed = {statuses.POSTPONED, statuses.NOT_HELD}
+    if current:
+        allowed.add(current)
+    else:
+        allowed.add(statuses.DRAFT)
+    return allowed
+
+
 NON_EDITABLE_PROPOSAL_STATUSES = {
+    ProposalRegistration.ProposalStatus.DRAFT,
     ProposalRegistration.ProposalStatus.SENT,
     ProposalRegistration.ProposalStatus.COMPLETED,
 }
@@ -418,7 +453,7 @@ def _proposal_stage_terms_from_payload(payload):
 
 class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
     number = forms.IntegerField(
-        label="Номер",
+        label="Запрос",
         required=True,
         min_value=0,
         max_value=9999,
@@ -722,6 +757,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "type",
             "name",
             "kind",
+            "document_kind",
             "status",
             "year",
             "customer",
@@ -763,7 +799,16 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "customer": forms.TextInput(attrs={"placeholder": "Искать по наименованию и регистрационному номеру"}),
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user=None, **kwargs):
+        self.user = user
+        self.proposal_status_admin = is_proposal_status_admin(user)
+        instance = kwargs.get("instance")
+        self.proposal_status_editable = bool(
+            instance
+            and getattr(instance, "pk", None)
+            and instance.is_content_locked
+            and can_edit_locked_proposal_status(user, instance.status)
+        )
         super().__init__(*args, **kwargs)
         getlist = self.data.getlist if hasattr(self.data, "getlist") else lambda key: []
         if self.data:
@@ -785,15 +830,17 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         ]
                     elif value:
                         data[field_name] = str(value).replace("\u00a0", "").replace(" ", "").replace(",", ".")
+            if not str(data.get("document_kind") or "").strip():
+                data["document_kind"] = ProposalRegistration.ProposalDocumentKind.FINAL
             self.data = data
         for field in self.fields.values():
             _apply_russian_error_messages(field)
         self.fields["group_member"].queryset = _group_choices()
         self.fields["group_member"].label_from_instance = lambda obj: obj.group_display_label
         self.fields["group_member"].empty_label = "— Не выбрано —"
-        self.fields["status"].widget.disabled_values = {str(value) for value in NON_EDITABLE_PROPOSAL_STATUSES}
+        self.fields["status"].widget.disabled_values = self._status_disabled_values()
         if not (self.instance and self.instance.pk) and not self.is_bound:
-            self.fields["status"].initial = ProposalRegistration.ProposalStatus.FINAL
+            self.fields["status"].initial = ProposalRegistration.ProposalStatus.DRAFT
             self.fields["evaluation_date"].initial = _default_proposal_evaluation_date()
         self.fields["type"].queryset = Product.objects.order_by("position", "id")
         self.fields["type"].label_from_instance = lambda obj: obj.short_name
@@ -1121,6 +1168,90 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.stage_rows = self._build_stage_rows()
         self.summary_commercial_row = self._build_summary_commercial_row()
         self._refresh_proposal_terms_display()
+        self._lock_version_fields()
+
+    def _lock_registration_field(self, field):
+        lock_field(
+            field,
+            disabled=True,
+            use_disabled_attr=isinstance(
+                field.widget,
+                (forms.Select, forms.CheckboxInput, forms.RadioSelect),
+            ),
+        )
+
+    def _current_status_for_permissions(self) -> str:
+        if getattr(self.instance, "pk", None):
+            return str(self.instance.status or "")
+        return ProposalRegistration.ProposalStatus.DRAFT
+
+    def _status_disabled_values(self) -> set[str]:
+        allowed = allowed_manual_proposal_statuses(self.user, self._current_status_for_permissions())
+        return {choice.value for choice in ProposalRegistration.ProposalStatus} - allowed
+
+    def _lock_version_fields(self):
+        instance = self.instance
+        if not getattr(instance, "pk", None):
+            return
+        if instance.is_content_locked:
+            for name, field in self.fields.items():
+                if name == "status" and self.proposal_status_editable:
+                    continue
+                self._lock_registration_field(field)
+            return
+        if instance.has_identity_siblings():
+            for name in ("number", "sub_number", "group_member"):
+                self._lock_registration_field(self.fields[name])
+
+    def _assign_proposal_version(self, cleaned):
+        if any(name in self.errors for name in ("number", "sub_number", "group_member")):
+            return
+        number = cleaned.get("number")
+        if number in (None, ""):
+            return
+        sub_number = cleaned.get("sub_number")
+        if sub_number in (None, ""):
+            sub_number = 0
+        member = cleaned.get("group_member")
+        siblings = ProposalRegistration.identity_siblings(
+            number,
+            sub_number,
+            member,
+            exclude_pk=getattr(self.instance, "pk", None),
+        )
+        identity_changed = not bool(getattr(self.instance, "pk", None))
+        if self.instance.pk:
+            original = (
+                ProposalRegistration.objects.filter(pk=self.instance.pk)
+                .values("number", "sub_number", "group_member_id")
+                .first()
+            )
+            member_id = getattr(member, "pk", None)
+            identity_changed = (
+                not original
+                or original["number"] != number
+                or original["sub_number"] != sub_number
+                or original["group_member_id"] != member_id
+            )
+            if original and not identity_changed:
+                return
+            if original and identity_changed and ProposalRegistration.identity_siblings(
+                original["number"],
+                original["sub_number"],
+                original["group_member_id"],
+                exclude_pk=self.instance.pk,
+            ).exists():
+                self.add_error(
+                    "number",
+                    "Запрос, № и группа версии с общим ТКП ID не изменяются.",
+                )
+                return
+        if siblings.filter(status__in=ProposalRegistration.DRAFT_STATUSES).exists():
+            self.add_error("number", ProposalRegistration.VERSION_DRAFT_ERROR)
+            return
+        if not self.instance.pk or identity_changed:
+            latest = siblings.aggregate(max_version=Max("version")).get("max_version") or 0
+            self.instance.version = int(latest) + 1
 
     def _is_payment_schedule_common_enabled(self):
         if self.is_bound:
@@ -1700,10 +1831,8 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def clean_status(self):
         status = self.cleaned_data.get("status")
-        if status in NON_EDITABLE_PROPOSAL_STATUSES:
-            current_status = str(getattr(self.instance, "status", "") or "")
-            if self.instance.pk and status == current_status:
-                return status
+        allowed = allowed_manual_proposal_statuses(self.user, self._current_status_for_permissions())
+        if status not in allowed:
             raise forms.ValidationError("Выберите корректное значение.")
         return status
 
@@ -2725,6 +2854,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 cleaned["final_report_percent"] = last_stage["final_report_percent"]
                 cleaned["final_report_term_days"] = last_stage["final_report_term_days"]
 
+        self._assign_proposal_version(cleaned)
         return cleaned
 
     def save(self, commit=True):

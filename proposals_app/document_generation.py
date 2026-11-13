@@ -563,6 +563,25 @@ def store_generated_pdf_document(user, proposal, pdf_bytes: bytes) -> dict[str, 
     }
 
 
+def convert_docx_bytes_to_pdf_locally(docx_bytes: bytes, *, source_name: str = "proposal.docx") -> bytes:
+    """DOCX → PDF через локальный LibreOffice, без ONLYOFFICE."""
+    if not docx_bytes:
+        raise RuntimeError("Пустой DOCX-файл нельзя конвертировать в PDF.")
+    from projects_app.docx_render import DocxRenderError, _render_with_libreoffice, find_soffice
+
+    if not find_soffice():
+        raise RuntimeError(
+            "LibreOffice (soffice) не найден. Установите LibreOffice для локальной генерации PDF."
+        )
+    try:
+        pdf_bytes = _render_with_libreoffice(docx_bytes, source_name or "proposal.docx")
+    except DocxRenderError as exc:
+        raise RuntimeError(f"Локальная генерация PDF не удалась: {exc}") from exc
+    if not pdf_bytes:
+        raise RuntimeError("Локальная генерация PDF вернула пустой файл.")
+    return pdf_bytes
+
+
 def generate_and_store_proposal_pdf(user, proposal, *, source_url: str) -> dict[str, str]:
     source_name = str(getattr(proposal, "docx_file_name", "") or "").strip() or "proposal.docx"
     pdf_bytes = convert_docx_source_to_pdf(source_url=source_url, source_name=source_name)

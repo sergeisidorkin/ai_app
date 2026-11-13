@@ -616,13 +616,13 @@
                 <div class="dropdown pt-1" id="master-proposal-kind-filter-dropdown" style="transform: translateY(3px);">
                   <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
                           id="proposal-kind-filter-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                    Вид: <span class="js-proposal-kind-filter-label">Все</span>
+                    Категория: <span class="js-proposal-kind-filter-label">Все</span>
                   </button>
                   <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="proposal-kind-filter-toggle"
                        style="max-height: 240px; overflow-y: auto;">
                     <div class="form-check mb-2">
                       <input class="form-check-input js-proposal-kind-filter" type="checkbox" value="__all__" id="proposal-kind-filter-all" checked>
-                      <label class="form-check-label" for="proposal-kind-filter-all">Все виды</label>
+                      <label class="form-check-label" for="proposal-kind-filter-all">Все категории</label>
                     </div>
                     <hr class="dropdown-divider">
                     <div id="proposal-kind-filter-list"></div>
@@ -643,9 +643,27 @@
                     <div id="proposal-status-filter-list"></div>
                   </div>
                 </div>
+                <div class="dropdown pt-1" id="master-proposal-year-filter-dropdown" style="transform: translateY(3px);">
+                  <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"
+                          id="proposal-year-filter-toggle" data-bs-toggle="dropdown" data-bs-display="static" data-bs-auto-close="outside" aria-expanded="false">
+                    Год: <span class="js-proposal-year-filter-label">Все</span>
+                  </button>
+                  <div class="dropdown-menu p-3 project-filter-menu" aria-labelledby="proposal-year-filter-toggle"
+                       style="max-height: 240px; overflow-y: auto;">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input js-proposal-year-filter" type="checkbox" value="__all__" id="proposal-year-filter-all" checked>
+                      <label class="form-check-label" for="proposal-year-filter-all">Все годы</label>
+                    </div>
+                    <hr class="dropdown-divider">
+                    <div id="proposal-year-filter-list"></div>
+                  </div>
+                </div>
               </div>
               <div class="d-flex align-items-center gap-2">
                 <div id="proposal-form-actions" class="d-none align-items-center gap-2">
+                  <button type="button"
+                          class="btn btn-outline-primary btn-sm d-none"
+                          data-proposal-form-create-version-btn="1">Создать версию</button>
                   <button type="button"
                           class="btn btn-outline-secondary btn-sm"
                           data-proposal-form-cancel-btn="1">Отмена</button>
@@ -707,7 +725,7 @@
               <div id="checklists-content-statuses" class="checklists-section-content">
                 <div id="checklists-pane"
                      hx-get="{% url 'checklists_app:panel_partial' %}"
-                     hx-trigger="intersect once, shown.bs.tab from:#sidebar a[href='#checklists'] once, checklists-statuses-load from:body once"
+                     hx-trigger="intersect once, shown.bs.tab from:{#sidebar a[href='#checklists']} once, checklists-statuses-load from:body once"
                      hx-target="#checklists-pane"
                      hx-swap="innerHTML">
                   <div class="text-muted htmx-indicator">Загрузка чек-листов…</div>
@@ -743,7 +761,7 @@
           <div class="ps-3">
             <div id="checklists-pane"
                  hx-get="{% url 'checklists_app:panel_partial' %}"
-                 hx-trigger="intersect once, shown.bs.tab from:#sidebar a[href='#checklists'] once"
+                 hx-trigger="intersect once, shown.bs.tab from:{#sidebar a[href='#checklists']} once"
                  hx-target="#checklists-pane"
                  hx-swap="innerHTML">
               <div class="text-muted htmx-indicator">Загрузка чек-листов…</div>
@@ -1145,7 +1163,7 @@
           <div class="ps-3">
             <div id="connections-pane"
                  hx-get="{% url 'onedrive_connections_partial' %}"
-                 hx-trigger="intersect once, shown.bs.tab from:#sidebar a[href='#connections'] once"
+                 hx-trigger="intersect once, shown.bs.tab from:{#sidebar a[href='#connections']} once"
                  hx-target="#connections-pane"
                  hx-swap="innerHTML"
                  hx-indicator="#connections-loading">
@@ -1178,7 +1196,7 @@
 
                 <div id="debugger-pane"
                      hx-get="{% url 'debugger_app:panel_partial' %}"
-                     hx-trigger="intersect once, shown.bs.tab from:#sidebar a[href='#debugger'] once"
+                     hx-trigger="intersect once, shown.bs.tab from:{#sidebar a[href='#debugger']} once"
                      hx-target="#debugger-pane"
                      hx-swap="innerHTML">
                   <div class="text-muted htmx-indicator">Загрузка…</div>

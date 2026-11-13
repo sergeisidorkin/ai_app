@@ -2364,6 +2364,18 @@
   const policyLazyRequestTokens = new Map();
   const policyLazyRequestControllers = new Map();
   const POLICY_LAZY_REFRESH_CONCURRENCY = 2;
+  const POLICY_REQUEST_TIMEOUT_MS = 20000;
+  let policyShellRequestToken = 0;
+  let policyShellAbortController = null;
+
+  function bindPolicyFetchTimeout(controller, timeoutMs) {
+    const timer = window.setTimeout(function () {
+      controller.abort();
+    }, timeoutMs);
+    return function () {
+      window.clearTimeout(timer);
+    };
+  }
 
   function syncPolicyLazyPlaceholderQuery(placeholder) {
     if (!placeholder?.matches?.('[data-policy-lazy-placeholder="1"]')) return;
@@ -2447,8 +2459,10 @@
       policyLazyRequestControllers.set(tableKey, controller);
       placeholder.dataset.policyLazyRequestToken = String(requestToken);
       setPolicyLazyPlaceholderStatus(placeholder, 'loading', 'Загрузка…');
+      const clearPolicyFetchTimeout = bindPolicyFetchTimeout(controller, POLICY_REQUEST_TIMEOUT_MS);
       fetch(policyLazyPlaceholderUrl(placeholder), {
         signal: controller.signal,
+        credentials: 'same-origin',
         headers: { 'HX-Request': 'true', 'X-Requested-With': 'fetch' },
       }).then(function (response) {
         if (!response.ok) throw new Error('Не удалось загрузить таблицу.');
@@ -2478,6 +2492,7 @@
           setPolicyLazyPlaceholderStatus(current, 'error', 'Ошибка загрузки');
         }
       }).finally(function () {
+        clearPolicyFetchTimeout();
         if (policyLazyRequestControllers.get(tableKey) === controller) {
           policyLazyRequestControllers.delete(tableKey);
         }
@@ -2635,6 +2650,74 @@
     );
   }
 
+  function showPolicyShellLoadError() {
+    const current = policyPane();
+    if (!current || current.dataset.policyShellState !== 'loading') return;
+    current.dataset.policyShellState = 'error';
+    current.innerHTML =
+      '<div class="alert alert-danger mb-0">Не удалось загрузить таблицы. ' +
+      '<button type="button" class="btn btn-sm btn-outline-danger ms-2" data-policy-shell-retry="1">Повторить</button></div>';
+  }
+
+  function installPolicyShellHtml(html) {
+    const current = policyPane();
+    if (!current || current.dataset.policyShellState !== 'loading') {
+      throw new Error('policy shell target gone');
+    }
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '').trim();
+    const replacement = template.content.querySelector('#policy-pane');
+    if (!replacement || !replacement.matches('[data-policy-lazy-shell="1"]')) {
+      throw new Error('policy shell fragment');
+    }
+    current.replaceWith(replacement);
+    if (window.htmx) window.htmx.process(replacement);
+    replacement.dataset.policyShellState = 'loaded';
+    const gantt = window.__policyTypicalServiceTermGantt;
+    const boundContainer = gantt && (
+      gantt.$container || gantt.$root
+      || (gantt.$layout && gantt.$layout.$container)
+      || null
+    );
+    if (gantt && boundContainer && !document.body.contains(boundContainer)) {
+      disposeTypicalServiceTermGanttInstance();
+    }
+    initPolicyProductSelects(replacement);
+    initPolicySectionSelects(replacement);
+    initPolicyServiceBlockSelects(replacement);
+    initPolicyLazyShell(replacement);
+  }
+
+  function requestPolicyShell(shellUrl, attempt) {
+    policyShellRequestToken += 1;
+    const requestToken = policyShellRequestToken;
+    if (policyShellAbortController) policyShellAbortController.abort();
+    const controller = new AbortController();
+    policyShellAbortController = controller;
+    const clearPolicyFetchTimeout = bindPolicyFetchTimeout(controller, POLICY_REQUEST_TIMEOUT_MS);
+    return fetch(shellUrl, {
+      signal: controller.signal,
+      credentials: 'same-origin',
+      headers: { 'HX-Request': 'true', 'X-Requested-With': 'fetch' },
+    }).then(function (response) {
+      if (requestToken !== policyShellRequestToken) return null;
+      if (!response.ok) throw new Error('policy shell status');
+      return response.text();
+    }).then(function (html) {
+      if (html == null || requestToken !== policyShellRequestToken) return;
+      installPolicyShellHtml(html);
+    }).catch(function () {
+      if (requestToken !== policyShellRequestToken) return;
+      if (attempt < 1 && policyPane()?.dataset?.policyShellState === 'loading') {
+        return requestPolicyShell(shellUrl, attempt + 1);
+      }
+      showPolicyShellLoadError();
+    }).finally(function () {
+      clearPolicyFetchTimeout();
+      if (policyShellAbortController === controller) policyShellAbortController = null;
+    });
+  }
+
   function loadPolicyShellOnce() {
     const root = policyPane();
     const shellUrl = normalizeFilterValue(root?.dataset?.policyShellUrl);
@@ -2646,20 +2729,7 @@
     if (loading) {
       loading.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span><span>Загрузка таблиц…</span>';
     }
-    return Promise.resolve(
-      htmx.ajax('GET', shellUrl, { target: '#policy-pane', swap: 'outerHTML' })
-    ).then(function () {
-      const shell = policyPane();
-      if (shell) shell.dataset.policyShellState = 'loaded';
-      initPolicyLazyShell(shell);
-    }).catch(function () {
-      const current = policyPane();
-      if (!current) return;
-      current.dataset.policyShellState = 'error';
-      current.innerHTML =
-        '<div class="alert alert-danger mb-0">Не удалось загрузить таблицы. ' +
-        '<button type="button" class="btn btn-sm btn-outline-danger ms-2" data-policy-shell-retry="1">Повторить</button></div>';
-    });
+    return requestPolicyShell(shellUrl, 0);
   }
 
   function clearManagedPolicyTableSelection(wrapper) {
@@ -2896,8 +2966,10 @@
       generation: requestGeneration,
     });
 
+    const clearPolicyFetchTimeout = bindPolicyFetchTimeout(controller, POLICY_REQUEST_TIMEOUT_MS);
     return fetch(requestUrl, {
       signal: controller.signal,
+      credentials: 'same-origin',
       headers: { 'HX-Request': 'true', 'X-Requested-With': 'fetch' },
     }).then(function (response) {
       if (!response.ok) throw new Error('Не удалось обновить таблицу.');
@@ -2954,6 +3026,7 @@
       }
       throw error;
     }).finally(function () {
+      clearPolicyFetchTimeout();
       const activeRequest = policyLoadedFragmentRequests.get(tableKey);
       if (activeRequest?.token === requestToken) {
         policyLoadedFragmentRequests.delete(tableKey);

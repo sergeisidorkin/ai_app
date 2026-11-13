@@ -66,6 +66,8 @@ from .forms import (
     ProposalVariableForm,
     _proposal_group_member_order_map,
     _proposal_group_member_short,
+    allowed_manual_proposal_statuses,
+    can_edit_locked_proposal_status,
     proposal_variable_registry_json,
 )
 from .document_generation import (
@@ -73,6 +75,7 @@ from .document_generation import (
     LOCAL_PROPOSAL_PATH_PREFIX,
     LocalProposalFolderError,
     build_proposal_docx_source_url,
+    convert_docx_bytes_to_pdf_locally,
     generate_and_store_proposal_pdf,
     get_generated_docx_path,
     get_generated_pdf_path,
@@ -86,15 +89,21 @@ from .document_generation import (
     store_existing_proposal_docx_bytes,
     store_generated_documents,
     store_generated_documents_locally,
+    store_generated_pdf_document,
 )
 from .models import (
     ProposalDispatchRecipient,
     ProposalRegistration,
     ProposalTemplate,
     ProposalVariable,
+    ProposalVersionError,
     mirror_primary_dispatch_recipient,
 )
-from .services import normalize_proposal_delivery_channels, send_proposal_dispatch_emails
+from .services import (
+    PROPOSAL_DELIVERY_CHANNEL_STATUS_ONLY,
+    normalize_proposal_delivery_channels,
+    send_proposal_dispatch_emails,
+)
 from .variable_resolver import resolve_variables
 from .xlsx_export import build_commercial_xlsx
 
@@ -1578,6 +1587,11 @@ def _build_proposal_payment_schedule_rows(proposals):
                     "tkp_id": proposal.short_uid,
                     "type": (getattr(product, "short_name", "") or str(product or "")).strip(),
                     "name": proposal.name,
+                    "version": proposal.version_display,
+                    "version_group": getattr(proposal, "version_group", "") or "",
+                    "is_version_head": bool(getattr(proposal, "is_version_head", False)),
+                    "is_version_continuation": bool(getattr(proposal, "is_version_continuation", False)),
+                    "has_version_history": bool(getattr(proposal, "has_version_history", False)),
                     "stage": f"Этап {index}",
                     "evaluation_date": (
                         _proposal_schedule_date(
@@ -1633,6 +1647,233 @@ def _build_proposal_payment_schedule_rows(proposals):
     return rows
 
 
+def _annotate_preliminary_sent_status_markers(proposals):
+    """Отправленное предварительное ТКП помечается как завершённое по цвету, если у того же ТКП ID есть итоговое."""
+    grouped = {}
+    for proposal in proposals:
+        grouped.setdefault(_proposal_version_group_key(proposal), []).append(proposal)
+    final = ProposalRegistration.ProposalDocumentKind.FINAL
+    preliminary = ProposalRegistration.ProposalDocumentKind.PRELIMINARY
+    sent = ProposalRegistration.ProposalStatus.SENT
+    for members in grouped.values():
+        has_final = any(member.document_kind == final for member in members)
+        for member in members:
+            member.sent_status_marker_done = bool(
+                has_final
+                and member.document_kind == preliminary
+                and member.status == sent
+            )
+    return proposals
+
+
+def _proposal_version_group_key(proposal):
+    uid = str(getattr(proposal, "short_uid", "") or "").strip()
+    if uid:
+        return uid
+    return f"id:{proposal.pk}"
+
+
+def _order_proposals_for_display(proposals):
+    items = list(proposals)
+    groups = {}
+    for item in items:
+        groups.setdefault(_proposal_version_group_key(item), []).append(item)
+
+    def anchor(members):
+        first = min(members, key=lambda proposal: (int(proposal.version or 1), proposal.pk or 0))
+        return (int(first.position or 0), first.pk or 0)
+
+    ordered = []
+    for key in sorted(groups, key=lambda group_key: anchor(groups[group_key])):
+        members = sorted(
+            groups[key],
+            key=lambda proposal: (-int(proposal.version or 1), -(proposal.pk or 0)),
+        )
+        for index, proposal in enumerate(members):
+            proposal.is_version_head = index == 0
+            proposal.is_version_continuation = index > 0
+            proposal.has_version_history = len(members) > 1
+            proposal.version_group = key
+        ordered.extend(members)
+    return ordered
+
+
+def _normalize_proposal_version_order(ordered_ids, by_id):
+    grouped = {}
+    group_order = []
+    for proposal_id in ordered_ids:
+        item = by_id[proposal_id]
+        key = _proposal_version_group_key(item)
+        if key not in grouped:
+            grouped[key] = []
+            group_order.append(key)
+        grouped[key].append(item)
+    normalized = []
+    for key in group_order:
+        members = sorted(
+            grouped[key],
+            key=lambda proposal: (-int(proposal.version or 1), -(proposal.pk or 0)),
+        )
+        normalized.extend(member.pk for member in members)
+    return normalized
+
+
+def _persist_proposal_positions(ordered_ids):
+    for index, proposal_id in enumerate(ordered_ids, start=1):
+        ProposalRegistration.objects.filter(pk=proposal_id).update(position=index)
+
+
+def _move_proposal_group(pk, direction):
+    items = list(ProposalRegistration.objects.select_related("group_member").order_by("position", "id"))
+    display = _order_proposals_for_display(items)
+    groups = []
+    index_by_pk = {}
+    for proposal in display:
+        key = proposal.version_group
+        if not groups or groups[-1][0] != key:
+            groups.append((key, []))
+        groups[-1][1].append(proposal.pk)
+        index_by_pk[proposal.pk] = len(groups) - 1
+    index = index_by_pk.get(pk)
+    if index is None:
+        return
+    swap_with = index - 1 if direction == "up" else index + 1
+    if swap_with < 0 or swap_with >= len(groups):
+        return
+    groups[index], groups[swap_with] = groups[swap_with], groups[index]
+    _persist_proposal_positions(proposal_id for _, proposal_ids in groups for proposal_id in proposal_ids)
+
+
+def _proposal_identity_key(proposal):
+    return (
+        str(proposal.sub_number if proposal.sub_number is not None else ""),
+        str(getattr(proposal, "group_display", "") or ""),
+        str(getattr(proposal, "short_uid", "") or ""),
+        str(getattr(proposal, "type_short_display", "") or ""),
+        str(getattr(proposal, "name", "") or ""),
+    )
+
+
+def _payment_identity_key(row):
+    sub_number = row.get("sub_number")
+    return (
+        str(sub_number if sub_number is not None else ""),
+        str(row.get("group") or ""),
+        str(row.get("tkp_id") or ""),
+        str(row.get("type") or ""),
+        str(row.get("name") or ""),
+    )
+
+
+def _annotate_identity_groups(items, key_fn):
+    items = list(items)
+    start = 0
+    while start < len(items):
+        key = key_fn(items[start])
+        end = start + 1
+        while end < len(items) and key_fn(items[end]) == key:
+            end += 1
+        group_size = end - start
+        for offset, item in enumerate(items[start:end]):
+            values = {
+                "show_identity_fields": offset == 0,
+                "identity_has_next": offset < group_size - 1,
+                "is_identity_continuation": offset > 0,
+            }
+            if isinstance(item, dict):
+                item.update(values)
+            else:
+                for name, value in values.items():
+                    setattr(item, name, value)
+        start = end
+    return items
+
+
+def _annotate_payment_number_groups(rows):
+    items = list(rows)
+    start = 0
+    while start < len(items):
+        current_number = items[start].get("number")
+        end = start + 1
+        while end < len(items) and items[end].get("number") == current_number:
+            end += 1
+        group_size = end - start
+        for offset, row in enumerate(items[start:end]):
+            row["is_first_for_number"] = offset == 0
+            row["is_number_continuation"] = offset > 0
+            row["has_next_for_number"] = offset < group_size - 1
+        start = end
+    return _annotate_payment_request_version_toggles(items)
+
+
+def _annotate_payment_request_version_toggles(rows):
+    items = list(rows)
+    start = 0
+    while start < len(items):
+        number = items[start].get("number")
+        end = start + 1
+        while end < len(items) and items[end].get("number") == number:
+            end += 1
+        group = items[start:end]
+
+        def tkp_id(row):
+            return str(row.get("version_group") or row.get("tkp_id") or "")
+
+        combine, toggle_ids = _request_version_toggle_state(
+            group,
+            tkp_id,
+            has_own_toggle=lambda row: bool(
+                row.get("is_first_for_proposal")
+                and row.get("is_version_head")
+                and row.get("has_version_history")
+            ),
+        )
+        controlled = " ".join(toggle_ids) if combine else ""
+        for index, row in enumerate(group):
+            own_toggle = bool(
+                row.get("is_first_for_proposal")
+                and row.get("is_version_head")
+                and row.get("has_version_history")
+            )
+            if combine and index == 0:
+                row["show_version_toggle"] = True
+                row["version_toggle_group"] = toggle_ids[0]
+                row["version_toggle_controlled_ids"] = controlled
+                row["version_toggle_suppressed"] = False
+                row["version_toggle_master_only"] = not own_toggle
+            elif combine and own_toggle:
+                row["show_version_toggle"] = True
+                row["version_toggle_group"] = tkp_id(row)
+                row["version_toggle_controlled_ids"] = ""
+                row["version_toggle_suppressed"] = True
+                row["version_toggle_master_only"] = False
+            else:
+                row["show_version_toggle"] = own_toggle
+                row["version_toggle_group"] = tkp_id(row) if own_toggle else ""
+                row["version_toggle_controlled_ids"] = ""
+                row["version_toggle_suppressed"] = False
+                row["version_toggle_master_only"] = False
+        start = end
+    return items
+
+
+def _payment_row_class(row):
+    classes = []
+    if row.get("has_next_for_proposal"):
+        classes.append("proposal-payment-stage-has-next")
+    if row.get("is_continuation"):
+        classes.append("proposal-payment-stage-continuation")
+    if row.get("has_next_for_number"):
+        classes.append("proposal-payment-number-has-next")
+    if row.get("is_number_continuation"):
+        classes.append("proposal-payment-number-continuation")
+    if row.get("identity_has_next"):
+        classes.append("proposal-payment-identity-has-next")
+    if row.get("is_identity_continuation"):
+        classes.append("proposal-payment-identity-continuation")
+    return " ".join(classes)
+
+
 def _annotate_proposal_number_groups(proposals):
     items = list(proposals)
     start = 0
@@ -1647,7 +1888,127 @@ def _annotate_proposal_number_groups(proposals):
             proposal.is_number_continuation = offset > 1
             proposal.has_next_for_number = offset < group_size
         start = end
+    return _annotate_request_version_toggles(items)
+
+
+def _request_version_toggle_state(rows, tkp_id, *, has_own_toggle):
+    seen_tkp = []
+    toggle_ids = []
+    for row in rows:
+        tkp = tkp_id(row)
+        if tkp and tkp not in seen_tkp:
+            seen_tkp.append(tkp)
+        if has_own_toggle(row) and tkp and tkp not in toggle_ids:
+            toggle_ids.append(tkp)
+    return len(seen_tkp) > 1 and bool(toggle_ids), toggle_ids
+
+
+def _annotate_request_version_toggles(proposals):
+    """Одна стрелка на «Запрос», если внутри него несколько разных ТКП ID."""
+    items = list(proposals)
+    start = 0
+    while start < len(items):
+        number = items[start].number
+        end = start + 1
+        while end < len(items) and items[end].number == number:
+            end += 1
+        group = items[start:end]
+        combine, toggle_ids = _request_version_toggle_state(
+            group,
+            _proposal_version_group_key,
+            has_own_toggle=lambda proposal: bool(
+                proposal.is_version_head and proposal.has_version_history
+            ),
+        )
+        controlled = " ".join(toggle_ids) if combine else ""
+        for index, proposal in enumerate(group):
+            own_toggle = bool(proposal.is_version_head and proposal.has_version_history)
+            if combine and index == 0:
+                proposal.show_version_toggle = True
+                proposal.version_toggle_group = toggle_ids[0]
+                proposal.version_toggle_controlled_ids = controlled
+                proposal.version_toggle_suppressed = False
+                proposal.version_toggle_master_only = not own_toggle
+            elif combine and own_toggle:
+                proposal.show_version_toggle = True
+                proposal.version_toggle_group = _proposal_version_group_key(proposal)
+                proposal.version_toggle_controlled_ids = ""
+                proposal.version_toggle_suppressed = True
+                proposal.version_toggle_master_only = False
+            else:
+                proposal.show_version_toggle = own_toggle
+                proposal.version_toggle_group = _proposal_version_group_key(proposal) if own_toggle else ""
+                proposal.version_toggle_controlled_ids = ""
+                proposal.version_toggle_suppressed = False
+                proposal.version_toggle_master_only = False
+        start = end
     return items
+
+
+PROPOSAL_YEAR_NONE = "none"
+
+
+def _proposal_request_values(request, key):
+    if request is None:
+        return []
+    values = list(request.GET.getlist(key))
+    if request.method == "POST":
+        values.extend(request.POST.getlist(key))
+    parts = []
+    for value in values:
+        parts.extend(part.strip() for part in str(value).split(",") if part.strip())
+    return parts
+
+
+def _selected_proposal_years(request):
+    years = []
+    for value in _proposal_request_values(request, "proposals_year"):
+        if value == "__all__":
+            continue
+        if value == PROPOSAL_YEAR_NONE:
+            year = None
+        elif value.isdigit():
+            year = int(value)
+        else:
+            continue
+        if year not in years:
+            years.append(year)
+    return years
+
+
+def _proposal_year_query_values(years):
+    return [PROPOSAL_YEAR_NONE if year is None else str(year) for year in years]
+
+
+def _proposal_year_options():
+    """Все годы реестра, независимо от текущего фильтра: список в шапке не должен схлопываться."""
+    years = set()
+    has_none = False
+    for year in ProposalRegistration.objects.values_list("year", flat=True).distinct():
+        if year is None:
+            has_none = True
+        else:
+            years.add(year)
+    options = [{"value": str(year), "label": str(year)} for year in sorted(years, reverse=True)]
+    if has_none:
+        options.append({"value": PROPOSAL_YEAR_NONE, "label": "Без года"})
+    return options
+
+
+def _apply_proposal_year_scope(queryset, years):
+    """Год сужает выборку на сервере. Версии одного ТКП ID остаются вместе, если подошла любая."""
+    if not years:
+        return queryset
+    numeric = [year for year in years if year is not None]
+    include_none = None in years
+    year_q = Q()
+    if numeric:
+        year_q |= Q(year__in=numeric)
+    if include_none:
+        year_q |= Q(year__isnull=True)
+    matched = ProposalRegistration.objects.filter(year_q)
+    sibling_uids = matched.exclude(short_uid="").values("short_uid")
+    return queryset.filter(Q(pk__in=matched.values("pk")) | Q(short_uid__in=sibling_uids))
 
 
 def _proposals_context(
@@ -1659,6 +2020,7 @@ def _proposals_context(
 ):
     if request is not None and user is None:
         user = request.user
+    selected_years = _selected_proposal_years(request)
     proposals = ProposalRegistration.objects.select_related(
         "group_member",
         "country",
@@ -1671,8 +2033,22 @@ def _proposals_context(
             "dispatch_recipients",
             queryset=ProposalDispatchRecipient.objects.order_by("position", "id"),
         ),
-    ).all()
-    proposals = _annotate_proposal_number_groups(proposals)
+    )
+    proposals = _apply_proposal_year_scope(proposals, selected_years)
+    proposals = _annotate_preliminary_sent_status_markers(
+        _annotate_identity_groups(
+            _annotate_proposal_number_groups(_order_proposals_for_display(proposals)),
+            _proposal_identity_key,
+        )
+    )
+    proposal_payment_schedule_rows = _annotate_payment_number_groups(
+        _annotate_identity_groups(
+            _build_proposal_payment_schedule_rows(proposals),
+            _payment_identity_key,
+        )
+    )
+    for row in proposal_payment_schedule_rows:
+        row["row_class"] = _payment_row_class(row)
     try:
         _attach_proposal_folder_urls(
             proposals,
@@ -1726,21 +2102,23 @@ def _proposals_context(
     proposal_order_ids = [proposal.pk for proposal in proposals]
     return {
         "proposals": proposals,
-        "proposal_payment_schedule_rows": _build_proposal_payment_schedule_rows(proposals),
+        "proposal_payment_schedule_rows": proposal_payment_schedule_rows,
         "proposal_templates": proposal_templates,
         "proposal_variables": proposal_variables,
         "proposal_registry_ui_columns": proposal_registry_ui_columns,
         "proposal_payment_schedule_ui_columns": proposal_payment_schedule_ui_columns,
         "proposal_dispatch_ui_columns": proposal_dispatch_ui_columns,
         "proposal_order_signature": _proposal_order_signature(proposal_order_ids),
-        "proposal_registry_empty_colspan": len(proposal_registry_ui_columns) + 1,
-        "proposal_payment_schedule_empty_colspan": len(proposal_payment_schedule_ui_columns) + 1,
-        "proposal_dispatch_empty_colspan": len(proposal_dispatch_ui_columns) + 1,
+        "proposal_registry_empty_colspan": len(proposal_registry_ui_columns) + 3,
+        "proposal_payment_schedule_empty_colspan": len(proposal_payment_schedule_ui_columns) + 2,
+        "proposal_dispatch_empty_colspan": len(proposal_dispatch_ui_columns) + 2,
         "primary_cloud_storage_label": get_primary_cloud_storage_label(),
         "proposal_request_sent_initial": timezone.localtime().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M"),
         "has_active_smtp_connection": has_active_smtp_connection,
         "allow_local_proposal_folder": local_proposal_folder_enabled(),
         "local_proposal_folder_placeholder": local_proposal_folder_placeholder(),
+        "proposal_year_options": _proposal_year_options(),
+        "proposal_registry_years": _proposal_year_query_values(selected_years),
     }
 
 
@@ -2282,6 +2660,27 @@ def _proposal_product_autofill_data(product_ids=None, group_member=None):
     }
 
 
+def _proposal_form_with_message(proposal, message, user=None):
+    form = ProposalRegistrationForm(instance=proposal, user=user)
+    form.cleaned_data = {}
+    form.add_error(None, message)
+    return form
+
+
+def _save_locked_proposal_status(request, proposal):
+    status = str(request.POST.get("status") or "")
+    allowed = allowed_manual_proposal_statuses(request.user, proposal.status)
+    if status not in allowed:
+        form = ProposalRegistrationForm(instance=proposal, user=request.user)
+        form.cleaned_data = {}
+        form.add_error("status", "Выберите корректное значение.")
+        return _render_proposal_form(request, form=form, action="edit", proposal=proposal)
+    if status != proposal.status:
+        proposal.status = status
+        proposal.save(update_fields=["status"])
+    return _render_proposals_updated(request)
+
+
 def _render_proposal_form(request, *, form, action, proposal=None):
     customer_identifier_record_id, customer_identifier_selected = _autocomplete_link_state(
         form,
@@ -2424,7 +2823,7 @@ def _render_proposal_variable_form(request, *, form, action, variable=None):
 
 
 def _normalize_proposal_positions():
-    items = ProposalRegistration.objects.order_by("position", "id").only("id", "position")
+    items = _order_proposals_for_display(ProposalRegistration.objects.all())
     for idx, item in enumerate(items, start=1):
         if item.position != idx:
             ProposalRegistration.objects.filter(pk=item.pk).update(position=idx)
@@ -2555,9 +2954,9 @@ def proposals_partial(request):
 @require_http_methods(["GET", "POST"])
 def proposal_form_create(request):
     if request.method == "GET":
-        return _render_proposal_form(request, form=ProposalRegistrationForm(), action="create")
+        return _render_proposal_form(request, form=ProposalRegistrationForm(user=request.user), action="create")
 
-    form = ProposalRegistrationForm(request.POST)
+    form = ProposalRegistrationForm(request.POST, user=request.user)
     if not form.is_valid():
         return _render_proposal_form(request, form=form, action="create")
 
@@ -2655,12 +3054,26 @@ def proposal_form_edit(request, pk: int):
     if request.method == "GET":
         return _render_proposal_form(
             request,
-            form=ProposalRegistrationForm(instance=proposal),
+            form=ProposalRegistrationForm(instance=proposal, user=request.user),
             action="edit",
             proposal=proposal,
         )
 
-    form = ProposalRegistrationForm(request.POST, instance=proposal)
+    if proposal.is_content_locked:
+        if not can_edit_locked_proposal_status(request.user, proposal.status):
+            return _render_proposal_form(
+                request,
+                form=_proposal_form_with_message(
+                    proposal,
+                    "Карточка доступна только для просмотра. Создайте новую версию.",
+                    user=request.user,
+                ),
+                action="edit",
+                proposal=proposal,
+            )
+        return _save_locked_proposal_status(request, proposal)
+
+    form = ProposalRegistrationForm(request.POST, instance=proposal, user=request.user)
     if not form.is_valid():
         return _render_proposal_form(request, form=form, action="edit", proposal=proposal)
 
@@ -2672,6 +3085,40 @@ def proposal_form_edit(request, pk: int):
     form.save_objects(proposal, request.user)
     form.save_commercial_offers(proposal, request.user)
     return _render_proposals_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def proposal_create_version(request, pk: int):
+    with transaction.atomic():
+        proposal = get_object_or_404(ProposalRegistration.objects.select_for_update(), pk=pk)
+        if not proposal.is_content_locked:
+            return _render_proposal_form(
+                request,
+                form=_proposal_form_with_message(
+                    proposal,
+                    "Версию можно создать только для отправленного, завершённого, отложенного или несостоявшегося ТКП.",
+                    user=request.user,
+                ),
+                action="edit",
+                proposal=proposal,
+            )
+        try:
+            created = proposal.create_next_version()
+        except ProposalVersionError as exc:
+            return _render_proposal_form(
+                request,
+                form=_proposal_form_with_message(proposal, str(exc), user=request.user),
+                action="edit",
+                proposal=proposal,
+            )
+    return _render_proposal_form(
+        request,
+        form=ProposalRegistrationForm(instance=created, user=request.user),
+        action="edit",
+        proposal=created,
+    )
 
 
 def _upsert_dispatch_recipient_email(person, email, email_record_id):
@@ -2922,11 +3369,42 @@ def proposal_dispatch_send(request):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
 
     sent_at_display = timezone.localtime(sent_at).strftime("%d.%m.%Y %H:%M")
-    email_result = send_proposal_dispatch_emails(
-        proposals=selected_proposals,
-        sender=request.user,
-        delivery_channels=delivery_channels,
-    )
+    if delivery_channels == (PROPOSAL_DELIVERY_CHANNEL_STATUS_ONLY,):
+        email_result = {
+            "delivery_channels": delivery_channels,
+            "email_delivery": {
+                "requested": False,
+                "attempted": 0,
+                "sent": 0,
+                "failed": 0,
+                "errors": [],
+            },
+            "sent_proposal_ids": [proposal.pk for proposal in selected_proposals],
+        }
+    else:
+        try:
+            _source_kind, local_folder = resolve_proposal_generation_source(request)
+        except LocalProposalFolderError as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        if local_folder is not None:
+            email_result = {
+                "delivery_channels": delivery_channels,
+                "email_delivery": {
+                    "requested": False,
+                    "simulated": True,
+                    "attempted": 0,
+                    "sent": len(selected_proposals),
+                    "failed": 0,
+                    "errors": [],
+                },
+                "sent_proposal_ids": [proposal.pk for proposal in selected_proposals],
+            }
+        else:
+            email_result = send_proposal_dispatch_emails(
+                proposals=selected_proposals,
+                sender=request.user,
+                delivery_channels=delivery_channels,
+            )
     sent_proposal_ids = email_result["sent_proposal_ids"]
     updated = 0
     sent_updates = []
@@ -3108,6 +3586,45 @@ def proposal_dispatch_transfer_to_contract(request):
     )
 
 
+def _onlyoffice_endpoint_unavailable(exc: BaseException) -> bool:
+    message = str(exc)
+    return (
+        "ONLYOFFICE недоступен для генерации PDF" in message
+        or "Не удалось скачать PDF из ONLYOFFICE" in message
+    )
+
+
+def _generate_signed_proposal_pdf(user, proposal, signed_docx_bytes: bytes, *, source_url: str) -> dict[str, str]:
+    """PDF подписанного ТКП: локальный LibreOffice для local:-файла и запасной путь, если ONLYOFFICE недоступен."""
+    docx_link = str(getattr(proposal, "docx_file_link", "") or "")
+    source_name = str(getattr(proposal, "docx_file_name", "") or "").strip() or "proposal.docx"
+
+    def render_locally() -> dict[str, str]:
+        pdf_bytes = convert_docx_bytes_to_pdf_locally(signed_docx_bytes, source_name=source_name)
+        return store_generated_pdf_document(user, proposal, pdf_bytes)
+
+    if is_local_proposal_path(docx_link):
+        return render_locally()
+
+    onlyoffice_error = None
+    if is_onlyoffice_conversion_configured():
+        try:
+            return generate_and_store_proposal_pdf(user, proposal, source_url=source_url)
+        except RuntimeError as exc:
+            if not (local_proposal_folder_enabled() and _onlyoffice_endpoint_unavailable(exc)):
+                raise
+            onlyoffice_error = exc
+    elif not local_proposal_folder_enabled():
+        raise RuntimeError("Не настроен ONLYOFFICE Document Server для генерации PDF.")
+
+    try:
+        return render_locally()
+    except RuntimeError as exc:
+        if onlyoffice_error is None:
+            raise
+        raise RuntimeError(f"{onlyoffice_error}; локальная генерация PDF: {exc}") from exc
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_POST
@@ -3143,12 +3660,6 @@ def proposal_dispatch_sign_documents(request):
             status=400,
         )
 
-    if not is_onlyoffice_conversion_configured():
-        return JsonResponse(
-            {"ok": False, "error": "Не настроен ONLYOFFICE Document Server для генерации PDF."},
-            status=400,
-        )
-
     document_updates = []
     errors = []
 
@@ -3179,9 +3690,10 @@ def proposal_dispatch_sign_documents(request):
                     docx_file_link=proposal.docx_file_link,
                 )
 
-            stored_pdf = generate_and_store_proposal_pdf(
+            stored_pdf = _generate_signed_proposal_pdf(
                 request.user,
                 proposal,
+                signed_docx_bytes,
                 source_url=build_proposal_docx_source_url(
                     request,
                     proposal,
@@ -3658,11 +4170,13 @@ def proposal_row_order(request):
     base_signature = str(payload.get("base_order_signature") or "")
     with transaction.atomic():
         current_items = list(
-            ProposalRegistration.objects.select_for_update().order_by("position", "id").only("id", "position")
+            ProposalRegistration.objects.select_for_update().order_by("position", "id")
         )
-        current_proposal_ids = [item.pk for item in current_items]
+        by_id = {item.pk: item for item in current_items}
+        current_proposal_ids = [item.pk for item in _order_proposals_for_display(current_items)]
         current_signature = _proposal_order_signature(current_proposal_ids)
-        desired_signature = _proposal_order_signature(ordered_proposal_ids)
+        normalized_ids = _normalize_proposal_version_order(ordered_proposal_ids, by_id)
+        desired_signature = _proposal_order_signature(normalized_ids)
 
         conflict_payload = {
             "ok": False,
@@ -3677,8 +4191,7 @@ def proposal_row_order(request):
         if set(ordered_proposal_ids) != set(current_proposal_ids):
             return JsonResponse(conflict_payload, status=409)
 
-        for idx, proposal_id in enumerate(ordered_proposal_ids, start=1):
-            ProposalRegistration.objects.filter(pk=proposal_id).update(position=idx)
+        _persist_proposal_positions(normalized_ids)
     return JsonResponse({"ok": True, "order_signature": desired_signature})
 
 
@@ -3686,14 +4199,7 @@ def proposal_row_order(request):
 @user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def proposal_move_up(request, pk: int):
-    _normalize_proposal_positions()
-    items = list(ProposalRegistration.objects.order_by("position", "id").only("id", "position"))
-    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
-    if idx is not None and idx > 0:
-        current, previous = items[idx], items[idx - 1]
-        ProposalRegistration.objects.filter(pk=current.id).update(position=previous.position)
-        ProposalRegistration.objects.filter(pk=previous.id).update(position=current.position)
-        _normalize_proposal_positions()
+    _move_proposal_group(pk, "up")
     return _render_proposals_updated_or_empty(request)
 
 
@@ -3701,12 +4207,5 @@ def proposal_move_up(request, pk: int):
 @user_passes_test(staff_required)
 @require_http_methods(["POST", "GET"])
 def proposal_move_down(request, pk: int):
-    _normalize_proposal_positions()
-    items = list(ProposalRegistration.objects.order_by("position", "id").only("id", "position"))
-    idx = next((i for i, item in enumerate(items) if item.id == pk), None)
-    if idx is not None and idx < len(items) - 1:
-        current, next_item = items[idx], items[idx + 1]
-        ProposalRegistration.objects.filter(pk=current.id).update(position=next_item.position)
-        ProposalRegistration.objects.filter(pk=next_item.id).update(position=current.position)
-        _normalize_proposal_positions()
+    _move_proposal_group(pk, "down")
     return _render_proposals_updated_or_empty(request)

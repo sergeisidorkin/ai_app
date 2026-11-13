@@ -2,7 +2,9 @@
 {% if proposal_lazy_shell %}
 {% include "proposals_app/_proposals_lazy_shell.html" %}
 {% else %}
-<div id="proposals-pane">
+<div id="proposals-pane"
+     data-proposal-tables-url="{% url 'proposals_partial' %}?tables=1"
+     data-proposal-years="{% if proposal_registry_years %}{{ proposal_registry_years|join:',' }}{% else %}__all__{% endif %}">
   <div id="proposals-loading" class="text-muted htmx-indicator d-none">Загрузка…</div>
 
   <div class="d-flex justify-content-between align-items-center gap-3 mb-3 table-section-header flex-wrap">
@@ -32,7 +34,7 @@
 
   <div class="registration-table-wrap proposal-registry-table-wrap">
     <table id="proposal-registry-table"
-           class="table table-sm align-middle reg-table proposals-table"
+           class="table table-sm align-top reg-table proposals-table"
            {% if request.user.is_authenticated and request.user.is_staff %}
            data-queued-row-order
            data-row-order-save-url="{% url 'proposal_row_order' %}"
@@ -42,13 +44,17 @@
            {% endif %}>
       <colgroup>
         <col class="checkbox">
+        <col class="proposal-version-toggle" data-col="version-toggle">
         <col class="proposal-number" data-col="number">
         <col class="proposal-sub-number" data-col="sub-number">
         <col class="group" data-col="group">
         <col class="proposal-id" data-col="tkp-id">
         <col class="proposal-type" data-col="type">
         <col class="proposal-name" data-col="name">
+        <col class="proposal-version" data-col="version">
         <col class="proposal-kind" data-col="kind">
+        <col class="proposal-document-kind" data-col="document-kind">
+        <col class="proposal-status-marker" data-col="status-marker">
         <col class="proposal-status" data-col="status">
         <col class="proposal-year" data-col="year">
         <col class="proposal-customer" data-col="customer">
@@ -84,7 +90,13 @@
               </div>
             {% endif %}
           </th>
+          <th class="proposal-version-toggle-col" data-col="version-toggle">
+            <button type="button" class="clf-wrap-btn proposal-versions-toggle js-proposal-versions-toggle" id="proposal-registry-versions-toggle" title="Свернуть/развернуть строки" aria-label="Свернуть/развернуть строки"><i class="bi bi-arrows-collapse"></i></button>
+          </th>
           {% for column in proposal_registry_ui_columns %}
+            {% if column.data_col == "status" %}
+            <th class="proposal-status-marker-col" data-col="status-marker"><span class="visually-hidden">Индикатор статуса</span></th>
+            {% endif %}
             <th data-col="{{ column.data_col }}"{% if column.split_prefix %} class="proposal-split-header{% if column.split_inline %} proposal-split-header-inline{% endif %}"{% endif %}>{% if column.split_prefix %}<span class="proposal-split-header-prefix">{{ column.split_prefix }}</span><span class="proposal-split-header-suffix">{{ column.split_suffix }}</span>{% else %}{{ column.label }}{% endif %}</th>
           {% endfor %}
         </tr>
@@ -101,7 +113,17 @@
               data-edit-url="{% url 'proposal_form_edit' proposal.pk %}"
               data-delete-url="{% url 'proposal_delete' proposal.pk %}"
               data-move-up-url="{% url 'proposal_move_up' proposal.pk %}"
-              data-move-down-url="{% url 'proposal_move_down' proposal.pk %}"{% if proposal.is_number_continuation or proposal.has_next_for_number %} class="{% if proposal.has_next_for_number %}proposal-registry-number-has-next{% endif %}{% if proposal.is_number_continuation %}{% if proposal.has_next_for_number %} {% endif %}proposal-registry-number-continuation{% endif %}"{% endif %}>
+              data-move-down-url="{% url 'proposal_move_down' proposal.pk %}"
+              data-version-group="{{ proposal.version_group }}"
+              data-row-group="{{ proposal.version_group }}"
+              data-identity-sub-number="{{ proposal.sub_number }}"
+              data-identity-group="{{ proposal.group_display }}"
+              data-identity-tkp-id="{{ proposal.short_uid }}"
+              data-identity-type="{{ proposal.type_short_display }}"
+              data-identity-name="{{ proposal.name }}"
+              {% if proposal.is_version_head %}data-version-head="1"{% endif %}
+              {% if proposal.is_version_continuation %}data-version-continuation="1" data-row-group-continuation="1"{% endif %}
+              {% if proposal.is_number_continuation or proposal.has_next_for_number or proposal.is_identity_continuation or proposal.identity_has_next %} class="{% if proposal.has_next_for_number %}proposal-registry-number-has-next{% endif %}{% if proposal.is_number_continuation %}{% if proposal.has_next_for_number %} {% endif %}proposal-registry-number-continuation{% endif %}{% if proposal.identity_has_next %}{% if proposal.has_next_for_number or proposal.is_number_continuation %} {% endif %}proposal-registry-identity-has-next{% endif %}{% if proposal.is_identity_continuation %}{% if proposal.has_next_for_number or proposal.is_number_continuation or proposal.identity_has_next %} {% endif %}proposal-registry-identity-continuation{% endif %}"{% endif %}>
             <td class="text-nowrap">
               {% if request.user.is_authenticated and request.user.is_staff %}
                 <div class="form-check">
@@ -114,14 +136,18 @@
                 </div>
               {% endif %}
             </td>
+            <td class="proposal-version-toggle-cell text-nowrap" data-col="version-toggle">{% include "proposals_app/_proposal_version_toggle.html" with show=proposal.show_version_toggle group=proposal.version_toggle_group controlled=proposal.version_toggle_controlled_ids suppressed=proposal.version_toggle_suppressed master_only=proposal.version_toggle_master_only %}</td>
             <td data-col="number">{% if proposal.is_first_for_number %}{{ proposal.formatted_number }}{% endif %}</td>
-            <td data-col="sub-number">{{ proposal.sub_number }}</td>
-            <td data-col="group">{{ proposal.group_display }}</td>
-            <td data-col="tkp-id" class="proposal-id-cell">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
-            <td data-col="type">{{ proposal.type_short_display }}</td>
-            <td data-col="name">{{ proposal.name }}</td>
+            <td data-col="sub-number">{% if proposal.show_identity_fields %}{{ proposal.sub_number }}{% endif %}</td>
+            <td data-col="group">{% if proposal.show_identity_fields %}{{ proposal.group_display }}{% endif %}</td>
+            <td data-col="tkp-id" class="proposal-id-cell">{% if proposal.show_identity_fields %}<span class="clf-id-droid-mono">{{ proposal.short_uid }}</span>{% endif %}</td>
+            <td data-col="type">{% if proposal.show_identity_fields %}{{ proposal.type_short_display }}{% endif %}</td>
+            <td data-col="name">{% if proposal.show_identity_fields %}{{ proposal.name }}{% endif %}</td>
+            <td data-col="version" class="proposal-id-cell text-nowrap">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ proposal.version_display }}</span></td>
             <td data-col="kind">{{ proposal.get_kind_display }}</td>
-            <td data-col="status" class="proposal-status-cell">{{ proposal.get_status_display }}</td>
+            <td data-col="document-kind">{{ proposal.get_document_kind_display }}</td>
+            <td class="proposal-status-marker-cell" data-col="status-marker">{% if proposal.status == "not_held" %}<i class="bi bi-play-circle text-muted proposal-status-marker-icon" title="{{ proposal.get_status_display }}" aria-hidden="true"></i>{% else %}<i class="bi bi-circle proposal-status-marker-icon{% if proposal.status == 'draft' %} proposal-status-marker--work{% elif proposal.status == 'sent' %}{% if proposal.sent_status_marker_done %} proposal-status-marker--done{% else %} proposal-status-marker--review{% endif %}{% elif proposal.status == 'completed' %} proposal-status-marker--done{% elif proposal.status == 'postponed' %} proposal-status-marker--deferred{% endif %}" title="{{ proposal.get_status_display }}" aria-hidden="true"></i>{% endif %}</td>
+            <td data-col="status" class="proposal-status-cell"><span class="proposal-status-label">{{ proposal.get_status_display }}</span></td>
             <td data-col="year">{{ proposal.year }}</td>
             <td data-col="customer">{{ proposal.customer }}</td>
             <td data-col="country">{{ proposal.country.short_name|default:"" }}</td>
@@ -250,12 +276,14 @@
     <table id="proposal-payment-schedule-table" class="table table-sm align-middle reg-table proposals-table">
       <colgroup>
         <col class="checkbox">
+        <col class="proposal-version-toggle" data-col="version-toggle">
         <col class="proposal-number" data-col="number">
         <col class="proposal-sub-number" data-col="sub-number">
         <col class="group" data-col="group">
         <col class="proposal-id" data-col="tkp-id">
         <col class="proposal-type" data-col="type">
         <col class="proposal-name" data-col="name">
+        <col class="proposal-version" data-col="version">
         <col class="proposal-stage" data-col="stage">
         <col class="proposal-evaluation-date" data-col="evaluation-date">
         <col class="proposal-start-date" data-col="start-date">
@@ -281,6 +309,9 @@
                      disabled>
             </div>
           </th>
+          <th class="proposal-version-toggle-col" data-col="version-toggle">
+            <button type="button" class="clf-wrap-btn proposal-versions-toggle js-proposal-versions-toggle" id="proposal-payment-versions-toggle" title="Свернуть/развернуть строки" aria-label="Свернуть/развернуть строки"><i class="bi bi-arrows-collapse"></i></button>
+          </th>
           {% for column in proposal_payment_schedule_ui_columns %}
             <th data-col="{{ column.data_col }}">{{ column.label }}</th>
           {% endfor %}
@@ -289,11 +320,20 @@
       <tbody>
         {% for row in proposal_payment_schedule_rows %}
           <tr data-proposal-id="{{ row.proposal_id }}"
+              data-number="{{ row.number }}"
               data-kind="{{ row.kind }}"
               data-kind-label="{{ row.kind_label }}"
               data-status="{{ row.status }}"
               data-status-label="{{ row.status_label }}"
-              data-edit-url="{% url 'proposal_form_edit' row.proposal_id %}"{% if row.is_continuation or row.has_next_for_proposal %} class="{% if row.has_next_for_proposal %}proposal-payment-stage-has-next{% endif %}{% if row.is_continuation %}{% if row.has_next_for_proposal %} {% endif %}proposal-payment-stage-continuation{% endif %}"{% endif %}>
+              data-version-group="{{ row.version_group }}"
+              {% if row.is_version_head %}data-version-head="1"{% endif %}
+              {% if row.is_version_continuation %}data-version-continuation="1"{% endif %}
+              data-edit-url="{% url 'proposal_form_edit' row.proposal_id %}"
+              data-identity-sub-number="{{ row.sub_number }}"
+              data-identity-group="{{ row.group }}"
+              data-identity-tkp-id="{{ row.tkp_id }}"
+              data-identity-type="{{ row.type }}"
+              data-identity-name="{{ row.name }}"{% if row.row_class %} class="{{ row.row_class }}"{% endif %}>
             <td class="text-nowrap">
               {% if row.is_first_for_proposal %}
                 <div class="form-check">
@@ -305,12 +345,14 @@
                 </div>
               {% endif %}
             </td>
-            <td data-col="number">{% if row.is_first_for_proposal %}{{ row.number }}{% endif %}</td>
-            <td data-col="sub-number">{% if row.is_first_for_proposal %}{{ row.sub_number }}{% endif %}</td>
-            <td data-col="group">{% if row.is_first_for_proposal %}{{ row.group }}{% endif %}</td>
-            <td data-col="tkp-id" class="proposal-id-cell">{% if row.is_first_for_proposal %}{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ row.tkp_id }}</span>{% endif %}</td>
-            <td data-col="type">{{ row.type }}</td>
-            <td data-col="name">{{ row.name }}</td>
+            <td class="proposal-version-toggle-cell text-nowrap" data-col="version-toggle">{% include "proposals_app/_proposal_version_toggle.html" with show=row.show_version_toggle group=row.version_toggle_group controlled=row.version_toggle_controlled_ids suppressed=row.version_toggle_suppressed master_only=row.version_toggle_master_only %}</td>
+            <td data-col="number">{% if row.is_first_for_number %}{{ row.number }}{% endif %}</td>
+            <td data-col="sub-number">{% if row.show_identity_fields %}{{ row.sub_number }}{% endif %}</td>
+            <td data-col="group">{% if row.show_identity_fields %}{{ row.group }}{% endif %}</td>
+            <td data-col="tkp-id" class="proposal-id-cell">{% if row.show_identity_fields %}<span class="clf-id-droid-mono">{{ row.tkp_id }}</span>{% endif %}</td>
+            <td data-col="type">{% if row.show_identity_fields %}{{ row.type }}{% endif %}</td>
+            <td data-col="name">{% if row.show_identity_fields %}{{ row.name }}{% endif %}</td>
+            <td data-col="version" class="proposal-id-cell text-nowrap">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ row.version }}</span></td>
             <td data-col="stage">{{ row.stage }}</td>
             <td data-col="evaluation-date">{{ row.evaluation_date|date:"d.m.Y" }}</td>
             <td data-col="start-date">{{ row.start_date|date:"d.m.Y" }}</td>
@@ -397,12 +439,14 @@
     <table id="proposal-dispatch-table" class="table table-sm align-middle proposal-dispatch-table">
       <colgroup>
         <col class="checkbox">
+        <col class="proposal-version-toggle" data-col="version-toggle">
         <col class="proposal-number" data-col="number">
         <col class="proposal-sub-number" data-col="sub-number">
         <col class="group" data-col="group">
         <col class="proposal-id" data-col="tkp-id">
         <col class="proposal-type" data-col="type">
         <col class="proposal-name" data-col="name">
+        <col class="proposal-version" data-col="version">
         <col class="proposal-disk" data-col="cloud">
         <col class="docx-name" data-col="docx-name">
         <col class="pdf-name" data-col="pdf-name">
@@ -427,6 +471,9 @@
               </div>
             {% endif %}
           </th>
+          <th class="proposal-version-toggle-col" data-col="version-toggle">
+            <button type="button" class="clf-wrap-btn proposal-versions-toggle js-proposal-versions-toggle" id="proposal-dispatch-versions-toggle" title="Свернуть/развернуть строки" aria-label="Свернуть/развернуть строки"><i class="bi bi-arrows-collapse"></i></button>
+          </th>
           {% for column in proposal_dispatch_ui_columns %}
             <th data-col="{{ column.data_col }}"{% if column.data_col == "contact-name" %} class="proposal-dispatch-contact-name-col"{% endif %}>
               {% if column.data_col == "contact-name" %}
@@ -449,14 +496,23 @@
           {% for row in rows %}
           <tr data-proposal-id="{{ proposal.id }}"
               data-dispatch-group="{{ proposal.id }}"
+              data-version-group="{{ proposal.version_group }}"
+              {% if proposal.is_version_head %}data-version-head="1"{% endif %}
+              {% if proposal.is_version_continuation %}data-version-continuation="1"{% endif %}
               data-kind="{{ proposal.kind }}"
               data-kind-label="{{ proposal.get_kind_display }}"
               data-status="{{ proposal.status }}"
               data-status-label="{{ proposal.get_status_display }}"
               data-tkp-id="{{ proposal.short_uid }}"
-              {% if not forloop.last %}class="proposal-dispatch-contact-has-next"{% endif %}
+              {% if not forloop.last or forloop.first and proposal.has_next_for_number or forloop.first and proposal.is_number_continuation or forloop.first and proposal.identity_has_next or forloop.first and proposal.is_identity_continuation %}class="{% if not forloop.last %}proposal-dispatch-contact-has-next{% endif %}{% if forloop.first and proposal.has_next_for_number %}{% if not forloop.last %} {% endif %}proposal-dispatch-number-has-next{% endif %}{% if forloop.first and proposal.is_number_continuation %}{% if not forloop.last or proposal.has_next_for_number %} {% endif %}proposal-dispatch-number-continuation{% endif %}{% if forloop.first and proposal.identity_has_next %}{% if not forloop.last or proposal.has_next_for_number or proposal.is_number_continuation %} {% endif %}proposal-dispatch-identity-has-next{% endif %}{% if forloop.first and proposal.is_identity_continuation %}{% if not forloop.last or proposal.has_next_for_number or proposal.is_number_continuation or proposal.identity_has_next %} {% endif %}proposal-dispatch-identity-continuation{% endif %}"{% endif %}
               {% if forloop.first %}
               data-dispatch-group-head="1"
+              data-number="{{ proposal.formatted_number }}"
+              data-identity-sub-number="{{ proposal.sub_number }}"
+              data-identity-group="{{ proposal.group_display }}"
+              data-identity-tkp-id="{{ proposal.short_uid }}"
+              data-identity-type="{{ proposal.type_short_display }}"
+              data-identity-name="{{ proposal.name }}"
               data-contact-email="{{ proposal.dispatch_to_emails }}"
               data-edit-url="{% url 'proposal_dispatch_form_edit' proposal.pk %}"
               data-send-ready="{% if proposal.docx_file_name %}1{% else %}0{% endif %}"
@@ -477,12 +533,14 @@
                 </div>
               {% endif %}
             </td>
-            <td data-col="number" rowspan="{{ rows|length }}">{{ proposal.formatted_number }}</td>
-            <td data-col="sub-number" rowspan="{{ rows|length }}">{{ proposal.sub_number }}</td>
-            <td data-col="group" rowspan="{{ rows|length }}">{{ proposal.group_display }}</td>
-            <td data-col="tkp-id" class="proposal-id-cell" rowspan="{{ rows|length }}">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ proposal.short_uid }}</span></td>
-            <td data-col="type" rowspan="{{ rows|length }}">{{ proposal.type_short_display }}</td>
-            <td data-col="name" rowspan="{{ rows|length }}">{{ proposal.name }}</td>
+            <td class="proposal-version-toggle-cell text-nowrap" data-col="version-toggle" rowspan="{{ rows|length }}">{% include "proposals_app/_proposal_version_toggle.html" with show=proposal.show_version_toggle group=proposal.version_toggle_group controlled=proposal.version_toggle_controlled_ids suppressed=proposal.version_toggle_suppressed master_only=proposal.version_toggle_master_only %}</td>
+            <td data-col="number" rowspan="{{ rows|length }}">{% if proposal.is_first_for_number %}{{ proposal.formatted_number }}{% endif %}</td>
+            <td data-col="sub-number" rowspan="{{ rows|length }}">{% if proposal.show_identity_fields %}{{ proposal.sub_number }}{% endif %}</td>
+            <td data-col="group" rowspan="{{ rows|length }}">{% if proposal.show_identity_fields %}{{ proposal.group_display }}{% endif %}</td>
+            <td data-col="tkp-id" class="proposal-id-cell" rowspan="{{ rows|length }}">{% if proposal.show_identity_fields %}<span class="clf-id-droid-mono">{{ proposal.short_uid }}</span>{% endif %}</td>
+            <td data-col="type" rowspan="{{ rows|length }}">{% if proposal.show_identity_fields %}{{ proposal.type_short_display }}{% endif %}</td>
+            <td data-col="name" rowspan="{{ rows|length }}">{% if proposal.show_identity_fields %}{{ proposal.name }}{% endif %}</td>
+            <td data-col="version" class="proposal-id-cell text-nowrap" rowspan="{{ rows|length }}">{% if request.user.is_authenticated and request.user.is_staff %}<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>{% endif %}<span class="clf-id-droid-mono">{{ proposal.version_display }}</span></td>
             <td class="text-nowrap" data-col="cloud" rowspan="{{ rows|length }}">
               {% with folder_url=proposal.proposal_workspace_folder_url %}
               {% if folder_url %}
@@ -637,9 +695,18 @@
                          type="checkbox"
                          id="proposal-channel-connected-email"
                          value="connected_email"
-                         {% if not has_active_smtp_connection %}disabled{% endif %}>
+                         {% if not has_active_smtp_connection %}disabled data-channel-unavailable="1"{% endif %}>
                   <label class="form-check-label" for="proposal-channel-connected-email">
                     Подключенная электронная почта
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input js-proposal-channel"
+                         type="checkbox"
+                         id="proposal-channel-status-only"
+                         value="status_without_email">
+                  <label class="form-check-label" for="proposal-channel-status-only">
+                    Смена статуса без отправки почты
                   </label>
                 </div>
                 {% if not has_active_smtp_connection %}
@@ -764,5 +831,6 @@
 
       {% include "proposals_app/proposal_variables_section.html" %}
     {% endif %}
+  {{ proposal_year_options|json_script:"proposal-year-options" }}
 </div>
 {% endif %}

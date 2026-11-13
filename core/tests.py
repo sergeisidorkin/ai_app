@@ -280,6 +280,12 @@ class HomePagePermissionsTests(TestCase):
         self.assertContains(response, 'id="policy-product-filter-toggle"', html=False)
         self.assertContains(response, 'id="proposal-kind-filter-toggle"', html=False)
         self.assertContains(response, 'id="proposal-status-filter-toggle"', html=False)
+        self.assertContains(response, 'id="proposal-year-filter-toggle"', html=False)
+        self.assertContains(response, 'Год: <span class="js-proposal-year-filter-label">Все</span>', html=False)
+        self.assertContains(response, 'id="proposal-year-filter-all"', html=False)
+        self.assertContains(response, 'Все годы', html=False)
+        html = response.content.decode()
+        self.assertLess(html.find('id="proposal-status-filter-toggle"'), html.find('id="proposal-year-filter-toggle"'))
         self.assertContains(
             response,
             'class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"\n'
@@ -308,6 +314,12 @@ class HomePagePermissionsTests(TestCase):
             response,
             'class="btn btn-primary btn-sm dropdown-toggle" type="button"\n'
             '                          id="proposal-status-filter-toggle"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'class="btn btn-outline-primary btn-sm dropdown-toggle" type="button"\n'
+            '                          id="proposal-year-filter-toggle"',
             html=False,
         )
 
