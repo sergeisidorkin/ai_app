@@ -741,6 +741,7 @@ body .second-sidebar + .flex-grow-1 {
 #master-policy-product-filter-dropdown .dropdown-menu,
 #master-proposal-kind-filter-dropdown .dropdown-menu,
 #master-proposal-status-filter-dropdown .dropdown-menu,
+#master-proposal-year-filter-dropdown .dropdown-menu,
 #proposal-payment-view-dropdown .dropdown-menu,
 .worktime-filter-dropdown .dropdown-menu {
   z-index: 4010;
@@ -757,6 +758,7 @@ body .second-sidebar + .flex-grow-1 {
 #master-policy-product-filter-dropdown > .btn,
 #master-proposal-kind-filter-dropdown > .btn,
 #master-proposal-status-filter-dropdown > .btn,
+#master-proposal-year-filter-dropdown > .btn,
 #master-project-filter-dropdown > .btn,
 #master-year-filter-dropdown > .btn,
 #master-status-filter-dropdown > .btn,
@@ -3676,13 +3678,14 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane table.proposals-table col.proposal-type       { width: 1% !important; }
 #proposals-pane table.proposals-table col.proposal-name       { width: 8% !important; }
 #proposals-pane table.proposals-table col.proposal-kind,
+#proposals-pane table.proposals-table col.proposal-document-kind,
 #proposals-pane table.proposals-table col.proposal-status,
 #proposals-pane table.proposals-table col.proposal-year,
 #proposals-pane table.proposals-table col.proposal-customer,
 #proposals-pane table.proposals-table col.proposal-country,
 #proposals-pane table.proposals-table col.proposal-identifier,
 #proposals-pane table.proposals-table col.proposal-regnumber,
-#proposals-pane table.proposals-table col.proposal-regdate { width: calc(71% / 8) !important; }
+#proposals-pane table.proposals-table col.proposal-regdate { width: calc(71% / 9) !important; }
 #proposals-pane table.proposals-table col.proposal-purpose,
 #proposals-pane table.proposals-table col.proposal-services { width: 12% !important; }
 #proposals-pane table.proposals-table col.proposal-evaluation-date,
@@ -3991,16 +3994,16 @@ section#templates .alert.alert-info .text-muted {
 }
 
 #proposals-pane #proposal-registry-table col.proposal-number,
-#proposals-pane #proposal-registry-table > thead tr > :nth-child(2),
-#proposals-pane #proposal-registry-table > tbody tr > :nth-child(2) {
+#proposals-pane #proposal-registry-table > thead tr > :nth-child(3),
+#proposals-pane #proposal-registry-table > tbody tr > :nth-child(3) {
   width: 68px !important;
   min-width: 68px !important;
   max-width: 68px !important;
 }
 
 #proposals-pane #proposal-registry-table col.proposal-sub-number,
-#proposals-pane #proposal-registry-table > thead tr > :nth-child(3),
-#proposals-pane #proposal-registry-table > tbody tr > :nth-child(3) {
+#proposals-pane #proposal-registry-table > thead tr > :nth-child(4),
+#proposals-pane #proposal-registry-table > tbody tr > :nth-child(4) {
   width: 36px !important;
   min-width: 36px !important;
   max-width: 36px !important;
@@ -4020,21 +4023,6 @@ section#templates .alert.alert-info .text-muted {
   text-overflow: clip !important;
 }
 
-#proposals-pane #proposal-registry-table > thead tr > :first-child {
-  vertical-align: bottom !important;
-}
-
-#proposals-pane #proposal-registry-table > thead tr > :first-child .form-check {
-  position: static !important;
-  width: 100% !important;
-  height: auto !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
 #proposals-pane .proposal-payment-schedule-table-wrap > table.proposals-table {
   width: max-content;
   min-width: 100%;
@@ -4044,7 +4032,7 @@ section#templates .alert.alert-info .text-muted {
   border-bottom: 0 !important;
 }
 
-#proposals-pane .registration-table-wrap tr.proposal-registry-number-has-next > td:nth-child(n+3) {
+#proposals-pane .registration-table-wrap tr.proposal-registry-number-has-next > td:nth-child(n+4) {
   background-image: repeating-linear-gradient(
     to right,
     rgba(33, 37, 41, .22) 0,
@@ -4058,6 +4046,23 @@ section#templates .alert.alert-info .text-muted {
 }
 
 #proposals-pane .registration-table-wrap tr.proposal-registry-number-continuation > td {
+  border-top: 0 !important;
+}
+
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-has-next > td[data-col="sub-number"],
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-has-next > td[data-col="group"],
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-has-next > td[data-col="tkp-id"],
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-has-next > td[data-col="type"],
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-has-next > td[data-col="name"] {
+  border-bottom: 0 !important;
+  background-image: none !important;
+}
+
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-continuation > td[data-col="sub-number"],
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-continuation > td[data-col="group"],
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-continuation > td[data-col="tkp-id"],
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-continuation > td[data-col="type"],
+#proposals-pane .registration-table-wrap tr.proposal-registry-identity-continuation > td[data-col="name"] {
   border-top: 0 !important;
 }
 
@@ -6688,7 +6693,7 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   border-bottom: 0 !important;
 }
 
-#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-stage-has-next > td:nth-child(n+6) {
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-stage-has-next > td:nth-child(n+4) {
   background-image: repeating-linear-gradient(
     to right,
     rgba(33, 37, 41, .22) 0,
@@ -6702,6 +6707,44 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
 }
 
 #proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-stage-continuation > td {
+  border-top: 0 !important;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-number-has-next > td {
+  border-bottom: 0 !important;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-number-has-next > td:nth-child(n+4) {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(33, 37, 41, .22) 0,
+    rgba(33, 37, 41, .22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-number-continuation > td {
+  border-top: 0 !important;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-has-next > td[data-col="sub-number"],
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-has-next > td[data-col="group"],
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-has-next > td[data-col="tkp-id"],
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-has-next > td[data-col="type"],
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-has-next > td[data-col="name"] {
+  border-bottom: 0 !important;
+  background-image: none !important;
+}
+
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-continuation > td[data-col="sub-number"],
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-continuation > td[data-col="group"],
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-continuation > td[data-col="tkp-id"],
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-continuation > td[data-col="type"],
+#proposals-pane .proposal-payment-schedule-table-wrap tr.proposal-payment-identity-continuation > td[data-col="name"] {
   border-top: 0 !important;
 }
 
@@ -6753,7 +6796,8 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   left: var(--dispatch-group-toggle-inset);
   top: auto;
   right: auto;
-  bottom: calc(var(--bs-table-cell-padding-y) + (1.5rem - 1rem) / 2);
+  /* На одной линии с мастер-чекбоксом: 1rem внутри .form-check высотой 1.5rem. */
+  bottom: calc(var(--bs-table-cell-padding-y) + (1.5rem - 1rem) / 2 + 1px);
   width: 16px;
   height: 16px;
   margin-left: 0;
@@ -6802,6 +6846,173 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
   display: none !important;
 }
 
+#proposals-pane #proposal-registry-table col.proposal-version-toggle,
+#proposals-pane #proposal-registry-table > thead tr > th.proposal-version-toggle-col,
+#proposals-pane #proposal-registry-table > tbody tr > td.proposal-version-toggle-cell,
+#proposals-pane #proposal-payment-schedule-table col.proposal-version-toggle,
+#proposals-pane #proposal-payment-schedule-table > thead tr > th.proposal-version-toggle-col,
+#proposals-pane #proposal-payment-schedule-table > tbody tr > td.proposal-version-toggle-cell,
+#proposals-pane #proposal-dispatch-table col.proposal-version-toggle,
+#proposals-pane #proposal-dispatch-table > thead tr > th.proposal-version-toggle-col,
+#proposals-pane #proposal-dispatch-table > tbody tr > td.proposal-version-toggle-cell {
+  width: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
+  padding-left: 0.15rem !important;
+  padding-right: 0.15rem !important;
+  text-align: center;
+  vertical-align: middle;
+}
+
+#proposals-pane #proposal-registry-table > thead tr > th.proposal-version-toggle-col,
+#proposals-pane #proposal-payment-schedule-table > thead tr > th.proposal-version-toggle-col,
+#proposals-pane #proposal-dispatch-table > thead tr > th.proposal-version-toggle-col {
+  position: relative;
+  vertical-align: bottom !important;
+}
+
+#proposals-pane .proposal-versions-toggle {
+  position: absolute;
+  left: 50%;
+  top: auto;
+  right: auto;
+  /* На одной линии с мастер-чекбоксом: 1rem внутри .form-check высотой 1.5rem. */
+  bottom: calc(var(--bs-table-cell-padding-y) + (1.5rem - 1rem) / 2 + 1px);
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  font-size: .65rem;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+#proposals-pane #proposal-registry-table col.proposal-status-marker,
+#proposals-pane #proposal-registry-table > thead tr > th.proposal-status-marker-col,
+#proposals-pane #proposal-registry-table > tbody tr > td.proposal-status-marker-cell {
+  width: 44px !important;
+  min-width: 44px !important;
+  max-width: 44px !important;
+  padding-left: 0.15rem !important;
+  padding-right: 0.15rem !important;
+  text-align: center !important;
+  vertical-align: middle;
+}
+
+#proposals-pane #proposal-registry-table > tbody tr > td.proposal-status-marker-cell {
+  line-height: 1;
+  vertical-align: middle !important;
+}
+
+#proposals-pane #proposal-registry-table .proposal-status-marker-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  position: relative;
+  z-index: 0;
+  font-size: 1rem;
+  line-height: 1;
+  vertical-align: middle;
+  background: none;
+  color: var(--reg-launch-color, #6c757d);
+  pointer-events: none;
+}
+
+#proposals-pane #proposal-registry-table .proposal-status-marker-icon::before {
+  line-height: 1;
+  vertical-align: 0;
+}
+
+#proposals-pane #proposal-registry-table .proposal-status-marker-icon.text-muted {
+  color: #ced4da !important;
+}
+
+#proposals-pane #proposal-registry-table .proposal-status-marker-icon::after {
+  background: var(--reg-launch-bg, #f8f9fa);
+  border-radius: 50%;
+  content: "";
+  height: .88em;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: .88em;
+  z-index: -1;
+}
+
+#proposals-pane #proposal-registry-table .proposal-status-marker--work {
+  --reg-launch-color: var(--bs-primary);
+  --reg-launch-bg: #b8d6ff;
+}
+
+#proposals-pane #proposal-registry-table .proposal-status-marker--done {
+  --reg-launch-color: #198754;
+  --reg-launch-bg: #8fd8a8;
+}
+
+#proposals-pane #proposal-registry-table .proposal-status-marker--deferred {
+  --reg-launch-color: #adb5bd;
+  --reg-launch-bg: #e9ecef;
+}
+
+#proposals-pane #proposal-registry-table .proposal-status-marker--review {
+  --reg-launch-color: #fd7e14;
+  --reg-launch-bg: #ffe4c2;
+}
+
+#proposals-pane .proposal-version-group-toggle {
+  position: relative;
+  left: auto;
+  top: -1.5px;
+  transform: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dispatch-group-toggle-size);
+  height: var(--dispatch-group-toggle-size);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #ced4da;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+#proposals-pane .proposal-version-group-toggle:hover,
+#proposals-pane .proposal-version-group-toggle:active {
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+}
+
+#proposals-pane .proposal-version-group-toggle .bi {
+  transition: transform .12s ease-out;
+}
+
+#proposals-pane .proposal-version-group-toggle[aria-expanded="false"] .bi {
+  transform: rotate(-90deg);
+}
+
+#proposals-pane .proposal-version-group-toggle.proposal-version-toggle-suppressed {
+  display: none !important;
+}
+
+#proposals-pane tr.proposal-registry-version-collapsed {
+  display: none !important;
+}
+
+#proposals-pane form[data-proposal-locked="1"] .row {
+  pointer-events: none;
+}
+
+#proposals-pane form[data-proposal-locked="1"] .proposal-status-editable {
+  pointer-events: auto;
+}
+
 #proposals-pane .proposal-dispatch-table tr.proposal-dispatch-contact-has-next > td[data-col="contact-name"],
 #proposals-pane .proposal-dispatch-table tr.proposal-dispatch-contact-has-next > td[data-col="contact-email"],
 #proposals-pane .proposal-dispatch-table tr.proposal-dispatch-contact-has-next > td[data-col="job-title"],
@@ -6823,6 +7034,28 @@ body.typical-service-term-gantt-row-dragging .typical-service-term-gantt-editor 
 #proposals-pane .proposal-dispatch-table tr[data-dispatch-continuation="1"] > td[data-col="contact-email"],
 #proposals-pane .proposal-dispatch-table tr[data-dispatch-continuation="1"] > td[data-col="job-title"],
 #proposals-pane .proposal-dispatch-table tr[data-dispatch-continuation="1"] > td[data-col="organization"] {
+  border-top: 0 !important;
+}
+
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-number-has-next > td:first-child,
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-number-has-next > td[data-col="version-toggle"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-number-has-next > td[data-col="number"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-has-next > td[data-col="sub-number"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-has-next > td[data-col="group"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-has-next > td[data-col="tkp-id"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-has-next > td[data-col="type"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-has-next > td[data-col="name"] {
+  border-bottom: 0 !important;
+}
+
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-number-continuation > td:first-child,
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-number-continuation > td[data-col="version-toggle"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-number-continuation > td[data-col="number"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-continuation > td[data-col="sub-number"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-continuation > td[data-col="group"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-continuation > td[data-col="tkp-id"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-continuation > td[data-col="type"],
+#proposals-pane .proposal-dispatch-table tr.proposal-dispatch-identity-continuation > td[data-col="name"] {
   border-top: 0 !important;
 }
 
@@ -7873,21 +8106,25 @@ html.table-action-progress * {
 }
 
 #proposals-pane table.proposals-table.table-sm,
-#proposals-pane table.proposal-dispatch-table.table-sm { --bs-table-cell-padding-y: .25rem; }
+#proposals-pane table.proposal-dispatch-table.table-sm,
+#proposals-pane table.proposal-template-table.table-sm { --bs-table-cell-padding-y: .25rem; }
 
 #proposals-pane table.proposals-table thead th,
-#proposals-pane table.proposal-dispatch-table thead th {
+#proposals-pane table.proposal-dispatch-table thead th,
+#proposals-pane table.proposal-template-table thead th {
   white-space: normal !important;
   overflow: visible !important;
   text-overflow: clip !important;
   vertical-align: bottom !important;
   line-height: 1.2;
   padding-top: var(--bs-table-cell-padding-y) !important;
-  padding-bottom: calc(var(--bs-table-cell-padding-y) + 2px) !important;
+  /* На 1px выше прежнего зазора, как чуть приподнятые заголовки реестра проектов. */
+  padding-bottom: calc(var(--bs-table-cell-padding-y) + 3px) !important;
 }
 
 #proposals-pane table.proposals-table thead th,
-#proposals-pane table.proposal-dispatch-table thead th {
+#proposals-pane table.proposal-dispatch-table thead th,
+#proposals-pane table.proposal-template-table thead th {
   white-space: nowrap !important;
 }
 
@@ -8000,31 +8237,31 @@ html.table-action-progress * {
   text-align: center !important;
 }
 
-#proposals-pane table.proposals-table thead th:nth-child(2),
 #proposals-pane table.proposals-table thead th:nth-child(3),
-#proposals-pane table.proposals-table tbody td:nth-child(2),
+#proposals-pane table.proposals-table thead th:nth-child(4),
 #proposals-pane table.proposals-table tbody td:nth-child(3),
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(4),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(4) {
+#proposals-pane table.proposals-table tbody td:nth-child(4),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(5),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(5) {
   width: 1% !important;
   min-width: max-content !important;
   max-width: none !important;
   white-space: nowrap !important;
 }
 
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(4) {
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(5) {
   overflow: visible !important;
   text-overflow: clip !important;
 }
 
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(2),
 #proposals-pane table.proposal-dispatch-table thead th:nth-child(3),
-#proposals-pane table.proposal-dispatch-table thead th:nth-child(5),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(4),
 #proposals-pane table.proposal-dispatch-table thead th:nth-child(6),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(2),
+#proposals-pane table.proposal-dispatch-table thead th:nth-child(7),
 #proposals-pane table.proposal-dispatch-table tbody td:nth-child(3),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(5),
-#proposals-pane table.proposal-dispatch-table tbody td:nth-child(6) {
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(4),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(6),
+#proposals-pane table.proposal-dispatch-table tbody td:nth-child(7) {
   width: 1% !important;
   min-width: 1% !important;
   max-width: 1% !important;
@@ -8087,6 +8324,40 @@ html.table-action-progress * {
   margin: 0 !important;
 }
 
+/* Мастер-чекбокс шапки — у низа ячейки, на одной линии с кнопкой сворачивания. */
+#proposals-pane table.proposals-table > thead tr > :first-child,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child,
+#proposals-pane table.proposal-template-table > thead tr > :first-child {
+  position: relative !important;
+  vertical-align: bottom !important;
+}
+
+#proposals-pane table.proposals-table > thead tr > :first-child .form-check,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child .form-check,
+#proposals-pane table.proposal-template-table > thead tr > :first-child .form-check {
+  position: absolute !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: calc(var(--bs-table-cell-padding-y) + 1px) !important;
+  transform: translateX(-50%);
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  height: auto !important;
+  min-height: 1.5rem;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#proposals-pane table.proposals-table > thead tr > :first-child .form-check-input,
+#proposals-pane table.proposal-dispatch-table > thead tr > :first-child .form-check-input,
+#proposals-pane table.proposal-template-table > thead tr > :first-child .form-check-input {
+  position: static !important;
+  float: none !important;
+  transform: none !important;
+}
+
 #proposals-pane table.proposals-table col.checkbox,
 #proposals-pane table.proposal-dispatch-table col.checkbox {
   width: 30px !important;
@@ -8107,15 +8378,20 @@ html.table-action-progress * {
   min-width: 30px !important;
   max-width: 30px !important;
   text-align: center !important;
-  vertical-align: middle !important;
   padding-left: .25rem !important;
   padding-right: .25rem !important;
 }
 
-#proposals-pane table.proposals-table > thead tr > :nth-child(2),
-#proposals-pane table.proposals-table > tbody tr > :nth-child(2),
-#proposals-pane table.proposal-dispatch-table > thead tr > :nth-child(2),
-#proposals-pane table.proposal-dispatch-table > tbody tr > :nth-child(2),
+#proposals-pane table.proposals-table > tbody tr > :first-child,
+#proposals-pane table.proposal-dispatch-table > tbody tr > :first-child,
+#proposals-pane table.proposal-template-table > tbody tr > :first-child {
+  vertical-align: middle !important;
+}
+
+#proposals-pane table.proposals-table > thead tr > :nth-child(3),
+#proposals-pane table.proposals-table > tbody tr > :nth-child(3),
+#proposals-pane table.proposal-dispatch-table > thead tr > :nth-child(3),
+#proposals-pane table.proposal-dispatch-table > tbody tr > :nth-child(3),
 #proposals-pane table.proposal-template-table > thead tr > :nth-child(2),
 #proposals-pane table.proposal-template-table > tbody tr > :nth-child(2) {
   width: 68px !important;
@@ -8126,8 +8402,8 @@ html.table-action-progress * {
   text-overflow: ellipsis !important;
 }
 
-#proposals-pane table.proposal-dispatch-table > thead tr > :nth-child(3),
-#proposals-pane table.proposal-dispatch-table > tbody tr > :nth-child(3) {
+#proposals-pane table.proposal-dispatch-table > thead tr > :nth-child(4),
+#proposals-pane table.proposal-dispatch-table > tbody tr > :nth-child(4) {
   width: 36px !important;
   min-width: 36px !important;
   max-width: 36px !important;
@@ -8155,11 +8431,61 @@ html.table-action-progress * {
   transform: none !important;
 }
 
+#proposals-pane #proposal-registry-table > tbody > tr > td {
+  vertical-align: top !important;
+}
+
+#proposals-pane #proposal-registry-table > tbody > tr:hover > td,
+#proposals-pane #proposal-payment-schedule-table > tbody > tr:hover > td,
+#proposals-pane #proposal-dispatch-table > tbody > tr:hover > td,
+#proposals-pane #proposal-dispatch-table > tbody > tr.proposal-dispatch-group-hover > td,
+#proposals-pane .proposal-template-table > tbody > tr:hover > td {
+  --bs-table-accent-bg: rgba(0, 0, 0, 0.04);
+  box-shadow: inset 0 0 0 9999px var(--bs-table-accent-bg);
+}
+
+#proposals-pane #proposal-registry-table > tbody > tr.table-active > td,
+#proposals-pane #proposal-registry-table > tbody > tr.table-active:hover > td,
+#proposals-pane #proposal-payment-schedule-table > tbody > tr.table-active > td,
+#proposals-pane #proposal-payment-schedule-table > tbody > tr.table-active:hover > td,
+#proposals-pane #proposal-dispatch-table > tbody > tr.table-active > td,
+#proposals-pane #proposal-dispatch-table > tbody > tr.table-active:hover > td,
+#proposals-pane .proposal-template-table > tbody > tr.table-active > td,
+#proposals-pane .proposal-template-table > tbody > tr.table-active:hover > td {
+  --bs-table-accent-bg: var(--bs-table-active-bg);
+  box-shadow: inset 0 0 0 9999px var(--bs-table-accent-bg);
+}
+
+#proposals-pane #proposal-registry-table > tbody > tr > :first-child .form-check {
+  height: 1.5em !important;
+  min-height: 0 !important;
+  align-items: center !important;
+}
+
 #proposals-pane .form-label {
   display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+#proposals-pane .proposal-identity-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 3fr 1fr 2fr 2fr 2fr 1fr;
+}
+
+#proposals-pane .proposal-identity-row > * {
+  width: auto;
+  max-width: none;
+  min-width: 0;
+}
+
+#proposals-pane .proposal-identity-row .form-control,
+#proposals-pane .proposal-identity-row .form-select,
+#proposals-pane .proposal-identity-row .number-input-shell,
+#proposals-pane .proposal-identity-row .group-select-shell {
+  width: 100%;
+  min-width: 0;
 }
 
 #proposals-pane .js-proposal-report-terms-lock {
@@ -8292,7 +8618,8 @@ html.table-action-progress * {
 }
 
 #proposals-pane .number-input-shell input[type="number"] {
-  color: transparent;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
   caret-color: #212529;
 }
 
@@ -8312,7 +8639,16 @@ html.table-action-progress * {
   overflow: hidden;
   text-overflow: ellipsis;
   color: #212529;
+  font-size: 1rem;
+  font-weight: 400;
   line-height: 1.5;
+}
+
+#proposals-pane .number-input-shell:has(input.readonly-field) .number-input-display,
+#proposals-pane .number-input-shell:has(input:disabled) .number-input-display,
+#proposals-pane .number-input-shell:has(input[readonly]) .number-input-display {
+  color: var(--locked-field-fg);
+  font-weight: 400;
 }
 
 #proposals-pane .group-select-shell select {

@@ -1132,7 +1132,8 @@
   :is(#projects-modal, .registration-form-page) .number-input-shell input[type="number"] {
     position: relative;
     z-index: 1;
-    color: transparent;
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
     caret-color: #212529;
   }
   :is(#projects-modal, .registration-form-page) .number-input-shell input[type="number"]::placeholder {
@@ -1150,7 +1151,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
     color: #212529;
+    font-size: 1rem;
+    font-weight: 400;
     line-height: 1.5;
+  }
+  :is(#projects-modal, .registration-form-page) .number-input-shell:has(input.readonly-field) .number-input-display,
+  :is(#projects-modal, .registration-form-page) .number-input-shell:has(input:disabled) .number-input-display,
+  :is(#projects-modal, .registration-form-page) .number-input-shell:has(input[readonly]) .number-input-display {
+    color: var(--locked-field-fg);
+    font-weight: 400;
   }
   :is(#projects-modal, .registration-form-page) .group-select-shell {
     position: relative;

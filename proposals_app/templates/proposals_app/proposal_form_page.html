@@ -3,7 +3,7 @@
      class="proposal-form-page"
      data-header-root-label="ТКП"
      data-header-root-url="{% url 'proposals_partial' %}?tables=1"
-     data-header-current-label="{% if action == "create" %}Новое ТКП{% else %}{{ proposal.short_uid }}{% endif %}"
+     data-header-current-label="{% if action == "create" %}Новое ТКП{% elif proposal.version > 1 %}{{ proposal.short_uid }} / {{ proposal.version_display }}{% else %}{{ proposal.short_uid }}{% endif %}"
      data-header-current-url="{% if action == "create" %}{% url 'proposal_form_create' %}{% else %}{% url 'proposal_form_edit' proposal.pk %}{% endif %}">
   {{ typical_sections_json|json_script:"proposal-typical-sections-data" }}
   {{ service_goal_reports_json|json_script:"proposal-service-goal-reports-data" }}
@@ -26,40 +26,62 @@
           hx-post="{% url 'proposal_form_edit' proposal.pk %}"
         {% endif %}
         hx-target="#proposals-pane"
-        hx-swap="outerHTML">
+        hx-swap="outerHTML"
+        {% if action != "create" and proposal.is_content_locked %}
+          data-proposal-locked="1"
+          data-proposal-create-version-url="{% url 'proposal_create_version' proposal.pk %}"
+          {% if form.proposal_status_editable %}data-proposal-status-editable="1"{% endif %}
+        {% endif %}>
     {% csrf_token %}
     {{ form.type_ids }}
 
     <div class="row g-3">
-      <div class="col-2">
-        <label class="form-label">{{ form.number.label }}</label>
-        <div class="number-input-shell">
-          {{ form.number }}
-          <div class="number-input-display" id="proposal-number-display" aria-hidden="true"></div>
+      <div class="col-12">
+        <div class="row g-3 proposal-identity-row">
+          <div>
+            <label class="form-label">{{ form.number.label }}</label>
+            <div class="number-input-shell">
+              {{ form.number }}
+              <div class="number-input-display" id="proposal-number-display" aria-hidden="true"></div>
+            </div>
+          </div>
+          <div>
+            <label class="form-label">{{ form.sub_number.label }}</label>
+            {{ form.sub_number }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.group_member.label }}</label>
+            <div class="group-select-shell">
+              {{ form.group_member }}
+              <div class="group-select-display" id="proposal-group-display" aria-hidden="true"></div>
+            </div>
+          </div>
+          <div>
+            <label class="form-label" for="proposal-version-display">Версия</label>
+            <input type="text"
+                   class="form-control readonly-field"
+                   id="proposal-version-display"
+                   value="{{ proposal.version_display }}"
+                   readonly
+                   tabindex="-1">
+          </div>
+          <div>
+            <label class="form-label">{{ form.kind.label }}</label>
+            {{ form.kind }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.document_kind.label }}</label>
+            {{ form.document_kind }}
+          </div>
+          <div{% if action != 'create' and proposal.is_content_locked and form.proposal_status_editable %} class="proposal-status-editable"{% endif %}>
+            <label class="form-label">{{ form.status.label }}</label>
+            {{ form.status }}
+          </div>
+          <div>
+            <label class="form-label">{{ form.year.label }}</label>
+            {{ form.year }}
+          </div>
         </div>
-      </div>
-      <div class="col-1">
-        <label class="form-label">{{ form.sub_number.label }}</label>
-        {{ form.sub_number }}
-      </div>
-      <div class="col-3">
-        <label class="form-label">{{ form.group_member.label }}</label>
-        <div class="group-select-shell">
-          {{ form.group_member }}
-          <div class="group-select-display" id="proposal-group-display" aria-hidden="true"></div>
-        </div>
-      </div>
-      <div class="col-2">
-        <label class="form-label">{{ form.kind.label }}</label>
-        {{ form.kind }}
-      </div>
-      <div class="col-2">
-        <label class="form-label">{{ form.status.label }}</label>
-        {{ form.status }}
-      </div>
-      <div class="col-2">
-        <label class="form-label">{{ form.year.label }}</label>
-        {{ form.year }}
       </div>
 
       <div class="col-12">
@@ -355,7 +377,7 @@
       </div>
 
       {% include "proposals_app/_proposal_stage_terms.html" %}
-      <div class="col-3">
+      <div class="proposal-report-languages-field">
         <label class="form-label">{{ form.report_languages.label }}</label>
         {{ form.report_languages.as_hidden }}
         <div class="dropdown proposal-report-languages-dropdown" id="proposal-report-languages-dropdown">

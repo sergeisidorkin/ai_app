@@ -616,6 +616,10 @@
             candidate = step === 'up' ? candidate.previousElementSibling : candidate.nextElementSibling;
             continue;
           }
+          if (isGroupContinuation(candidate)) {
+            candidate = step === 'up' ? candidate.previousElementSibling : candidate.nextElementSibling;
+            continue;
+          }
           if (matchesRowScope(candidate, row, options)) return candidate;
           if (options && options.rowScopeDataKey) {
             candidate = step === 'up' ? candidate.previousElementSibling : candidate.nextElementSibling;

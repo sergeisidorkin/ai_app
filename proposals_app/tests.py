@@ -38,6 +38,7 @@ from nextcloud_app.api import NextcloudApiClient, NextcloudApiError, NextcloudNe
 from nextcloud_app.models import NextcloudUserLink
 from notifications_app.email_delivery import EmailDeliveryError
 from policy_app.models import (
+    ADMIN_GROUP,
     ExpertiseDirection,
     Grade,
     Product,
@@ -55,7 +56,10 @@ from yandexdisk_app.models import YandexDiskAccount
 
 from contracts_app.docx_processor import insert_floating_image_at_placeholder, process_template
 from .document_generation import (
+    build_proposal_document_base_name,
+    build_proposal_documents_paths,
     build_proposal_docx_source_token,
+    build_proposal_workspace_document_paths,
     generate_and_store_proposal_pdf,
     get_proposal_docx_source_token_payload,
     store_generated_documents,
@@ -144,7 +148,8 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Приморское",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            document_kind=ProposalRegistration.ProposalDocumentKind.PRELIMINARY,
             customer='ООО "Приморское"',
             asset_owner='ООО "Приморское"',
             asset_owner_matches_customer=True,
@@ -1195,7 +1200,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Услуга в направлении",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
         )
         ProposalAsset.objects.create(proposal=proposal, short_name="Актив", position=1)
@@ -1225,7 +1230,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Без дубля услуги",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
         )
         ProposalAsset.objects.create(proposal=proposal, short_name="Актив", position=1)
@@ -1255,7 +1260,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Один актив",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
         )
         ProposalAsset.objects.create(
@@ -1315,7 +1320,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=second_product,
             name="Мультиэтапное ТКП",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
             commercial_totals_json={
                 "exchange_rate": "100",
@@ -1431,7 +1436,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=second_product,
             name="Старое мультиэтапное ТКП",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
             commercial_totals_json={
                 "exchange_rate": "100",
@@ -1525,7 +1530,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=second_product,
             name="Мультиэтапное ТКП",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
             commercial_totals_json={
                 "exchange_rate": "100",
@@ -1612,7 +1617,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Стоимость из поля формы",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
             service_cost=Decimal("50900000"),
             commercial_totals_json={
@@ -1642,7 +1647,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Пустая стоимость услуг",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
             service_cost=None,
             commercial_totals_json={
@@ -1678,7 +1683,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Алиас стоимости",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
             service_cost=Decimal("7654321"),
             commercial_totals_json={"contract_total": "100"},
@@ -1776,7 +1781,7 @@ class ProposalDocumentGenerationTests(TestCase):
             type=self.product,
             name="Один актив",
             year=2026,
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             customer='ООО "Приморское"',
         )
         ProposalAsset.objects.create(
@@ -2548,6 +2553,49 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(self.successful_proposal.pdf_file_name, self.successful_pdf_name)
         self.assertEqual(self.successful_proposal.pdf_file_link, self.successful_pdf_link)
 
+    def test_send_settings_offer_status_change_without_email(self):
+        response = self.client.get(reverse("proposals_partial"))
+
+        self.assertContains(response, "Смена статуса без отправки почты")
+        self.assertContains(response, 'id="proposal-channel-status-only"', html=False)
+        self.assertContains(response, 'value="status_without_email"', html=False)
+
+    @patch("proposals_app.services.send_notification_email")
+    def test_status_only_channel_marks_sent_without_email_or_message(self, mocked_send_notification_email):
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.failed_proposal.pk],
+                "delivery_channels[]": ["status_without_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], ProposalRegistration.ProposalStatus.SENT)
+        self.assertEqual(payload["proposal_ids"], [self.failed_proposal.pk])
+        self.assertFalse(payload["email_delivery"]["requested"])
+        mocked_send_notification_email.assert_not_called()
+        self.failed_proposal.refresh_from_db()
+        self.assertEqual(self.failed_proposal.status, ProposalRegistration.ProposalStatus.SENT)
+        self.assertEqual(self.failed_proposal.sent_date, "04.04.2026 12:30")
+        self.assertEqual(self.failed_proposal.contact_email, "")
+
+    def test_status_only_channel_rejects_email_channels(self):
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.failed_proposal.pk],
+                "delivery_channels[]": ["status_without_email", "system_email"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.failed_proposal.refresh_from_db()
+        self.assertNotEqual(self.failed_proposal.status, ProposalRegistration.ProposalStatus.SENT)
+
     @override_settings(PROPOSAL_SYSTEM_FROM_EMAIL="ai@imcmontanai.ru")
     @patch("proposals_app.services.send_notification_email")
     def test_dispatch_send_puts_several_addresses_in_one_message(self, mocked_send_notification_email):
@@ -2656,6 +2704,82 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(self.successful_proposal.pdf_file_name, self.successful_pdf_name)
         self.assertEqual(self.successful_proposal.pdf_file_link, self.successful_pdf_link)
 
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=True)
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_simulates_delivery_for_local_folder(self, mocked_send_notification_email):
+        self.successful_proposal.pdf_file_name = ""
+        self.successful_proposal.pdf_file_link = ""
+        self.successful_proposal.save(update_fields=["pdf_file_name", "pdf_file_link"])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                response = self.client.post(
+                    reverse("proposal_dispatch_send"),
+                    {
+                        "proposal_ids[]": [self.successful_proposal.pk],
+                        "delivery_channels[]": ["system_email"],
+                        "sent_at": "2026-04-04T12:30",
+                        "source_kind": "local",
+                        "local_folder_path": tmp,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["updated"], 1)
+        self.assertTrue(payload["email_delivery"]["simulated"])
+        self.assertFalse(payload["email_delivery"]["requested"])
+        self.assertEqual(payload["email_delivery"]["failed"], 0)
+        self.assertEqual(payload["updates"][0]["status"], ProposalRegistration.ProposalStatus.SENT)
+        self.assertEqual(payload["updates"][0]["sent_date"], "04.04.2026 12:30")
+        self.successful_proposal.refresh_from_db()
+        self.assertEqual(self.successful_proposal.status, ProposalRegistration.ProposalStatus.SENT)
+        self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
+        mocked_send_notification_email.assert_not_called()
+
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=True)
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_local_folder_keeps_completed_status(self, mocked_send_notification_email):
+        self.successful_proposal.status = ProposalRegistration.ProposalStatus.COMPLETED
+        self.successful_proposal.save(update_fields=["status"])
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                response = self.client.post(
+                    reverse("proposal_dispatch_send"),
+                    {
+                        "proposal_ids[]": [self.successful_proposal.pk],
+                        "delivery_channels[]": ["system_email"],
+                        "sent_at": "2026-04-04T12:30",
+                        "source_kind": "local",
+                        "local_folder_path": tmp,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.successful_proposal.refresh_from_db()
+        self.assertEqual(self.successful_proposal.status, ProposalRegistration.ProposalStatus.COMPLETED)
+        self.assertEqual(self.successful_proposal.sent_date, "04.04.2026 12:30")
+        mocked_send_notification_email.assert_not_called()
+
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=False)
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_rejects_local_folder_when_disabled(self, mocked_send_notification_email):
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:30",
+                "source_kind": "local",
+                "local_folder_path": "/tmp/proposal-local",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("выключена", response.json()["error"])
+        self.successful_proposal.refresh_from_db()
+        self.assertNotEqual(self.successful_proposal.status, ProposalRegistration.ProposalStatus.SENT)
+        mocked_send_notification_email.assert_not_called()
 
     @patch("proposals_app.services.send_notification_email")
     @patch(
@@ -2998,6 +3122,144 @@ class ProposalDispatchSignTests(TestCase):
         self.assertIn('behindDoc="1"', paragraph._p.xml)
         self.assertNotIn("[[facsimile]]", paragraph._p.xml)
 
+    @override_settings(
+        PROPOSAL_ALLOW_LOCAL_FOLDER=True,
+        ONLYOFFICE_DOCUMENT_SERVER_URL="http://127.0.0.1:8092",
+    )
+    @patch("proposals_app.views.generate_and_store_proposal_pdf")
+    @patch("proposals_app.views.convert_docx_bytes_to_pdf_locally", return_value=b"%PDF-local-signed")
+    def test_dispatch_sign_writes_pdf_next_to_local_docx_without_onlyoffice(
+        self,
+        mocked_convert_locally,
+        mocked_generate_and_store_proposal_pdf,
+    ):
+        template_doc = Document()
+        template_doc.add_paragraph("[[facsimile]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                docx_path = Path(tmp) / "existing-offer.docx"
+                docx_path.write_bytes(buffer.getvalue())
+                self.proposal.docx_file_name = docx_path.name
+                self.proposal.docx_file_link = f"local:{docx_path}"
+                self.proposal.proposal_workspace_disk_path = ""
+                self.proposal.save(
+                    update_fields=["docx_file_name", "docx_file_link", "proposal_workspace_disk_path"]
+                )
+
+                response = self.client.post(
+                    reverse("proposal_dispatch_sign_documents"),
+                    {"proposal_ids[]": [self.proposal.pk]},
+                )
+
+                self.assertEqual(response.status_code, 200, response.content)
+                payload = response.json()
+                self.assertTrue(payload["ok"], payload)
+                self.assertEqual(payload["generated"], 1)
+                self.proposal.refresh_from_db()
+                self.assertEqual(self.proposal.pdf_file_name, "existing-offer.pdf")
+                self.assertTrue(self.proposal.pdf_file_link.startswith("local:"))
+                pdf_path = Path(self.proposal.pdf_file_link[len("local:"):])
+                self.assertEqual(pdf_path.parent.resolve(), Path(tmp).resolve())
+                self.assertEqual(pdf_path.read_bytes(), b"%PDF-local-signed")
+                mocked_generate_and_store_proposal_pdf.assert_not_called()
+                mocked_convert_locally.assert_called_once()
+                signed_doc = Document(BytesIO(mocked_convert_locally.call_args.args[0]))
+                self.assertNotIn("[[facsimile]]", signed_doc.paragraphs[0]._p.xml)
+                self.assertIn("wp:anchor", signed_doc.paragraphs[0]._p.xml)
+
+    @override_settings(
+        PROPOSAL_ALLOW_LOCAL_FOLDER=True,
+        ONLYOFFICE_DOCUMENT_SERVER_URL="http://127.0.0.1:8092",
+    )
+    @patch("proposals_app.views.store_generated_pdf_document")
+    @patch("proposals_app.views.store_existing_proposal_docx_bytes")
+    @patch("proposals_app.views.load_existing_proposal_docx_bytes")
+    @patch("proposals_app.views.convert_docx_bytes_to_pdf_locally", return_value=b"%PDF-local-fallback")
+    @patch(
+        "proposals_app.views.generate_and_store_proposal_pdf",
+        side_effect=RuntimeError(
+            "ONLYOFFICE недоступен для генерации PDF: HTTPConnectionPool(host='127.0.0.1', port=8092): "
+            "Max retries exceeded (Caused by NewConnectionError: [Errno 61] Connection refused)"
+        ),
+    )
+    def test_dispatch_sign_falls_back_to_local_pdf_when_onlyoffice_is_down(
+        self,
+        _mocked_generate_and_store_proposal_pdf,
+        mocked_convert_locally,
+        mocked_load_existing_proposal_docx_bytes,
+        mocked_store_existing_proposal_docx_bytes,
+        mocked_store_generated_pdf_document,
+    ):
+        template_doc = Document()
+        template_doc.add_paragraph("[[facsimile]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+        mocked_load_existing_proposal_docx_bytes.return_value = buffer.getvalue()
+        mocked_store_existing_proposal_docx_bytes.return_value = {
+            "docx_name": "existing-offer.docx",
+            "docx_path": self.proposal.docx_file_link,
+            "output_dir": self.proposal.proposal_workspace_disk_path,
+        }
+        mocked_store_generated_pdf_document.return_value = {
+            "pdf_name": "existing-offer.pdf",
+            "pdf_path": "/Corporate Root/ТКП/2026/333300RU DD Приморское/existing-offer.pdf",
+        }
+
+        response = self.client.post(
+            reverse("proposal_dispatch_sign_documents"),
+            {"proposal_ids[]": [self.proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["generated"], 1)
+        mocked_convert_locally.assert_called_once()
+        mocked_store_generated_pdf_document.assert_called_once()
+        self.assertEqual(
+            mocked_store_generated_pdf_document.call_args.args[2],
+            b"%PDF-local-fallback",
+        )
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.pdf_file_name, "existing-offer.pdf")
+
+    @override_settings(
+        PROPOSAL_ALLOW_LOCAL_FOLDER=False,
+        ONLYOFFICE_DOCUMENT_SERVER_URL="",
+    )
+    @patch("proposals_app.views.convert_docx_bytes_to_pdf_locally")
+    @patch("proposals_app.views.store_existing_proposal_docx_bytes")
+    @patch("proposals_app.views.load_existing_proposal_docx_bytes")
+    def test_dispatch_sign_cloud_docx_still_requires_onlyoffice(
+        self,
+        mocked_load_existing_proposal_docx_bytes,
+        mocked_store_existing_proposal_docx_bytes,
+        mocked_convert_locally,
+    ):
+        template_doc = Document()
+        template_doc.add_paragraph("[[facsimile]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+        mocked_load_existing_proposal_docx_bytes.return_value = buffer.getvalue()
+        mocked_store_existing_proposal_docx_bytes.return_value = {
+            "docx_name": "existing-offer.docx",
+            "docx_path": self.proposal.docx_file_link,
+            "output_dir": self.proposal.proposal_workspace_disk_path,
+        }
+
+        response = self.client.post(
+            reverse("proposal_dispatch_sign_documents"),
+            {"proposal_ids[]": [self.proposal.pk]},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertIn("Не настроен ONLYOFFICE Document Server для генерации PDF.", payload["error"])
+        mocked_convert_locally.assert_not_called()
+
     @patch("proposals_app.views.generate_and_store_proposal_pdf")
     def test_dispatch_sign_returns_error_without_current_user_facsimile(
         self,
@@ -3160,6 +3422,7 @@ class ProposalDispatchFormTests(TestCase):
         self.assertIsNotNone(stored_id)
 
         opened = self.client.get(reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]))
+        self.assertContains(opened, '<label class="form-label">Запрос</label>', html=False)
         self.assertContains(
             opened,
             'name="dispatch_recipient_identifier_record_id"',
@@ -3733,7 +3996,7 @@ class ProposalRegistrationFormTests(TestCase):
             "type": product.pk,
             "name": "Тестовое ТКП",
             "kind": ProposalRegistration.ProposalKind.REGULAR,
-            "status": ProposalRegistration.ProposalStatus.FINAL,
+            "status": ProposalRegistration.ProposalStatus.DRAFT,
             "year": 2026,
         }
         payload.update(overrides)
@@ -3762,6 +4025,23 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(form.fields["number"].widget.attrs["min"], 0)
         self.assertEqual(form.fields["number"].widget.attrs["max"], 9999)
         self.assertEqual(form.fields["number"].widget.attrs["placeholder"], "0001")
+
+    def test_document_kind_field_offers_final_and_preliminary(self):
+        form = ProposalRegistrationForm()
+
+        self.assertEqual(form.fields["kind"].label, "Категория")
+        self.assertEqual(form.fields["document_kind"].label, "Вид")
+        self.assertEqual(
+            list(form.fields["document_kind"].choices),
+            [
+                (ProposalRegistration.ProposalDocumentKind.FINAL, "Итоговое"),
+                (ProposalRegistration.ProposalDocumentKind.PRELIMINARY, "Предварительное"),
+            ],
+        )
+
+        saved = ProposalRegistrationForm(data=self._base_form_payload())
+        self.assertTrue(saved.is_valid(), saved.errors)
+        self.assertEqual(saved.cleaned_data["document_kind"], ProposalRegistration.ProposalDocumentKind.FINAL)
 
     def test_sub_number_field_uses_zero_to_nine_range_with_default(self):
         form = ProposalRegistrationForm()
@@ -3898,7 +4178,7 @@ class ProposalRegistrationFormTests(TestCase):
             type=product,
             name="Историческое ТКП",
             kind=ProposalRegistration.ProposalKind.REGULAR,
-            status=ProposalRegistration.ProposalStatus.FINAL,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             year=2026,
             customer='ООО "История"',
             commercial_totals_json={
@@ -3939,7 +4219,7 @@ class ProposalRegistrationFormTests(TestCase):
             type=product,
             name="Исторический текст курса",
             kind=ProposalRegistration.ProposalKind.REGULAR,
-            status=ProposalRegistration.ProposalStatus.FINAL,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             year=2026,
             customer='ООО "История"',
             commercial_totals_json={
@@ -3981,7 +4261,7 @@ class ProposalRegistrationFormTests(TestCase):
             type=product,
             name="Пустой курс",
             kind=ProposalRegistration.ProposalKind.REGULAR,
-            status=ProposalRegistration.ProposalStatus.FINAL,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
             year=2026,
             customer='ООО "История"',
             commercial_totals_json={
@@ -4006,7 +4286,7 @@ class ProposalRegistrationFormTests(TestCase):
     def test_new_form_defaults_status_to_final(self):
         form = ProposalRegistrationForm()
 
-        self.assertEqual(form.fields["status"].initial, ProposalRegistration.ProposalStatus.FINAL)
+        self.assertEqual(form.fields["status"].initial, ProposalRegistration.ProposalStatus.DRAFT)
 
     def test_new_form_requires_year(self):
         form = ProposalRegistrationForm()
@@ -4052,6 +4332,9 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(option_by_value["completed"]["label"], "Завершённое")
         self.assertTrue(option_by_value["sent"]["attrs"].get("disabled"))
         self.assertTrue(option_by_value["completed"]["attrs"].get("disabled"))
+        self.assertFalse(option_by_value["draft"]["attrs"].get("disabled"))
+        self.assertFalse(option_by_value["postponed"]["attrs"].get("disabled"))
+        self.assertFalse(option_by_value["not_held"]["attrs"].get("disabled"))
 
     def test_form_includes_not_held_status_after_completed(self):
         form = ProposalRegistrationForm()
@@ -4060,10 +4343,10 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(
             choices,
             [
-                ("preliminary", "Предварительное"),
-                ("final", "Итоговое"),
+                ("draft", "Черновик"),
                 ("sent", "Отправленное"),
                 ("completed", "Завершённое"),
+                ("postponed", "Отложенное"),
                 ("not_held", "Несостоявшееся"),
             ],
         )
@@ -4151,7 +4434,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "group_member": str(group_member.pk),
                 "name": "Мультиэтапное ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": "2026",
                 "payment_schedule_common": "false",
             }
@@ -4279,7 +4562,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "report_languages": "RU, EN, zh",
             }
@@ -4381,12 +4664,13 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(
             payment_labels,
             [
-                "Номер",
+                "Запрос",
                 "№",
                 "Группа",
                 "ТКП ID",
                 "Тип",
                 "Название",
+                "Верс.",
                 "Этап",
                 "Дата оценки",
                 "Дата начала",
@@ -4506,7 +4790,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -4568,7 +4852,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -4621,7 +4905,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "service_sections_payload": '[{"service_name":"Раздел 1","code":"S-101"}]',
                 "service_sections_editor_state": (
@@ -4688,7 +4972,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "service_sections_payload": '[{"service_name":"Раздел 1","code":"S-101"}]',
                 "service_sections_editor_state": json.dumps(editor_state, ensure_ascii=False),
@@ -4736,7 +5020,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "service_sections_payload": '[{"service_name":"Раздел 1","code":""}]',
             }
@@ -4788,7 +5072,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "service_sections_payload": '[{"service_name":"Раздел 1","code":"S-101"}]',
                 "service_sections_editor_state": (
@@ -4854,7 +5138,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "service_sections_payload": json.dumps(
                     [{"service_name": "Описание продукта", "code": "S-101"}],
@@ -4924,7 +5208,8 @@ class ProposalRegistrationFormTests(TestCase):
             group_member=group_member,
             type=product,
             name="Приморское",
-            status=ProposalRegistration.ProposalStatus.PRELIMINARY,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            document_kind=ProposalRegistration.ProposalDocumentKind.PRELIMINARY,
             proposal_project_name="Due Diligence АО «Полиметалл УК»",
             customer='АО «Полиметалл УК»',
             asset_owner='АО «Полиметалл УК»',
@@ -5113,7 +5398,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{evaluation_date}}"], "01.04.2026")
         self.assertEqual(replacements["{{effective_date}}"], "01.04.2026")
         self.assertEqual(replacements["{{final_report_term_weeks}}"], "2,0")
-        self.assertEqual(replacements["{{status}}"], "Предварительное")
+        self.assertEqual(replacements["{{status}}"], "Черновик")
         self.assertEqual(replacements["{{advance_percent}}"], "50%")
         self.assertEqual(replacements["{{preliminary_report_percent}}"], "20%")
         self.assertEqual(replacements["{{final_report_percent}}"], "30%")
@@ -5209,8 +5494,11 @@ class ProposalRegistrationFormTests(TestCase):
         )
         self.assertEqual(replacements["{{service_type_short}}"], "Due Diligence")
 
-    def test_resolve_tkp_preliminary_depends_on_status(self):
-        proposal = ProposalRegistration(status=ProposalRegistration.ProposalStatus.PRELIMINARY)
+    def test_resolve_tkp_preliminary_depends_on_document_kind(self):
+        proposal = ProposalRegistration(
+            status=ProposalRegistration.ProposalStatus.SENT,
+            document_kind=ProposalRegistration.ProposalDocumentKind.PRELIMINARY,
+        )
 
         replacements, _, _ = resolve_variables(
             proposal,
@@ -5218,7 +5506,8 @@ class ProposalRegistrationFormTests(TestCase):
         )
         self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
 
-        proposal.status = ProposalRegistration.ProposalStatus.FINAL
+        proposal.document_kind = ProposalRegistration.ProposalDocumentKind.FINAL
+        proposal.status = ProposalRegistration.ProposalStatus.DRAFT
         replacements, _, _ = resolve_variables(
             proposal,
             [ProposalVariable(key="{{tkp_preliminary}}", is_computed=True)],
@@ -5874,7 +6163,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -5933,7 +6222,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -5986,7 +6275,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "assets_payload": '[{"short_name":"ООО \\"Актив\\""}]',
                 "legal_entities_payload": '[{"asset_short_name":"ООО \\"Актив\\"","short_name":"","identifier":"ОГРН"}]',
@@ -6037,7 +6326,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -6101,7 +6390,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -6165,7 +6454,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -6227,7 +6516,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -6293,7 +6582,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "Тестовое ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Приморское"',
                 "country": country.pk,
@@ -6354,7 +6643,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "type": product.pk,
                 "name": "ТКП с нулями",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": 2026,
                 "customer": 'ООО "Ноль"',
                 "country": country.pk,
@@ -6432,7 +6721,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "group_member": str(group_member.pk),
                 "name": "Мультиэтапное ТКП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": "2026",
                 "service_cost": "2500",
             }
@@ -6579,7 +6868,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "group_member": str(group_member.pk),
                 "name": "ТКП с повтором продукта",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": "2026",
             }
         )
@@ -6764,7 +7053,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "group_member": str(group_member.pk),
                 "name": "Экспорт по последнему этапу",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": "2026",
             }
         )
@@ -6966,7 +7255,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "group_member": str(group_member.pk),
                 "name": "Коды в сводном КП",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": "2026",
             }
         )
@@ -7115,7 +7404,7 @@ class ProposalRegistrationFormTests(TestCase):
                 "group_member": str(group_member.pk),
                 "name": "Командировки по всем этапам",
                 "kind": ProposalRegistration.ProposalKind.REGULAR,
-                "status": ProposalRegistration.ProposalStatus.FINAL,
+                "status": ProposalRegistration.ProposalStatus.DRAFT,
                 "year": "2026",
             }
         )
@@ -7243,6 +7532,118 @@ class ProposalRowOrderTests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["current_proposal_ids"], [self.second.pk, self.first.pk, self.third.pk])
 
+    def test_row_order_with_year_filter_merges_into_full_registry(self):
+        self.first.year = 2024
+        self.second.year = 2026
+        self.third.year = 2026
+        ProposalRegistration.objects.bulk_update(
+            [self.first, self.second, self.third],
+            ["year"],
+        )
+        visible_ids = [self.second.pk, self.third.pk]
+
+        response = self.client.post(
+            reverse("proposal_row_order") + "?proposals_year=2026",
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [self.third.pk, self.second.pk],
+                    "base_order_signature": self._signature(visible_ids),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(ProposalRegistration.objects.order_by("position", "id").values_list("pk", flat=True)),
+            [self.first.pk, self.third.pk, self.second.pk],
+        )
+        self.assertEqual(response.json()["order_signature"], self._signature([self.third.pk, self.second.pk]))
+
+    def test_row_order_year_filter_keeps_hidden_rows_and_version_groups(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        older = ProposalRegistration.objects.create(
+            number=201,
+            sub_number=0,
+            group_member=group_member,
+            version=1,
+            year=2024,
+            position=1,
+            name="Старая версия",
+        )
+        newer = ProposalRegistration.objects.create(
+            number=201,
+            sub_number=0,
+            group_member=group_member,
+            version=2,
+            year=2026,
+            position=2,
+            name="Новая версия",
+        )
+        hidden = ProposalRegistration.objects.create(
+            number=202,
+            sub_number=0,
+            group_member=group_member,
+            year=2024,
+            position=3,
+            name="Скрытое ТКП",
+        )
+        visible = ProposalRegistration.objects.create(
+            number=203,
+            sub_number=0,
+            group_member=group_member,
+            year=2026,
+            position=4,
+            name="Видимое ТКП",
+        )
+        self.assertEqual(newer.short_uid, older.short_uid)
+        scoped_ids = [newer.pk, older.pk, visible.pk]
+
+        response = self.client.post(
+            reverse("proposal_row_order") + "?proposals_year=2026",
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [visible.pk, newer.pk, older.pk],
+                    "base_order_signature": self._signature(scoped_ids),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            list(
+                ProposalRegistration.objects.exclude(
+                    pk__in=[self.first.pk, self.second.pk, self.third.pk]
+                ).order_by("position", "id").values_list("pk", flat=True)
+            ),
+            [visible.pk, hidden.pk, newer.pk, older.pk],
+        )
+
+    def test_row_order_missing_id_returns_conflict(self):
+        response = self.client.post(
+            reverse("proposal_row_order"),
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [self.first.pk, self.second.pk, self.third.pk, 999999],
+                    "base_order_signature": self._signature([self.first.pk, self.second.pk, self.third.pk]),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json()["current_proposal_ids"],
+            [self.first.pk, self.second.pk, self.third.pk],
+        )
+
 
 class ProposalFormContextTests(TestCase):
     def setUp(self):
@@ -7312,12 +7713,15 @@ class ProposalFormContextTests(TestCase):
         self.assertFalse(rows[1].has_next_for_number)
         self.assertTrue(rows[2].is_first_for_number)
         self.assertFalse(rows[2].is_number_continuation)
+        self.assertTrue(rows[0].show_identity_fields)
+        self.assertTrue(rows[1].show_identity_fields)
+        self.assertTrue(rows[2].show_identity_fields)
         self.assertContains(response, 'class="proposal-registry-number-has-next"', html=False)
         self.assertContains(response, 'class="proposal-registry-number-continuation"', html=False)
         self.assertContains(response, '<td data-col="number"></td>', html=False)
         self.assertContains(response, '<td data-col="sub-number">1</td>', html=False)
 
-    def test_dispatch_table_renders_quick_edit_inside_tkp_id_column(self):
+    def test_dispatch_table_renders_tkp_id_without_quick_edit_icon(self):
         proposal = ProposalRegistration.objects.create(
             number=3333,
             sub_number=0,
@@ -7331,7 +7735,7 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.context["proposal_dispatch_empty_colspan"],
-            len(response.context["proposal_dispatch_ui_columns"]) + 1,
+            len(response.context["proposal_dispatch_ui_columns"]) + 2,
         )
         self.assertNotContains(response, "proposal-quick-edit-col", html=False)
         self.assertNotContains(response, '<col class="quick-edit"', html=False)
@@ -7339,12 +7743,11 @@ class ProposalFormContextTests(TestCase):
             response,
             (
                 '<td data-col="tkp-id" class="proposal-id-cell" rowspan="1">'
-                '<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" '
-                'role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>'
                 f'<span class="clf-id-droid-mono">{proposal.short_uid}</span></td>'
             ),
             html=False,
         )
+        self.assertNotContains(response, 'data-col="tkp-id" class="proposal-id-cell" rowspan="1"><i', html=False)
         self.assertContains(response, 'id="proposal-dispatch-groups-toggle"', html=False)
         self.assertNotContains(response, "data-proposal-dispatch-group-toggle", html=False)
 
@@ -7514,13 +7917,61 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-payment-col-term"', html=False)
         self.assertContains(response, 'id="proposal-col-country" data-default-hidden="true"', html=False)
         self.assertContains(response, 'id="proposal-payment-col-advance-percent" data-default-hidden="true"', html=False)
-        self.assertContains(response, 'class="proposal-payment-stage-has-next"', html=False)
-        self.assertContains(response, 'class="proposal-payment-stage-continuation"', html=False)
+        self.assertContains(
+            response,
+            'class="proposal-payment-stage-has-next proposal-payment-number-has-next"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'class="proposal-payment-stage-continuation proposal-payment-number-continuation"',
+            html=False,
+        )
         self.assertContains(response, f'data-edit-url="{reverse("proposal_form_edit", args=[proposal.pk])}"', html=False)
+        registry_edit_response = self.client.get(reverse("proposal_form_edit", args=[proposal.pk]))
+        self.assertContains(registry_edit_response, '<label class="form-label">Запрос</label>', html=False)
+        self.assertContains(registry_edit_response, '<label class="form-label" for="proposal-version-display">Версия</label>', html=False)
+        self.assertContains(
+            registry_edit_response,
+            f'id="proposal-version-display"\n                   value="{proposal.version_display}"',
+            html=False,
+        )
+        self.assertNotContains(registry_edit_response, '<label class="form-label">Номер</label>', html=False)
+        self.assertContains(response, 'for="proposal-payment-col-number">Запрос</label>', html=False)
+        self.assertContains(response, 'for="proposal-dispatch-col-number">Запрос</label>', html=False)
+        self.assertContains(response, 'for="proposal-col-number">Запрос</label>', html=False)
+        self.assertContains(response, '<th data-col="number">Запрос</th>', html=False)
+        html = response.content.decode()
+        payment = html.split('id="proposal-payment-schedule-table"', 1)[1].split("</table>", 1)[0]
+        dispatch = html.split('id="proposal-dispatch-table"', 1)[1].split("</table>", 1)[0]
+        self.assertLess(payment.find(">Название</th>"), payment.find(">Верс.</th>"))
+        self.assertLess(payment.find(">Верс.</th>"), payment.find(">Этап</th>"))
+        self.assertLess(dispatch.find('data-col="name"'), dispatch.find('data-col="version"'))
+        self.assertLess(dispatch.find('data-col="version"'), dispatch.find('data-col="cloud"'))
+        version_edit = (
+            '<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" '
+            'role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>'
+            '<span class="clf-id-droid-mono">01</span>'
+        )
+        self.assertEqual(
+            payment.count(f'<td data-col="version" class="proposal-id-cell text-nowrap">{version_edit}</td>'),
+            2,
+        )
+        self.assertIn(
+            '<td data-col="version" class="proposal-id-cell text-nowrap" rowspan="1">'
+            '<i class="bi bi-pencil-square text-secondary proposal-dispatch-quick-edit me-1" '
+            'role="button" title="Редактировать" aria-label="Редактировать отправку ТКП"></i>'
+            '<span class="clf-id-droid-mono">01</span></td>',
+            dispatch,
+        )
         self.assertContains(response, "proposal-quick-edit me-1", html=False)
         self.assertContains(response, '<td class="text-nowrap">\n              \n            </td>', html=False)
         self.assertContains(response, '<td data-col="number"></td>', html=False)
-        self.assertContains(response, '<td data-col="group"></td>', html=False)
+        self.assertEqual(payment.count(f'<td data-col="group">{proposal.group_display}</td>'), 2)
+        self.assertEqual(payment.count('<td data-col="type">TDD</td>'), 1)
+        self.assertEqual(payment.count('<td data-col="type">JORC</td>'), 1)
+        self.assertEqual(payment.count(f'<td data-col="name">{proposal.name}</td>'), 2)
+        self.assertNotIn('<td data-col="group"></td>', payment)
         self.assertContains(response, "TDD-JORC", html=False)
         self.assertContains(response, "Этап 1", html=False)
         self.assertContains(response, "Этап 2", html=False)
@@ -7592,6 +8043,54 @@ class ProposalFormContextTests(TestCase):
         self.assertEqual([row["type"] for row in rows], ["TDD", "TDD"])
         self.assertEqual(rows[0]["evaluation_date"], date(2026, 1, 1))
         self.assertEqual(rows[1]["evaluation_date"], date(2026, 2, 5))
+
+    def test_registry_and_dispatch_type_collapses_after_three_products(self):
+        def product(short_name, position):
+            return Product.objects.create(
+                short_name=short_name,
+                name_en=short_name,
+                name_ru=short_name,
+                consulting_type="Горный",
+                service_category="Аудит",
+                service_subtype="Аудит соответствия стандартам",
+                position=position,
+            )
+
+        products = [product(name, index) for index, name in enumerate(("TDD", "JORC", "CPR", "PFS", "QAQC"), start=1)]
+
+        def register(number, name, selected):
+            proposal = ProposalRegistration.objects.create(
+                number=number,
+                group_member=self.group_member,
+                type=selected[-1],
+                name=name,
+                year=2026,
+            )
+            ProposalRegistrationProduct.objects.bulk_create([
+                ProposalRegistrationProduct(proposal=proposal, product=item, rank=index)
+                for index, item in enumerate(selected, start=1)
+            ])
+            return proposal
+
+        three = register(3341, "Три продукта", products[:3])
+        four = register(3342, "Четыре продукта", products[:4])
+        five = register(3343, "Пять продуктов", products)
+
+        self.assertEqual(three.type_short_display, "TDD-JORC-CPR")
+        self.assertEqual(four.type_short_display, "4 этапа")
+        self.assertEqual(five.type_short_display, "5 этапов")
+
+        response = self.client.get(reverse("proposals_partial"))
+        html = response.content.decode()
+        registry = html.split('id="proposal-registry-table"', 1)[1].split("</table>", 1)[0]
+        dispatch = html.split('id="proposal-dispatch-table"', 1)[1].split("</table>", 1)[0]
+
+        for label in ("TDD-JORC-CPR", "4 этапа", "5 этапов"):
+            self.assertIn(f'<td data-col="type">{label}</td>', registry)
+            self.assertIn(f'<td data-col="type" rowspan="1">{label}</td>', dispatch)
+        for table in (registry, dispatch):
+            self.assertNotIn("TDD-JORC-CPR-PFS", table)
+            self.assertNotIn("TDD-JORC-CPR-PFS-QAQC", table)
 
     def test_payment_schedule_uses_stage_delay_for_next_stage_start(self):
         first_product = Product.objects.create(
@@ -8568,7 +9067,8 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'type="hidden" name="purpose"', html=False)
         self.assertContains(response, 'id="proposal-commercial-totals-payload"', html=False)
         self.assertContains(response, 'name="status"', html=False)
-        self.assertContains(response, 'value="final"', html=False)
+        self.assertContains(response, 'value="draft" selected', html=False)
+        self.assertContains(response, 'class="proposal-report-languages-field"', html=False)
         self.assertContains(response, 'id="proposal-report-languages-dropdown"', html=False)
         self.assertContains(response, 'id="proposal-report-languages-toggle"', html=False)
         self.assertContains(response, 'id="proposal-report-language-en"', html=False)
@@ -8856,6 +9356,11 @@ class ProposalCatalogLazyShellTests(TestCase):
         self.assertIn("proposal-registry-table", html)
         self.assertIn("Lazy TKP", html)
         self.assertIn("proposal-new-btn", html)
+        self.assertLess(html.find(">Категория<"), html.find(">Вид<"))
+        self.assertLess(html.find(">Вид<"), html.find(">Статус<"))
+        self.assertIn('data-col="document-kind"', html)
+        self.assertIn(">Итоговое<", html)
+        self.assertIn(">Черновик<", html)
 
     def test_non_htmx_partial_remains_full_registry(self):
         response = self.client.get(reverse("proposals_partial"))
@@ -8915,6 +9420,140 @@ class ProposalCatalogLazyShellTests(TestCase):
         self.assertIn("policy-table-skeleton", css)
 
 
+class ProposalYearFilterTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-year-filter-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.version_old = ProposalRegistration.objects.create(
+            number=8101,
+            sub_number=0,
+            version=1,
+            group_member=self.group_member,
+            name="Версия 2024",
+            year=2024,
+        )
+        self.version_new = ProposalRegistration.objects.create(
+            number=8101,
+            sub_number=0,
+            version=2,
+            group_member=self.group_member,
+            name="Версия 2026",
+            year=2026,
+        )
+        self.only_2024 = ProposalRegistration.objects.create(
+            number=8102,
+            sub_number=0,
+            group_member=self.group_member,
+            name="Только 2024",
+            year=2024,
+        )
+        self.only_2026 = ProposalRegistration.objects.create(
+            number=8103,
+            sub_number=0,
+            group_member=self.group_member,
+            name="Только 2026",
+            year=2026,
+        )
+        self.no_year = ProposalRegistration.objects.create(
+            number=8104,
+            sub_number=0,
+            group_member=self.group_member,
+            name="ТКП без года",
+        )
+        self.assertEqual(self.version_old.short_uid, self.version_new.short_uid)
+        self.assertNotEqual(self.only_2024.short_uid, self.version_old.short_uid)
+
+    def _names(self, response, marker):
+        html = response.content.decode()
+        start = html.find(marker)
+        self.assertGreaterEqual(start, 0)
+        return html[start:]
+
+    def test_year_scope_keeps_version_group_and_skips_other_years(self):
+        response = self.client.get(reverse("proposals_partial"), {"proposals_year": "2026"})
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Версия 2026", html)
+        self.assertIn("Версия 2024", html)
+        self.assertIn("Только 2026", html)
+        self.assertNotIn("Только 2024", html)
+        self.assertNotIn("ТКП без года", html)
+        self.assertIn('data-proposal-years="2026"', html)
+        self.assertIn(
+            f'data-row-order-save-url="{reverse("proposal_row_order")}?proposals_year=2026"',
+            html,
+        )
+        options_at = html.find('id="proposal-year-options"')
+        self.assertGreaterEqual(options_at, 0)
+        payload = html[options_at:html.find("</script>", options_at)].split(">", 1)[1]
+        self.assertEqual(
+            [option["value"] for option in json.loads(payload)],
+            ["2026", "2024", "none"],
+        )
+        self.assertEqual(json.loads(payload)[-1]["label"], "Без года")
+
+        payment = self._names(response, 'id="proposal-payment-schedule-table"')
+        dispatch = self._names(response, 'id="proposal-dispatch-table"')
+        self.assertNotIn("Только 2024", payment)
+        self.assertNotIn("Только 2024", dispatch)
+
+    def test_year_none_selects_proposals_without_year(self):
+        response = self.client.get(reverse("proposals_partial"), {"proposals_year": "none"})
+        html = response.content.decode()
+
+        self.assertIn("ТКП без года", html)
+        self.assertNotIn("Только 2026", html)
+        self.assertNotIn("Версия 2024", html)
+        self.assertIn('data-proposal-years="none"', html)
+
+    def test_several_years_can_be_combined(self):
+        response = self.client.get(
+            reverse("proposals_partial") + "?proposals_year=2024&proposals_year=none",
+        )
+        html = response.content.decode()
+
+        self.assertIn("Только 2024", html)
+        self.assertIn("Версия 2026", html)
+        self.assertIn("ТКП без года", html)
+        self.assertNotIn("Только 2026", html)
+
+    def test_missing_year_keeps_the_full_registry(self):
+        response = self.client.get(reverse("proposals_partial"))
+        html = response.content.decode()
+
+        self.assertIn("Только 2024", html)
+        self.assertIn("Только 2026", html)
+        self.assertIn("ТКП без года", html)
+        self.assertIn('data-proposal-years="__all__"', html)
+
+    def test_year_filter_is_wired_like_the_projects_filter(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core"
+            / "static"
+            / "core"
+            / "js"
+            / "proposals-panels.js"
+        ).read_text()
+
+        self.assertIn("const PROPOSAL_YEAR_FILTER_PREF_KEY = 'proposals:yearFilter';", source)
+        self.assertIn("detail.parameters.proposals_year = years.join(',');", source)
+        self.assertIn("function reloadProposalsForYears()", source)
+        self.assertIn("function initProposalYearFilter()", source)
+
+
 class ProposalNextcloudWorkspaceHookTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -8947,7 +9586,7 @@ class ProposalNextcloudWorkspaceHookTests(TestCase):
             "type": str(self.product.pk),
             "name": "Тестовое ТКП",
             "kind": ProposalRegistration.ProposalKind.REGULAR,
-            "status": ProposalRegistration.ProposalStatus.FINAL,
+            "status": ProposalRegistration.ProposalStatus.DRAFT,
             "year": "2026",
             "report_languages": "русский",
         }
@@ -11047,3 +11686,705 @@ class NextcloudClientNetworkCooldownTests(TestCase):
         NextcloudApiClient._record_network_failure()
 
         self.assertFalse(NextcloudApiClient.network_cooldown_active())
+
+
+class ProposalVersionTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-version-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+
+    def _proposal(self, **overrides):
+        values = {
+            "number": 4501,
+            "sub_number": 0,
+            "group_member": self.group_member,
+            "name": "Исходное ТКП",
+            "year": 2026,
+            "status": ProposalRegistration.ProposalStatus.SENT,
+            "version": 1,
+            "position": 1,
+            "docx_file_name": "tkp.docx",
+            "sent_date": "01.04.2026",
+            "proposal_workspace_disk_path": "/Corporate Root/01 ТКП/2026/source",
+            "contact_full_name": "Иванов Иван",
+            "contact_email": "ivan@example.com",
+        }
+        values.update(overrides)
+        return ProposalRegistration.objects.create(**values)
+
+    def _payload(self, **overrides):
+        payload = {
+            "number": "4501",
+            "group_member": str(self.group_member.pk),
+            "type": str(self.product.pk),
+            "name": "Новая карточка",
+            "kind": ProposalRegistration.ProposalKind.REGULAR,
+            "status": ProposalRegistration.ProposalStatus.DRAFT,
+            "year": "2026",
+            "report_languages": "русский",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_registry_shows_version_column_and_toggle_for_multiple_versions(self):
+        sent = self._proposal(name="Отправленная версия", position=2, type=self.product)
+        self._proposal(
+            name="Черновик версии",
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            version=2,
+            position=8,
+            docx_file_name="",
+            sent_date="",
+            type=self.product,
+        )
+        self._proposal(
+            number=4502,
+            name="Одиночное ТКП",
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            position=3,
+            docx_file_name="",
+            sent_date="",
+            type=self.product,
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+        html = response.content.decode()
+        sent_row = html.find("Отправленная версия")
+        draft_row = html.find("Черновик версии")
+
+        self.assertEqual(response.status_code, 200)
+        registry = html.split('id="proposal-registry-table"', 1)[1].split("</table>", 1)[0]
+        self.assertLess(registry.find('class="proposal-version-toggle-col"'), registry.find(">Запрос</th>"))
+        self.assertLess(registry.find(">Запрос</th>"), registry.find(">Название</th>"))
+        self.assertLess(registry.find(">Название</th>"), registry.find(">Верс.</th>"))
+        self.assertLess(registry.find(">Верс.</th>"), registry.find(">Категория</th>"))
+        self.assertIn(">Верс.</th>", html)
+        self.assertIn('id="proposal-registry-versions-toggle"', html)
+        self.assertLess(
+            registry.find('id="proposal-registry-versions-toggle"'),
+            registry.find(">Запрос</th>"),
+        )
+        self.assertNotIn("proposal-version-group-toggle", registry.split('data-col="status"', 1)[1].split("</td>", 1)[0])
+        self.assertLess(registry.find('data-col="status-marker"'), registry.find(">Статус</th>"))
+        self.assertLess(draft_row, sent_row)
+        self.assertEqual(html.count("data-proposal-version-toggle="), 3)
+        self.assertEqual(html.count(f'data-proposal-version-toggle="{sent.short_uid}"'), 3)
+        self.assertIn('id="proposal-payment-versions-toggle"', html)
+        self.assertIn('id="proposal-dispatch-versions-toggle"', html)
+        version_pencil = (
+            '<i class="bi bi-pencil-square text-secondary proposal-quick-edit me-1" '
+            'role="button" title="Редактировать" aria-label="Редактировать ТКП"></i>'
+        )
+        self.assertIn(
+            f'<td data-col="version" class="proposal-id-cell text-nowrap">{version_pencil}'
+            '<span class="clf-id-droid-mono">02</span></td>',
+            registry,
+        )
+        self.assertEqual(
+            registry.count(
+                f'<td data-col="version" class="proposal-id-cell text-nowrap">{version_pencil}'
+                '<span class="clf-id-droid-mono">01</span></td>'
+            ),
+            2,
+        )
+        payment = html.split('id="proposal-payment-schedule-table"', 1)[1].split("</table>", 1)[0]
+        dispatch = html.split('id="proposal-dispatch-table"', 1)[1].split("</table>", 1)[0]
+        self.assertNotIn("version-spacer", html)
+        self.assertLess(payment.find('class="proposal-version-toggle-col"'), payment.find(">Запрос</th>"))
+        self.assertLess(payment.find(">Запрос</th>"), payment.find(">Верс.</th>"))
+        dispatch_header = dispatch.split("<tbody", 1)[0]
+        self.assertLess(
+            dispatch_header.find('class="proposal-version-toggle-col"'),
+            dispatch_header.find('<th data-col="number"'),
+        )
+        self.assertLess(
+            dispatch_header.find('<th data-col="number"'),
+            dispatch_header.find('<th data-col="version"'),
+        )
+        shared_uid = f'<span class="clf-id-droid-mono">{sent.short_uid}</span>'
+        self.assertEqual(registry.count(shared_uid), 2)
+        self.assertEqual(payment.count(shared_uid), 2)
+        self.assertEqual(dispatch.count(shared_uid), 2)
+
+    def test_one_request_caret_controls_every_tkp_inside_it(self):
+        first = self._proposal(
+            number=4701,
+            sub_number=0,
+            version=2,
+            position=1,
+            name="Первый заголовок",
+            type=self.product,
+        )
+        self._proposal(
+            number=4701,
+            sub_number=0,
+            version=1,
+            position=2,
+            name="Первый хвост",
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            docx_file_name="",
+            sent_date="",
+            type=self.product,
+        )
+        second = self._proposal(
+            number=4701,
+            sub_number=1,
+            version=2,
+            position=3,
+            name="Второй заголовок",
+            type=self.product,
+        )
+        self._proposal(
+            number=4701,
+            sub_number=1,
+            version=1,
+            position=4,
+            name="Второй хвост",
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            docx_file_name="",
+            sent_date="",
+            type=self.product,
+        )
+        controlled = f'data-proposal-number-version-toggles="{first.short_uid} {second.short_uid}"'
+
+        response = self.client.get(reverse("proposals_partial"))
+        html = response.content.decode()
+        registry = html.split('id="proposal-registry-table"', 1)[1].split("</table>", 1)[0]
+        payment = html.split('id="proposal-payment-schedule-table"', 1)[1].split("</table>", 1)[0]
+        dispatch = html.split('id="proposal-dispatch-table"', 1)[1].split("</table>", 1)[0]
+
+        for table in (registry, payment, dispatch):
+            self.assertEqual(table.count(controlled), 1)
+            self.assertEqual(table.count("proposal-version-toggle-suppressed"), 1)
+            self.assertLess(table.find(controlled), table.find("proposal-version-toggle-suppressed"))
+            self.assertLess(table.find(controlled), table.find("Второй заголовок"))
+        self.assertIn("toggleProposalVersionGroups", (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "proposals-panels.js"
+        ).read_text())
+
+    def test_version_toggle_state_is_stored_per_table(self):
+        script = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "proposals-panels.js"
+        ).read_text()
+        keys = script.split("const PROPOSAL_VERSION_COLLAPSE_KEYS = ", 1)[1].split("};", 1)[0]
+
+        self.assertIn("'proposal-registry-table': 'proposal-registry-versions-collapsed'", keys)
+        self.assertIn("'proposal-payment-schedule-table': 'proposal-payment-versions-collapsed'", keys)
+        self.assertIn("'proposal-dispatch-table': 'proposal-dispatch-versions-collapsed'", keys)
+        self.assertIn("toggleVisibleProposalVersionGroups(versionGroupsToggle.closest('table'))", script)
+        self.assertIn("versionButton.closest('table')", script)
+        self.assertNotIn("saveProposalVersionCollapsed(collapsed)", script)
+        self.assertNotIn("loadProposalVersionCollapsed()", script)
+
+        css = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "css" / "site.css"
+        ).read_text()
+        self.assertNotIn(':not([data-col="version-toggle"])', css)
+        self.assertIn(
+            'tr.proposal-dispatch-number-has-next > td[data-col="version-toggle"]',
+            css,
+        )
+        self.assertIn("tr.proposal-registry-number-has-next > td {\n  border-bottom: 0 !important;", css)
+        self.assertIn("tr.proposal-payment-stage-has-next > td {\n  border-bottom: 0 !important;", css)
+        self.assertIn("tr.proposal-payment-number-has-next > td {\n  border-bottom: 0 !important;", css)
+
+    def test_registry_status_markers_match_project_status_balls(self):
+        markers = (
+            (ProposalRegistration.ProposalStatus.DRAFT, "proposal-status-marker--work", "bi-circle"),
+            (ProposalRegistration.ProposalStatus.SENT, "proposal-status-marker--review", "bi-circle"),
+            (ProposalRegistration.ProposalStatus.COMPLETED, "proposal-status-marker--done", "bi-circle"),
+            (ProposalRegistration.ProposalStatus.POSTPONED, "proposal-status-marker--deferred", "bi-circle"),
+            (ProposalRegistration.ProposalStatus.NOT_HELD, "", "bi-play-circle"),
+        )
+        for index, (status, marker_class, icon) in enumerate(markers, start=1):
+            self._proposal(
+                number=4600 + index,
+                name=f"Статус {status}",
+                status=status,
+                position=index,
+                docx_file_name="",
+                sent_date="",
+                type=self.product,
+            )
+
+        response = self.client.get(reverse("proposals_partial"))
+        registry = response.content.decode().split('id="proposal-registry-table"', 1)[1].split("</table>", 1)[0]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(registry.find('class="proposal-status-marker-col"'), registry.find(">Статус</th>"))
+        for status, marker_class, icon in markers:
+            name_at = registry.find(f"Статус {status}")
+            row = registry[registry.rfind("<tr", 0, name_at):registry.find("</tr>", name_at)]
+            cell = row.split('data-col="status-marker"', 1)[1].split("</td>", 1)[0]
+            self.assertNotIn("<button", cell)
+            self.assertIn(icon, cell)
+            if marker_class:
+                self.assertIn(marker_class, cell)
+            else:
+                self.assertIn("text-muted", cell)
+                self.assertNotIn("proposal-status-marker--", cell)
+
+    def test_sent_preliminary_marker_turns_green_when_final_version_exists(self):
+        preliminary = self._proposal(
+            number=4620,
+            name="Предварительное отправленное",
+            status=ProposalRegistration.ProposalStatus.SENT,
+            document_kind=ProposalRegistration.ProposalDocumentKind.PRELIMINARY,
+            version=1,
+            position=1,
+            type=self.product,
+        )
+        final = self._proposal(
+            number=4620,
+            name="Итоговое черновик",
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            document_kind=ProposalRegistration.ProposalDocumentKind.FINAL,
+            version=2,
+            position=2,
+            docx_file_name="",
+            sent_date="",
+            type=self.product,
+        )
+        self._proposal(
+            number=4621,
+            name="Предварительное без итогового",
+            status=ProposalRegistration.ProposalStatus.SENT,
+            document_kind=ProposalRegistration.ProposalDocumentKind.PRELIMINARY,
+            position=3,
+            type=self.product,
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+        registry = response.content.decode().split('id="proposal-registry-table"', 1)[1].split("</table>", 1)[0]
+
+        def marker_cell(name):
+            name_at = registry.find(name)
+            row = registry[registry.rfind("<tr", 0, name_at):registry.find("</tr>", name_at)]
+            return row.split('data-col="status-marker"', 1)[1].split("</td>", 1)[0], row
+
+        completed_marker, completed_row = marker_cell("Предварительное отправленное")
+        lone_marker, lone_row = marker_cell("Предварительное без итогового")
+        final_marker, _final_row = marker_cell("Итоговое черновик")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(preliminary.short_uid, final.short_uid)
+        self.assertIn("proposal-status-marker--done", completed_marker)
+        self.assertNotIn("proposal-status-marker--review", completed_marker)
+        self.assertIn(">Отправленное</span>", completed_row)
+        self.assertIn("proposal-status-marker--review", lone_marker)
+        self.assertNotIn("proposal-status-marker--done", lone_marker)
+        self.assertIn("proposal-status-marker--work", final_marker)
+
+    def test_identity_columns_group_only_when_every_value_matches(self):
+        shared = self._proposal(number=4801, name="Одинаковое ТКП", position=2, type=self.product)
+        self._proposal(
+            number=4801,
+            name="Одинаковое ТКП",
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            version=2,
+            position=8,
+            docx_file_name="",
+            sent_date="",
+            type=self.product,
+        )
+        renamed = self._proposal(number=4802, name="Первое имя", position=3, type=self.product)
+        self._proposal(
+            number=4802,
+            name="Второе имя",
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            version=2,
+            position=9,
+            docx_file_name="",
+            sent_date="",
+            type=self.product,
+        )
+
+        response = self.client.get(reverse("proposals_partial"))
+        html = response.content.decode()
+        registry = html.split('id="proposal-registry-table"', 1)[1].split("</table>", 1)[0]
+        payment = html.split('id="proposal-payment-schedule-table"', 1)[1].split("</table>", 1)[0]
+        dispatch = html.split('id="proposal-dispatch-table"', 1)[1].split("</table>", 1)[0]
+        shared_rows = [row for row in response.context["proposals"] if row.number == 4801]
+        renamed_rows = [row for row in response.context["proposals"] if row.number == 4802]
+        shared_uid = f'<span class="clf-id-droid-mono">{shared.short_uid}</span>'
+        renamed_uid = f'<span class="clf-id-droid-mono">{renamed.short_uid}</span>'
+        payment_shared = [
+            row for row in response.context["proposal_payment_schedule_rows"]
+            if row["tkp_id"] == shared.short_uid
+        ]
+        payment_renamed = [
+            row for row in response.context["proposal_payment_schedule_rows"]
+            if row["tkp_id"] == renamed.short_uid
+        ]
+
+        self.assertEqual([row.version for row in shared_rows], [2, 1])
+        self.assertTrue(shared_rows[0].show_identity_fields)
+        self.assertTrue(shared_rows[0].identity_has_next)
+        self.assertFalse(shared_rows[1].show_identity_fields)
+        self.assertTrue(shared_rows[1].is_identity_continuation)
+        self.assertFalse(shared_rows[1].identity_has_next)
+        self.assertTrue(all(row.show_identity_fields and not row.identity_has_next for row in renamed_rows))
+        self.assertEqual([row["show_identity_fields"] for row in payment_shared], [True, False])
+        self.assertEqual([row["identity_has_next"] for row in payment_shared], [True, False])
+        self.assertEqual([row["show_identity_fields"] for row in payment_renamed], [True, True])
+        self.assertTrue(payment_shared[0]["is_first_for_number"])
+        self.assertTrue(payment_shared[0]["has_next_for_number"])
+        self.assertTrue(payment_shared[1]["is_number_continuation"])
+        self.assertFalse(payment_shared[1]["is_first_for_number"])
+        self.assertTrue(payment_renamed[0]["is_first_for_number"])
+        self.assertTrue(payment_renamed[1]["is_number_continuation"])
+        self.assertEqual(payment.count(f'<td data-col="number">{shared.formatted_number}</td>'), 1)
+        self.assertEqual(payment.count(f'<td data-col="number">{renamed.formatted_number}</td>'), 1)
+        self.assertEqual(payment.count('<td data-col="number"></td>'), 2)
+        self.assertIn("proposal-payment-number-has-next", payment)
+        self.assertIn("proposal-payment-number-continuation", payment)
+        self.assertIn("proposal-registry-identity-has-next", registry)
+        self.assertIn("proposal-registry-identity-continuation", registry)
+        self.assertIn("proposal-payment-identity-has-next", payment)
+        self.assertIn("proposal-payment-identity-continuation", payment)
+        self.assertIn("proposal-dispatch-number-has-next", dispatch)
+        self.assertIn("proposal-dispatch-number-continuation", dispatch)
+        self.assertIn("proposal-dispatch-identity-has-next", dispatch)
+        self.assertIn("proposal-dispatch-identity-continuation", dispatch)
+        self.assertEqual(dispatch.count(f'<td data-col="number" rowspan="1">{shared.formatted_number}</td>'), 1)
+        self.assertEqual(dispatch.count(f'<td data-col="number" rowspan="1">{renamed.formatted_number}</td>'), 1)
+        self.assertEqual(dispatch.count('<td data-col="number" rowspan="1"></td>'), 2)
+        self.assertEqual(registry.count(shared_uid), 1)
+        self.assertEqual(payment.count(shared_uid), 1)
+        self.assertEqual(dispatch.count(shared_uid), 1)
+        self.assertEqual(registry.count(renamed_uid), 2)
+        self.assertEqual(registry.count("Одинаковое ТКП"), 3)
+        self.assertEqual(payment.count("Одинаковое ТКП"), 3)
+        self.assertEqual(dispatch.count("Одинаковое ТКП"), 3)
+        self.assertEqual(registry.count("Первое имя"), 2)
+        self.assertEqual(registry.count("Второе имя"), 2)
+        self.assertEqual(registry.count('<td data-col="tkp-id" class="proposal-id-cell"></td>'), 1)
+        self.assertEqual(registry.count('<td data-col="type"></td>'), 1)
+        self.assertEqual(registry.count('<td data-col="name"></td>'), 1)
+
+    def test_locked_statuses_open_read_only_with_create_version_action(self):
+        index_html = (Path(__file__).resolve().parents[1] / "templates" / "index.html").read_text()
+        actions = index_html.split('id="proposal-form-actions"', 1)[1].split("</div>", 1)[0]
+        self.assertLess(
+            actions.find("data-proposal-form-create-version-btn"),
+            actions.find("data-proposal-form-cancel-btn"),
+        )
+
+        for index, status in enumerate((
+            ProposalRegistration.ProposalStatus.SENT,
+            ProposalRegistration.ProposalStatus.COMPLETED,
+            ProposalRegistration.ProposalStatus.POSTPONED,
+            ProposalRegistration.ProposalStatus.NOT_HELD,
+        )):
+            proposal = self._proposal(status=status, number=4600 + index)
+            response = self.client.get(reverse("proposal_form_edit", args=[proposal.pk]))
+            html = response.content.decode()
+            name_at = html.find('name="name"')
+            self.assertIn('data-proposal-locked="1"', html)
+            self.assertIn(
+                f'data-proposal-create-version-url="{reverse("proposal_create_version", args=[proposal.pk])}"',
+                html,
+            )
+            self.assertIn("disabled", html[name_at:name_at + 400])
+
+        editable = self._proposal(
+            number=4701,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            docx_file_name="",
+            sent_date="",
+        )
+        editable_html = self.client.get(reverse("proposal_form_edit", args=[editable.pk])).content.decode()
+        self.assertNotIn('data-proposal-locked="1"', editable_html)
+
+    def test_create_version_copies_card_without_files_or_dispatch(self):
+        source = self._proposal(document_kind=ProposalRegistration.ProposalDocumentKind.PRELIMINARY)
+        ProposalRegistrationProduct.objects.create(proposal=source, product=self.product, rank=1)
+        ProposalAsset.objects.create(proposal=source, short_name="Рудник")
+        ProposalCommercialOffer.objects.create(proposal=source, specialist="Геолог", position=1)
+        ProposalDispatchRecipient.objects.create(proposal=source, last_name="Петров", email="petrov@example.com")
+
+        response = self.client.post(reverse("proposal_create_version", args=[source.pk]))
+        created = ProposalRegistration.objects.exclude(pk=source.pk).get()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('data-proposal-locked="1"', response.content.decode())
+        self.assertIn('data-header-current-label="', response.content.decode())
+        self.assertIn("/ 02", response.content.decode())
+        self.assertEqual(created.short_uid, source.short_uid)
+        self.assertEqual(created.version, 2)
+        self.assertEqual(created.document_kind, ProposalRegistration.ProposalDocumentKind.PRELIMINARY)
+        self.assertEqual(created.status, ProposalRegistration.ProposalStatus.DRAFT)
+        self.assertEqual(created.name, source.name)
+        self.assertEqual(created.proposal_workspace_disk_path, source.proposal_workspace_disk_path)
+        self.assertEqual(created.docx_file_name, "")
+        source_paths = build_proposal_workspace_document_paths(source)
+        created_paths = build_proposal_workspace_document_paths(created)
+        self.assertIn("_v01", source_paths["docx_name"])
+        self.assertIn("_v02", created_paths["docx_name"])
+        self.assertNotEqual(source_paths["docx_path"], created_paths["docx_path"])
+        self.assertNotEqual(source_paths["pdf_path"], created_paths["pdf_path"])
+        self.assertNotEqual(
+            build_proposal_document_base_name(source),
+            build_proposal_document_base_name(created),
+        )
+        local_source = build_proposal_documents_paths(source)
+        local_created = build_proposal_documents_paths(created)
+        self.assertNotEqual(local_source["docx_path"], local_created["docx_path"])
+        self.assertNotEqual(local_source["pdf_path"], local_created["pdf_path"])
+        self.assertEqual(created.sent_date, "")
+        self.assertEqual(created.contact_email, "")
+        self.assertEqual(list(created.assets.values_list("short_name", flat=True)), ["Рудник"])
+        self.assertEqual(list(created.product_links.values_list("product_id", flat=True)), [self.product.pk])
+        self.assertEqual(created.commercial_offers.get().specialist, "Геолог")
+        self.assertFalse(created.dispatch_recipients.exists())
+        source.refresh_from_db()
+        self.assertEqual(source.status, ProposalRegistration.ProposalStatus.SENT)
+        self.assertEqual(source.docx_file_name, "tkp.docx")
+
+    def test_create_version_is_rejected_while_a_draft_exists(self):
+        source = self._proposal()
+        self._proposal(
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            version=2,
+            docx_file_name="",
+            sent_date="",
+        )
+
+        response = self.client.post(reverse("proposal_create_version", args=[source.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ProposalRegistration.VERSION_DRAFT_ERROR, html=False)
+        self.assertEqual(ProposalRegistration.objects.count(), 2)
+        self.assertIn('data-proposal-locked="1"', response.content.decode())
+
+    def test_locked_card_ignores_posted_edits(self):
+        proposal = self._proposal()
+
+        response = self.client.post(
+            reverse("proposal_form_edit", args=[proposal.pk]),
+            self._payload(name="Изменённое имя"),
+        )
+
+        proposal.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(proposal.status, ProposalRegistration.ProposalStatus.SENT)
+        self.assertEqual(proposal.name, "Исходное ТКП")
+        self.assertContains(response, "Выберите корректное значение.", html=False)
+
+    def test_new_proposal_with_same_identity_creates_version_only_without_draft(self):
+        self._proposal()
+
+        created = self.client.post(reverse("proposal_form_create"), self._payload())
+        versions = list(ProposalRegistration.objects.order_by("version"))
+
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual([item.version for item in versions], [1, 2])
+        self.assertEqual(versions[0].short_uid, versions[1].short_uid)
+        self.assertEqual(versions[1].name, "Новая карточка")
+        self.assertEqual(versions[1].status, ProposalRegistration.ProposalStatus.DRAFT)
+
+        blocked = self.client.post(reverse("proposal_form_create"), self._payload(name="Ещё одна"))
+
+        self.assertEqual(blocked.status_code, 200)
+        self.assertContains(blocked, ProposalRegistration.VERSION_DRAFT_ERROR, html=False)
+        self.assertEqual(ProposalRegistration.objects.count(), 2)
+
+    def test_version_with_siblings_keeps_identity_fields_locked(self):
+        self._proposal()
+        draft = self._proposal(
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            version=2,
+            docx_file_name="",
+            sent_date="",
+        )
+
+        html = self.client.get(reverse("proposal_form_edit", args=[draft.pk])).content.decode()
+        number_at = html.find('name="number"')
+
+        self.assertNotIn('data-proposal-locked="1"', html)
+        self.assertIn("disabled", html[number_at:number_at + 400])
+
+    def test_row_order_keeps_versions_of_one_tkp_together(self):
+        first = self._proposal(number=4801, name="Первая", position=1, docx_file_name="", sent_date="")
+        older = self._proposal(name="Старая версия", position=2)
+        newer = self._proposal(
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            version=2,
+            position=4,
+            docx_file_name="",
+            sent_date="",
+        )
+        third = self._proposal(
+            number=4803,
+            name="Третья",
+            position=3,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            docx_file_name="",
+            sent_date="",
+        )
+        display_ids = [first.pk, newer.pk, older.pk, third.pk]
+
+        response = self.client.post(
+            reverse("proposal_row_order"),
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": [first.pk, older.pk, third.pk, newer.pk],
+                    "base_order_signature": ":".join(str(item_id) for item_id in display_ids),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            list(ProposalRegistration.objects.order_by("position", "id").values_list("pk", flat=True)),
+            display_ids,
+        )
+
+    def test_status_filter_lists_proposal_states(self):
+        script = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "proposals-panels.js"
+        ).read_text()
+        start = script.index("const PROPOSAL_STATUS_FILTER_OPTIONS")
+        block = script[start:script.index("];", start)]
+
+        self.assertLess(block.find("'Черновик'"), block.find("'Отправленное'"))
+        self.assertLess(block.find("'Отправленное'"), block.find("'Завершённое'"))
+        self.assertLess(block.find("'Завершённое'"), block.find("'Отложенное'"))
+        self.assertLess(block.find("'Отложенное'"), block.find("'Несостоявшееся'"))
+        self.assertNotIn("Предварительное", block)
+        self.assertNotIn("Итоговое", block)
+
+    def test_admin_can_change_status_of_locked_card_without_other_fields(self):
+        admin = get_user_model().objects.create_user(
+            username="proposal-status-admin",
+            password="secret",
+            is_staff=True,
+        )
+        Employee.objects.create(user=admin, role=ADMIN_GROUP)
+        self.client.force_login(admin)
+        proposal = self._proposal(number=4901, name="Исходное ТКП")
+
+        opened = self.client.get(reverse("proposal_form_edit", args=[proposal.pk]))
+        html = opened.content.decode()
+        status_at = html.find('name="status"')
+
+        self.assertIn('data-proposal-status-editable="1"', html)
+        self.assertNotIn("disabled", html[status_at:status_at + 80])
+
+        response = self.client.post(
+            reverse("proposal_form_edit", args=[proposal.pk]),
+            self._payload(number="4901", status=ProposalRegistration.ProposalStatus.DRAFT, name="Чужое имя"),
+        )
+
+        proposal.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(proposal.status, ProposalRegistration.ProposalStatus.DRAFT)
+        self.assertEqual(proposal.name, "Исходное ТКП")
+
+    def test_sent_card_status_can_switch_among_sent_postponed_and_not_held(self):
+        proposal = self._proposal(number=4904, name="Отправленное ТКП")
+        opened = self.client.get(reverse("proposal_form_edit", args=[proposal.pk]))
+        html = opened.content.decode()
+        status_at = html.find('name="status"')
+        name_at = html.find('name="name"')
+        status_html = html[status_at:html.find("</select>", status_at)]
+
+        self.assertIn('data-proposal-status-editable="1"', html)
+        self.assertIn('class="proposal-status-editable"', html)
+        self.assertNotIn("disabled", html[status_at:status_at + 80])
+        self.assertIn("disabled", html[name_at:name_at + 400])
+        self.assertRegex(status_html, r'<option value="draft"[^>]*disabled')
+        self.assertRegex(status_html, r'<option value="completed"[^>]*disabled')
+        self.assertNotRegex(status_html, r'<option value="sent"[^>]*disabled')
+        self.assertNotRegex(status_html, r'<option value="postponed"[^>]*disabled')
+        self.assertNotRegex(status_html, r'<option value="not_held"[^>]*disabled')
+
+        for status in (
+            ProposalRegistration.ProposalStatus.POSTPONED,
+            ProposalRegistration.ProposalStatus.NOT_HELD,
+            ProposalRegistration.ProposalStatus.SENT,
+        ):
+            response = self.client.post(
+                reverse("proposal_form_edit", args=[proposal.pk]),
+                self._payload(number="4904", status=status, name="Чужое имя", year="2030"),
+            )
+            proposal.refresh_from_db()
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(proposal.status, status)
+            self.assertEqual(proposal.name, "Отправленное ТКП")
+            self.assertEqual(proposal.year, 2026)
+
+        completed = self._proposal(
+            number=4905,
+            status=ProposalRegistration.ProposalStatus.COMPLETED,
+        )
+        completed_html = self.client.get(reverse("proposal_form_edit", args=[completed.pk])).content.decode()
+        self.assertNotIn('data-proposal-status-editable="1"', completed_html)
+        rejected = self.client.post(
+            reverse("proposal_form_edit", args=[completed.pk]),
+            self._payload(
+                number="4905",
+                status=ProposalRegistration.ProposalStatus.POSTPONED,
+                name="Чужое имя",
+            ),
+        )
+        completed.refresh_from_db()
+        self.assertContains(rejected, "Карточка доступна только для просмотра.", html=False)
+        self.assertEqual(completed.status, ProposalRegistration.ProposalStatus.COMPLETED)
+        self.assertEqual(completed.name, "Исходное ТКП")
+
+    def test_non_admin_cannot_change_locked_card_and_can_postpone_draft(self):
+        postponed = self._proposal(
+            number=4902,
+            status=ProposalRegistration.ProposalStatus.POSTPONED,
+            docx_file_name="",
+            sent_date="",
+        )
+        rejected = self.client.post(
+            reverse("proposal_form_edit", args=[postponed.pk]),
+            self._payload(number="4902", status=ProposalRegistration.ProposalStatus.DRAFT, name="Чужое имя"),
+        )
+        postponed.refresh_from_db()
+        self.assertContains(rejected, "Выберите корректное значение.", html=False)
+        self.assertEqual(postponed.status, ProposalRegistration.ProposalStatus.POSTPONED)
+        self.assertEqual(postponed.name, "Исходное ТКП")
+
+        draft = self._proposal(
+            number=4903,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            docx_file_name="",
+            sent_date="",
+        )
+        saved = self.client.post(
+            reverse("proposal_form_edit", args=[draft.pk]),
+            self._payload(
+                number="4903",
+                status=ProposalRegistration.ProposalStatus.POSTPONED,
+                name="Исходное ТКП",
+            ),
+        )
+        draft.refresh_from_db()
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(draft.status, ProposalRegistration.ProposalStatus.POSTPONED)
+        self.assertEqual(draft.name, "Исходное ТКП")

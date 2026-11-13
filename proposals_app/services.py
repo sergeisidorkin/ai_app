@@ -33,6 +33,7 @@ sys.modules.setdefault("ai_app.proposals_app.services", sys.modules[__name__])
 PROPOSAL_SENDING_TEMPLATE_TYPE = "proposal_sending"
 PROPOSAL_SENDING_DEFAULT_SUBJECT = "Технико-коммерческое предложение IMC Montan {{tkp_id}}"
 PROPOSAL_SENDING_DEFAULT_BODY = "<p>Направляем проект ТКП {{tkp_id}}</p>"
+PROPOSAL_DELIVERY_CHANNEL_STATUS_ONLY = "status_without_email"
 SUPPORTED_PROPOSAL_DELIVERY_CHANNELS = (
     DELIVERY_CHANNEL_SYSTEM_EMAIL,
     DELIVERY_CHANNEL_CONNECTED_EMAIL,
@@ -55,6 +56,12 @@ def normalize_proposal_delivery_channels(delivery_channels):
     }
     if not requested:
         raise ValueError("Выберите хотя бы один способ отправки.")
+
+    status_only = PROPOSAL_DELIVERY_CHANNEL_STATUS_ONLY in requested
+    if status_only and requested != {PROPOSAL_DELIVERY_CHANNEL_STATUS_ONLY}:
+        raise ValueError("Смена статуса без отправки почты не сочетается с отправкой писем.")
+    if status_only:
+        return (PROPOSAL_DELIVERY_CHANNEL_STATUS_ONLY,)
 
     invalid = requested - set(SUPPORTED_PROPOSAL_DELIVERY_CHANNELS)
     if invalid:

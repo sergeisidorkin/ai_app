@@ -214,6 +214,15 @@ def ensure_proposal_documents_root() -> Path:
     return root
 
 
+def _proposal_document_version_token(proposal) -> str:
+    """Версии одного ТКП ID делят short_uid и рабочую папку, поэтому файл без версии затирает предыдущий."""
+    try:
+        version = int(getattr(proposal, "version", None) or 1)
+    except (TypeError, ValueError):
+        version = 1
+    return f"v{max(version, 1):02d}"
+
+
 def build_proposal_document_base_name(proposal) -> str:
     proposal_id = sanitize_folder_name(proposal.short_uid or f"proposal-{proposal.pk}")
     product = ""
@@ -225,6 +234,7 @@ def build_proposal_document_base_name(proposal) -> str:
         parts.append(product)
     if label:
         parts.append(label)
+    parts.append(_proposal_document_version_token(proposal))
     return "_".join(part for part in parts if part)
 
 
@@ -561,6 +571,25 @@ def store_generated_pdf_document(user, proposal, pdf_bytes: bytes) -> dict[str, 
         "pdf_path": str(paths["pdf_path"]),
         "output_dir": str(paths["workspace_root"]),
     }
+
+
+def convert_docx_bytes_to_pdf_locally(docx_bytes: bytes, *, source_name: str = "proposal.docx") -> bytes:
+    """DOCX → PDF через локальный LibreOffice, без ONLYOFFICE."""
+    if not docx_bytes:
+        raise RuntimeError("Пустой DOCX-файл нельзя конвертировать в PDF.")
+    from projects_app.docx_render import DocxRenderError, _render_with_libreoffice, find_soffice
+
+    if not find_soffice():
+        raise RuntimeError(
+            "LibreOffice (soffice) не найден. Установите LibreOffice для локальной генерации PDF."
+        )
+    try:
+        pdf_bytes = _render_with_libreoffice(docx_bytes, source_name or "proposal.docx")
+    except DocxRenderError as exc:
+        raise RuntimeError(f"Локальная генерация PDF не удалась: {exc}") from exc
+    if not pdf_bytes:
+        raise RuntimeError("Локальная генерация PDF вернула пустой файл.")
+    return pdf_bytes
 
 
 def generate_and_store_proposal_pdf(user, proposal, *, source_url: str) -> dict[str, str]:

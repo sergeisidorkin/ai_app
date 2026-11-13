@@ -47,6 +47,13 @@ def _proposal_kind(proposal) -> str:
     return proposal.get_kind_display() or ""
 
 
+def _proposal_document_kind(proposal) -> str:
+    getter = getattr(proposal, "get_document_kind_display", None)
+    if callable(getter):
+        return getter() or ""
+    return str(getattr(proposal, "document_kind", "") or "")
+
+
 def _proposal_status(proposal) -> str:
     return proposal.get_status_display() or ""
 
@@ -254,11 +261,11 @@ def _proposal_tkp_preliminary(proposal) -> str:
     try:
         from proposals_app.models import ProposalRegistration
 
-        if getattr(proposal, "status", "") == ProposalRegistration.ProposalStatus.PRELIMINARY:
-            return "(предварительное)"
+        preliminary = ProposalRegistration.ProposalDocumentKind.PRELIMINARY
     except Exception:
-        if getattr(proposal, "status", "") == "preliminary":
-            return "(предварительное)"
+        preliminary = "preliminary"
+    if getattr(proposal, "document_kind", "") == preliminary:
+        return "(предварительное)"
     return ""
 
 
@@ -1731,6 +1738,7 @@ FIELD_MAP = {
     ("proposals", "registry", "type"): _proposal_type,
     ("proposals", "registry", "name"): _proposal_name,
     ("proposals", "registry", "kind"): _proposal_kind,
+    ("proposals", "registry", "document_kind"): _proposal_document_kind,
     ("proposals", "registry", "status"): _proposal_status,
     ("proposals", "registry", "year"): _proposal_year,
     ("proposals", "registry", "customer"): _proposal_customer,

@@ -14,17 +14,55 @@ sys.modules.setdefault("proposals_app.models", sys.modules[__name__])
 sys.modules.setdefault("ai_app.proposals_app.models", sys.modules[__name__])
 
 
+class ProposalVersionError(Exception):
+    """Новую версию ТКП нельзя создать, пока у этого ТКП ID есть черновик."""
+
+
 class ProposalRegistration(models.Model):
     class ProposalKind(models.TextChoices):
         REGULAR = "regular", "Обычные"
         OWED_TO_US = "owed_to_us", "Должны нам"
 
-    class ProposalStatus(models.TextChoices):
-        PRELIMINARY = "preliminary", "Предварительное"
+    class ProposalDocumentKind(models.TextChoices):
         FINAL = "final", "Итоговое"
+        PRELIMINARY = "preliminary", "Предварительное"
+
+    class ProposalStatus(models.TextChoices):
+        DRAFT = "draft", "Черновик"
         SENT = "sent", "Отправленное"
         COMPLETED = "completed", "Завершённое"
+        POSTPONED = "postponed", "Отложенное"
         NOT_HELD = "not_held", "Несостоявшееся"
+
+    DRAFT_STATUSES = frozenset({ProposalStatus.DRAFT})
+    LOCKED_STATUSES = frozenset({
+        ProposalStatus.SENT,
+        ProposalStatus.COMPLETED,
+        ProposalStatus.POSTPONED,
+        ProposalStatus.NOT_HELD,
+    })
+    VERSION_DRAFT_ERROR = (
+        "У этого ТКП ID уже есть черновик. Новую версию можно создать после отправки."
+    )
+    VERSION_CLONE_SKIP = frozenset({
+        "docx_file_name",
+        "docx_file_link",
+        "docx_file_id",
+        "pdf_file_name",
+        "pdf_file_link",
+        "pdf_file_id",
+        "sent_date",
+        "transfer_to_contract_date",
+        "recipient",
+        "recipient_country",
+        "recipient_identifier",
+        "recipient_registration_number",
+        "recipient_registration_date",
+        "recipient_identifier_record",
+        "recipient_job_title",
+        "contact_full_name",
+        "contact_email",
+    })
 
     class PreliminaryReportTermUnit(models.TextChoices):
         MONTHS = "months", "мес."
@@ -58,11 +96,11 @@ class ProposalRegistration(models.Model):
     short_uid = models.CharField(
         "ТКП ID",
         max_length=32,
-        unique=True,
         db_index=True,
         blank=True,
         editable=False,
     )
+    version = models.PositiveIntegerField("Версия", default=1)
     type = models.ForeignKey(
         Product,
         on_delete=models.PROTECT,
@@ -73,17 +111,24 @@ class ProposalRegistration(models.Model):
     )
     name = models.CharField("Название", max_length=255, blank=True, default="")
     kind = models.CharField(
-        "Вид",
+        "Категория",
         max_length=20,
         choices=ProposalKind.choices,
         default=ProposalKind.REGULAR,
+        db_index=True,
+    )
+    document_kind = models.CharField(
+        "Вид",
+        max_length=20,
+        choices=ProposalDocumentKind.choices,
+        default=ProposalDocumentKind.FINAL,
         db_index=True,
     )
     status = models.CharField(
         "Статус",
         max_length=20,
         choices=ProposalStatus.choices,
-        default=ProposalStatus.FINAL,
+        default=ProposalStatus.DRAFT,
         db_index=True,
     )
     year = models.PositiveIntegerField("Год", null=True, blank=True)
@@ -302,7 +347,7 @@ class ProposalRegistration(models.Model):
         verbose_name_plural = "Реестр ТКП"
         constraints = [
             models.UniqueConstraint(
-                fields=("number", "sub_number", "group_member"),
+                fields=("number", "sub_number", "group_member", "version"),
                 name="proposal_registration_identity_unique",
             ),
         ]
@@ -313,6 +358,78 @@ class ProposalRegistration(models.Model):
     @property
     def formatted_number(self):
         return f"{int(self.number or 0):04d}"
+
+    @property
+    def version_display(self):
+        return f"{int(self.version or 1):02d}"
+
+    @property
+    def is_content_locked(self):
+        return self.status in self.LOCKED_STATUSES
+
+    @classmethod
+    def identity_siblings(cls, number, sub_number, group_member, *, exclude_pk=None):
+        member_id = getattr(group_member, "pk", group_member)
+        queryset = cls.objects.filter(number=number, sub_number=int(sub_number or 0))
+        if member_id:
+            queryset = queryset.filter(group_member_id=member_id)
+        else:
+            queryset = queryset.filter(group_member__isnull=True)
+        if exclude_pk:
+            queryset = queryset.exclude(pk=exclude_pk)
+        return queryset
+
+    def has_identity_siblings(self):
+        if not self.pk:
+            return False
+        return self.identity_siblings(
+            self.number,
+            self.sub_number,
+            self.group_member_id,
+            exclude_pk=self.pk,
+        ).exists()
+
+    def create_next_version(self):
+        with transaction.atomic():
+            siblings = list(
+                type(self)
+                .identity_siblings(self.number, self.sub_number, self.group_member_id)
+                .select_for_update()
+            )
+            if any(item.status in self.DRAFT_STATUSES for item in siblings):
+                raise ProposalVersionError(self.VERSION_DRAFT_ERROR)
+            next_version = max((int(item.version or 1) for item in siblings), default=0) + 1
+            values = {}
+            for field in self._meta.concrete_fields:
+                if field.primary_key or field.name in self.VERSION_CLONE_SKIP or field.name in {"version", "status"}:
+                    continue
+                values[field.attname] = getattr(self, field.attname)
+            clone = type(self)(**values)
+            clone.version = next_version
+            clone.status = self.ProposalStatus.DRAFT
+            clone.save()
+            self._clone_version_children(clone)
+            return clone
+
+    def _clone_version_children(self, clone):
+        related_models = (
+            ("product_links", ProposalRegistrationProduct),
+            ("assets", ProposalAsset),
+            ("legal_entities", ProposalLegalEntity),
+            ("proposal_objects", ProposalObject),
+            ("commercial_offers", ProposalCommercialOffer),
+        )
+        for related_name, model in related_models:
+            copies = []
+            for child in getattr(self, related_name).all():
+                child_values = {"proposal_id": clone.pk}
+                for field in child._meta.concrete_fields:
+                    if field.primary_key or field.name == "proposal":
+                        continue
+                    child_values[field.attname] = getattr(child, field.attname)
+                copies.append(model(**child_values))
+            if copies:
+                model.objects.bulk_create(copies)
 
     @property
     def contact_short_name(self):
@@ -529,6 +646,16 @@ class ProposalRegistration(models.Model):
 
     @property
     def type_short_display(self):
+        """Цепочка коротких имён до трёх продуктов, дальше — «N этап/этапа/этапов»."""
+        from projects_app.registration_summary import SUMMARY_TYPE_CHAIN_LIMIT, stage_count_label
+
+        links = self._ordered_product_links()
+        if links:
+            count = sum(1 for link in links if getattr(link, "product_id", None))
+        else:
+            count = len(self.ordered_products())
+        if count > SUMMARY_TYPE_CHAIN_LIMIT:
+            return stage_count_label(count)
         return "-".join(self.type_short_names)
 
 

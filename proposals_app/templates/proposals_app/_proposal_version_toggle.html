@@ -1,0 +1,10 @@
+{% if show %}
+<button type="button"
+        class="proposal-version-group-toggle{% if suppressed %} proposal-version-toggle-suppressed{% endif %}"
+        data-proposal-version-toggle="{{ group }}"
+        {% if controlled %}data-proposal-number-version-toggles="{{ controlled }}"{% endif %}
+        {% if master_only %}data-proposal-request-version-master="1"{% endif %}
+        aria-expanded="true"
+        aria-label="Свернуть/развернуть версии"
+        {% if suppressed %}hidden{% endif %}><i class="bi bi-caret-down-fill"></i></button>
+{% endif %}
