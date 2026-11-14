@@ -17514,6 +17514,8 @@ def _docx_with_footnote(
     leading_tab=False,
     leading_space=False,
     footnote_ref_mark=False,
+    open_mark="{",
+    close_mark="}",
 ):
     """DOCX with a footnote whose body is not in the main story."""
     from lxml import etree
@@ -17546,12 +17548,12 @@ def _docx_with_footnote(
     wrap_open = bool(wrap_brackets)
     wrap_close = wrap_brackets is True
     if wrap_open:
-        add_text("<", superscript=left_super, rstyle=bracket_rstyle)
+        add_text(open_mark, superscript=left_super, rstyle=bracket_rstyle)
     ref_run = etree.SubElement(paragraph, f"{{{w_ns}}}r")
     ref = etree.SubElement(ref_run, f"{{{w_ns}}}footnoteReference")
     ref.set(f"{{{w_ns}}}id", str(note_id))
     if wrap_close:
-        add_text(">", superscript=right_super, rstyle=bracket_rstyle)
+        add_text(close_mark, superscript=right_super, rstyle=bracket_rstyle)
     parts["word/document.xml"] = etree.tostring(
         root, xml_declaration=True, encoding="UTF-8", standalone=True
     )
@@ -22060,30 +22062,25 @@ class TpgrPercentMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], text)
 
-    def test_skips_percent_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <доля 10 %>"), [])
-        self.assertEqual(self._findings("<a <b> доля 10 % текст>"), [])
-        self.assertEqual(self._findings("шаблон < 05 data \\ доля 10 % >"), [])
+    def test_skips_percent_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {доля 10 %}"), [])
+        self.assertEqual(self._findings("{a {b} доля 10 % текст}"), [])
+        self.assertEqual(self._findings("шаблон { 05 data \\ доля 10 % }"), [])
+        self.assertEqual(len(self._findings("шаблон <доля 10 %>")), 1)
+        self.assertEqual(len(self._findings("шаблон < 05 data \\ доля 10 % >")), 1)
         self.assertEqual(len(self._findings("после > доля 10 %")), 1)
 
-    def test_skips_percent_inside_superscript_angles(self):
-        document = Document()
-        paragraph = document.add_paragraph()
-        paragraph.add_run("шаблон ")
-        marked = paragraph.add_run("<доля 10 %>")
-        marked.font.superscript = True
-        buffer = BytesIO()
-        document.save(buffer)
-        source = buffer.getvalue()
-        text, _spans = extract_document_text(source)
-        offsets = extract_superscript_offsets(source)
-        self.assertIn(text.index("<"), offsets)
-        self.assertIn(text.index(">"), offsets)
-        findings = run_macro(
+    def test_superscript_does_not_change_brace_skip(self):
+        text = "шаблон {доля 10 %} и <доля 10 %>"
+        findings = self._findings(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "10")
+        self.assertGreater(findings[0]["start"], text.index("<"))
+        covered = run_macro(
             self.macro,
-            type("Ctx", (), {"text": text, "superscript_offsets": offsets})(),
+            type("Ctx", (), {"text": text, "superscript_offsets": frozenset(range(len(text)))})(),
         )
-        self.assertEqual(findings, [])
+        self.assertEqual(covered, findings)
 
     def test_flags_percent_after_comparison(self):
         text = "порог < 0,1 и доля >= 2, затем 10 % запасов"
@@ -22091,17 +22088,25 @@ class TpgrPercentMacroTests(TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "10")
 
-    def test_flags_percent_after_unclosed_angles(self):
-        text = "Этап 2 <<Определение фазового состава\nдоля 10 % запасов"
+    def test_flags_percent_after_unclosed_braces(self):
+        text = "Этап 2 {Определение фазового состава\nдоля 10 % запасов"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "10")
+        angles = "Этап 2 <<Определение фазового состава\nдоля 10 % запасов"
+        angle_findings = self._findings(angles)
+        self.assertEqual(len(angle_findings), 1)
+        self.assertEqual(angles[angle_findings[0]["start"]:angle_findings[0]["end"]], "10")
 
-    def test_stray_closing_angle_cancels_the_next_opening(self):
-        text = "после > <доля 10 %>"
+    def test_stray_closing_brace_cancels_the_next_opening(self):
+        text = "после } {доля 10 %}"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "10")
+        angles = "после > <доля 10 %>"
+        angle_findings = self._findings(angles)
+        self.assertEqual(len(angle_findings), 1)
+        self.assertEqual(angles[angle_findings[0]["start"]:angle_findings[0]["end"]], "10")
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("доля 10 % запасов")
@@ -22209,9 +22214,11 @@ class TpgrSignsMacroTests(TestCase):
     def test_skips_celsius_with_nbsp(self):
         self.assertEqual(self._findings("температура 10\u00a0°C"), [])
 
-    def test_skips_signs_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <скважина №5>"), [])
-        self.assertEqual(self._findings("шаблон <10°C>"), [])
+    def test_skips_signs_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {скважина №5}"), [])
+        self.assertEqual(self._findings("шаблон {10°C}"), [])
+        self.assertEqual(len(self._findings("шаблон <скважина №5>")), 1)
+        self.assertEqual(len(self._findings("шаблон <10°C>")), 1)
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("скважина № 5")
@@ -22443,15 +22450,21 @@ class TpgrDashMacroTests(TestCase):
             self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "\u2014")
             self.assertEqual(findings[0]["message"], self.MSG)
 
-    def test_skips_dash_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <слово - слово>"), [])
-        self.assertEqual(self._findings("шаблон <слово\u2014слово>"), [])
+    def test_skips_dash_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {слово - слово}"), [])
+        self.assertEqual(self._findings("шаблон {слово\u2014слово}"), [])
+        self.assertEqual(len(self._findings("шаблон <слово - слово>")), 1)
+        self.assertEqual(len(self._findings("шаблон <слово\u2014слово>")), 1)
 
-    def test_flags_dash_after_unclosed_angles(self):
-        text = "Этап 2 <<Определение фазового состава\nэлектроэнергию \u2013 в 2 раза"
+    def test_flags_dash_after_unclosed_braces(self):
+        text = "Этап 2 {Определение фазового состава\nэлектроэнергию \u2013 в 2 раза"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "\u2013")
+        angles = "Этап 2 <<Определение фазового состава\nэлектроэнергию \u2013 в 2 раза"
+        angle_findings = self._findings(angles)
+        self.assertEqual(len(angle_findings), 1)
+        self.assertEqual(angles[angle_findings[0]["start"]:angle_findings[0]["end"]], "\u2013")
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("слово - слово")
@@ -22523,8 +22536,9 @@ class TpgrRangeDashMacroTests(TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG)
 
-    def test_skips_range_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <10-20>"), [])
+    def test_skips_range_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {10-20}"), [])
+        self.assertEqual(len(self._findings("шаблон <10-20>")), 1)
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("диапазон 10-20 м")
@@ -22602,8 +22616,9 @@ class TpgrAbbrMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
-    def test_skips_abbreviation_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <и т. д.>"), [])
+    def test_skips_abbreviation_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {и т. д.}"), [])
+        self.assertEqual(len(self._findings("шаблон <и т. д.>")), 1)
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("и т. д.")
@@ -23274,8 +23289,9 @@ class TpgrHangingPrepositionMacroTests(TestCase):
         ]
         self.assertEqual(hanging, [])
 
-    def test_skips_particle_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <текст в \nдоме>"), [])
+    def test_skips_particle_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {текст в \nдоме}"), [])
+        self.assertEqual(len(self._findings("шаблон <текст в \nдоме>")), 1)
 
     def test_flags_particle_after_comparison(self):
         text = "порог < 0,1\nтекст в \nдоме"
@@ -23915,8 +23931,9 @@ class TpgrDateMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
-    def test_skips_date_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <12.05.2018 г.>"), [])
+    def test_skips_date_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {12.05.2018 г.}"), [])
+        self.assertEqual(len(self._findings("шаблон <12.05.2018 г.>")), 1)
 
     def test_comment_has_no_course_hyperlink(self):
         source = _report_docx_bytes("от 12.05.2018 г. утверждён")
@@ -24039,8 +24056,9 @@ class TpgrDigitGroupMacroTests(TestCase):
         self.assertIn("12\n345", text)
         self.assertEqual(self._findings(text), [])
 
-    def test_skips_number_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <запасы 12345 т>"), [])
+    def test_skips_number_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {запасы 12345 т}"), [])
+        self.assertEqual(len(self._findings("шаблон <запасы 12345 т>")), 1)
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("запасы 12345 т")
@@ -24099,8 +24117,9 @@ class TpgrRepeatedQuotesMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
-    def test_skips_repeated_quotes_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <««название»>"), [])
+    def test_skips_repeated_quotes_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {««название»}"), [])
+        self.assertEqual(len(self._findings("шаблон <««название»>")), 1)
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("текст ««название»")
@@ -24168,8 +24187,9 @@ class TpgrGuillemetMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], text)
 
-    def test_skips_quotes_inside_angle_brackets(self):
-        self.assertEqual(self._findings('шаблон <"название">'), [])
+    def test_skips_quotes_inside_braces(self):
+        self.assertEqual(self._findings('шаблон {"название"}'), [])
+        self.assertGreaterEqual(len(self._findings('шаблон <"название">')), 1)
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes('текст "название"')
@@ -24277,8 +24297,9 @@ class TpgrUnclosedGuillemetMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
-    def test_skips_quotes_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <«название>"), [])
+    def test_skips_quotes_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {«название}"), [])
+        self.assertEqual(len(self._findings("шаблон <«название>")), 1)
 
     def test_comment_includes_course_hyperlink(self):
         source = _report_docx_bytes("текст «название далее")
@@ -24336,8 +24357,9 @@ class DocxBrokenRefMacroTests(TestCase):
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
-    def test_skips_error_inside_angle_brackets(self):
-        self.assertEqual(self._findings("шаблон <" + self.NEEDLE + ">"), [])
+    def test_skips_error_inside_braces(self):
+        self.assertEqual(self._findings("шаблон {" + self.NEEDLE + "}"), [])
+        self.assertEqual(len(self._findings("шаблон <" + self.NEEDLE + ">")), 1)
 
     def test_comment_has_no_course_hyperlink(self):
         source = _report_docx_bytes("см. " + self.NEEDLE + " далее")
@@ -24379,15 +24401,16 @@ class DocxBrokenRefMacroTests(TestCase):
 
 
 class TmplUnclosedAnglesMacroTests(TestCase):
-    """Блок 13 VBA TPGR(): TMPL-SS-00.00 — незакрытые угловые скобки."""
+    """Блок 13 VBA TPGR(): TMPL-SS-00.00 — незакрытые фигурные скобки."""
 
-    MSG = "TMPL-SS-00.00: Отсутствует закрывающая угловая скобка (>)"
-    MSG_OPEN = "TMPL-SS-00.00: Отсутствует открывающая угловая скобка (<)"
-    MSG_FN = "TMPL-SS-00.00: Отсутствует закрывающая угловая скобка (>) в тексте сноски внизу страницы"
+    MSG = "TMPL-SS-00.00: Отсутствует закрывающая фигурная скобка (})"
+    MSG_OPEN = "TMPL-SS-00.00: Отсутствует открывающая фигурная скобка ({)"
+    MSG_FN = "TMPL-SS-00.00: Отсутствует закрывающая фигурная скобка (}) в тексте сноски внизу страницы"
+    MSG_OPEN_FN = "TMPL-SS-00.00: Отсутствует открывающая фигурная скобка ({) в тексте сноски внизу страницы"
 
     def setUp(self):
         self.macro = ReportMacro(
-            name="TMPL-SS-00.00 Незакрытые угловые скобки",
+            name="TMPL-SS-00.00 Незакрытые фигурные скобки",
             code=tpgr_macro_code("TMPL-SS-00.00 Незакрытые"),
         )
 
@@ -24403,115 +24426,128 @@ class TmplUnclosedAnglesMacroTests(TestCase):
 
     def test_catalog_has_unclosed_angles_macro_without_course_link(self):
         spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SS-00.00"))
-        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SS-00.00 Незакрытые угловые скобки")
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SS-00.00 Незакрытые фигурные скобки")
         self.assertIn(self.MSG, spec["code"])
         self.assertIn(self.MSG_OPEN, spec["code"])
         self.assertIn(self.MSG_FN, spec["code"])
+        self.assertIn(self.MSG_OPEN_FN, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
 
     def test_flags_unclosed_opening_bracket(self):
         for text in (
-            "шаблон <название месторождения",
-            "текст<1 далее",
-            "<один> и <два",
+            "шаблон {название месторождения",
+            "текст{1 далее",
+            "{один} и {два",
         ):
             findings = self._findings(text)
             self.assertEqual(len(findings), 1, repr(text))
             self.assertEqual(findings[0]["message"], self.MSG)
             self.assertNotIn("links", findings[0])
-            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+            self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "{")
+        self.assertEqual(self._findings("шаблон <название месторождения"), [])
 
     def test_flags_each_unclosed_opening(self):
-        text = "<первый <второй"
+        text = "{первый {второй"
         findings = self._findings(text)
         self.assertEqual(len(findings), 2)
-        self.assertEqual([text[item["start"]] for item in findings], ["<", "<"])
+        self.assertEqual([text[item["start"]] for item in findings], ["{", "{"])
+        self.assertEqual(self._findings("<первый <второй"), [])
 
     def test_flags_extra_closing_bracket(self):
-        text = "текст > далее"
+        text = "текст } далее"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG_OPEN)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "}")
+        self.assertEqual(self._findings("текст > далее"), [])
 
     def test_flags_double_closing_after_pair(self):
-        text = "Лишняя закрывающая угловая скобка <в тексте>> также отмечается как ошибка."
+        text = "Лишняя закрывающая фигурная скобка {в тексте}} также отмечается как ошибка."
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG_OPEN)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">>")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "}}")
+        self.assertEqual(
+            self._findings("Лишняя закрывающая угловая скобка <в тексте>> также отмечается как ошибка."),
+            [],
+        )
 
     def test_balanced_brackets_span_paragraphs(self):
         for text in (
-            "<технический текст\nпродолжается\nи заканчивается здесь>",
-            "начало <блок\nобычный абзац\nконец блока> дальше",
-            "<первый абзац>\n<второй абзац>",
+            "{технический текст\nпродолжается\nи заканчивается здесь}",
+            "начало {блок\nобычный абзац\nконец блока} дальше",
+            "{первый абзац}\n{второй абзац}",
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
     def test_unclosed_opening_survives_later_paragraphs(self):
-        text = "<технический текст\nследующий абзац без закрытия\nещё абзац"
+        text = "{технический текст\nследующий абзац без закрытия\nещё абзац"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "{")
 
     def test_extra_closing_after_earlier_paragraphs(self):
-        text = "первый абзац\nвторой абзац>\nтретий"
+        text = "первый абзац\nвторой абзац}\nтретий"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG_OPEN)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "}")
 
     def test_docx_brackets_span_paragraphs(self):
         source = _report_docx_bytes(
             "Введение.",
-            "<технический",
+            "{технический",
             "текст на несколько",
-            "абзацев>",
+            "абзацев}",
             "После блока.",
         )
         text, _spans = extract_document_text(source)
-        self.assertIn("\n", text[text.find("<"):text.find(">")])
+        self.assertIn("\n", text[text.find("{"):text.find("}")])
         self.assertEqual(self._findings(text), [])
 
     def test_docx_unclosed_opening_spans_paragraphs(self):
-        source = _report_docx_bytes("<технический", "текст", "без закрытия")
+        source = _report_docx_bytes("{технический", "текст", "без закрытия")
         text, _spans = extract_document_text(source)
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "{")
 
     def test_quoted_bracket_chars_are_not_guillemet_pairs(self):
-        text = "У каждой открывающей «<» должна быть закрывающая «>»."
+        text = "У каждой открывающей «{» должна быть закрывающая «}»."
         self.assertEqual(self._findings(text), [])
+        self.assertEqual(self._findings("У каждой открывающей «<» должна быть закрывающая «>»."), [])
 
     def test_flags_leading_double_closing(self):
-        text = ">> лишние в начале"
+        text = "}} лишние в начале"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG_OPEN)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">>")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "}}")
+        self.assertEqual(self._findings(">> лишние в начале"), [])
 
     def test_flags_trailing_unclosed_opening(self):
-        text = "шаблон <"
+        text = "шаблон {"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "{")
+        self.assertEqual(self._findings("шаблон <"), [])
 
     def test_skips_balanced_brackets(self):
         for text in (
-            "шаблон <название> далее",
-            "текст<1>сноска",
-            "вложенные <a <b>>",
-            "пусто <> тут",
+            "шаблон {название} далее",
+            "текст{1}сноска",
+            "вложенные {a {b}}",
+            "пусто {} тут",
             "кавычки «название» далее",
+            "шаблон <название> далее",
+            "пусто <> тут",
         ):
             self.assertEqual(self._findings(text), [], repr(text))
 
-    def test_skips_comparison_operators(self):
+    def test_angle_signs_are_not_braces(self):
         for text in (
             "при pH < 7 раствор кислый",
             "содержание < 0,1 %",
@@ -24521,32 +24557,62 @@ class TmplUnclosedAnglesMacroTests(TestCase):
             "содержание > 0,1 %",
             "температура >= 20 °C",
             "стрелка –> направо",
+            "стрелка -> направо",
+            "код -> 1",
         ):
             self.assertEqual(self._findings(text), [], repr(text))
+        opened = "при pH { 7 раствор"
+        findings = self._findings(opened)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(opened[findings[0]["start"]:findings[0]["end"]], "{")
+        self.assertEqual(self._findings("{шаблон –}"), [])
 
-    def test_skips_numbered_folder_path_in_angles(self):
+    def test_skips_numbered_folder_path_in_braces(self):
         samples = (
-            "Устав ООО «Сахавольфрам» < 05 data \\ Тополиное \\ 1.Устав.pdf https://drive.google.com/file/d/abc/view?usp=drive_link >",
-            "Структура группы < 05 data \\ Тополиное \\ 6. Структура группы \\ схема.pdf https://drive.google.com/file/d/abc/view >",
-            "Прогноз< 05 data \\ Тополиное \\ file.pdf >",
-            "при pH < 7 раствор. Источник < 05 data \\ folder \\ file.pdf >",
+            "Устав ООО «Сахавольфрам» { 05 data \\ Тополиное \\ 1.Устав.pdf https://drive.google.com/file/d/abc/view?usp=drive_link }",
+            "Структура группы { 05 data \\ Тополиное \\ 6. Структура группы \\ схема.pdf https://drive.google.com/file/d/abc/view }",
+            "Прогноз{ 05 data \\ Тополиное \\ file.pdf }",
+            "при pH < 7 раствор. Источник { 05 data \\ folder \\ file.pdf }",
         )
         for text in samples:
+            self.assertEqual(self._findings(text), [], repr(text))
+        angles = (
+            "Устав ООО «Сахавольфрам» < 05 data \\ Тополиное \\ 1.Устав.pdf https://drive.google.com/file/d/abc/view?usp=drive_link >",
+            "Прогноз< 05 data \\ Тополиное \\ file.pdf >",
+        )
+        for text in angles:
             self.assertEqual(self._findings(text), [], repr(text))
 
     def test_skips_numbered_folder_path_in_footnote(self):
         note = (
-            " Устав ООО «Сахавольфрам» < 05 data \\ Тополиное \\ "
-            "1.Устав.pdf https://drive.google.com/file/d/abc/view?usp=drive_link >\n"
+            " Устав ООО «Сахавольфрам» { 05 data \\ Тополиное \\ "
+            "1.Устав.pdf https://drive.google.com/file/d/abc/view?usp=drive_link }\n"
         )
         notes = [{"id": "6", "kind": "footnote", "text": note}]
         self.assertEqual(self._findings("см. источник", notes=notes), [])
+        angle_note = (
+            " Устав ООО «Сахавольфрам» < 05 data \\ Тополиное \\ "
+            "1.Устав.pdf https://drive.google.com/file/d/abc/view?usp=drive_link >\n"
+        )
+        self.assertEqual(
+            self._findings("см. источник", notes=[{"id": "6", "kind": "footnote", "text": angle_note}]),
+            [],
+        )
 
-    def test_superscript_angles_before_date_are_not_comparisons(self):
+    def test_empty_braces_before_date_stay_balanced(self):
+        for sample in (
+            "Лицензия Л037-00109-14/00620196{}",
+            "Лицензия Л037-00109-14/00620196<>",
+        ):
+            source = _report_docx_bytes(sample, "05.10.2022")
+            text, _spans = extract_document_text(source)
+            self.assertEqual(self._findings(text), [], sample)
+
+    def test_superscript_does_not_change_brace_balance(self):
         document = Document()
         paragraph = document.add_paragraph()
         paragraph.add_run("Лицензия Л037-00109-14/00620196")
-        marked = paragraph.add_run("<>")
+        marked = paragraph.add_run("{}")
         marked.font.superscript = True
         document.add_paragraph("05.10.2022")
         buffer = BytesIO()
@@ -24556,57 +24622,46 @@ class TmplUnclosedAnglesMacroTests(TestCase):
         offsets = extract_superscript_offsets(source)
         self.assertEqual(self._findings(text, superscript_offsets=offsets), [])
 
-    def test_plain_angles_before_date_are_a_comparison(self):
-        source = _report_docx_bytes("Лицензия Л037-00109-14/00620196<>", "05.10.2022")
-        text, _spans = extract_document_text(source)
-        findings = self._findings(text)
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["message"], self.MSG)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
-
     def test_flags_unclosed_numbered_folder_path(self):
-        text = "Источник < 05 data \\ folder \\ file.pdf"
+        text = "Источник { 05 data \\ folder \\ file.pdf"
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "{")
+        self.assertEqual(self._findings("Источник < 05 data \\ folder \\ file.pdf"), [])
 
-    def test_footnote_treats_angle_signs_as_brackets(self):
-        notes = [{"id": "1", "kind": "footnote", "text": "содержание < 0,1 %\n"}]
-        findings = self._findings("см. источник", notes=notes)
+    def test_footnote_flags_unclosed_braces_not_angles(self):
+        angles = [{"id": "1", "kind": "footnote", "text": "содержание < 0,1 %\n"}]
+        self.assertEqual(self._findings("см. источник", notes=angles), [])
+        braces = [{"id": "1", "kind": "footnote", "text": "содержание { 0,1 %\n"}]
+        findings = self._findings("см. источник", notes=braces)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG_FN)
         self.assertEqual(findings[0]["note_id"], "1")
 
-    def test_hyphen_before_closing_is_a_template_bracket(self):
-        lone = "стрелка -> направо"
+    def test_closing_brace_does_not_depend_on_the_previous_sign(self):
+        self.assertEqual(self._findings("стрелка -> направо"), [])
+        self.assertEqual(self._findings("{шаблон\nстрелка -> дальше"), [
+            {
+                "start": 0,
+                "end": 1,
+                "message": self.MSG,
+            },
+        ])
+        self.assertEqual(self._findings("{шаблон\nстрелка –}"), [])
+        lone = "текст }"
         findings = self._findings(lone)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG_OPEN)
-        self.assertEqual(lone[findings[0]["start"]:findings[0]["end"]], ">")
-
-        before_number = "код -> 1"
-        findings = self._findings(before_number)
-        self.assertEqual(len(findings), 1, repr(before_number))
-        self.assertEqual(before_number[findings[0]["start"]:findings[0]["end"]], ">")
-
-        closed = "<шаблон\nстрелка -> дальше"
-        self.assertEqual(self._findings(closed), [])
-
-    def test_short_dash_arrow_does_not_close_template_bracket(self):
-        text = "<шаблон\nстрелка –> и текст"
-        findings = self._findings(text)
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["message"], self.MSG)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "<")
+        self.assertEqual(lone[findings[0]["start"]:findings[0]["end"]], "}")
 
     def test_flags_unclosed_bracket_in_footnote_on_reference_mark(self):
-        source = _docx_with_footnote("см. источник", "<комментарий без закрытия")
+        source = _docx_with_footnote("см. источник", "{комментарий без закрытия")
         notes = extract_notes(source)
         self.assertEqual(len(notes), 1)
-        self.assertIn("<комментарий", notes[0]["text"])
+        self.assertIn("{комментарий", notes[0]["text"])
         body, _ = extract_document_text(source)
-        self.assertNotIn("<комментарий", body)
+        self.assertNotIn("{комментарий", body)
         findings = self._findings(body, notes=notes)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG_FN)
@@ -24624,68 +24679,65 @@ class TmplUnclosedAnglesMacroTests(TestCase):
         self.assertLess(start_at, ref_at)
 
     def test_skips_balanced_footnote(self):
-        source = _docx_with_footnote("см. источник", "<комментарий>")
+        source = _docx_with_footnote("см. источник", "{комментарий}")
         notes = extract_notes(source)
         body, _ = extract_document_text(source)
         self.assertEqual(self._findings(body, notes=notes), [])
 
     def test_comment_has_no_course_hyperlink(self):
-        source = _report_docx_bytes("шаблон <название месторождения")
+        source = _report_docx_bytes("шаблон {название месторождения")
         text, _spans = extract_document_text(source)
         findings = self._findings(text)
         result = insert_comments(source, findings)
         with zipfile.ZipFile(BytesIO(result)) as archive:
             comments_xml = archive.read("word/comments.xml").decode("utf-8")
-        self.assertIn("TMPL-SS-00.00: Отсутствует закрывающая угловая скобка", comments_xml)
+        self.assertIn("TMPL-SS-00.00: Отсутствует закрывающая фигурная скобка", comments_xml)
         self.assertNotIn("w:hyperlink", comments_xml)
         self.assertNotIn("learn.imcmontanai.ru", comments_xml)
 
     def test_comment_covers_double_closing_in_docx(self):
         source = _report_docx_bytes(
-            "Лишняя закрывающая угловая скобка <в тексте>> также отмечается как ошибка."
+            "Лишняя закрывающая фигурная скобка {в тексте}} также отмечается как ошибка."
         )
         text, _spans = extract_document_text(source)
         findings = self._findings(text)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], ">>")
+        self.assertEqual(text[findings[0]["start"]:findings[0]["end"]], "}}")
         result = insert_comments(source, findings)
         with zipfile.ZipFile(BytesIO(result)) as archive:
             comments_xml = archive.read("word/comments.xml").decode("utf-8")
             document_xml = archive.read("word/document.xml").decode("utf-8")
-        self.assertIn("Отсутствует открывающая угловая скобка", comments_xml)
+        self.assertIn("Отсутствует открывающая фигурная скобка", comments_xml)
         start_at = document_xml.find("commentRangeStart")
         end_at = document_xml.find("commentRangeEnd")
         marked = document_xml[start_at:end_at]
-        self.assertGreaterEqual(marked.count("&gt;"), 2)
+        self.assertGreaterEqual(marked.count("}"), 2)
 
     def test_course_sample_flags_extra_close_not_exceptions(self):
         text = (
-            "У каждой открывающей «<» должна быть закрывающая «>».\n"
-            "Исключения:\n"
-            "сравнения вроде < 0,1 или > 0,1;\n"
-            "знаки меньше или равно и больше или равно: <= или >=;\n"
-            "стрелки: <– или –>.\n"
-            "У каждой открывающей «<» должна быть закрывающая «>», в т.\xa0ч. в тексте сноски<>.\n"
-            "Лишняя закрывающая угловая скобка <в тексте>> также отмечается как ошибка.\n"
-            "В техническом отчёте незакрытый угловой скобкой <текст считается ошибкой. <Новый текст в скобках>.\n"
+            "У каждой открывающей «{» должна быть закрывающая «}».\n"
+            "Знаки меньше и больше не скобки: < 0,1 или > 0,1, <= или >=, <– или –>.\n"
+            "У каждой открывающей «{» должна быть закрывающая «}», в т.\xa0ч. в тексте сноски{}.\n"
+            "Лишняя закрывающая фигурная скобка {в тексте}} также отмечается как ошибка.\n"
+            "В техническом отчёте незакрытый фигурной скобкой {текст считается ошибкой. {Новый текст в скобках}.\n"
         )
         notes = [{
             "id": "1",
             "kind": "footnote",
-            "text": " Пример незакрытой угловой скобки в <сноске.\n",
+            "text": " Пример незакрытой фигурной скобки в {сноске.\n",
         }]
         findings = self._findings(text, notes=notes)
         body = [item for item in findings if not item.get("note_id")]
         notes_hit = [item for item in findings if item.get("note_id")]
         slices = [text[item["start"]:item["end"]] for item in body]
-        self.assertEqual(slices.count(">>"), 1)
-        self.assertEqual(slices.count("<"), 1)
-        extra = next(item for item in body if text[item["start"]:item["end"]] == ">>")
-        unclosed = next(item for item in body if text[item["start"]:item["end"]] == "<")
+        self.assertEqual(slices.count("}}"), 1)
+        self.assertEqual(slices.count("{"), 1)
+        extra = next(item for item in body if text[item["start"]:item["end"]] == "}}")
+        unclosed = next(item for item in body if text[item["start"]:item["end"]] == "{")
         self.assertEqual(extra["message"], self.MSG_OPEN)
         self.assertEqual(unclosed["message"], self.MSG)
-        self.assertIn("<в тексте>>", text[extra["start"] - 10:extra["end"] + 1])
-        self.assertTrue(text[unclosed["start"]:].startswith("<текст считается ошибкой"))
+        self.assertIn("{в тексте}}", text[extra["start"] - 10:extra["end"] + 1])
+        self.assertTrue(text[unclosed["start"]:].startswith("{текст считается ошибкой"))
         self.assertEqual(len(notes_hit), 1)
         self.assertEqual(notes_hit[0]["note_id"], "1")
         self.assertEqual(notes_hit[0]["message"], self.MSG_FN)
@@ -24700,27 +24752,19 @@ class TmplUnclosedAnglesMacroTests(TestCase):
         notes = extract_notes(source)
         findings = self._findings(text, notes=notes)
         body = [item for item in findings if not item.get("note_id")]
-        slices = [text[item["start"]:item["end"]] for item in body]
-        self.assertIn(">>", slices)
-        self.assertTrue(any(item.get("note_id") == "1" for item in findings))
-        result = insert_comments(source, findings)
-        with zipfile.ZipFile(BytesIO(result)) as archive:
-            document_xml = archive.read("word/document.xml").decode("utf-8")
-        para = document_xml.find("Лишняя закрывающая")
-        self.assertNotEqual(para, -1)
-        snippet = document_xml[para:para + 700]
-        self.assertIn("commentRangeStart", snippet)
-        self.assertIn("&gt;&gt;", snippet)
+        marked = [text[item["start"]:item["end"]] for item in body]
+        self.assertFalse(any("<" in piece or ">" in piece for piece in marked))
+        self.assertFalse([item for item in findings if item.get("note_id")])
 
 
 class TmplPublicFootnoteBracketsMacroTests(TestCase):
-    """Блок 9 VBA TPGR(): публичные сноски без угловых скобок."""
+    """Блок 9 VBA TPGR(): публичные сноски без фигурных скобок."""
 
-    MSG = "TMPL-SS-00.00: Для сносок на публичные источники знак сноски ставится без угловых скобок"
+    MSG = "TMPL-SS-00.00: Для сносок на публичные источники знак сноски ставится без фигурных скобок"
 
     def setUp(self):
         self.macro = ReportMacro(
-            name="TMPL-SS-00.01 Сноски без угловых скобок",
+            name="TMPL-SS-00.01 Сноски без фигурных скобок",
             code=tpgr_macro_code("TMPL-SS-00.01 Сноски"),
         )
 
@@ -24732,14 +24776,14 @@ class TmplPublicFootnoteBracketsMacroTests(TestCase):
 
     def test_catalog_has_public_footnote_macro_without_course_link(self):
         spec = next(item for item in TPGR_MACROS if _tpgr_spec_label(item).startswith("TMPL-SS-00.01 Сноски"))
-        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SS-00.01 Сноски без угловых скобок")
+        self.assertEqual(_tpgr_spec_label(spec), "TMPL-SS-00.01 Сноски без фигурных скобок")
         self.assertIn(self.MSG, spec["code"])
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
 
-    def test_flags_public_footnote_wrapped_in_angles(self):
+    def test_flags_public_footnote_wrapped_in_braces(self):
         source = _docx_with_footnote("см. источник", "Иванов, 2020.", wrap_brackets=True)
         notes = extract_notes(source)
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         findings = self._findings(notes)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG)
@@ -24756,7 +24800,21 @@ class TmplPublicFootnoteBracketsMacroTests(TestCase):
     def test_skips_public_footnote_without_angles(self):
         source = _docx_with_footnote("см. источник", "Иванов, 2020.", wrap_brackets=False)
         notes = extract_notes(source)
-        self.assertFalse(notes[0]["wrapped_in_angles"])
+        self.assertFalse(notes[0]["wrapped_in_braces"])
+        self.assertEqual(self._findings(notes), [])
+
+    def test_angles_around_public_footnote_are_not_braces(self):
+        source = _docx_with_footnote(
+            "см. источник",
+            "Иванов, 2020.",
+            wrap_brackets=True,
+            open_mark="<",
+            close_mark=">",
+        )
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["next_char"], ">")
+        self.assertFalse(notes[0]["wrapped_in_braces"])
         self.assertEqual(self._findings(notes), [])
 
     def test_skips_nextcloud_footnote_with_angles(self):
@@ -24766,7 +24824,7 @@ class TmplPublicFootnoteBracketsMacroTests(TestCase):
             wrap_brackets=True,
         )
         notes = extract_notes(source)
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertEqual(self._findings(notes), [])
         self.assertEqual(
             self._findings(notes, nextcloud_base_url="https://cloud.example.com"),
@@ -24780,7 +24838,7 @@ class TmplPublicFootnoteBracketsMacroTests(TestCase):
             wrap_brackets=True,
         )
         notes = extract_notes(source)
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertEqual(self._findings(notes), [])
 
     def test_skips_google_docs_footnote_with_angles(self):
@@ -24790,7 +24848,7 @@ class TmplPublicFootnoteBracketsMacroTests(TestCase):
             wrap_brackets=True,
         )
         notes = extract_notes(source)
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertEqual(self._findings(notes), [])
 
 
@@ -24891,11 +24949,15 @@ class TpgrListPeriodMacroTests(TestCase):
         )
         self.assertEqual(len(self._findings(source)), 1)
 
-    def test_skips_list_inside_angle_brackets(self):
-        source = _list_style_docx(
+    def test_skips_list_inside_braces(self):
+        skipped = _list_style_docx(
+            [("{первый пункт", self.MARK), ("второй пункт}", self.MARK)],
+        )
+        self.assertEqual(self._findings(skipped), [])
+        checked = _list_style_docx(
             [("<первый пункт", self.MARK), ("второй пункт>", self.MARK)],
         )
-        self.assertEqual(self._findings(source), [])
+        self.assertEqual(len(self._findings(checked)), 1)
 
     def test_comment_includes_course_hyperlink(self):
         source = _list_style_docx(
@@ -24988,20 +25050,20 @@ class TpgrFootnoteSpaceMacroTests(TestCase):
         self.assertEqual(extract_notes(source)[0]["prev_char"], "т")
         self.assertEqual(self._findings(source), [])
 
-    def test_skips_footnote_wrapped_in_angles_without_space(self):
+    def test_skips_footnote_wrapped_in_braces_without_space(self):
         source = _docx_with_footnote("текст", "сноска", wrap_brackets=True)
         notes = extract_notes(source)
-        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev_char"], "{")
         self.assertEqual(notes[0]["prev2_char"], "т")
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertEqual(self._findings(source), [])
 
     def test_skips_space_before_wrapped_footnote(self):
         source = _docx_with_footnote("текст ", "сноска", wrap_brackets=True)
         notes = extract_notes(source)
-        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev_char"], "{")
         self.assertEqual(notes[0]["prev2_char"], " ")
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertEqual(self._findings(source), [])
 
     def test_skips_nbsp_before_wrapped_footnote(self):
@@ -25146,9 +25208,22 @@ class TpgrTableCellPeriodMacroTests(TestCase):
         source = _report_docx_bytes("Обычный абзац.")
         self.assertEqual(self._findings(source), [])
 
-    def test_skips_period_inside_angle_brackets(self):
-        source = _table_docx("<название.>")
-        self.assertEqual(self._findings(source), [])
+    def test_skips_period_inside_braces(self):
+        def run(text, start, end):
+            return run_macro(
+                self.macro,
+                type("Ctx", (), {
+                    "text": text,
+                    "table_cells": [{"start": start, "end": end, "text": text[start:end]}],
+                })(),
+            )
+
+        braced = "{ячейка.}"
+        self.assertEqual(run(braced, 1, len(braced) - 1), [])
+        angled = "<ячейка.>"
+        findings = run(angled, 1, len(angled) - 1)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(angled[findings[0]["start"]:findings[0]["end"]], "а.")
 
     def test_comment_has_no_course_hyperlink(self):
         source = _table_docx("текст.")
@@ -25420,8 +25495,9 @@ class TmplSourceTabMacroTests(TestCase):
     def test_skips_lowercase(self):
         self.assertEqual(self._findings(text="источник: Иванов"), [])
 
-    def test_skips_inside_angle_brackets(self):
-        self.assertEqual(self._findings(text="<Источник: название>"), [])
+    def test_skips_inside_braces(self):
+        self.assertEqual(self._findings(text="{Источник: название}"), [])
+        self.assertEqual(len(self._findings(text="<Источник: название>")), 1)
 
     def test_flags_each_occurrence(self):
         text = "Источник: один\nИсточник: два"
@@ -25646,15 +25722,15 @@ class TmplFootnoteTabMacroTests(TestCase):
 
 
 class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
-    """Блок 9 VBA TPGR(): NextCloud-сноски в угловых скобках надстрочным шрифтом."""
+    """Блок 9 VBA TPGR(): NextCloud-сноски в фигурных скобках надстрочным шрифтом."""
 
     NC_TEXT = "файл https://cloud.imcmontanai.ru/s/abc"
     MSG_WRAP = (
-        "TMPL-SN-00.00: В угловые скобки (<>) должен заключаться знак сноски, "
+        "TMPL-SN-00.00: В фигурные скобки ({}) должен заключаться знак сноски, "
         "содержащий ссылку на облачное хранилище проекта NextCloud"
     )
     MSG_SUPER = (
-        "TMPL-SN-00.00: Угловые скобки (<>), в которые заключается знак сноски, "
+        "TMPL-SN-00.00: Фигурные скобки ({}), в которые заключается знак сноски, "
         "содержащий ссылку на облачное хранилище проекта NextCloud, должны быть "
         "в надстрочном регистре"
     )
@@ -25682,10 +25758,25 @@ class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
         self.assertNotIn("learn.imcmontanai.ru", spec["code"].split("def check", 1)[-1])
         self.assertNotIn("course_links", spec["code"].split("def check", 1)[-1])
 
+    def test_flags_nextcloud_footnote_wrapped_in_angles(self):
+        source = _docx_with_footnote(
+            "см. облако",
+            self.NC_TEXT,
+            wrap_brackets=True,
+            open_mark="<",
+            close_mark=">",
+            bracket_superscript=True,
+        )
+        notes = extract_notes(source)
+        self.assertFalse(notes[0]["wrapped_in_braces"])
+        findings = self._findings(source)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["message"], self.MSG_WRAP)
+
     def test_flags_nextcloud_footnote_without_angles(self):
         source = _docx_with_footnote("см. облако", self.NC_TEXT, wrap_brackets=False)
         notes = extract_notes(source)
-        self.assertFalse(notes[0]["wrapped_in_angles"])
+        self.assertFalse(notes[0]["wrapped_in_braces"])
         findings = self._findings(source)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["message"], self.MSG_WRAP)
@@ -25708,7 +25799,7 @@ class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
             bracket_superscript=False,
         )
         notes = extract_notes(source)
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertFalse(notes[0]["prev_superscript"])
         self.assertFalse(notes[0]["next_superscript"])
         findings = self._findings(source)
@@ -25726,7 +25817,7 @@ class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
             right_bracket_superscript=False,
         )
         notes = extract_notes(source)
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertTrue(notes[0]["prev_superscript"])
         self.assertFalse(notes[0]["next_superscript"])
         findings = self._findings(source)
@@ -25741,7 +25832,7 @@ class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
             bracket_superscript=True,
         )
         notes = extract_notes(source)
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertTrue(notes[0]["prev_superscript"])
         self.assertTrue(notes[0]["next_superscript"])
         self.assertEqual(self._findings(source), [])
@@ -25754,7 +25845,7 @@ class TmplNextcloudFootnoteBracketsMacroTests(TestCase):
             bracket_rstyle="FootnoteReference",
         )
         notes = extract_notes(source)
-        self.assertTrue(notes[0]["wrapped_in_angles"])
+        self.assertTrue(notes[0]["wrapped_in_braces"])
         self.assertTrue(notes[0]["prev_superscript"])
         self.assertTrue(notes[0]["next_superscript"])
         self.assertEqual(self._findings(source), [])
@@ -25830,7 +25921,7 @@ class TmplFootnoteBracketSpaceMacroTests(TestCase):
     """Блок 11 VBA TPGR(): TMPL-SN-00.00 — пробел перед сноской в скобках."""
 
     MSG = (
-        "TMPL-SN-00.00: Знак указателя сноски, заключенный в угловые скобки (<>), "
+        "TMPL-SN-00.00: Знак указателя сноски, заключенный в фигурные скобки ({}), "
         "не отбивается пробелом от комментируемого текста"
     )
 
@@ -25856,7 +25947,7 @@ class TmplFootnoteBracketSpaceMacroTests(TestCase):
     def test_flags_space_before_opening_bracket(self):
         source = _docx_with_footnote("текст ", "сноска", wrap_brackets=True)
         notes = extract_notes(source)
-        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev_char"], "{")
         self.assertEqual(notes[0]["prev2_char"], " ")
         findings = self._findings(source)
         self.assertEqual(len(findings), 1)
@@ -25882,16 +25973,28 @@ class TmplFootnoteBracketSpaceMacroTests(TestCase):
     def test_flags_space_before_left_bracket_even_without_right(self):
         source = _docx_with_footnote("текст ", "сноска", wrap_brackets="left")
         notes = extract_notes(source)
-        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev_char"], "{")
         self.assertEqual(notes[0]["prev2_char"], " ")
-        self.assertFalse(notes[0]["wrapped_in_angles"])
+        self.assertFalse(notes[0]["wrapped_in_braces"])
         self.assertEqual(len(self._findings(source)), 1)
 
     def test_skips_wrapped_footnote_without_space(self):
         source = _docx_with_footnote("текст", "сноска", wrap_brackets=True)
         notes = extract_notes(source)
-        self.assertEqual(notes[0]["prev_char"], "<")
+        self.assertEqual(notes[0]["prev_char"], "{")
         self.assertEqual(notes[0]["prev2_char"], "т")
+        self.assertEqual(self._findings(source), [])
+
+    def test_skips_space_before_angle_bracket(self):
+        source = _docx_with_footnote(
+            "текст ",
+            "сноска",
+            wrap_brackets=True,
+            open_mark="<",
+            close_mark=">",
+        )
+        notes = extract_notes(source)
+        self.assertEqual(notes[0]["prev_char"], "<")
         self.assertEqual(self._findings(source), [])
 
     def test_skips_space_before_unwrapped_footnote(self):

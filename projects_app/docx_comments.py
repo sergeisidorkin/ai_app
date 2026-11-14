@@ -95,7 +95,7 @@ def extract_notes(docx_bytes: bytes) -> list[dict]:
             note["prev2_char"] = prev2_ch
             note["prev_superscript"] = bool(prev_super)
             note["next_superscript"] = bool(next_super)
-            note["wrapped_in_angles"] = prev_ch == "<" and next_ch == ">"
+            note["wrapped_in_braces"] = prev_ch == "{" and next_ch == "}"
     else:
         for note in notes:
             note["prev_char"] = ""
@@ -103,7 +103,7 @@ def extract_notes(docx_bytes: bytes) -> list[dict]:
             note["prev2_char"] = ""
             note["prev_superscript"] = False
             note["next_superscript"] = False
-            note["wrapped_in_angles"] = False
+            note["wrapped_in_braces"] = False
     return notes
 
 
@@ -156,7 +156,7 @@ def extract_paragraphs(docx_bytes: bytes) -> list[dict]:
 
 
 def extract_superscript_offsets(docx_bytes: bytes) -> frozenset[int]:
-    """Offsets of superscript «<» and «>» in the same coordinates as extract_document_text()."""
+    """Offsets of superscript «{» and «}» in the same coordinates as extract_document_text()."""
     if not docx_bytes or not docx_bytes.startswith(b"PK"):
         return frozenset()
     parts = _read_zip(docx_bytes)
@@ -177,7 +177,7 @@ def extract_superscript_offsets(docx_bytes: bytes) -> frozenset[int]:
         for node, value in _iter_paragraph_plain(paragraph):
             if node is not None and _run_is_superscript(node, super_ids):
                 for index, ch in enumerate(value):
-                    if ch in "<>":
+                    if ch in "{}":
                         offsets.add(offset + index)
             offset += len(value)
         offset += 1
@@ -1144,7 +1144,7 @@ def _notes_from_part(xml: bytes | None, kind: str, super_ids: frozenset[str] | N
                 if value:
                     if _run_is_superscript(node, super_ids):
                         for index, ch in enumerate(value):
-                            if ch in "<>":
+                            if ch in "{}":
                                 raised.add(pos + index)
                     chunks.append(value)
                     pos += len(value)

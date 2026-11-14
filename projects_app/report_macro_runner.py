@@ -403,25 +403,10 @@ def apply_report_macro_checks(
     return result
 
 
-def _superscript_maps(ctx) -> list[tuple[str, frozenset[int]]]:
-    maps = []
-    text = getattr(ctx, "text", None) or ""
-    body_marks = frozenset(getattr(ctx, "superscript_offsets", ()) or ())
-    if text and body_marks:
-        maps.append((text, body_marks))
-    for note in getattr(ctx, "notes", None) or ():
-        body = note.get("text") or ""
-        marks = frozenset(note.get("superscript_offsets") or ())
-        if body and marks:
-            maps.append((body, marks))
-    return maps
-
-
 def run_macro(macro: ReportMacro, ctx) -> list[dict]:
     namespace = {
         "__builtins__": SAFE_BUILTINS,
         "re": re,
-        "_superscript_maps": _superscript_maps(ctx),
     }
     try:
         exec(macro.code or "", namespace, namespace)
