@@ -19,73 +19,11 @@ TPGR_COURSE_SN_URL = "https://learn.imcmontanai.ru/course/section.php?id=13"
 TPGR_COURSE_LINK_TEXT = "Ссылка на страницу курса TPGR"
 
 _HELPERS = """
-def _is_superscript_angle(text, i):
-    # Надстрочные «<» и «>» никогда не знаки сравнения.
-    # _superscript_maps задаёт запуск проверки: список пар (текст, смещения).
-    for stored, marks in _superscript_maps:
-        if text is stored and i in marks:
-            return True
-    return False
-
-def _is_lt_op(text, i):
-    # Сравнение, не скобка шаблона: <=, <-, <~, <–, <— и «< 0,1».
-    # «< 05 data \\ ... >» — скобки пути: после пробела цифра, но дальше «\\» и «>».
-    # Надстрочный знак — всегда скобка.
-    if _is_superscript_angle(text, i):
-        return False
-    n = len(text)
-    nxt = text[i + 1] if i + 1 < n else ""
-    if nxt in "=-~\u2013\u2014":
-        return True
-    j = i + 1
-    while j < n and text[j] in " \\t\\r\\n\\xa0":
-        j += 1
-    if not (j > i + 1 and j < n and (text[j].isdigit() or text[j] in "+.")):
-        return False
-    return not _is_backslash_path_bracket(text, i)
-
-def _is_gt_op(text, i):
-    # Сравнение или стрелка «–>», не скобка шаблона. Дефис «->» скобку закрывает.
-    # Надстрочный знак — всегда скобка.
-    if _is_superscript_angle(text, i):
-        return False
-    n = len(text)
-    prev = text[i - 1] if i else ""
-    nxt = text[i + 1] if i + 1 < n else ""
-    if nxt == ">" or prev == ">":
-        return False
-    if prev == "-":
-        return False
-    if prev == "\u2013":
-        return True
-    if nxt == "=":
-        return True
-    j = i + 1
-    while j < n and text[j] in " \\t\\r\\n\\xa0":
-        j += 1
-    return j > i + 1 and j < n and (text[j].isdigit() or text[j] in "+.")
-
-def _is_backslash_path_bracket(text, i):
-    # От «<» до ближайшей «>» есть «\\», и раньше неё нет другой «<».
-    n = len(text)
-    saw_backslash = False
-    k = i + 1
-    while k < n:
-        ch = text[k]
-        if ch == "\\u005c":
-            saw_backslash = True
-        elif ch == "<" and not saw_backslash:
-            return False
-        elif ch == ">" and not _is_gt_op(text, k):
-            return saw_backslash
-        k += 1
-    return saw_backslash
-
-def _angle_mask(text):
-    # Внутри только закрытой пары «<...>». Незакрытая «<» не прячет хвост документа.
-    # Лишняя «>» гасит следующую «<», поэтому баланс по-прежнему может уйти ниже нуля.
-    cached = getattr(_angle_mask, "_text", None)
-    mask = getattr(_angle_mask, "_mask", None)
+def _brace_mask(text):
+    # Внутри только закрытой пары «{...}». Незакрытая «{» не прячет хвост документа.
+    # Лишняя «}» гасит следующую «{», поэтому баланс по-прежнему может уйти ниже нуля.
+    cached = getattr(_brace_mask, "_text", None)
+    mask = getattr(_brace_mask, "_mask", None)
     if cached is text and mask is not None:
         return mask
     n = len(text)
@@ -93,27 +31,27 @@ def _angle_mask(text):
     stack = []
     debt = 0
     for i, ch in enumerate(text):
-        if ch == "<" and not _is_lt_op(text, i):
+        if ch == "{":
             if debt:
                 debt -= 1
             else:
                 stack.append(i)
-        elif ch == ">" and not _is_gt_op(text, i):
+        elif ch == "}":
             if stack:
                 start = stack.pop()
                 for j in range(start + 1, i + 1):
                     built[j] = True
             else:
                 debt += 1
-    _angle_mask._text = text
-    _angle_mask._mask = built
+    _brace_mask._text = text
+    _brace_mask._mask = built
     return built
 
-def in_angles(text, i):
-    # Позиция внутри закрытой пары «<...>». Сравнения (< 0,1, <=, >=, –>) не скобки.
+def in_braces(text, i):
+    # Позиция внутри закрытой пары «{...}».
     if not text or i <= 0:
         return False
-    mask = _angle_mask(text)
+    mask = _brace_mask(text)
     if i >= len(mask):
         return mask[-1]
     return mask[i]
@@ -170,7 +108,7 @@ def check(ctx):
             left = i - 2
             while left > 0 and is_num_ch(text[left - 1]):
                 left -= 1
-            if not in_angles(text, i):
+            if not in_braces(text, i):
                 findings.append({
                     "start": left,
                     "end": i - 1,
@@ -201,7 +139,7 @@ def check(ctx):
 
     for m in re.finditer(r"[№§]", text):
         i = m.start()
-        if in_angles(text, i):
+        if in_braces(text, i):
             continue
         nxt = text[i + 1:i + 2]
         if m.group() == "№" and nxt in ("", "\n"):
@@ -222,7 +160,7 @@ def check(ctx):
                 "links": course_links("https://learn.imcmontanai.ru/course/section.php?id=12"),
             })
     for m in re.finditer("°C", text):
-        if in_angles(text, m.start()):
+        if in_braces(text, m.start()):
             continue
         j = m.start()
         prev = text[j - 1:j]
@@ -351,7 +289,7 @@ def check(ctx):
         return k < len(text) and text[k].isalpha()
 
     def add(i):
-        if in_angles(text, i):
+        if in_braces(text, i):
             return
         findings.append({
             "start": i,
@@ -426,7 +364,7 @@ def check(ctx):
     )
 
     def add(i):
-        if in_angles(text, i):
+        if in_braces(text, i):
             return
         findings.append({
             "start": i,
@@ -583,7 +521,7 @@ def check(ctx):
         # Заглавное длинное слово (г. Москва / см. Рис.) — не сокращение; А. С. — инициалы.
         if all_upper(second[:1]) and not (n2 <= 2 and all_upper(second)):
             continue
-        if in_angles(text, i):
+        if in_braces(text, i):
             continue
         findings.append({
             "start": i,
@@ -641,7 +579,7 @@ def check(ctx):
             else:
                 visual_end = after in ("\n", "\r")
             if prev in prev_ok and nxt in spaces and visual_end:
-                if not in_angles(text, i):
+                if not in_braces(text, i):
                     findings.append({
                         "start": i,
                         "end": j,
@@ -658,89 +596,29 @@ def check(ctx):
         "section": "SS",
         "part": "00",
         "number": "00",
-        "name": "Незакрытые угловые скобки",
-        "description": "Баланс «<»/«>» по всему документу: технический текст внутри скобок может занимать несколько абзацев. Лишняя «>» тоже ошибка. Сравнения (< 0,1, <=) не скобки. Сноски — комментарий на знаке сноски.",
+        "name": "Незакрытые фигурные скобки",
+        "description": "Баланс «{»/«}» по всему документу: технический текст внутри скобок может занимать несколько абзацев. Лишняя «}» тоже ошибка. Сноски — комментарий на знаке сноски.",
         "code": _code(
             r"""
 def check(ctx):
-    # Стек «<»/«>» по всему тексту: очистка удаляет всё между скобками, в том числе несколько абзацев.
-    # Незакрытая «<» и лишняя «>» (пропуск парной скобки) — ошибка.
-    # Сравнения (< 0,1, <=, <-, > 0,1, >=) и стрелка «–>» (короткое тире) не скобки шаблона.
-    # «< 05 data \ ... >» — скобки пути: после пробела цифра, но дальше «\» и «>».
-    # Дефис и «>» (->) — закрывающая скобка шаблона.
-    # Ёлочки «» только цитируют символ скобки («<», «>»), это не << / >>.
+    # Стек «{»/«}» по всему тексту: очистка удаляет всё между скобками, в том числе несколько абзацев.
+    # Незакрытая «{» и лишняя «}» (пропуск парной скобки) — ошибка.
+    # Ёлочки «» только цитируют символ скобки («{», «}»), это не {{ / }}.
     # Сноски: одно примечание на знак сноски в основном тексте.
-    # В тексте сноски сравнений «<»/«>» не бывает: оба знака всегда скобки.
-    # Надстрочные «<» и «>» в теле документа тоже не сравнения.
     text = ctx.text or ""
     findings = []
-    msg_close = "TMPL-SS-00.00: Отсутствует закрывающая угловая скобка (>)"
-    msg_open = "TMPL-SS-00.00: Отсутствует открывающая угловая скобка (<)"
-    msg_close_fn = "TMPL-SS-00.00: Отсутствует закрывающая угловая скобка (>) в тексте сноски внизу страницы"
-    msg_open_fn = "TMPL-SS-00.00: Отсутствует открывающая угловая скобка (<) в тексте сноски внизу страницы"
-    spaces = set(" \t\r\n\xa0")
-    lt_ops = set("=-~–—")
-    en_dash = "–"
+    msg_close = "TMPL-SS-00.00: Отсутствует закрывающая фигурная скобка (})"
+    msg_open = "TMPL-SS-00.00: Отсутствует открывающая фигурная скобка ({)"
+    msg_close_fn = "TMPL-SS-00.00: Отсутствует закрывающая фигурная скобка (}) в тексте сноски внизу страницы"
+    msg_open_fn = "TMPL-SS-00.00: Отсутствует открывающая фигурная скобка ({) в тексте сноски внизу страницы"
 
-    def is_lt_op(s, i):
-        if _is_superscript_angle(s, i):
-            return False
-        n = len(s)
-        nxt = s[i + 1] if i + 1 < n else ""
-        if nxt in lt_ops:
-            return True
-        j = i + 1
-        while j < n and s[j] in spaces:
-            j += 1
-        if not (j > i + 1 and j < n and (s[j].isdigit() or s[j] in "+.")):
-            return False
-        return not is_path_bracket(s, i)
-
-    def is_gt_op(s, i):
-        if _is_superscript_angle(s, i):
-            return False
-        n = len(s)
-        prev = s[i - 1] if i else ""
-        nxt = s[i + 1] if i + 1 < n else ""
-        if nxt == ">" or prev == ">":
-            return False
-        if prev == "-":
-            return False
-        if prev == en_dash:
-            return True
-        if nxt == "=":
-            return True
-        j = i + 1
-        while j < n and s[j] in spaces:
-            j += 1
-        return j > i + 1 and j < n and (s[j].isdigit() or s[j] in "+.")
-
-    def is_path_bracket(s, i):
-        n = len(s)
-        saw_backslash = False
-        k = i + 1
-        while k < n:
-            ch = s[k]
-            if ch == "\\":
-                saw_backslash = True
-            elif ch == "<" and not saw_backslash:
-                return False
-            elif ch == ">" and not is_gt_op(s, k):
-                return saw_backslash
-            k += 1
-        return saw_backslash
-
-    def scan(s, comparisons=True):
+    def scan(s):
         stack = []
         extra = []
         for i, ch in enumerate(s):
-            if ch == "<":
-                if comparisons and is_lt_op(s, i):
-                    continue
+            if ch == "{":
                 stack.append(i)
-            elif ch == ">":
-                if comparisons and is_gt_op(s, i):
-                    continue
+            elif ch == "}":
                 if stack:
                     stack.pop()
                 else:
@@ -753,7 +631,7 @@ def check(ctx):
             start = pos
             end = pos + 1
             if widen_close:
-                while start > 0 and s[start - 1] == ">":
+                while start > 0 and s[start - 1] == "}":
                     start -= 1
             if runs and start <= runs[-1][1]:
                 runs[-1] = (runs[-1][0], max(runs[-1][1], end))
@@ -772,7 +650,7 @@ def check(ctx):
         if not nid:
             continue
         body = note.get("text") or ""
-        opened, extra = scan(body, comparisons=False)
+        opened, extra = scan(body)
         if not opened and not extra:
             continue
         msg = msg_close_fn if opened else msg_open_fn
@@ -792,14 +670,14 @@ def check(ctx):
         "section": "SS",
         "part": "00",
         "number": "01",
-        "name": "Сноски без угловых скобок",
-        "description": "Для сносок на публичные источники знак сноски ставится без угловых скобок.",
+        "name": "Сноски без фигурных скобок",
+        "description": "Для сносок на публичные источники знак сноски ставится без фигурных скобок.",
         "code": _code(
             r'''
 def check(ctx):
-    # VBA блок 9 (публичные источники): если сноска не на NextCloud, Google Drive или Google Docs, знак не в <>.
+    # VBA блок 9 (публичные источники): если сноска не на NextCloud, Google Drive или Google Docs, знак не в {}.
     findings = []
-    msg = "TMPL-SS-00.00: Для сносок на публичные источники знак сноски ставится без угловых скобок"
+    msg = "TMPL-SS-00.00: Для сносок на публичные источники знак сноски ставится без фигурных скобок"
     nc = (getattr(ctx, "nextcloud_base_url", "") or "").strip().lower()
     needles = []
     if nc:
@@ -814,7 +692,7 @@ def check(ctx):
         body = (note.get("text") or "").lower()
         if any(item and item in body for item in needles):
             continue
-        if not note.get("wrapped_in_angles"):
+        if not note.get("wrapped_in_braces"):
             continue
         findings.append({
             "start": 0,
@@ -850,7 +728,7 @@ def check(ctx):
         re.I,
     )
     for m in pattern.finditer(text):
-        if in_angles(text, m.start()):
+        if in_braces(text, m.start()):
             continue
         findings.append({"start": m.start(), "end": m.end(), "message": msg})
     return findings
@@ -898,7 +776,7 @@ def check(ctx):
         return None
 
     def add(j, k, t):
-        if in_angles(text, j if j <= k else k):
+        if in_braces(text, j if j <= k else k):
             return
         if k == j:
             start, end = k, t
@@ -911,7 +789,7 @@ def check(ctx):
         if not found:
             continue
         j, k, t, _suffix = found
-        if in_angles(text, m.start()):
+        if in_braces(text, m.start()):
             continue
         add(j, k, t)
     for m in year_re.finditer(text):
@@ -923,7 +801,7 @@ def check(ctx):
         j, k, t, suffix = found
         if k != j or suffix != "г.":
             continue
-        if in_angles(text, m.start()):
+        if in_braces(text, m.start()):
             continue
         add(j, k, t)
     return findings
@@ -1030,7 +908,7 @@ def check(ctx):
             end = start + consumed
         if int_digits < 4:
             continue
-        if in_angles(text, start):
+        if in_braces(text, start):
             continue
         if end < n and text[end] == "," and (end + 1 >= n or text[end + 1] in spaces):
             continue
@@ -1167,7 +1045,7 @@ def check(ctx):
             break
         if i < 0 or (j >= 0 and j < i):
             i = j
-        if in_angles(text, i):
+        if in_braces(text, i):
             start = i + 1
             continue
         findings.append({
@@ -1207,7 +1085,7 @@ def check(ctx):
     for i, ch in enumerate(text):
         if ch not in bad:
             continue
-        if in_angles(text, i):
+        if in_braces(text, i):
             continue
         findings.append({
             "start": i,
@@ -1277,7 +1155,7 @@ def check(ctx):
 
     for i, ch in enumerate(text):
         if ch == "«":
-            if in_angles(text, i):
+            if in_braces(text, i):
                 continue
             if stack:
                 if sent_dot(text[stack[0] + 1:i]):
@@ -1364,7 +1242,7 @@ def check(ctx):
         if i < 0 or raw[i] == ".":
             return
         pos = int(last.get("start") or 0) + i
-        if in_angles(text, pos):
+        if in_braces(text, pos):
             return
         findings.append({
             "start": pos,
@@ -1411,7 +1289,7 @@ def check(ctx):
         "code": _code(
             r'''
 def check(ctx):
-    # VBA блок 12: пробел/nbsp сразу перед знаком сноски (не перед «<»).
+    # VBA блок 12: пробел/nbsp сразу перед знаком сноски (не перед «{»).
     findings = []
     msg = "TPGR-SN-02.06: Знак указателя сноски не отбивается пробелом от комментируемого текста"
     links = course_links("https://learn.imcmontanai.ru/course/section.php?id=13")
@@ -1476,7 +1354,7 @@ def check(ctx):
         if skip:
             continue
         abs_pos = start + pos
-        if in_angles(text, abs_pos):
+        if in_braces(text, abs_pos):
             continue
         # Как VBA: комментарий на символ перед точкой — так он виден в ячейке.
         mark_start = abs_pos - 1
@@ -1580,7 +1458,7 @@ def check(ctx):
         end = item["end"]
         if start < 0 or end > len(text) or start >= end:
             continue
-        if in_angles(text, start):
+        if in_braces(text, start):
             continue
         msg = (
             "DOCX-SS-00.00: Перекрёстная ссылка должна указывать на ближайший объект. После данной ссылки с номером «"
@@ -1696,7 +1574,7 @@ def check(ctx):
             if mark < 0 or mark + 1 > len(text):
                 start = end
                 continue
-            if in_angles(text, mark):
+            if in_braces(text, mark):
                 start = end
                 continue
             findings.append({"start": mark, "end": mark + 1, "message": msg})
@@ -1901,14 +1779,14 @@ def check(ctx):
         "part": "00",
         "number": "01",
         "name": "Скобки NextCloud-сноски",
-        "description": "Сноска на NextCloud заключается в угловые скобки, скобки в надстрочном регистре.",
+        "description": "Сноска на NextCloud заключается в фигурные скобки, скобки в надстрочном регистре.",
         "code": _code(
             r'''
 def check(ctx):
-    # VBA блок 9 (NextCloud, Google Drive и Google Docs): знак сноски в <> , скобки надстрочные.
+    # VBA блок 9 (NextCloud, Google Drive и Google Docs): знак сноски в {} , скобки надстрочные.
     findings = []
-    msg_wrap = "TMPL-SN-00.00: В угловые скобки (<>) должен заключаться знак сноски, содержащий ссылку на облачное хранилище проекта NextCloud"
-    msg_super = "TMPL-SN-00.00: Угловые скобки (<>), в которые заключается знак сноски, содержащий ссылку на облачное хранилище проекта NextCloud, должны быть в надстрочном регистре"
+    msg_wrap = "TMPL-SN-00.00: В фигурные скобки ({}) должен заключаться знак сноски, содержащий ссылку на облачное хранилище проекта NextCloud"
+    msg_super = "TMPL-SN-00.00: Фигурные скобки ({}), в которые заключается знак сноски, содержащий ссылку на облачное хранилище проекта NextCloud, должны быть в надстрочном регистре"
     nc = (getattr(ctx, "nextcloud_base_url", "") or "").strip().lower()
     needles = []
     if nc:
@@ -1925,7 +1803,7 @@ def check(ctx):
         body = (note.get("text") or "").lower()
         if not any(item and item in body for item in needles):
             continue
-        if not note.get("wrapped_in_angles"):
+        if not note.get("wrapped_in_braces"):
             findings.append({
                 "start": 0,
                 "end": 1,
@@ -1953,13 +1831,13 @@ def check(ctx):
         "part": "00",
         "number": "02",
         "name": "Пробел перед сноской в скобках",
-        "description": "Знак сноски в угловых скобках не отбивается пробелом от комментируемого текста.",
+        "description": "Знак сноски в фигурных скобках не отбивается пробелом от комментируемого текста.",
         "code": _code(
             r'''
 def check(ctx):
-    # VBA блок 11: пробел/nbsp сразу перед «<» у знака сноски.
+    # VBA блок 11: пробел/nbsp сразу перед «{» у знака сноски.
     findings = []
-    msg = "TMPL-SN-00.00: Знак указателя сноски, заключенный в угловые скобки (<>), не отбивается пробелом от комментируемого текста"
+    msg = "TMPL-SN-00.00: Знак указателя сноски, заключенный в фигурные скобки ({}), не отбивается пробелом от комментируемого текста"
     spaces = set(" {nbsp}")
     for note in getattr(ctx, "notes", None) or ():
         if str(note.get("kind") or "footnote") != "footnote":
@@ -1967,7 +1845,7 @@ def check(ctx):
         nid = str(note.get("id") or "")
         if not nid:
             continue
-        if (note.get("prev_char") or "") != "<":
+        if (note.get("prev_char") or "") != "{":
             continue
         if (note.get("prev2_char") or "") not in spaces:
             continue
