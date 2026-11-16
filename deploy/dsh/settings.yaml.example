@@ -461,8 +461,9 @@ llm-pi-ai:
         input:
         - text
         - image
-        # Placeholder until the checkpoint and context length are chosen.
-        contextWindow: 32768
+        # Qwen3.8-27B max_position_embeddings. pi-ai rejects a finished
+        # answer when usage exceeds this value, even if SGLang returned stop.
+        contextWindow: 262144
         maxTokens: 8192
         reasoningEfforts:
           'off': null

@@ -134,8 +134,13 @@ loading anything.
 The container entrypoint merges the provider into the existing
 `/opt/dsh/home/settings.yaml` when `SGLANG_BASE_URL` is set. The bundled
 catalog in `settings.yaml.example` carries the same entry so Django and
-report checks can see `qwen3.8-27b-local`. `contextWindow` stays at 32768
-until the checkpoint is chosen. NVIDIA Container Toolkit is a one-time host
+report checks can see `qwen3.8-27b-local`. `contextWindow` is 262144,
+the `max_position_embeddings` of Qwen3.8-27B. SGLang reports the same
+`context_len`. pi-ai treats a finished answer as overflow when usage
+exceeds this catalog value. On the current GPU the KV pool is about
+105390 tokens (`max_total_num_tokens`); a prompt above that pool fails
+in the server.
+NVIDIA Container Toolkit is a one-time host
 install; it is not part of the Django deploy, and installing it does not
 start SGLang.
 
