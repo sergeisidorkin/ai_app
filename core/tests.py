@@ -1137,7 +1137,7 @@ class DshBrandingTests(SimpleTestCase):
         self.assertEqual(model["id"], "qwen3.8-27b-local")
         self.assertEqual(model["name"], "Qwen3.8-27B (локально)")
         self.assertEqual(model["input"], ["text", "image"])
-        self.assertEqual(model["contextWindow"], 32768)
+        self.assertEqual(model["contextWindow"], 262144)
         self.assertEqual(
             list(model["reasoningEfforts"]),
             ["off", "low", "medium", "high", "xhigh"],
@@ -1198,6 +1198,7 @@ class DshBrandingTests(SimpleTestCase):
         self.assertEqual(once, twice)
         self.assertIn("    sglang:\n", once)
         self.assertIn("id: qwen3.8-27b-local\n", once)
+        self.assertIn("contextWindow: 262144\n", once)
         self.assertIn("        - image\n", once)
         self.assertIn("          'off': null\n", once)
         self.assertIn("  provider: alibaba\n", once)
