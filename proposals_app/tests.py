@@ -2553,6 +2553,62 @@ class ProposalDispatchSendTests(TestCase):
         self.assertEqual(self.successful_proposal.pdf_file_name, self.successful_pdf_name)
         self.assertEqual(self.successful_proposal.pdf_file_link, self.successful_pdf_link)
 
+    @patch("proposals_app.services.send_notification_email")
+    def test_dispatch_send_uses_saved_letter_including_empty_custom_text(self, mocked_send_notification_email):
+        mocked_send_notification_email.return_value = {
+            "recipient_email": "recipient@example.com",
+            "subject": "ignored",
+            "is_html": True,
+        }
+        self.successful_proposal.dispatch_email_subject = "Мой заголовок"
+        self.successful_proposal.dispatch_email_body_html = "<p>Мой текст</p>"
+        self.successful_proposal.dispatch_email_customized = True
+        self.successful_proposal.save(
+            update_fields=["dispatch_email_subject", "dispatch_email_body_html", "dispatch_email_customized"]
+        )
+
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:30",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        call_kwargs = mocked_send_notification_email.call_args.kwargs
+        self.assertEqual(call_kwargs["subject"], "Мой заголовок")
+        self.assertEqual(call_kwargs["content"], "<p>Мой текст</p>")
+
+        self.successful_proposal.dispatch_email_subject = ""
+        self.successful_proposal.dispatch_email_body_html = ""
+        self.successful_proposal.sent_date = ""
+        self.successful_proposal.status = ProposalRegistration.ProposalStatus.DRAFT
+        self.successful_proposal.save(
+            update_fields=[
+                "dispatch_email_subject",
+                "dispatch_email_body_html",
+                "dispatch_email_customized",
+                "sent_date",
+                "status",
+            ]
+        )
+        mocked_send_notification_email.reset_mock()
+        response = self.client.post(
+            reverse("proposal_dispatch_send"),
+            {
+                "proposal_ids[]": [self.successful_proposal.pk],
+                "delivery_channels[]": ["system_email"],
+                "sent_at": "2026-04-04T12:40",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        call_kwargs = mocked_send_notification_email.call_args.kwargs
+        self.assertEqual(call_kwargs["subject"], "")
+        self.assertEqual(call_kwargs["content"], "")
+
     def test_send_settings_offer_status_change_without_email(self):
         response = self.client.get(reverse("proposals_partial"))
 
@@ -3970,6 +4026,228 @@ class ProposalDispatchFormTests(TestCase):
             list(self.proposal.dispatch_recipients.order_by("position", "id").values_list("role", "email")),
             [("to", "same@example.com"), ("bcc", "other@example.com")],
         )
+
+    def _dispatch_payload(self, **overrides):
+        payload = {
+            "docx_file_name": "",
+            "docx_file_link": "",
+            "pdf_file_name": "",
+            "pdf_file_link": "",
+            "sent_date": "",
+            "recipient": "",
+            "recipient_country": str(self.country.pk),
+            "recipient_identifier": "",
+            "recipient_registration_number": "",
+            "recipient_registration_date": "",
+            "recipient_job_title": "",
+            "contact_last_name": "Иванов",
+            "contact_first_name": "Иван",
+            "contact_middle_name": "Иванович",
+            "contact_email": "contact@example.com",
+        }
+        payload.update(overrides)
+        return payload
+
+    @override_settings(ROOT_URLCONF="urls")
+    def test_dispatch_form_shows_collapsible_letter_editor_with_rendered_template(self):
+        response = self.client.get(reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]))
+        html = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(
+            html.find('id="proposal-dispatch-letter-toggle"'),
+            html.find('id="proposal-dispatch-contacts-toggle"'),
+        )
+        self.assertIn("Письмо", html)
+        self.assertIn("Тема письма", html)
+        self.assertIn("Текст письма", html)
+        self.assertNotIn("Текст письма (уведомления)", html)
+        self.assertIn('id="proposal-dispatch-letter-editor"', html)
+        self.assertIn('id="proposal-dispatch-letter-body" class="proposal-dispatch-letter-body d-none"', html)
+        self.assertIn(self.proposal.name, html)
+        self.assertIn(self.proposal.short_uid, html)
+
+    def test_dispatch_form_save_without_letter_edit_keeps_stored_text(self):
+        self.proposal.dispatch_email_subject = "Сохранённый заголовок"
+        self.proposal.dispatch_email_body_html = "<p>Сохранённый текст</p>"
+        self.proposal.save(update_fields=["dispatch_email_subject", "dispatch_email_body_html"])
+
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._dispatch_payload(
+                dispatch_email_subject="Сохранённый заголовок",
+                dispatch_email_body_html="<p>Нормализованный текст</p>",
+                dispatch_email_letter_dirty="0",
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.dispatch_email_subject, "Сохранённый заголовок")
+        self.assertEqual(self.proposal.dispatch_email_body_html, "<p>Сохранённый текст</p>")
+        self.assertFalse(self.proposal.dispatch_email_customized)
+
+    def test_dispatch_form_save_with_letter_edit_keeps_manual_text(self):
+        response = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._dispatch_payload(
+                dispatch_email_subject="Новый заголовок",
+                dispatch_email_body_html="<p>Новый текст</p>",
+                dispatch_email_letter_dirty="1",
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode()[:500])
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.dispatch_email_subject, "Новый заголовок")
+        self.assertEqual(self.proposal.dispatch_email_body_html, "<p>Новый текст</p>")
+        self.assertTrue(self.proposal.dispatch_email_customized)
+
+    def test_dispatch_letter_editor_is_wired_to_the_letter_toolbar(self):
+        proposals_js = (
+            Path(__file__).resolve().parents[1] / "core" / "static" / "core" / "js" / "proposals-panels.js"
+        ).read_text()
+        letters_js = (
+            Path(__file__).resolve().parents[1] / "letters_app" / "static" / "letters_app" / "js" / "letters-panels.js"
+        ).read_text()
+
+        self.assertIn("function initDispatchLetterEditor(form)", proposals_js)
+        self.assertIn("window.LetterBodyEditor.mount", proposals_js)
+        self.assertIn("window.LetterBodyEditor = {", letters_js)
+        self.assertIn("source !== 'user'", letters_js)
+        self.assertIn(
+            "quill.format(applyColor.dataset.applyColor, getAppliedToolbarColor(toolbar, applyColor.dataset.applyColor), 'user')",
+            letters_js,
+        )
+        self.assertIn("quill.format('list', toggleCurrent ? false : listType, 'user')", letters_js)
+        self.assertIn("popover.style.position = 'fixed'", letters_js)
+
+
+class ProposalDispatchLetterRegistryTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-letter-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        LetterTemplate.objects.update_or_create(
+            template_type="proposal_sending",
+            user=None,
+            defaults={
+                "subject_template": "Общий {{tkp_id}}",
+                "body_html": "<p>Общий {{tkp_id}}</p>",
+                "is_default": True,
+            },
+        )
+        self.personal_template = LetterTemplate.objects.create(
+            template_type="proposal_sending",
+            user=self.user,
+            subject_template="Личный {{tkp_id}}",
+            body_html="<p>Личный {{tkp_id}}</p>",
+            is_default=False,
+        )
+
+    def _payload(self, **overrides):
+        payload = {
+            "number": "3333",
+            "group_member": str(self.group_member.pk),
+            "type": str(self.product.pk),
+            "name": "Тестовое ТКП",
+            "kind": ProposalRegistration.ProposalKind.REGULAR,
+            "status": ProposalRegistration.ProposalStatus.DRAFT,
+            "year": "2026",
+            "report_languages": "русский",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_registry_save_fills_personal_template_until_letter_is_customized(self):
+        from .services import build_proposal_tkp_id
+
+        created = self.client.post(reverse("proposal_form_create"), self._payload())
+        self.assertEqual(created.status_code, 200, created.content.decode()[:800])
+        proposal = ProposalRegistration.objects.get()
+        tkp_id = build_proposal_tkp_id(proposal)
+        self.assertEqual(proposal.dispatch_email_subject, f"Личный {tkp_id}")
+        self.assertEqual(proposal.dispatch_email_body_html, f"<p>Личный {tkp_id}</p>")
+        self.assertFalse(proposal.dispatch_email_customized)
+
+        self.personal_template.subject_template = "Обновлённый {{tkp_id}}"
+        self.personal_template.body_html = "<p>Обновлённый {{tkp_id}}</p>"
+        self.personal_template.save(update_fields=["subject_template", "body_html"])
+        edited = self.client.post(
+            reverse("proposal_form_edit", args=[proposal.pk]),
+            self._payload(name="Другое имя"),
+        )
+        self.assertEqual(edited.status_code, 200, edited.content.decode()[:800])
+        proposal.refresh_from_db()
+        tkp_id = build_proposal_tkp_id(proposal)
+        self.assertEqual(proposal.name, "Другое имя")
+        self.assertEqual(proposal.dispatch_email_subject, f"Обновлённый {tkp_id}")
+        self.assertEqual(proposal.dispatch_email_body_html, f"<p>Обновлённый {tkp_id}</p>")
+
+        proposal.dispatch_email_subject = "Ручной заголовок"
+        proposal.dispatch_email_body_html = "<p>Ручной текст</p>"
+        proposal.dispatch_email_customized = True
+        proposal.save(
+            update_fields=["dispatch_email_subject", "dispatch_email_body_html", "dispatch_email_customized"]
+        )
+        self.personal_template.subject_template = "Снова {{tkp_id}}"
+        self.personal_template.body_html = "<p>Снова {{tkp_id}}</p>"
+        self.personal_template.save(update_fields=["subject_template", "body_html"])
+        edited_again = self.client.post(
+            reverse("proposal_form_edit", args=[proposal.pk]),
+            self._payload(name="Третье имя"),
+        )
+        self.assertEqual(edited_again.status_code, 200, edited_again.content.decode()[:800])
+        proposal.refresh_from_db()
+        self.assertEqual(proposal.name, "Третье имя")
+        self.assertEqual(proposal.dispatch_email_subject, "Ручной заголовок")
+        self.assertEqual(proposal.dispatch_email_body_html, "<p>Ручной текст</p>")
+        self.assertTrue(proposal.dispatch_email_customized)
+
+    def test_locked_registry_save_does_not_refresh_letter(self):
+        proposal = ProposalRegistration.objects.create(
+            number=3334,
+            group_member=self.group_member,
+            type=self.product,
+            name="Заблокированное ТКП",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.SENT,
+            dispatch_email_subject="Старый заголовок",
+            dispatch_email_body_html="<p>Старый текст</p>",
+        )
+        self.personal_template.subject_template = "Новый {{tkp_id}}"
+        self.personal_template.save(update_fields=["subject_template"])
+
+        response = self.client.post(
+            reverse("proposal_form_edit", args=[proposal.pk]),
+            self._payload(number="3334", name="Новое имя", status=ProposalRegistration.ProposalStatus.SENT),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        proposal.refresh_from_db()
+        self.assertEqual(proposal.name, "Заблокированное ТКП")
+        self.assertEqual(proposal.dispatch_email_subject, "Старый заголовок")
+        self.assertEqual(proposal.dispatch_email_body_html, "<p>Старый текст</p>")
+        self.assertFalse(proposal.dispatch_email_customized)
 
 
 class ProposalRegistrationFormTests(TestCase):
@@ -12118,6 +12396,12 @@ class ProposalVersionTests(TestCase):
 
     def test_create_version_copies_card_without_files_or_dispatch(self):
         source = self._proposal(document_kind=ProposalRegistration.ProposalDocumentKind.PRELIMINARY)
+        source.dispatch_email_subject = "Старый заголовок"
+        source.dispatch_email_body_html = "<p>Старый текст</p>"
+        source.dispatch_email_customized = True
+        source.save(
+            update_fields=["dispatch_email_subject", "dispatch_email_body_html", "dispatch_email_customized"]
+        )
         ProposalRegistrationProduct.objects.create(proposal=source, product=self.product, rank=1)
         ProposalAsset.objects.create(proposal=source, short_name="Рудник")
         ProposalCommercialOffer.objects.create(proposal=source, specialist="Геолог", position=1)
@@ -12153,6 +12437,9 @@ class ProposalVersionTests(TestCase):
         self.assertNotEqual(local_source["pdf_path"], local_created["pdf_path"])
         self.assertEqual(created.sent_date, "")
         self.assertEqual(created.contact_email, "")
+        self.assertEqual(created.dispatch_email_subject, "")
+        self.assertEqual(created.dispatch_email_body_html, "")
+        self.assertFalse(created.dispatch_email_customized)
         self.assertEqual(list(created.assets.values_list("short_name", flat=True)), ["Рудник"])
         self.assertEqual(list(created.product_links.values_list("product_id", flat=True)), [self.product.pk])
         self.assertEqual(created.commercial_offers.get().specialist, "Геолог")

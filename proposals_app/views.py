@@ -101,7 +101,9 @@ from .models import (
 )
 from .services import (
     PROPOSAL_DELIVERY_CHANNEL_STATUS_ONLY,
+    assign_proposal_dispatch_letter,
     normalize_proposal_delivery_channels,
+    proposal_dispatch_letter_preview,
     send_proposal_dispatch_emails,
 )
 from .variable_resolver import resolve_variables
@@ -2820,6 +2822,16 @@ def _render_dispatch_form(request, *, form, proposal):
     for index, row in enumerate(ordered_recipients, start=1):
         row.contact_index = index
     dispatch_recipients = annotate_staff_locked_contacts(dispatch_recipients)
+    letter_preview = proposal_dispatch_letter_preview(proposal, sender=request.user)
+    if form.is_bound:
+        dispatch_letter_subject = form.data.get("dispatch_email_subject", letter_preview["subject"])
+        dispatch_letter_body = form.data.get("dispatch_email_body_html", letter_preview["content"])
+        dispatch_letter_dirty = form.data.get("dispatch_email_letter_dirty", "0")
+    else:
+        dispatch_letter_subject = letter_preview["subject"]
+        dispatch_letter_body = letter_preview["content"]
+        dispatch_letter_dirty = "0"
+    dispatch_letter_expanded = str(dispatch_letter_dirty or "").strip().lower() in {"1", "true", "yes", "on"}
     return render(
         request,
         PROPOSAL_DISPATCH_FORM_TEMPLATE,
@@ -2837,6 +2849,10 @@ def _render_dispatch_form(request, *, form, proposal):
             "empty_dispatch_recipient": DispatchRecipientFormRow({}),
             "recipient_countries": form.fields["recipient_country"].queryset,
             "default_recipient_country_id": form.fields["recipient_country"].initial or "",
+            "dispatch_letter_subject": dispatch_letter_subject,
+            "dispatch_letter_body": dispatch_letter_body,
+            "dispatch_letter_dirty": "1" if dispatch_letter_expanded else "0",
+            "dispatch_letter_expanded": dispatch_letter_expanded,
         },
     )
 
@@ -3017,6 +3033,7 @@ def proposal_form_create(request):
     form.save_objects(proposal, request.user)
     form.save_commercial_offers(proposal, request.user)
     _maybe_create_nextcloud_proposal_workspace(request, proposal)
+    assign_proposal_dispatch_letter(proposal, sender=request.user)
     return _render_proposals_updated(request)
 
 
@@ -3129,6 +3146,7 @@ def proposal_form_edit(request, pk: int):
     form.save_legal_entities(proposal, request.user)
     form.save_objects(proposal, request.user)
     form.save_commercial_offers(proposal, request.user)
+    assign_proposal_dispatch_letter(proposal, sender=request.user)
     return _render_proposals_updated(request)
 
 

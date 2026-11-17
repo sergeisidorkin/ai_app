@@ -4023,8 +4023,21 @@ class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
             self.cleaned_dispatch_recipients = final_rows
         return cleaned
 
+    def _posted_dispatch_letter(self):
+        if not self._flag_is_set(self.data.get("dispatch_email_letter_dirty")):
+            return None
+        return {
+            "subject": str(self.data.get("dispatch_email_subject") or "")[:500],
+            "body": str(self.data.get("dispatch_email_body_html") or ""),
+        }
+
     def save(self, commit=True):
         instance = super().save(commit=False)
+        letter = self._posted_dispatch_letter()
+        if letter is not None:
+            instance.dispatch_email_subject = letter["subject"]
+            instance.dispatch_email_body_html = letter["body"]
+            instance.dispatch_email_customized = True
         payloads = list(getattr(self, "cleaned_dispatch_recipients", []) or [])
         if not commit:
             return instance
