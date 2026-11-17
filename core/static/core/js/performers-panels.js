@@ -5250,9 +5250,11 @@
     footer.insertAdjacentElement('afterend', marker);
 
     var intersectionObserver = null;
+    var resizeObserver = null;
 
     function release() {
       if (intersectionObserver) intersectionObserver.disconnect();
+      if (resizeObserver) resizeObserver.disconnect();
       window.removeEventListener('scroll', sync, true);
       window.removeEventListener('resize', sync);
     }
@@ -5293,6 +5295,12 @@
       intersectionObserver.observe(section);
       intersectionObserver.observe(marker);
     }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(sync);
+      resizeObserver.observe(section);
+      var contentColumn = section.closest('.flex-grow-1');
+      if (contentColumn) resizeObserver.observe(contentColumn);
+    }
     window.addEventListener('scroll', sync, true);
     window.addEventListener('resize', sync);
     window.requestAnimationFrame(sync);
@@ -5315,6 +5323,7 @@
     footer.insertAdjacentElement('afterend', marker);
 
     var intersectionObserver = null;
+    var resizeObserver = null;
     var stickyTotalKeys = [
       ['actual', '#perf-total-actual'],
       ['estimated', '#perf-total-estimated'],
@@ -5365,6 +5374,7 @@
 
     function release() {
       if (intersectionObserver) intersectionObserver.disconnect();
+      if (resizeObserver) resizeObserver.disconnect();
       window.removeEventListener('scroll', sync, true);
       window.removeEventListener('resize', sync);
       window.removeEventListener('projects:section-shown', sync);
@@ -5429,6 +5439,12 @@
       intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
       intersectionObserver.observe(section);
       intersectionObserver.observe(marker);
+    }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(sync);
+      resizeObserver.observe(section);
+      var contentColumn = section.closest('.flex-grow-1');
+      if (contentColumn) resizeObserver.observe(contentColumn);
     }
     window.addEventListener('scroll', sync, true);
     window.addEventListener('resize', sync);

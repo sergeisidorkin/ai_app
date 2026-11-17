@@ -1852,13 +1852,23 @@ def index_report_uploads(uploads):
     return by_full, by_all, by_performer
 
 
-def _report_sort_key(performer):
+def _report_section_rank(performer):
+    """Код раздела в «Исполнителях»: позиция внутри актива, затем id."""
     return (
-        performer.registration_id or 0,
-        performer.asset_name or "",
-        performer.executor or "",
         getattr(performer, "position", 0) or 0,
         performer.pk or 0,
+    )
+
+
+def _report_sort_key(performer):
+    """Проекты и активы в том же порядке, что в таблице «Исполнители»."""
+    registration = getattr(performer, "registration", None)
+    return (
+        -(getattr(registration, "number", None) or 0),
+        getattr(registration, "short_uid", "") or "",
+        performer.registration_id or 0,
+        performer.asset_name or "",
+        *_report_section_rank(performer),
     )
 
 
@@ -2167,10 +2177,17 @@ def build_report_submission_rows(performers, uploads=None):
             check_rules=check_rules,
             catalog=catalog,
         )
-        for executor, grouped in groupby(asset_list, key=lambda performer: performer.executor or ""):
-            group_list = list(grouped)
-            if not group_list:
-                continue
+        sections_by_executor = {}
+        for performer in asset_list:
+            sections_by_executor.setdefault(performer.executor or "", []).append(performer)
+        # Место исполнителя задаёт его самый ранний код. Все его разделы
+        # идут сразу под сводной строкой, без чужих строк между ними.
+        executor_order = sorted(
+            sections_by_executor,
+            key=lambda executor: _report_section_rank(sections_by_executor[executor][0]),
+        )
+        for executor in executor_order:
+            group_list = sections_by_executor[executor]
             group_key = report_group_key(registration_id, executor, asset_name)
             if len(group_list) > 1:
                 _append_slot_rows(
@@ -2410,10 +2427,14 @@ def report_slot_row_id(upload) -> str:
         # Тот же первый исполнитель, что у строки «Весь отчет» в таблице:
         # пустой исполнитель в таблицу не попадает.
         first_pk = (
-            Performer.objects.filter(registration_id=registration_id, asset_name=asset_name)
+            Performer.objects.filter(
+                report_table_performer_q(),
+                registration_id=registration_id,
+                asset_name=asset_name,
+            )
             .annotate(executor_trim=Trim("executor"))
             .exclude(executor_trim="")
-            .order_by("executor", "position", "pk")
+            .order_by("position", "pk")
             .values_list("pk", flat=True)
             .first()
         ) or 0
@@ -2421,6 +2442,7 @@ def report_slot_row_id(upload) -> str:
     if upload.is_all_sections:
         first_pk = (
             Performer.objects.filter(
+                report_table_performer_q(),
                 registration_id=registration_id,
                 executor=getattr(upload, "executor", "") or "",
                 asset_name=asset_name,

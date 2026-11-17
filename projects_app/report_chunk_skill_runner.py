@@ -373,6 +373,7 @@ def _execute_chunk(
     heartbeat,
 ) -> None:
     from .report_macro_runner import ReportCheckAborted
+    from .report_skill_runner import AGENT_OUTPUT_TOKENS
 
     workspace_value = str(getattr(settings, "DSH_SORT_WORKSPACE", "") or "").strip()
     if not workspace_value:
@@ -411,6 +412,7 @@ def _execute_chunk(
             reasoning_effort,
             disable_tools,
             temperature,
+            max_tokens=AGENT_OUTPUT_TOKENS,
         )
         task.status = ReportCheckChunk.Status.RUNNING
         task.attempts = attempt
@@ -1068,6 +1070,7 @@ def _run_validation_request(
     if not workspace_value:
         raise ChunkSkillError("Не задан DSH_SORT_WORKSPACE для проверки отчётов.")
     from .report_macro_runner import ReportCheckAborted
+    from .report_skill_runner import AGENT_OUTPUT_TOKENS
 
     task_root = (
         Path(workspace_value).expanduser()
@@ -1084,6 +1087,7 @@ def _run_validation_request(
             reasoning,
             True,
             temperature,
+            max_tokens=AGENT_OUTPUT_TOKENS,
         )
         slot = _acquire_model_slot(model_id, heartbeat=lambda: heartbeat(upload))
 

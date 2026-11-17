@@ -377,9 +377,11 @@
     footer.insertAdjacentElement('afterend', marker);
 
     let intersectionObserver = null;
+    let resizeObserver = null;
 
     function release() {
       if (intersectionObserver) intersectionObserver.disconnect();
+      if (resizeObserver) resizeObserver.disconnect();
       window.removeEventListener('scroll', sync, true);
       window.removeEventListener('resize', sync);
     }
@@ -419,6 +421,12 @@
       intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
       intersectionObserver.observe(section);
       intersectionObserver.observe(marker);
+    }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(sync);
+      resizeObserver.observe(section);
+      const contentColumn = section.closest('.flex-grow-1');
+      if (contentColumn) resizeObserver.observe(contentColumn);
     }
     window.addEventListener('scroll', sync, true);
     window.addEventListener('resize', sync);

@@ -95,6 +95,36 @@
       </div>
     </div>
 
+    <div class="proposal-dispatch-letter">
+      <div class="d-flex align-items-center gap-2">
+        <div class="form-label mb-0">Письмо</div>
+        <button type="button"
+                id="proposal-dispatch-letter-toggle"
+                class="btn btn-link btn-sm text-secondary text-decoration-none p-0 d-inline-flex align-items-center"
+                aria-expanded="{% if dispatch_letter_expanded %}true{% else %}false{% endif %}"
+                aria-label="{% if dispatch_letter_expanded %}Свернуть письмо{% else %}Развернуть письмо{% endif %}"
+                title="{% if dispatch_letter_expanded %}Свернуть письмо{% else %}Развернуть письмо{% endif %}">
+          <i class="bi {% if dispatch_letter_expanded %}bi-dash-square{% else %}bi-plus-square{% endif %}"></i>
+        </button>
+      </div>
+      <div id="proposal-dispatch-letter-body" class="proposal-dispatch-letter-body{% if not dispatch_letter_expanded %} d-none{% endif %}">
+        <input type="hidden" name="dispatch_email_letter_dirty" value="{{ dispatch_letter_dirty }}">
+        <div class="mt-3">
+          <label class="form-label" for="proposal-dispatch-letter-subject">Тема письма</label>
+          <input type="text"
+                 class="form-control"
+                 id="proposal-dispatch-letter-subject"
+                 name="dispatch_email_subject"
+                 value="{{ dispatch_letter_subject }}">
+        </div>
+        <div class="mt-3 mb-3">
+          <label class="form-label">Текст письма</label>
+          <textarea name="dispatch_email_body_html" class="d-none">{{ dispatch_letter_body }}</textarea>
+          <div id="proposal-dispatch-letter-editor" style="min-height: 200px;"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="proposal-dispatch-contacts">
     <div class="d-flex align-items-center gap-2">
       <div class="form-label mb-0">Контактные данные</div>

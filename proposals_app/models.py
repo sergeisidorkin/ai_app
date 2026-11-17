@@ -62,6 +62,9 @@ class ProposalRegistration(models.Model):
         "recipient_job_title",
         "contact_full_name",
         "contact_email",
+        "dispatch_email_subject",
+        "dispatch_email_body_html",
+        "dispatch_email_customized",
     })
 
     class PreliminaryReportTermUnit(models.TextChoices):
@@ -339,6 +342,21 @@ class ProposalRegistration(models.Model):
     recipient_job_title = models.CharField("Должность", max_length=255, blank=True, default="")
     contact_full_name = models.CharField("ФИО", max_length=255, blank=True, default="")
     contact_email = models.CharField("Эл. почта", max_length=255, blank=True, default="")
+    dispatch_email_subject = models.CharField(
+        "Заголовок письма",
+        max_length=500,
+        blank=True,
+        default="",
+    )
+    dispatch_email_body_html = models.TextField(
+        "Текст письма (уведомления)",
+        blank=True,
+        default="",
+    )
+    dispatch_email_customized = models.BooleanField(
+        "Письмо отредактировано вручную",
+        default=False,
+    )
 
     class Meta:
         app_label = "proposals_app"

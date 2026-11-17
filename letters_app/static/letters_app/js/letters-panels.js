@@ -334,11 +334,68 @@
     return normalized;
   }
 
+  function resetColorPopoverPlacement(popover) {
+    popover.style.position = '';
+    popover.style.top = '';
+    popover.style.left = '';
+    popover.style.right = '';
+    popover.style.zIndex = '';
+  }
+
+  function placeColorPopover(toolbar, kind) {
+    var popover = toolbar.querySelector('[data-color-popover="' + kind + '"]');
+    var anchor = toolbar.querySelector('[data-color-combo="' + kind + '"]')
+      || toolbar.querySelector('[data-color-toggle="' + kind + '"]');
+    if (!popover || !anchor || !toolbar.closest('.modal')) {
+      if (popover) resetColorPopoverPlacement(popover);
+      return;
+    }
+    var anchorRect = anchor.getBoundingClientRect();
+    var width = popover.offsetWidth || 208;
+    var height = popover.offsetHeight || 240;
+    var gap = 6;
+    var margin = 8;
+    var left = anchorRect.right - width;
+    left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+    var top = anchorRect.bottom + gap;
+    var above = anchorRect.top - gap - height;
+    if (top + height > window.innerHeight - margin && above >= margin) top = above;
+    popover.style.position = 'fixed';
+    popover.style.left = Math.round(left) + 'px';
+    popover.style.top = Math.round(top) + 'px';
+    popover.style.right = 'auto';
+    popover.style.zIndex = '2000';
+  }
+
+  var colorPopoverToolbars = [];
+
+  function rememberColorPopoverToolbar(toolbar) {
+    if (colorPopoverToolbars.indexOf(toolbar) === -1) colorPopoverToolbars.push(toolbar);
+  }
+
+  function repositionOpenColorPopovers() {
+    colorPopoverToolbars = colorPopoverToolbars.filter(function (toolbar) {
+      return document.body.contains(toolbar);
+    });
+    colorPopoverToolbars.forEach(function (toolbar) {
+      toolbar.querySelectorAll('[data-color-popover]').forEach(function (popover) {
+        if (!popover.hidden) placeColorPopover(toolbar, popover.dataset.colorPopover);
+      });
+    });
+  }
+
+  if (!window.__letterColorPopoverFollow) {
+    window.__letterColorPopoverFollow = true;
+    window.addEventListener('resize', repositionOpenColorPopovers);
+    document.addEventListener('scroll', repositionOpenColorPopovers, true);
+  }
+
   function closeColorPopovers(toolbar, exceptKind) {
     toolbar.querySelectorAll('[data-color-popover]').forEach(function (popover) {
       var kind = popover.dataset.colorPopover;
       var keepOpen = exceptKind && kind === exceptKind;
       popover.hidden = !keepOpen;
+      if (!keepOpen) resetColorPopoverPlacement(popover);
       var toggle = toolbar.querySelector('[data-color-toggle="' + kind + '"]');
       if (toggle) toggle.setAttribute('aria-expanded', keepOpen ? 'true' : 'false');
     });
@@ -351,6 +408,7 @@
     closeColorPopovers(toolbar, shouldOpen ? kind : null);
     if (!shouldOpen) return;
     setToolbarColor(toolbar, kind, getAppliedToolbarColor(toolbar, kind), false);
+    placeColorPopover(toolbar, kind);
   }
 
   function commitToolbarColor(toolbar, kind) {
@@ -532,6 +590,7 @@
     updateListMarkerControl(toolbar, 'bullet');
     initializeToolbarColors(toolbar);
     syncLetterListToolbar(toolbar, quill, lastRange);
+    rememberColorPopoverToolbar(toolbar);
   }
 
   function initEditor(templateType) {
@@ -818,4 +877,36 @@
         .catch(function (err) { console.error('Reset failed', err); });
     }
   });
+
+  window.LetterBodyEditor = {
+    mount: function (editorEl, html, onChange) {
+      if (!editorEl || editorEl.dataset.letterEditorMounted === '1') return;
+      editorEl.dataset.letterEditorMounted = '1';
+      loadQuill(function () {
+        if (editorEl._letterQuill) return;
+        var toolbar = createLetterToolbar(editorEl);
+        var quill = new Quill(editorEl, {
+          theme: 'snow',
+          modules: {
+            toolbar: toolbar,
+          },
+        });
+        var delta = quill.clipboard.convert({ html: html || '' });
+        quill.setContents(delta, 'silent');
+        attachLetterListToolbar(toolbar, quill);
+        editorEl._letterQuill = quill;
+        quill.on('text-change', function (_delta, _oldDelta, source) {
+          if (source !== 'user' || typeof onChange !== 'function') return;
+          onChange(quill.root.innerHTML);
+        });
+      });
+    },
+    html: function (editorEl) {
+      var quill = editorEl && editorEl._letterQuill;
+      return quill ? quill.root.innerHTML : '';
+    },
+    isReady: function (editorEl) {
+      return !!(editorEl && editorEl._letterQuill);
+    },
+  };
 })();

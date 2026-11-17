@@ -99,7 +99,7 @@ def build_proposal_tkp_id(proposal):
     return " ".join(part for part in parts if part)
 
 
-def _build_proposal_email(proposal, *, sender):
+def _render_proposal_dispatch_letter(proposal, *, sender):
     tkp_id = build_proposal_tkp_id(proposal)
     template_vars = {"tkp_id": tkp_id}
     subject = render_subject(PROPOSAL_SENDING_DEFAULT_SUBJECT, template_vars)
@@ -117,6 +117,43 @@ def _build_proposal_email(proposal, *, sender):
         "subject": subject,
         "content": content,
     }
+
+
+def _stored_proposal_dispatch_letter(proposal):
+    customized = bool(getattr(proposal, "dispatch_email_customized", False))
+    subject = getattr(proposal, "dispatch_email_subject", "") or ""
+    content = getattr(proposal, "dispatch_email_body_html", "") or ""
+    if not customized and not str(subject).strip() and not str(content).strip():
+        return None
+    return {
+        "tkp_id": build_proposal_tkp_id(proposal),
+        "subject": subject,
+        "content": content,
+    }
+
+
+def proposal_dispatch_letter_preview(proposal, *, sender):
+    stored = _stored_proposal_dispatch_letter(proposal)
+    if stored is not None:
+        return stored
+    return _render_proposal_dispatch_letter(proposal, sender=sender)
+
+
+def assign_proposal_dispatch_letter(proposal, *, sender):
+    if getattr(proposal, "dispatch_email_customized", False):
+        return proposal
+    rendered = _render_proposal_dispatch_letter(proposal, sender=sender)
+    proposal.dispatch_email_subject = rendered["subject"][:500]
+    proposal.dispatch_email_body_html = rendered["content"]
+    proposal.save(update_fields=["dispatch_email_subject", "dispatch_email_body_html"])
+    return proposal
+
+
+def _build_proposal_email(proposal, *, sender):
+    stored = _stored_proposal_dispatch_letter(proposal)
+    if stored is not None:
+        return stored
+    return _render_proposal_dispatch_letter(proposal, sender=sender)
 
 
 def _get_proposal_attachment_cloud_user(user):

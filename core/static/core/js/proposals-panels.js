@@ -12634,11 +12634,61 @@
     }
   }
 
+  function initDispatchLetterEditor(form) {
+    const toggle = form.querySelector('#proposal-dispatch-letter-toggle');
+    const letterBody = form.querySelector('#proposal-dispatch-letter-body');
+    const editorEl = form.querySelector('#proposal-dispatch-letter-editor');
+    const subjectInput = form.querySelector('[name="dispatch_email_subject"]');
+    const bodyInput = form.querySelector('[name="dispatch_email_body_html"]');
+    const dirtyInput = form.querySelector('[name="dispatch_email_letter_dirty"]');
+
+    function markDirty() {
+      if (dirtyInput) dirtyInput.value = '1';
+    }
+
+    function syncBody() {
+      if (!editorEl || !bodyInput || !window.LetterBodyEditor || !window.LetterBodyEditor.isReady(editorEl)) return;
+      bodyInput.value = window.LetterBodyEditor.html(editorEl);
+    }
+
+    function mountEditor() {
+      if (!editorEl || !window.LetterBodyEditor) return;
+      window.LetterBodyEditor.mount(editorEl, bodyInput ? bodyInput.value : '', function () {
+        markDirty();
+        syncBody();
+      });
+    }
+
+    subjectInput?.addEventListener('input', markDirty);
+    toggle?.addEventListener('click', function () {
+      if (!letterBody) return;
+      const willExpand = letterBody.classList.contains('d-none');
+      letterBody.classList.toggle('d-none', !willExpand);
+      const icon = toggle.querySelector('i');
+      if (icon) icon.className = willExpand ? 'bi bi-dash-square' : 'bi bi-plus-square';
+      const label = willExpand ? 'Свернуть письмо' : 'Развернуть письмо';
+      toggle.setAttribute('aria-expanded', willExpand ? 'true' : 'false');
+      toggle.setAttribute('aria-label', label);
+      toggle.title = label;
+      if (willExpand) mountEditor();
+    });
+    form.addEventListener('htmx:configRequest', function (event) {
+      syncBody();
+      const parameters = event.detail && event.detail.parameters;
+      if (!parameters) return;
+      if (subjectInput) parameters.dispatch_email_subject = subjectInput.value;
+      if (bodyInput) parameters.dispatch_email_body_html = bodyInput.value;
+      if (dirtyInput) parameters.dispatch_email_letter_dirty = dirtyInput.value;
+    });
+    if (letterBody && !letterBody.classList.contains('d-none')) mountEditor();
+  }
+
   function initProposalDispatchForm() {
     const form = document.querySelector('#proposals-modal form[data-proposal-dispatch-form]');
     if (!form || form.dataset.dispatchEditorBound === '1') return;
     form.dataset.dispatchEditorBound = '1';
     attachGuillemets(form);
+    initDispatchLetterEditor(form);
     initDispatchRecipientEditor(form);
   }
 

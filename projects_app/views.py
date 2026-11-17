@@ -7011,7 +7011,7 @@ def _performers_context(user=None, request=None):
         .annotate(executor_trim=Trim("executor"))
         .filter(report_table_performer_q(), registration__status__in=active_participation_statuses)
         .exclude(executor_trim="")
-        .order_by("registration_id", "executor", "asset_name", "position", "id")
+        .order_by("-registration__number", "registration__short_uid", "registration_id", "asset_name", "position", "id")
     )
     report_project_scope = report_visible_registration_ids(user)
     if report_project_scope is not None:

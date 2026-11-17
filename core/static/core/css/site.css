@@ -2023,6 +2023,12 @@ body .second-sidebar + .flex-grow-1 {
   border-top: 1.5px solid #000 !important;
 }
 
+/* Пустая сумма не создаёт строку текста, строка итогов схлопывается,
+   и «Добавить строку» прилипает к нижней границе таблицы. */
+#perf-totals-row > .perf-cost-cell .perf-cost-value:empty::before {
+  content: "\00a0";
+}
+
 .performers-table.perf-costs-hidden #perf-totals-row > .perf-cost-cell,
 .performers-table.perf-costs-hidden #perf-totals-row > .perf-spacer,
 .performers-table.perf-costs-hidden #perf-totals-row > td:last-child {
@@ -8985,6 +8991,14 @@ html.table-action-progress * {
 #proposals-pane .proposal-payment-stage-block {
   border-top: 1px solid #dee2e6;
   padding-top: 1.25rem;
+}
+
+#proposals-modal .proposal-dispatch-letter {
+  margin-top: 2rem;
+}
+
+#proposals-modal .proposal-dispatch-letter .ql-container {
+  font-size: 15px;
 }
 
 #proposals-modal .proposal-dispatch-contacts {

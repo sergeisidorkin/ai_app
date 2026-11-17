@@ -11861,6 +11861,73 @@ class ReportSubmissionTests(TestCase):
         self.assertEqual(rows[3].section_label, "ECN Экономика")
         self.assertFalse(any(row.is_all_sections for row in rows))
 
+    def test_report_rows_follow_performer_section_code_order(self):
+        later_name = "Яковлев Яков Яковлевич"
+        early_name = "Андреев Андрей Андреевич"
+        geology = self.product.sections.create(
+            code="GEO",
+            short_name="Geology",
+            short_name_ru="Геология",
+            name_en="Geology",
+            name_ru="Геология",
+            accounting_type="Раздел",
+            position=3,
+        )
+        first = Performer.objects.create(
+            registration=self.project,
+            executor=later_name,
+            asset_name=self.asset_name,
+            typical_section=self.mrk,
+            position=1,
+        )
+        second = Performer.objects.create(
+            registration=self.project,
+            executor=early_name,
+            asset_name=self.asset_name,
+            typical_section=self.ecn,
+            position=2,
+        )
+        third = Performer.objects.create(
+            registration=self.project,
+            executor=later_name,
+            asset_name=self.asset_name,
+            typical_section=geology,
+            position=3,
+        )
+        rows = [
+            row for row in build_report_submission_rows([second, third, first])
+            if row.is_current
+        ]
+        self.assertEqual(
+            [(row.executor, row.section_label) for row in rows],
+            [
+                (self.project.project_manager, FULL_REPORT_LABEL),
+                (later_name, "2 раздела"),
+                (later_name, "MRK Маркетинг"),
+                (later_name, "GEO Геология"),
+                (early_name, "ECN Экономика"),
+            ],
+        )
+        self.assertEqual(rows[0].row_id, f"full-{self.project.pk}-{first.pk}")
+        full_upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=self.project.project_manager,
+            asset_name=self.asset_name,
+            is_full_report=True,
+            version=0,
+            file_name="full.docx",
+        )
+        self.assertEqual(report_slot_row_id(full_upload), rows[0].row_id)
+        all_upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            executor=later_name,
+            asset_name=self.asset_name,
+            is_all_sections=True,
+            version=0,
+            file_name="all.docx",
+        )
+        self.assertEqual(report_slot_row_id(all_upload), rows[1].row_id)
+
     def _report_section_html(self, response):
         html = response.content.decode()
         start = html.find('id="report-submission-section"')
@@ -20927,9 +20994,73 @@ console.log("continue ok")
         self.assertEqual(reviewed["validation_reasoning"], "high")
         self.assertNotEqual(warm, reviewed)
 
+    def test_chunk_request_raises_output_token_cap(self):
+        from projects_app.models import ReportCheckChunk, ReportCheckRun
+        from projects_app.report_chunk_skill_runner import _execute_chunk
+        from projects_app.report_skill_runner import AGENT_OUTPUT_TOKENS
+
+        upload = PerformerReportUpload.objects.create(
+            registration=self.project,
+            performer=self.performer,
+            executor=self.performer.executor,
+            asset_name=self.performer.asset_name,
+            file_name="report.docx",
+        )
+        run = ReportCheckRun.objects.create(
+            upload=upload,
+            source_sha256="a" * 64,
+        )
+        task = ReportCheckChunk.objects.create(
+            run=run,
+            skill_name="report-final-check-v2-max",
+            chunk_id="chunk-00016",
+            payload_sha256="b" * 64,
+            payload={"chunk_id": "chunk-00016", "blocks": []},
+        )
+        seen = {}
+
+        def prepare_profile(*_args, **kwargs):
+            seen.update(kwargs)
+            return "report-check-text"
+
+        def run_headless(_prompt, *, cwd, profile, heartbeat):
+            root = Path(cwd)
+            (root / "output" / "findings.json").write_text(
+                json.dumps({"chunk_id": "chunk-00016", "findings": []}),
+                encoding="utf-8",
+            )
+            self.assertEqual(profile, "report-check-text")
+            heartbeat()
+            return "Готово"
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(
+            DSH_SORT_WORKSPACE=tmp,
+        ), patch(
+            "projects_app.report_chunk_skill_runner.run_headless",
+            side_effect=run_headless,
+        ):
+            _execute_chunk(
+                upload,
+                task,
+                "report-final-check-v2-max",
+                "qwen3.8-27b-local",
+                "off",
+                True,
+                "0.2",
+                {},
+                prepare_profile,
+                lambda _name: None,
+                lambda _upload: True,
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, ReportCheckChunk.Status.DONE)
+        self.assertEqual(seen["max_tokens"], AGENT_OUTPUT_TOKENS)
+
     def test_validation_request_holds_and_releases_model_slot(self):
         from projects_app.models import ReportModelThrottle
         from projects_app.report_chunk_skill_runner import _run_validation_request, _touch_model_slot
+        from projects_app.report_skill_runner import AGENT_OUTPUT_TOKENS
 
         upload = PerformerReportUpload.objects.create(
             registration=self.project,
@@ -20939,7 +21070,10 @@ console.log("continue ok")
             file_name="report.docx",
         )
 
-        def prepare_profile(*_args, **_kwargs):
+        seen = {}
+
+        def prepare_profile(*_args, **kwargs):
+            seen.update(kwargs)
             return "report-check-text"
 
         def run_headless(_prompt, *, cwd, profile, heartbeat):
@@ -20970,6 +21104,7 @@ console.log("continue ok")
                 lambda _upload: True,
             )
         self.assertEqual(result, [])
+        self.assertEqual(seen["max_tokens"], AGENT_OUTPUT_TOKENS)
         self.assertEqual(touched.call_count, 1)
         throttle = ReportModelThrottle.objects.get(route_key="validator")
         self.assertEqual(throttle.active_token, "")
