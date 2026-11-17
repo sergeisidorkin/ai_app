@@ -4115,6 +4115,11 @@ class ProposalDispatchFormTests(TestCase):
         self.assertIn("window.LetterBodyEditor.mount", proposals_js)
         self.assertIn("window.LetterBodyEditor = {", letters_js)
         self.assertIn("source !== 'user'", letters_js)
+        self.assertIn(
+            "quill.format(applyColor.dataset.applyColor, getAppliedToolbarColor(toolbar, applyColor.dataset.applyColor), 'user')",
+            letters_js,
+        )
+        self.assertIn("quill.format('list', toggleCurrent ? false : listType, 'user')", letters_js)
         self.assertIn("popover.style.position = 'fixed'", letters_js)
 
 

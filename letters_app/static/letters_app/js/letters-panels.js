@@ -513,7 +513,7 @@
       if (applyColor && toolbar.contains(applyColor)) {
         event.preventDefault();
         restoreSelection();
-        quill.format(applyColor.dataset.applyColor, getAppliedToolbarColor(toolbar, applyColor.dataset.applyColor));
+        quill.format(applyColor.dataset.applyColor, getAppliedToolbarColor(toolbar, applyColor.dataset.applyColor), 'user');
         syncLetterListToolbar(toolbar, quill, lastRange);
         return;
       }
@@ -525,7 +525,7 @@
       var currentList = quill.getFormat().list || false;
       var toggleCurrent = !button.dataset.listMarkerOption && currentList === listType;
       if (isListMarkerType(listType)) updateListMarkerControl(toolbar, listType);
-      quill.format('list', toggleCurrent ? false : listType);
+      quill.format('list', toggleCurrent ? false : listType, 'user');
       syncLetterListToolbar(toolbar, quill, lastRange);
     });
     toolbar.addEventListener('input', function (event) {
