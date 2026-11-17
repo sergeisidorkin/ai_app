@@ -9942,6 +9942,23 @@ class CloudStorageProjectRoutingTests(TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("Nextcloud", payload["error"])
 
+    def test_create_registration_workspace_returns_error_line_when_stream_fails(self):
+        with self.assertLogs("projects_app.views", level="ERROR"):
+            with patch(
+                "projects_app.views.routed_create_basic_project_workspace_stream",
+                side_effect=RuntimeError("database rejected the link"),
+            ):
+                response = self.client.post(
+                    reverse("create_registration_workspace"),
+                    {"project_id": self.project.pk},
+                )
+                raw = b"".join(response.streaming_content)
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(raw.decode())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "Не удалось создать рабочее пространство.")
+
     def test_projects_partial_uses_current_primary_cloud_label_in_workspace_modal(self):
         settings_obj = CloudStorageSettings.get_solo()
         settings_obj.primary_storage = CloudStorageSettings.PrimaryStorage.NEXTCLOUD

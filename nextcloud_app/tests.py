@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
 from pathlib import Path
+from urllib.parse import quote
 import time
 from unittest.mock import Mock, call, patch
 
@@ -13,6 +14,7 @@ from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
 from contacts_app.models import PersonRecord
+from core.cloud_paths import CLOUD_FILE_URL_MAX_LENGTH
 from core.models import CloudStorageSettings
 from contracts_app.models import ContractProjectRegistration
 from experts_app.models import ExpertProfile, ExpertProfileSpecialty
@@ -1081,6 +1083,39 @@ class NextcloudWorkspaceTests(TestCase):
         workspace = ProjectWorkspace.objects.get(project=self.project)
         self.assertEqual(workspace.disk_path, project_path)
         self.assertEqual(workspace.public_url, f"https://cloud.example.com/apps/files/files?dir={project_path}")
+
+    def test_create_basic_project_workspace_stores_percent_encoded_cyrillic_url(self):
+        self.project.name = "Чиатура-Зестафони"
+        self.project.save(update_fields=["name"])
+        project_path = (
+            "/Corporate Root/03 Проекты/2026/"
+            + _build_project_folder_name(self.project)
+        )
+        files_url = (
+            "https://cloud.imcmontanai.ru/apps/files/files?dir="
+            + quote(project_path, safe="/")
+        )
+        self.assertGreater(len(files_url), 200)
+        self.assertLessEqual(len(files_url), CLOUD_FILE_URL_MAX_LENGTH)
+
+        client = Mock()
+        client.is_configured = True
+        client.username = "cloud-admin"
+        client.ensure_folder.side_effect = lambda _owner, path: "/" + "/".join(
+            part for part in str(path).replace("\\", "/").split("/") if part
+        )
+        client.ensure_user_share.return_value = Mock()
+        client.build_files_url.side_effect = lambda path: (
+            "https://cloud.imcmontanai.ru/apps/files/files?dir="
+            + quote(path, safe="/")
+        )
+
+        items = list(create_basic_project_workspace_stream(self.creator, self.project, client=client))
+
+        self.assertTrue(items[-1].ok)
+        workspace = ProjectWorkspace.objects.get(project=self.project)
+        self.assertEqual(workspace.public_url, files_url)
+        self.assertLessEqual(len(workspace.public_url), CLOUD_FILE_URL_MAX_LENGTH)
 
     def _workspace_client(self):
         client = Mock()

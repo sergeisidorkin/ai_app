@@ -9297,6 +9297,15 @@ def create_registration_workspace(request):
                     yield _padded(json.dumps(item) + "\n")
         except CloudStorageNotReadyError as exc:
             yield _padded(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        except Exception:
+            logger.exception(
+                "Failed to create registration workspace for project %s",
+                project.pk,
+            )
+            yield _padded(json.dumps({
+                "ok": False,
+                "error": "Не удалось создать рабочее пространство.",
+            }) + "\n")
 
     resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
     resp["Cache-Control"] = "no-cache, no-store"
@@ -10820,6 +10829,15 @@ def create_source_data_workspace(request):
                     yield _padded(json.dumps(item) + "\n")
         except CloudStorageNotReadyError as exc:
             yield _padded(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        except Exception:
+            logger.exception(
+                "Failed to create source data workspace for project %s",
+                project.pk,
+            )
+            yield _padded(json.dumps({
+                "ok": False,
+                "error": "Не удалось создать пространство исходных данных.",
+            }) + "\n")
 
     resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
     resp["Cache-Control"] = "no-cache, no-store"
@@ -11862,6 +11880,12 @@ def create_contract_project(request):
                 }) + "\n")
         except CloudStorageNotReadyError as exc:
             yield _padded(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        except Exception:
+            logger.exception("Failed to create contract projects")
+            yield _padded(json.dumps({
+                "ok": False,
+                "error": "Не удалось создать проекты договоров.",
+            }) + "\n")
 
     resp = StreamingHttpResponse(_stream(), content_type="application/x-ndjson")
     resp["Cache-Control"] = "no-cache, no-store"

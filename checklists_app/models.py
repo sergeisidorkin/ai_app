@@ -2,6 +2,8 @@ import secrets
 
 from django.conf import settings
 from django.db import models
+
+from core.cloud_paths import CLOUD_FILE_URL_MAX_LENGTH
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -470,7 +472,12 @@ class ProjectWorkspace(models.Model):
         related_name="yadisk_workspace",
     )
     disk_path = models.CharField("Путь на диске", max_length=2048)
-    public_url = models.URLField("Публичная ссылка", blank=True, default="")
+    public_url = models.URLField(
+        "Публичная ссылка",
+        max_length=CLOUD_FILE_URL_MAX_LENGTH,
+        blank=True,
+        default="",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -526,7 +533,12 @@ class ChecklistItemFolder(models.Model):
         related_name="yadisk_folders",
     )
     disk_path = models.CharField("Путь на диске", max_length=2048)
-    public_url = models.URLField("Публичная ссылка", blank=True, default="")
+    public_url = models.URLField(
+        "Публичная ссылка",
+        max_length=CLOUD_FILE_URL_MAX_LENGTH,
+        blank=True,
+        default="",
+    )
     file_count = models.PositiveIntegerField("Кол-во файлов", default=0)
     last_upload_at = models.DateTimeField("Последняя загрузка", null=True, blank=True)
     synced_at = models.DateTimeField("Последняя синхронизация", null=True, blank=True)
@@ -554,7 +566,12 @@ class SourceDataSectionFolder(models.Model):
     )
     asset_name = models.CharField("Наименование актива", max_length=255, blank=True, default="")
     disk_path = models.CharField("Путь на диске", max_length=2048)
-    public_url = models.URLField("Публичная ссылка", blank=True, default="")
+    public_url = models.URLField(
+        "Публичная ссылка",
+        max_length=CLOUD_FILE_URL_MAX_LENGTH,
+        blank=True,
+        default="",
+    )
     file_count = models.PositiveIntegerField("Кол-во файлов", default=0)
     last_upload_at = models.DateTimeField("Последняя загрузка", null=True, blank=True)
     synced_at = models.DateTimeField("Последняя синхронизация", null=True, blank=True)
@@ -585,7 +602,12 @@ class SourceDataItemFolder(models.Model):
     )
     asset_name = models.CharField("Наименование актива", max_length=255, blank=True, default="")
     disk_path = models.CharField("Путь на диске", max_length=2048)
-    public_url = models.URLField("Публичная ссылка", blank=True, default="")
+    public_url = models.URLField(
+        "Публичная ссылка",
+        max_length=CLOUD_FILE_URL_MAX_LENGTH,
+        blank=True,
+        default="",
+    )
     file_count = models.PositiveIntegerField("Кол-во файлов", default=0)
     last_upload_at = models.DateTimeField("Последняя загрузка", null=True, blank=True)
     synced_at = models.DateTimeField("Последняя синхронизация", null=True, blank=True)
