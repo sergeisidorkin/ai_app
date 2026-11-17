@@ -12134,7 +12134,7 @@ class ReportSubmissionTests(TestCase):
         self.assertIn('id="report-submission-asset-list"', section)
         self.assertIn('value="__all__"', section)
         names = self._report_json(section, "report-submission-asset-names")
-        self.assertEqual(names, ["Карьер", "Карьер, Южный", "Фабрика", "Другой актив"])
+        self.assertEqual(names, ["Другой актив", "Карьер", "Карьер, Южный", "Фабрика"])
         self.assertEqual(self._report_json(section, "report-submission-selected-assets"), [])
         self.assertIn('data-asset-name=""', section)
 

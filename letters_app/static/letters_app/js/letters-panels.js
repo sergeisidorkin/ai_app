@@ -894,6 +894,11 @@
         var delta = quill.clipboard.convert({ html: html || '' });
         quill.setContents(delta, 'silent');
         attachLetterListToolbar(toolbar, quill);
+        var linkTooltip = editorEl.querySelector('.ql-tooltip');
+        if (linkTooltip) {
+          linkTooltip.classList.add('ql-hidden');
+          linkTooltip.hidden = true;
+        }
         editorEl._letterQuill = quill;
         quill.on('text-change', function (_delta, _oldDelta, source) {
           if (source !== 'user' || typeof onChange !== 'function') return;

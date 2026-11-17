@@ -119,8 +119,10 @@
         </div>
         <div class="mt-3 mb-3">
           <label class="form-label">Текст письма</label>
-          <textarea name="dispatch_email_body_html" class="d-none">{{ dispatch_letter_body }}</textarea>
-          <div id="proposal-dispatch-letter-editor" style="min-height: 200px;"></div>
+          <div class="proposal-dispatch-letter-frame">
+            <textarea name="dispatch_email_body_html" class="d-none">{{ dispatch_letter_body }}</textarea>
+            <div id="proposal-dispatch-letter-editor"></div>
+          </div>
         </div>
       </div>
     </div>

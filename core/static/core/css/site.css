@@ -8158,6 +8158,10 @@ html.table-action-progress * {
   white-space: nowrap !important;
 }
 
+#proposals-pane #proposal-registry-table thead th[data-col="service-cost"] {
+  text-align: right !important;
+}
+
 #proposals-pane table.proposals-table tbody th,
 #proposals-pane table.proposals-table tbody td {
   white-space: nowrap !important;
@@ -8997,8 +9001,34 @@ html.table-action-progress * {
   margin-top: 2rem;
 }
 
-#proposals-modal .proposal-dispatch-letter .ql-container {
+#proposals-modal .proposal-dispatch-letter-frame {
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+  background: #fff;
+}
+
+#proposals-modal .proposal-dispatch-letter-frame > .ql-toolbar.ql-snow {
+  border: 0;
+  border-bottom: 1px solid #ced4da;
+  border-radius: 0.375rem 0.375rem 0 0;
+  background: #fff;
+}
+
+#proposals-modal .proposal-dispatch-letter-frame .ql-container {
+  height: auto !important;
+  min-height: 200px;
+  border: 0 !important;
+  background: #fff;
   font-size: 15px;
+}
+
+#proposals-modal .proposal-dispatch-letter-frame .ql-editor {
+  min-height: 200px;
+  height: auto;
+}
+
+#proposals-modal .proposal-dispatch-letter-frame .ql-tooltip {
+  display: none !important;
 }
 
 #proposals-modal .proposal-dispatch-contacts {
