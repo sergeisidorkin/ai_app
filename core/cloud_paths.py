@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 
+# A Nextcloud files URL percent-encodes the folder path. One Unicode code
+# point expands to at most 12 characters, and stored disk paths are at most
+# 2048 characters. The extra 256 covers the scheme, host and query prefix.
+CLOUD_FILE_URL_MAX_LENGTH = 256 + 12 * 2048
+
 PROPOSALS_SECTION_FOLDER = "01 ТКП"
 CONTRACTS_SECTION_FOLDER = "02 Договоры"
 PROJECTS_SECTION_FOLDER = "03 Проекты"
