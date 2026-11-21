@@ -1,12 +1,15 @@
 import json
+import tempfile
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from contracts_app.forms import ContractProjectRegistrationForm
 from policy_app.models import ServiceBlockClassifier
 from policy_app.test_spec_product import seed_spec_catalog
+from proposals_app.document_generation import _media_url_for_path, delete_proposal_scan_file
 from proposals_app.forms import ProposalRegistrationForm
 from proposals_app.variable_resolver import (
     _proposal_product_name,
@@ -101,3 +104,18 @@ class SpecDocumentVariableTests(TestCase):
         self.assertEqual(_proposal_report_title(proposal), "Название сделки")
         self.assertEqual(_proposal_product_name(proposal), "Название сделки")
         self.assertEqual(_proposal_service_goal_genitive(proposal), "")
+
+
+class SpecScanDeleteTests(TestCase):
+    def test_media_scan_with_encoded_cyrillic_name_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(MEDIA_ROOT=tmp, MEDIA_URL="/media/"):
+                path = Path(tmp) / "Offer_скан.pdf"
+                path.write_bytes(b"scan")
+                stored = _media_url_for_path(path)
+                self.assertIn("%", stored)
+                self.assertNotIn("скан", stored)
+
+                delete_proposal_scan_file(None, stored)
+
+                self.assertFalse(path.exists())

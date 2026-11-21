@@ -1371,11 +1371,8 @@ def _ensure_performer_rows_for_work_item(instance, catalog_sections=True):
     )
     existing_block_ids_for_asset = set(
         Performer.objects
-        .filter(
-            registration=instance.project,
-            asset_name=asset_name,
-            service_block__isnull=False,
-        )
+        .filter(registration=instance.project, service_block__isnull=False)
+        .filter(models.Q(work_item=instance) | models.Q(asset_name=asset_name))
         .values_list("service_block_id", flat=True)
     )
 
@@ -1494,6 +1491,10 @@ def _ensure_performer_rows_for_work_item(instance, catalog_sections=True):
 
 @receiver(post_save, sender=WorkVolume)
 def ensure_performer_rows(sender, instance, created, **kwargs):
+    if not created and instance.project_id:
+        old_asset_name = getattr(instance, "_old_effective_asset_name", None)
+        if old_asset_name is not None:
+            _sync_related_asset_name_updates(instance, old_asset_name)
     _ensure_performer_rows_for_work_item(instance, catalog_sections=created)
 
 

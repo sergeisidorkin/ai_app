@@ -6,7 +6,7 @@ import posixpath
 import sys
 from types import SimpleNamespace
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 import jwt
 import requests
@@ -720,6 +720,30 @@ def proposal_scan_storage_folder(proposal):
     raise ProposalScanError("Для ТКП не задана папка файлов DOCX или PDF.")
 
 
+def _media_file_from_link(raw: str) -> Path | None:
+    """Файл внутри MEDIA_ROOT по сохранённой media-ссылке.
+
+    Имя в ссылке закодировано. Перед проверкой границ каталога его нужно
+    раскодировать, иначе кириллический суффикс «_скан» не находится на диске.
+    """
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+    if not media_url or not str(raw or "").startswith(media_url):
+        return None
+    relative_path = unquote(str(raw)[len(media_url):].lstrip("/"))
+    if not relative_path or relative_path.startswith(("/", "\\")):
+        return None
+    parts = Path(relative_path).parts
+    if ".." in parts:
+        return None
+    root = Path(settings.MEDIA_ROOT).resolve()
+    path = (root / relative_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path
+
+
 def _media_url_for_path(path: Path) -> str:
     relative = path.resolve().relative_to(Path(settings.MEDIA_ROOT).resolve())
     media_base = str(settings.MEDIA_URL or "").rstrip("/")
@@ -774,11 +798,10 @@ def delete_proposal_scan_file(user, stored_link: str) -> None:
         return
     media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
     if media_url and raw.startswith(media_url):
-        relative_path = raw[len(media_url):].lstrip("/")
-        path = Path(settings.MEDIA_ROOT) / relative_path
-        if path.is_file():
+        media_path = _media_file_from_link(raw)
+        if media_path is not None and media_path.is_file():
             try:
-                path.unlink()
+                media_path.unlink()
             except OSError as exc:
                 raise ProposalScanError(f"Не удалось удалить скан: {exc}") from exc
         return

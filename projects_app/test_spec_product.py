@@ -1,4 +1,9 @@
+from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
 
 from contracts_app.models import ContractProjectRegistration
 from policy_app.models import ServiceBlockClassifier
@@ -76,6 +81,48 @@ class SpecProjectPerformerTests(TestCase):
         performers = list(Performer.objects.filter(registration=project).order_by("id"))
         self.assertEqual(len(performers), 1)
         self.assertEqual(performers[0].executor, "Иванов")
+
+    def test_renaming_asset_does_not_duplicate_spec_performers(self):
+        contract = self._contract([{"service_name": "Геология участка", "code": "GEO"}])
+        project = self._project(contract_project_registration=contract, number=8804)
+        volume = WorkVolume.objects.create(project=project, name="Рудник", asset_name="Рудник", position=1)
+        volume.asset_name = "Карьер"
+        volume.save()
+
+        performers = list(Performer.objects.filter(work_item=volume))
+        self.assertEqual(len(performers), 1)
+        self.assertEqual(performers[0].service_block_id, self.block.pk)
+        self.assertEqual(performers[0].asset_name, "Карьер")
+
+    @patch("projects_app.views.create_info_request_notifications")
+    def test_spec_section_performer_can_receive_info_request(self, _notify):
+        user = get_user_model().objects.create_user(username="spec-info", password="secret", is_staff=True)
+        self.client.force_login(user)
+        contract = self._contract([{"service_name": "Геология участка", "code": "GEO"}])
+        project = self._project(contract_project_registration=contract, number=8805)
+        WorkVolume.objects.create(project=project, name="Рудник", asset_name="Рудник", position=1)
+        performer = Performer.objects.get(registration=project)
+        performer.executor = "Иванов"
+        performer.participation_response = Performer.ParticipationResponse.CONFIRMED
+        performer.save(update_fields=["executor", "participation_response"])
+
+        listed = self.client.get(reverse("performers_partial"))
+        self.assertEqual(listed.status_code, 200)
+        self.assertContains(listed, f'id="info-request-sel-{performer.pk}"')
+
+        request_sent_at = timezone.localtime().replace(second=0, microsecond=0)
+        response = self.client.post(
+            reverse("info_request_approval"),
+            {
+                "performer_ids[]": [str(performer.pk)],
+                "duration_hours": "48",
+                "request_sent_at": request_sent_at.isoformat(timespec="minutes"),
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()["ok"])
+        performer.refresh_from_db()
+        self.assertIsNotNone(performer.info_request_sent_at)
 
     def test_empty_contract_does_not_fall_through_to_proposal(self):
         proposal = ProposalRegistration.objects.create(

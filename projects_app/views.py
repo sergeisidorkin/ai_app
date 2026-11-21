@@ -351,6 +351,19 @@ def staff_required(user):
     return user.is_authenticated and user.is_staff
 
 
+def _info_request_section_q():
+    """Строки с типом учета «Разделы»: раздел продукта или блок спецпроекта."""
+    return (
+        Q(typical_section__service_block__accounting_type="Разделы")
+        | Q(typical_section__isnull=True, service_block__accounting_type="Разделы")
+    )
+
+
+def performer_accounting_type(performer) -> str:
+    section = performer.typical_section or performer.service_block
+    return str(getattr(section, "accounting_type", "") or "")
+
+
 def _is_admin_user(user):
     return is_admin_user(user)
 
@@ -6787,6 +6800,8 @@ def _performers_context(user=None, request=None):
             "registration__type",
             "typical_section",
             "typical_section__product",
+            "typical_section__service_block",
+            "service_block",
             "employee",
             "employee__user",
         )
@@ -6795,8 +6810,8 @@ def _performers_context(user=None, request=None):
         .filter(
             registration__status__in=active_participation_statuses,
             participation_response=Performer.ParticipationResponse.CONFIRMED,
-            typical_section__service_block__accounting_type="Разделы",
         )
+        .filter(_info_request_section_q())
         .exclude(executor_trim="")
         .order_by("registration_id", "executor", "asset_name", "position", "id")
     )
@@ -8650,6 +8665,8 @@ def info_request_approval(request):
             "registration",
             "registration__type",
             "typical_section",
+            "typical_section__service_block",
+            "service_block",
             "employee",
             "employee__user",
         )
@@ -8658,10 +8675,7 @@ def info_request_approval(request):
     )
     if len(selected_performers) != len(performer_ids):
         return JsonResponse({"ok": False, "error": "Часть выбранных строк не найдена."}, status=400)
-    if any(
-        getattr(performer.typical_section, "accounting_type", None) != "Разделы"
-        for performer in selected_performers
-    ):
+    if any(performer_accounting_type(performer) != "Разделы" for performer in selected_performers):
         return JsonResponse(
             {"ok": False, "error": "Запрос информации доступен только для строк с типом учета «Разделы»."},
             status=400,
