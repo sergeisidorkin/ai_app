@@ -149,6 +149,26 @@ def seed_system_spec_product(apps, schema_editor):
         section.save(using=db_alias)
 
 
+def unseed_system_spec_product(apps, schema_editor):
+    """Убирает раздел SPEC до отката колонки short_name.
+
+    Seed создаёт типовой раздел уже после удаления short_name. Откат этой
+    миграции идёт раньше, чем колонка возвращается как NOT NULL. Если раздел
+    останется, PostgreSQL не сможет вернуть колонку.
+    """
+    Product = apps.get_model("policy_app", "Product")
+    TypicalSection = apps.get_model("policy_app", "TypicalSection")
+    db_alias = schema_editor.connection.alias
+    product_ids = list(
+        Product.objects.using(db_alias)
+        .filter(short_name=SPEC_SHORT_NAME)
+        .values_list("pk", flat=True)
+    )
+    if not product_ids:
+        return
+    TypicalSection.objects.using(db_alias).filter(product_id__in=product_ids).delete()
+
+
 class Migration(migrations.Migration):
     # Индекс нельзя создать в той же транзакции, где seed меняет строки.
     atomic = False
@@ -163,5 +183,5 @@ class Migration(migrations.Migration):
             name="is_system",
             field=models.BooleanField(db_index=True, default=False, verbose_name="Системный продукт"),
         ),
-        migrations.RunPython(seed_system_spec_product, migrations.RunPython.noop),
+        migrations.RunPython(seed_system_spec_product, unseed_system_spec_product),
     ]

@@ -74,6 +74,7 @@ from policy_app.models import (
     ServiceGoalReport,
     SpecialtyTariff,
     Tariff,
+    SYSTEM_DSC_SECTION_CODE,
     TypicalSection,
     TypicalSectionSpecialty,
     TypicalServiceComposition,
@@ -4286,9 +4287,12 @@ class ServiceBlockClassifierTableTests(TestCase):
             position=2,
         )
 
+    def _user_blocks(self):
+        return ServiceBlockClassifier.objects.exclude(code=SYSTEM_DSC_SECTION_CODE)
+
     def _ordered_codes(self):
         return list(
-            ServiceBlockClassifier.objects.order_by("position", "id").values_list("code", flat=True)
+            self._user_blocks().order_by("position", "id").values_list("code", flat=True)
         )
 
     def test_accounting_type_choices_match_requirements(self):
@@ -4676,7 +4680,7 @@ class ServiceBlockClassifierTableTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Retarget"], "#policy-modal .modal-content")
         self.assertContains(response, "Проверьте введённые данные.")
-        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._user_blocks().count(), 2)
 
     def test_code_must_be_unique_case_insensitively_on_create_and_edit(self):
         self.assertTrue(ServiceBlockClassifier._meta.get_field("code").unique)
@@ -4692,7 +4696,7 @@ class ServiceBlockClassifierTableTests(TestCase):
                 self.assertEqual(create.status_code, 200)
                 self.assertEqual(create["HX-Retarget"], "#policy-modal .modal-content")
                 self.assertContains(create, unique_message)
-        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._user_blocks().count(), 2)
 
         edit = self.client.post(
             reverse("service_block_classifier_form_edit", args=[self.second.pk]),
@@ -4746,7 +4750,7 @@ class ServiceBlockClassifierTableTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response["HX-Retarget"], "#policy-modal .modal-content")
                 self.assertContains(response, format_message)
-        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._user_blocks().count(), 2)
 
         for good_code in ("XYZ", "qwe"):
             with self.subTest(code=good_code):
@@ -4879,7 +4883,7 @@ class ServiceBlockClassifierTableTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(bulk.status_code, 403)
-        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._user_blocks().count(), 2)
         self.assertEqual(self._ordered_codes(), ["ABC", "DEF"])
         for url in (
             reverse("service_block_classifier_csv_download"),
@@ -4911,10 +4915,12 @@ class ServiceBlockClassifierTableTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["policy_pagination_enabled"])
-        self.assertEqual(response.context["paginator"].count, 30)
+        total = ServiceBlockClassifier.objects.count()
+        self.assertGreaterEqual(total, 30)
+        self.assertEqual(response.context["paginator"].count, total)
         self.assertEqual(len(response.context["service_block_classifiers"]), 25)
         self.assertContains(response, "Показано строк")
-        self.assertContains(response, "1–25 из 30")
+        self.assertContains(response, f"1–25 из {total}")
         self.assertContains(response, 'hx-target="#policy-service-block-classifiers-section"', html=False)
         self.assertContains(response, 'id="service-block-classifiers-csv-download-btn"', html=False)
         self.assertContains(response, 'id="service-block-classifiers-csv-upload-btn"', html=False)
@@ -4922,17 +4928,17 @@ class ServiceBlockClassifierTableTests(TestCase):
         self.assertNotContains(response, codes[-1])
 
         page_two = self.client.get(reverse("policy_service_block_classifiers_table"), {"page": 2})
-        self.assertEqual(len(page_two.context["service_block_classifiers"]), 5)
+        self.assertEqual(len(page_two.context["service_block_classifiers"]), total - 25)
         self.assertContains(page_two, codes[-1])
-        self.assertContains(page_two, "26–30 из 30")
+        self.assertContains(page_two, f"26–{total} из {total}")
         self.assertContains(page_two, 'data-policy-table-page="2"', html=False)
 
         wide = self.client.get(
             reverse("policy_service_block_classifiers_table"),
             {"page_size": 100},
         )
-        self.assertEqual(len(wide.context["service_block_classifiers"]), 30)
-        self.assertContains(wide, "1–30 из 30")
+        self.assertEqual(len(wide.context["service_block_classifiers"]), total)
+        self.assertContains(wide, f"1–{total} из {total}")
 
     def test_csv_download_exports_every_row_without_pagination(self):
         geology = ExpertSpecialty.objects.create(
@@ -4986,15 +4992,16 @@ class ServiceBlockClassifierTableTests(TestCase):
                 "Организация",
             ],
         )
-        self.assertEqual(len(rows), 29)
-        self.assertEqual(rows[1][0], "ABC")
-        self.assertEqual(rows[1][6], "ГЭ")
-        self.assertEqual(rows[1][7], "Геология блока\nГорное дело блока")
-        self.assertEqual(rows[1][8], "Горное направление")
-        self.assertEqual(rows[1][9], "SBC Co")
-        self.assertEqual(rows[2][0], "DEF")
-        self.assertEqual(rows[2][6], "")
-        self.assertEqual(rows[-1][0], "P26")
+        data_rows = [row for row in rows[1:] if row[0] != SYSTEM_DSC_SECTION_CODE]
+        self.assertEqual(
+            [row[0] for row in data_rows],
+            ["ABC", "DEF", *[f"P{index:02d}" for index in range(1, 27)]],
+        )
+        self.assertEqual(data_rows[0][6], "ГЭ")
+        self.assertEqual(data_rows[0][7], "Геология блока\nГорное дело блока")
+        self.assertEqual(data_rows[0][8], "Горное направление")
+        self.assertEqual(data_rows[0][9], "SBC Co")
+        self.assertEqual(data_rows[1][6], "")
 
     def test_csv_upload_creates_updates_and_skips_invalid_rows(self):
         geology = ExpertSpecialty.objects.create(
@@ -6801,8 +6808,9 @@ class ProductCsvUploadTests(TestCase):
                 "Групповой продукт",
             ],
         )
+        exported = {row[0]: row for row in rows[1:]}
         self.assertEqual(
-            rows[1],
+            exported["AUD"],
             [
                 "AUD",
                 "Audit",
