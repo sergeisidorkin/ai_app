@@ -19311,6 +19311,37 @@ class ReportMacroRunnerTests(TestCase):
         with self.assertRaises(ChunkSkillError):
             _json_object_from_text("Замечаний нет, JSON не сформирован.")
 
+    def test_truncated_chunk_hash_stays_on_the_same_fragment(self):
+        from projects_app.report_chunk_skill_runner import (
+            ChunkSkillError,
+            _read_chunk_response,
+        )
+
+        expected = "chunk-00008-656b2703831d29fdd61f"
+        missing = Path("/tmp/report-check-findings-missing.json")
+        accepted = _read_chunk_response(
+            missing,
+            expected,
+            max_bytes=10_000,
+            fallback_text=json.dumps({
+                "schema_version": 1,
+                "chunk_id": "chunk-00008-656b2703831d29fdd61",
+                "findings": [],
+            }),
+        )
+        self.assertEqual(accepted["chunk_id"], expected)
+        with self.assertRaises(ChunkSkillError) as raised:
+            _read_chunk_response(
+                missing,
+                expected,
+                max_bytes=10_000,
+                fallback_text=json.dumps({
+                    "chunk_id": "chunk-00001-aaaaaaaaaaaaaaaaaaaa",
+                    "findings": [],
+                }),
+            )
+        self.assertIn("другому фрагменту", str(raised.exception))
+
     def test_insert_many_comments_keeps_text_and_ranges(self):
         paragraphs = [f"абзац {index} ошибка {index} конец" for index in range(40)]
         source = _report_docx_bytes(*paragraphs)
@@ -27947,3 +27978,57 @@ class ProductUsageCountTests(TestCase):
         new.refresh_from_db()
         self.assertEqual(old.usage_count, 1)
         self.assertEqual(new.usage_count, 0)
+
+
+class CalendarTermSpanTests(SimpleTestCase):
+    def test_calendar_term_uses_real_months_and_keeps_lag(self):
+        from projects_app.stage_terms import calendar_term_span, group_calendar_term
+
+        stages = [
+            {
+                "service_term_months": "1",
+                "preliminary_report_term_unit": "months",
+                "final_report_term_weeks": "2",
+                "final_report_term_unit": "weeks",
+                "next_stage_delay_days": "3",
+                "next_stage_delay_unit": "days",
+            },
+            {
+                "service_term_months_enabled": False,
+                "service_term_months": "1.2",
+                "preliminary_report_term_unit": "months",
+                "final_report_term_weeks": "2.2",
+                "final_report_term_unit": "months",
+            },
+        ]
+
+        span = calendar_term_span(date(2026, 1, 1), stages)
+
+        self.assertEqual(span["end"], date(2026, 5, 30))
+        shown = group_calendar_term(date(2026, 1, 1), stages)
+        self.assertEqual(shown["days"], 149)
+        self.assertEqual(shown["weeks"], "21.3")
+        self.assertEqual(shown["origin"], "2026-01-01")
+        self.assertEqual(shown["end"], "2026-05-30")
+        self.assertEqual(group_calendar_term(None, stages)["weeks"], "")
+
+    def test_calendar_term_excludes_source_data_term(self):
+        from projects_app.stage_terms import calendar_term_span, group_calendar_term
+
+        stages = [
+            {
+                "source_data_term": "2",
+                "source_data_term_unit": "weeks",
+                "service_term_months": "1",
+                "preliminary_report_term_unit": "months",
+                "final_report_term_weeks": "2",
+                "final_report_term_unit": "weeks",
+            }
+        ]
+
+        span = calendar_term_span(date(2026, 1, 1), stages)
+        shown = group_calendar_term(date(2026, 1, 1), stages)
+
+        self.assertEqual(span["end"], date(2026, 2, 15))
+        self.assertEqual(shown["days"], 45)
+        self.assertEqual(shown["weeks"], "6.4")

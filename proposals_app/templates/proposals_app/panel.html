@@ -124,6 +124,11 @@
             var saved = P ? P.get(cfg.prefKey, null) : null;
             if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
               cfg.hidden = saved;
+              if (cfg.prefKey === 'proposals:hiddenCols' && P && !P.get('proposals:hiddenCols:overall-term', false)) {
+                cfg.hidden['overall-term'] = true;
+                P.set(cfg.prefKey, cfg.hidden);
+                P.set('proposals:hiddenCols:overall-term', true);
+              }
             } else if (document.getElementById(cfg.menuId)) {
               cfg.hidden = getDefaultHidden(cfg);
             }

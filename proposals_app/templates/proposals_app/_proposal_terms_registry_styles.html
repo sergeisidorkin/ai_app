@@ -304,10 +304,46 @@
   #proposals-pane.proposal-form-page .registration-terms-section .contract-date-terms-field {
     box-sizing: border-box;
     margin-left: 0;
-    margin-bottom: .5rem;
+    margin-bottom: 0;
     padding-left: 0;
     padding-right: 0;
     width: var(--proposal-terms-field);
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-overall-term-row > td {
+    background: transparent;
+    border: 0;
+    padding-top: 0;
+    padding-bottom: .75rem;
+    vertical-align: bottom;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-overall-term-row > .proposal-overall-start-cell {
+    padding-left: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-overall-term-shell {
+    width: var(--proposal-terms-field);
+    min-width: 0;
+    max-width: 100%;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-overall-term-preliminary-cell {
+    display: none;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-overall-term-source-cell {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    padding: 0 !important;
+    overflow: hidden;
+    border: 0;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-overall-term-source-cell > * {
+    display: none !important;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed .proposal-overall-term-preliminary-cell {
+    display: table-cell;
+  }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-terms-editor.is-source-date-collapsed.is-preliminary-date-collapsed .proposal-overall-term-preliminary-cell .proposal-overall-term-shell {
+    width: calc(100% - var(--proposal-stage-field-toggle-space));
+    max-width: none;
   }
   #proposals-pane.proposal-form-page .proposal-report-languages-field {
     flex: 0 0 auto;
@@ -752,6 +788,9 @@
     padding: 0;
     overflow: hidden;
   }
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-overall-term-shell {
+    min-width: 0;
+  }
   #proposals-pane.proposal-form-page .registration-terms-section .registration-term-shell {
     min-width: 0;
   }
@@ -810,7 +849,8 @@
   #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-source-data-term-unit,
   #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-preliminary-term-unit,
   #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-total-final-term-unit,
-  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-group-term-unit {
+  #proposals-pane.proposal-form-page .registration-terms-section .registration-contract-group-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-overall-term-unit {
     background-color: #fff !important;
     color: #212529 !important;
     -webkit-text-fill-color: #212529 !important;
@@ -857,7 +897,8 @@
   #proposals-pane.proposal-form-page .registration-terms-section .registration-term-shell.readonly-field .registration-term-unit {
     pointer-events: none;
   }
-  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-shell.readonly-field .registration-contract-group-term-unit {
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-stage-final-term-shell.readonly-field .registration-contract-group-term-unit,
+  #proposals-pane.proposal-form-page .registration-terms-section .proposal-overall-term-shell.readonly-field .proposal-overall-term-unit {
     pointer-events: auto;
   }
   #proposals-pane.proposal-form-page .registration-terms-section span.proposal-stage-delay-unit {

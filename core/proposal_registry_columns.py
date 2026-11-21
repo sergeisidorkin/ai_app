@@ -255,6 +255,13 @@ PROPOSAL_REGISTRY_COLUMNS = [
         "variable_available": True,
     },
     {
+        "picker_value": "overall-term",
+        "data_col": "overall-term",
+        "source_column": "overall_term",
+        "label": "Срок",
+        "variable_available": False,
+    },
+    {
         "picker_value": "service-cost",
         "data_col": "service-cost",
         "source_column": "service_cost",
@@ -341,6 +348,7 @@ PROPOSAL_REGISTRY_DEFAULT_HIDDEN_SOURCE_COLUMNS = {
     "purpose",
     "service_composition",
     "report_languages",
+    "overall_term",
 }
 
 

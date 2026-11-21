@@ -573,7 +573,13 @@ def _insert_rich_paragraphs(
         p_pr = OxmlElement("w:pPr")
         list_type = "" if render_plain else str(item.get("list_type") or "").strip()
         list_level = 0 if render_plain else _clamp_list_level(item.get("list_level"))
-        if list_type in _UNORDERED_RICH_LIST_TYPES:
+        paragraph_style = str(item.get("paragraph_style") or "").strip()
+        use_bullet_list_style = (
+            list_type == "bullet"
+            and paragraph_style == "bullet"
+            and bool(bullet_style_id)
+        )
+        if not use_bullet_list_style and list_type in _UNORDERED_RICH_LIST_TYPES:
             marker_num_id = marker_num_ids.get(list_type) or marker_num_ids.get("bullet", "")
             if marker_num_id:
                 num_pr = OxmlElement("w:numPr")
@@ -598,9 +604,10 @@ def _insert_rich_paragraphs(
                 num_pr.append(ilvl)
                 num_pr.append(num_id)
                 p_pr.append(num_pr)
-        paragraph_style = str(item.get("paragraph_style") or "").strip()
         paragraph_style_id = str(item.get("paragraph_style_id") or "").strip()
-        if paragraph_style == "list_paragraph" and not paragraph_style_id:
+        if use_bullet_list_style:
+            paragraph_style_id = bullet_style_id
+        elif paragraph_style == "list_paragraph" and not paragraph_style_id:
             paragraph_style_id = list_paragraph_style_id
         elif item.get("reset_paragraph_indent") and not paragraph_style_id:
             paragraph_style_id = list_paragraph_style_id
@@ -1131,6 +1138,166 @@ def _set_cell_width_pct(cell, width_pct: float) -> None:
     tc_w.set(qn("w:w"), str(int(round(float(width_pct) * 50))))
 
 
+def _element_sect_pr(element):
+    if element is None:
+        return None
+    if element.tag == qn("w:sectPr"):
+        return element
+    p_pr = element.find(qn("w:pPr"))
+    if p_pr is None:
+        return None
+    return p_pr.find(qn("w:sectPr"))
+
+
+def _governing_sect_pr(paragraph_element):
+    """sectPr раздела, в котором лежит абзац: следующий разрыв или свойства тела."""
+    parent = paragraph_element.getparent()
+    if parent is None or parent.tag != qn("w:body"):
+        return None
+    found = False
+    for child in parent:
+        if child is paragraph_element:
+            found = True
+            continue
+        if not found:
+            continue
+        sect = _element_sect_pr(child)
+        if sect is not None:
+            return sect
+    return parent.find(qn("w:sectPr"))
+
+
+def _set_section_landscape(sect) -> None:
+    from docx.oxml import OxmlElement
+
+    pg_sz = sect.find(qn("w:pgSz"))
+    if pg_sz is None:
+        pg_sz = OxmlElement("w:pgSz")
+        pg_sz.set(qn("w:w"), "11906")
+        pg_sz.set(qn("w:h"), "16838")
+        sect.append(pg_sz)
+    width = pg_sz.get(qn("w:w"))
+    height = pg_sz.get(qn("w:h"))
+    if pg_sz.get(qn("w:orient")) != "landscape" and width and height:
+        pg_sz.set(qn("w:w"), height)
+        pg_sz.set(qn("w:h"), width)
+    pg_sz.set(qn("w:orient"), "landscape")
+
+
+def _section_break_paragraph(sect_pr, *, landscape: bool):
+    """Абзац, который закрывает раздел переходом на следующую страницу."""
+    from docx.oxml import OxmlElement
+
+    paragraph = OxmlElement("w:p")
+    p_pr = OxmlElement("w:pPr")
+    sect = deepcopy(sect_pr)
+    section_type = sect.find(qn("w:type"))
+    if section_type is None:
+        section_type = OxmlElement("w:type")
+        sect.insert(0, section_type)
+    section_type.set(qn("w:val"), "nextPage")
+    if landscape:
+        _set_section_landscape(sect)
+    p_pr.append(sect)
+    paragraph.append(p_pr)
+    return paragraph
+
+
+def _section_content_width_twips(sect) -> int:
+    pg_sz = None if sect is None else sect.find(qn("w:pgSz"))
+    pg_mar = None if sect is None else sect.find(qn("w:pgMar"))
+    width = int(pg_sz.get(qn("w:w"))) if pg_sz is not None and pg_sz.get(qn("w:w")) else 15840
+    left = int(pg_mar.get(qn("w:left"))) if pg_mar is not None and pg_mar.get(qn("w:left")) else 1440
+    right = int(pg_mar.get(qn("w:right"))) if pg_mar is not None and pg_mar.get(qn("w:right")) else 1440
+    return max(width - left - right, 1440)
+
+
+def _label_width_twips(text: str, font_pt: float) -> int:
+    lines = [line for line in str(text or "").split("\n")] or [""]
+    longest = max(len(line) for line in lines)
+    # Запас на полужирный заголовок и поля ячейки, чтобы подпись не переносилась.
+    char_twips = float(font_pt) * 20 * 0.5
+    padding = int(Cm(0.4).twips)
+    return int(longest * char_twips) + padding
+
+
+def _header_label_widths(rows, column_count: int, fit_columns: list[int], font_pt: float) -> dict[int, float]:
+    fit = set(fit_columns)
+    needed = {column: float(_label_width_twips("", font_pt)) for column in fit_columns}
+    groups: list[tuple[list[int], int]] = []
+    occupied = [[False] * column_count for _ in rows]
+    for row_idx, row in enumerate(rows):
+        if row_idx > 0 and not any(isinstance(cell, dict) and cell.get("header") for cell in row):
+            break
+        col_idx = 0
+        for raw_cell in row:
+            spec = _normalize_table_cell_spec(raw_cell)
+            while col_idx < column_count and occupied[row_idx][col_idx]:
+                col_idx += 1
+            if col_idx >= column_count:
+                break
+            colspan = min(int(spec["colspan"]), column_count - col_idx)
+            rowspan = min(int(spec["rowspan"]), len(rows) - row_idx)
+            for rr in range(row_idx, row_idx + rowspan):
+                for cc in range(col_idx, col_idx + colspan):
+                    occupied[rr][cc] = True
+            span_cols = list(range(col_idx, col_idx + colspan))
+            if spec.get("header") and span_cols and all(column in fit for column in span_cols):
+                width = _label_width_twips(str(spec.get("text") or ""), font_pt)
+                if colspan == 1:
+                    needed[span_cols[0]] = max(needed[span_cols[0]], width)
+                else:
+                    groups.append((span_cols, width))
+            col_idx += colspan
+    for span_cols, width in groups:
+        current = sum(needed[column] for column in span_cols)
+        if width > current:
+            share = (width - current) / len(span_cols)
+            for column in span_cols:
+                needed[column] += share
+    minimum = float(Cm(1.2).twips)
+    return {column: max(width, minimum) for column, width in needed.items()}
+
+
+def _fit_landscape_label_widths(rows, column_count: int, table_spec: dict, usable_twips: int):
+    """Подогнать ширины так, чтобы названия этапов и активов помещались в альбомный лист.
+
+    Возвращает проценты столбцов и признак, что подписи пришлось сжать и разрешить перенос.
+    """
+    fit_columns = [int(column) for column in (table_spec.get("fit_label_columns") or [])]
+    if not fit_columns or any(column < 0 or column >= column_count for column in fit_columns):
+        return None
+    font_pt = float(table_spec.get("font_size_pt") or 7)
+    label_widths = _header_label_widths(rows, column_count, fit_columns, font_pt)
+    minimums = {
+        0: float(Cm(3.2).twips),
+        1: float(Cm(4.0).twips),
+        2: float(Cm(1.6).twips),
+    }
+    last_label = max(fit_columns)
+    for column in range(last_label + 1, column_count):
+        minimums[column] = float(Cm(2.2).twips) if column == column_count - 1 else float(Cm(1.6).twips)
+    for column in range(column_count):
+        minimums.setdefault(column, float(Cm(1.6).twips))
+
+    day_sum = sum(label_widths.values())
+    fixed_sum = sum(width for column, width in minimums.items() if column not in label_widths)
+    label_wrap = False
+    if fixed_sum + day_sum > usable_twips:
+        available = max(usable_twips - fixed_sum, float(len(label_widths)))
+        scale = available / day_sum if day_sum else 1
+        label_widths = {column: width * scale for column, width in label_widths.items()}
+        label_wrap = True
+    else:
+        minimums[1] = minimums.get(1, 0) + (usable_twips - fixed_sum - day_sum)
+
+    widths = [minimums.get(column, 0) if column not in label_widths else label_widths[column] for column in range(column_count)]
+    total = sum(widths) or 1
+    fiftieths = [int(round(width / total * 5000)) for width in widths]
+    fiftieths[1] += 5000 - sum(fiftieths)
+    return [value / 50 for value in fiftieths], label_wrap
+
+
 def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: str | None = None) -> bool:
     rows = table_spec.get("rows") if isinstance(table_spec, dict) else None
     if not isinstance(rows, list) or not rows:
@@ -1157,6 +1324,22 @@ def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: st
     except Exception:
         pass
     column_widths_pct = list(table_spec.get("column_widths_pct") or []) if isinstance(table_spec, dict) else []
+    anchor = paragraph._element
+    parent = anchor.getparent()
+    portrait_break = None
+    landscape_break = None
+    fit_columns: set[int] = set()
+    label_wrap = False
+    if table_spec.get("landscape_section") and parent is not None and parent.tag == qn("w:body"):
+        sect = _governing_sect_pr(anchor)
+        if sect is not None:
+            portrait_break = _section_break_paragraph(sect, landscape=False)
+            landscape_break = _section_break_paragraph(sect, landscape=True)
+            usable = _section_content_width_twips(_element_sect_pr(landscape_break))
+            fitted = _fit_landscape_label_widths(rows, column_count, table_spec, usable)
+            if fitted is not None:
+                column_widths_pct, label_wrap = fitted
+                fit_columns = {int(column) for column in (table_spec.get("fit_label_columns") or [])}
     if column_widths_pct and len(column_widths_pct) == column_count:
         _set_table_fixed_pct_widths(table, column_widths_pct)
     else:
@@ -1189,13 +1372,18 @@ def _insert_table_after_paragraph(paragraph, table_spec: dict, language_code: st
             )
             if column_widths_pct and len(column_widths_pct) == column_count:
                 _set_cell_width_pct(start_cell, sum(column_widths_pct[col_idx:col_idx + colspan]))
-            _set_cell_no_wrap(start_cell, bool(spec.get("no_wrap")))
+            no_wrap = bool(spec.get("no_wrap"))
+            if col_idx in fit_columns and spec.get("header"):
+                no_wrap = not label_wrap
+            _set_cell_no_wrap(start_cell, no_wrap)
             _apply_cell_text(start_cell, spec, font_size_pt, language_code)
             col_idx += colspan
 
-    anchor = paragraph._element
     anchor.addnext(table._tbl)
-    anchor.getparent().remove(anchor)
+    if portrait_break is not None and landscape_break is not None:
+        anchor.addnext(portrait_break)
+        table._tbl.addnext(landscape_break)
+    parent.remove(anchor)
     return True
 
 

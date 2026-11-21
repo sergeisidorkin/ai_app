@@ -738,7 +738,7 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
         return "" if value is None else str(value)
 
     def _refresh_contract_terms_display(self):
-        from projects_app.stage_terms import display_date, evaluation_dates_are_common, group_term_weeks
+        from projects_app.stage_terms import display_date, evaluation_dates_are_common, group_calendar_term
 
         rows = list(self.stage_rows or [])
 
@@ -781,7 +781,10 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 completion = display_date(raw_date) or str(raw_date)
                 break
         self.terms_completion_display = completion
-        self.terms_term_weeks = format(group_term_weeks(rows), "f")
+        term = group_calendar_term(self.terms_contract_date_iso, rows)
+        self.terms_term_weeks = term["weeks"]
+        self.terms_term_origin = term["origin"]
+        self.terms_term_end = term["end"]
 
     @staticmethod
     def _iso_date_input(value):

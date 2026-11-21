@@ -1952,6 +1952,45 @@ body .second-sidebar + .flex-grow-1 {
   pointer-events: none;
 }
 
+/* Реестр ТКП: панель страниц фиксируется у нижнего края, как у реестра проектов. */
+#proposal-registry-section {
+  overflow: visible;
+}
+
+#proposal-registry-section .policy-table-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  margin-top: calc(30px - .75rem);
+  padding-top: .75rem;
+  padding-bottom: .75rem;
+  border-top: 1px solid transparent;
+}
+
+#proposals-pane #proposal-registry-section .policy-table-footer.is-stuck {
+  position: fixed;
+  bottom: 0;
+  z-index: 30;
+  margin: 0 !important;
+  box-sizing: border-box;
+  background: #fff;
+  border-top-color: #e9ecef;
+}
+
+#proposal-registry-section .policy-sticky-actions-marker {
+  display: block;
+  height: 1px;
+  margin-top: -1px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#proposal-registry-section .proposal-registry-footer-spacer {
+  display: block;
+  height: 0;
+  pointer-events: none;
+}
+
 /* Таблица «Исполнители» тоже внутри .projects-outer-scroll, поэтому панель
    кнопок фиксируется у нижнего края экрана так же, как у реестра проектов. */
 #projects-content-team,
@@ -3762,13 +3801,19 @@ section#templates .alert.alert-info .text-muted {
   margin-bottom: var(--proposal-table-margin-to-scroll) !important;
 }
 
-#proposals-pane .proposal-registry-table-wrap + .products-actions-row,
+#proposals-pane .proposal-registry-table-wrap + .policy-table-footer {
+  margin-top: calc(var(--proposal-table-action-gap) - .75rem);
+}
+
+#proposals-pane .proposal-registry-table-wrap.has-horizontal-scroll + .policy-table-footer {
+  margin-top: max(0px, calc(var(--proposal-table-scroll-action-gap) - .75rem));
+}
+
 #proposals-pane .proposal-dispatch-table-wrap + .products-actions-row,
 #proposals-pane .proposal-template-table-wrap + .products-actions-row {
   margin-top: var(--proposal-table-action-gap) !important;
 }
 
-#proposals-pane .proposal-registry-table-wrap.has-horizontal-scroll + .products-actions-row,
 #proposals-pane .proposal-dispatch-table-wrap.has-horizontal-scroll + .products-actions-row,
 #proposals-pane .proposal-template-table-wrap.has-horizontal-scroll + .products-actions-row {
   margin-top: var(--proposal-table-scroll-action-gap) !important;

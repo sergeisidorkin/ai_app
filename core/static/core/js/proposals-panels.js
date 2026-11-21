@@ -1902,6 +1902,144 @@
     labelNode.textContent = values.length + ' выбрано';
   }
 
+  function proposalStoredFilterValues(prefKey, liveValues) {
+    let saved = window.UIPref ? UIPref.get(prefKey, null) : null;
+    if (!Array.isArray(saved) || !saved.length) saved = liveValues;
+    if (!Array.isArray(saved) || !saved.length || saved.includes(PROPOSAL_KIND_FILTER_ALL)) return [];
+    return saved.map(String).filter((value) => value && value !== PROPOSAL_KIND_FILTER_ALL);
+  }
+
+  function proposalKindFilterValues() {
+    return proposalStoredFilterValues(PROPOSAL_KIND_FILTER_PREF_KEY, window.__proposalKindFilter);
+  }
+
+  function proposalStatusFilterValues() {
+    return proposalStoredFilterValues(PROPOSAL_STATUS_FILTER_PREF_KEY, window.__proposalStatusFilter);
+  }
+
+  function proposalFilterKey(values) {
+    const list = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
+    if (!list.length || list.includes(PROPOSAL_KIND_FILTER_ALL)) return PROPOSAL_KIND_FILTER_ALL;
+    return list.slice().sort().join(',');
+  }
+
+  function readProposalRegistryPaginationState() {
+    const section = document.getElementById('proposal-registry-section');
+    if (section) {
+      const state = {
+        page: section.dataset.registryPage || '',
+        pageSize: section.dataset.registryPageSize || '25',
+      };
+      try { sessionStorage.setItem('proposals:registryPagination', JSON.stringify(state)); } catch (_) {}
+      return state;
+    }
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('proposals:registryPagination') || '');
+      if (saved && typeof saved === 'object') return saved;
+    } catch (_) {}
+    return null;
+  }
+
+  function initProposalRegistryFooterSticky() {
+    const footer = document.querySelector('#proposal-registry-section .policy-table-footer');
+    const section = footer && footer.closest('#proposal-registry-section');
+    if (!footer || !section || footer.dataset.stickyStateBound === '1') return;
+    footer.dataset.stickyStateBound = '1';
+
+    const spacer = document.createElement('div');
+    spacer.className = 'proposal-registry-footer-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('beforebegin', spacer);
+
+    const marker = document.createElement('span');
+    marker.className = 'policy-sticky-actions-marker';
+    marker.setAttribute('aria-hidden', 'true');
+    footer.insertAdjacentElement('afterend', marker);
+
+    let intersectionObserver = null;
+    let resizeObserver = null;
+
+    function release() {
+      if (intersectionObserver) intersectionObserver.disconnect();
+      if (resizeObserver) resizeObserver.disconnect();
+      window.removeEventListener('scroll', sync, true);
+      window.removeEventListener('resize', sync);
+    }
+
+    function sync() {
+      if (!footer.isConnected) {
+        release();
+        return;
+      }
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const sectionRect = section.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const sectionVisible = sectionRect.top < viewportHeight && sectionRect.bottom > 0;
+      const footerBelowFold = markerRect.top >= viewportHeight - 1;
+      const stuck = sectionVisible && footerBelowFold;
+      if (stuck) {
+        if (!footer.classList.contains('is-stuck')) {
+          const styles = window.getComputedStyle(footer);
+          const blockHeight = footer.offsetHeight
+            + (parseFloat(styles.marginTop) || 0)
+            + (parseFloat(styles.marginBottom) || 0);
+          spacer.style.height = blockHeight + 'px';
+          footer.classList.add('is-stuck');
+        }
+        const pinnedRect = section.getBoundingClientRect();
+        footer.style.left = pinnedRect.left + 'px';
+        footer.style.width = pinnedRect.width + 'px';
+      } else if (footer.classList.contains('is-stuck')) {
+        footer.classList.remove('is-stuck');
+        footer.style.left = '';
+        footer.style.width = '';
+        spacer.style.height = '0px';
+      }
+    }
+
+    if ('IntersectionObserver' in window) {
+      intersectionObserver = new IntersectionObserver(sync, { threshold: [0, 1] });
+      intersectionObserver.observe(section);
+      intersectionObserver.observe(marker);
+    }
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(sync);
+      resizeObserver.observe(section);
+      const contentColumn = section.closest('.flex-grow-1');
+      if (contentColumn) resizeObserver.observe(contentColumn);
+    }
+    window.addEventListener('scroll', sync, true);
+    window.addEventListener('resize', sync);
+    window.requestAnimationFrame(sync);
+  }
+
+  document.addEventListener('DOMContentLoaded', initProposalRegistryFooterSticky);
+
+  function syncProposalRegistry(kindValues, statusValues) {
+    const section = document.getElementById('proposal-registry-section');
+    if (!section || !window.htmx || !section.dataset.registryTableUrl) return;
+    const renderedKinds = (section.dataset.registryKinds || PROPOSAL_KIND_FILTER_ALL).split(',');
+    const renderedStatuses = (section.dataset.registryStatuses || PROPOSAL_STATUS_FILTER_ALL).split(',');
+    if (
+      proposalFilterKey(kindValues) === proposalFilterKey(renderedKinds)
+      && proposalFilterKey(statusValues) === proposalFilterKey(renderedStatuses)
+    ) return;
+    const params = new URLSearchParams();
+    params.set('page_size', section.dataset.registryPageSize || '25');
+    proposalYearFilterValues().forEach((year) => params.append('proposals_year', year));
+    (Array.isArray(kindValues) ? kindValues : []).forEach((value) => {
+      if (value && value !== PROPOSAL_KIND_FILTER_ALL) params.append('proposals_kind', value);
+    });
+    (Array.isArray(statusValues) ? statusValues : []).forEach((value) => {
+      if (value && value !== PROPOSAL_STATUS_FILTER_ALL) params.append('proposals_status', value);
+    });
+    const query = params.toString();
+    window.htmx.ajax('GET', section.dataset.registryTableUrl + (query ? '?' + query : ''), {
+      target: '#proposal-registry-section',
+      swap: 'outerHTML',
+    });
+  }
+
   function reloadProposalsForYears() {
     if (!window.htmx) return;
     const root = pane();
@@ -2242,6 +2380,7 @@
       if (root.querySelector('.js-proposal-payment-view:checked')?.value === PROPOSAL_PAYMENT_VIEW_GANTT) {
         requestAnimationFrame(() => renderProposalPaymentGantt(root));
       }
+      syncProposalRegistry(kindValues, normalizedStatusValues);
     }
 
     kindChecks.forEach((cb) => {
@@ -8705,6 +8844,9 @@
         renderHeader(getAssetRows());
         if (servicesStore) {
           servicesStore.commitCommercialRows(rowsData || [], { ...(meta || {}), source: 'commercial-view' });
+          if (meta?.reason === 'xlsx-import') {
+            renderRows(servicesStore.getCommercialRows(), meta);
+          }
           return;
         }
         renderRows(rowsData || [], meta);
@@ -11350,11 +11492,11 @@
           }
         });
         commercialBlocks.forEach(function (block, index) {
-          const exportButton = block.querySelector('[data-proposal-commercial-xlsx="1"]');
-          if (!exportButton) return;
           const isLastBlock = index === commercialBlocks.length - 1;
-          exportButton.classList.toggle('d-none', !isLastBlock);
-          exportButton.classList.toggle('d-flex', isLastBlock);
+          block.querySelectorAll('[data-proposal-commercial-xlsx="1"], [data-proposal-commercial-xlsx-import="1"]').forEach(function (button) {
+            button.classList.toggle('d-none', !isLastBlock);
+            button.classList.toggle('d-flex', isLastBlock);
+          });
         });
         if (summaryCommercialBlock) {
           summaryCommercialBlock.classList.toggle('d-none', !hasMultipleStages);
@@ -11996,6 +12138,147 @@
         if (!button || !commercialStagesContainer.contains(button)) return;
         event.preventDefault();
         downloadCommercialXlsx(button);
+      });
+
+      let commercialXlsxFileInput = null;
+
+      function commercialImportAssetNames() {
+        return getAssetRows().map(function (asset, index) {
+          return String(asset?.short_name || '').trim() || ('Актив ' + (index + 1));
+        });
+      }
+
+      function commercialRowIdentity(row) {
+        return [
+          String(row?.specialist || '').trim(),
+          String(row?.job_title || '').trim(),
+          String(row?.professional_status || '').trim(),
+          String(row?.service_name || '').trim(),
+        ].join('\u0001');
+      }
+
+      function preserveImportedMergeFlags(importedRows, existingRows) {
+        const existingByKey = new Map();
+        (Array.isArray(existingRows) ? existingRows : []).forEach(function (row) {
+          if (isProposalTravelExpensesRow(row) || String(row?.code || '').trim()) return;
+          const key = commercialRowIdentity(row);
+          const bucket = existingByKey.get(key) || [];
+          bucket.push(normalizeProposalMergeWithoutCode(row?.merge_without_code));
+          existingByKey.set(key, bucket);
+        });
+        const importedByKey = new Map();
+        (Array.isArray(importedRows) ? importedRows : []).forEach(function (row) {
+          if (isProposalTravelExpensesRow(row) || String(row?.code || '').trim()) return;
+          const key = commercialRowIdentity(row);
+          importedByKey.set(key, (importedByKey.get(key) || 0) + 1);
+        });
+        return (Array.isArray(importedRows) ? importedRows : []).map(function (row) {
+          if (isProposalTravelExpensesRow(row) || String(row?.code || '').trim()) {
+            return { ...row, merge_without_code: false };
+          }
+          const key = commercialRowIdentity(row);
+          const existingFlags = existingByKey.get(key) || [];
+          const keepFlag = existingFlags.length === 1 && existingFlags[0] && importedByKey.get(key) === 1;
+          return { ...row, merge_without_code: keepFlag };
+        });
+      }
+
+      function applyCommercialXlsxImport(payload) {
+        const blocks = getCommercialBlocks();
+        const stages = Array.isArray(payload?.stages) ? payload.stages : [];
+        if (stages.length !== blocks.length) {
+          throw new Error('Число этапов в файле не совпадает с проектом.');
+        }
+        blocks.forEach(function (block, index) {
+          const stage = stages[index] || {};
+          const totalsInput = block.querySelector('#proposal-commercial-totals-payload');
+          const currentTotals = parseCommercialTotalsPayload(block);
+          const importedTotals = stage.totals || {};
+          const manualContract = importedTotals.contract_total_manual === true;
+          if (totalsInput) {
+            totalsInput.value = JSON.stringify(normalizeProposalCommercialTotalsState({
+              ...currentTotals,
+              exchange_rate: importedTotals.exchange_rate ?? currentTotals.exchange_rate,
+              discount_percent: importedTotals.discount_percent || currentTotals.discount_percent,
+              travel_expenses_mode: importedTotals.travel_expenses_mode || currentTotals.travel_expenses_mode,
+              contract_total: manualContract ? String(importedTotals.contract_total || '') : '',
+              contract_total_auto: manualContract ? '' : currentTotals.contract_total_auto,
+            }));
+          }
+          const api = attachProposalCommercialTable(block, assetsApi);
+          const rows = preserveImportedMergeFlags(stage.rows || [], api?.getSerializedRows?.() || []);
+          api?.replaceRows?.(rows, { reason: 'xlsx-import', preserveExplicitRate: true });
+        });
+        syncSummaryCommercialBlock();
+        scheduleProposalFormDirtySync();
+      }
+
+      function ensureCommercialXlsxFileInput() {
+        if (commercialXlsxFileInput && commercialXlsxFileInput.isConnected) return commercialXlsxFileInput;
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        input.hidden = true;
+        form.appendChild(input);
+        input.addEventListener('change', function () {
+          const file = input.files && input.files[0];
+          input.value = '';
+          if (file) uploadCommercialXlsx(file);
+        });
+        commercialXlsxFileInput = input;
+        return input;
+      }
+
+      async function uploadCommercialXlsx(file) {
+        const importUrl = String(form.dataset.commercialXlsxImportUrl || '').trim();
+        if (!importUrl) return;
+        const buttons = Array.from(commercialStagesContainer.querySelectorAll('[data-proposal-commercial-xlsx-import="1"]'));
+        buttons.forEach(function (button) {
+          button.disabled = true;
+          button.setAttribute('aria-busy', 'true');
+        });
+        try {
+          const body = new FormData();
+          body.append('file', file);
+          body.append('assets', JSON.stringify(commercialImportAssetNames()));
+          body.append('stage_count', String(getCommercialBlocks().length));
+          const response = await fetch(importUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'X-CSRFToken': form.querySelector('[name="csrfmiddlewaretoken"]')?.value || '',
+            },
+            body: body,
+          });
+          const rawBody = String(await response.text()).trim();
+          let data = {};
+          try {
+            data = JSON.parse(rawBody || '{}');
+          } catch (error) {
+            data = {};
+          }
+          if (!response.ok || data.ok === false) {
+            throw new Error(String(data?.message || data?.error || '').trim() || 'Не удалось загрузить XLSX.');
+          }
+          applyCommercialXlsxImport(data);
+          const stageCount = Array.isArray(data.stages) ? data.stages.length : 0;
+          const stageText = stageCount === 1 ? '1 этап' : (stageCount + ' этапов');
+          alert('Статус: коммерческое предложение загружено (' + stageText + ').');
+        } catch (error) {
+          alert('Статус: ' + (error.message || 'Не удалось загрузить XLSX.'));
+        } finally {
+          buttons.forEach(function (button) {
+            button.disabled = false;
+            button.removeAttribute('aria-busy');
+          });
+        }
+      }
+
+      commercialStagesContainer.addEventListener('click', function (event) {
+        const button = event.target.closest('[data-proposal-commercial-xlsx-import="1"]');
+        if (!button || !commercialStagesContainer.contains(button)) return;
+        event.preventDefault();
+        ensureCommercialXlsxFileInput().click();
       });
 
       let summaryCommercialSyncQueued = false;
@@ -14001,12 +14284,36 @@
     }
   });
 
-  document.body.addEventListener('htmx:configRequest', function (event) {
-    const detail = event.detail;
-    if (!detail || !detail.parameters || !proposalRequestNeedsYearScope(detail)) return;
+  function addProposalRegistryScope(detail) {
     const years = proposalYearFilterValues();
     if (years.length && !proposalRequestHasParam(detail, 'proposals_year')) {
       detail.parameters.proposals_year = years.join(',');
+    }
+    const kinds = proposalKindFilterValues();
+    if (kinds.length && !proposalRequestHasParam(detail, 'proposals_kind')) {
+      detail.parameters.proposals_kind = kinds.join(',');
+    }
+    const statuses = proposalStatusFilterValues();
+    if (statuses.length && !proposalRequestHasParam(detail, 'proposals_status')) {
+      detail.parameters.proposals_status = statuses.join(',');
+    }
+  }
+
+  document.body.addEventListener('htmx:configRequest', function (event) {
+    const detail = event.detail;
+    if (!detail || !detail.parameters) return;
+    const path = detail.path || '';
+    const isRegistryTable = path.indexOf('/proposals/registry/table/') !== -1;
+    if (!isRegistryTable && !proposalRequestNeedsYearScope(detail)) return;
+    addProposalRegistryScope(detail);
+    if (isRegistryTable) return;
+    const state = readProposalRegistryPaginationState();
+    if (!state) return;
+    if (state.page && !detail.parameters.registry_page && !detail.parameters.page) {
+      detail.parameters.registry_page = state.page;
+    }
+    if (!detail.parameters.registry_page_size && !detail.parameters.page_size) {
+      detail.parameters.registry_page_size = state.pageSize || '25';
     }
   });
 
@@ -14025,6 +14332,18 @@
   });
 
   document.body.addEventListener('htmx:afterSettle', function (event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const isRegistrySection = target.id === 'proposal-registry-section'
+      || !!target.querySelector?.('#proposal-registry-section');
+    if (target.id !== 'proposals-pane' && !isRegistrySection) return;
+    initProposalRegistryFooterSticky();
+    if (target.id !== 'proposals-pane') {
+      updateProposalTableScrollGaps();
+      initProposalMasterFilters();
+      syncAllSelectionStates();
+      return;
+    }
     if (!(event.target && event.target.id === 'proposals-pane')) return;
     const last = window.__tableSelLast;
     if (SELECT_NAMES.includes(last)) {
