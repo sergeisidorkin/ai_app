@@ -166,7 +166,13 @@ def unseed_system_spec_product(apps, schema_editor):
     )
     if not product_ids:
         return
-    TypicalSection.objects.using(db_alias).filter(product_id__in=product_ids).delete()
+    # QuerySet.delete() собирает связи через живые модели и падает:
+    # исторический TypicalSection нельзя подставить в их ForeignKey.
+    (
+        TypicalSection.objects.using(db_alias)
+        .filter(product_id__in=product_ids)
+        ._raw_delete(db_alias)
+    )
 
 
 class Migration(migrations.Migration):
