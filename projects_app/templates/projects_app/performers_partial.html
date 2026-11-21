@@ -151,14 +151,14 @@
         data-asset-name="{{ p.asset_name }}"
         data-display-group-id="{{ p.display_group_id|default:'' }}"
         data-executor="{{ p.executor }}"
-        data-typical-section-id="{% if p.typical_section_id %}{{ p.typical_section_id }}{% endif %}"
+        data-typical-section-id="{{ p.work_section_key }}"
         data-grade="{{ p.grade }}"
         data-grade-name="{{ p.grade_name }}"
         data-edit-url="{% url 'performer_form_edit' p.pk %}"
         data-delete-url="{% url 'performer_delete' p.pk %}"
         data-move-up-url="{% url 'performer_move_up' p.pk %}"
         data-move-down-url="{% url 'performer_move_down' p.pk %}"
-        data-accounting-type="{% if p.typical_section %}{{ p.typical_section.accounting_type }}{% endif %}"
+        data-accounting-type="{% if p.work_section %}{{ p.work_section.accounting_type }}{% endif %}"
         data-report-section-locked="{% if p.report_section_locked %}1{% else %}0{% endif %}"
         data-order-locked="{% if p.order_locked %}1{% else %}0{% endif %}"
         data-report-upload-locked="{% if p.report_upload_locked %}1{% else %}0{% endif %}">
@@ -198,7 +198,7 @@
         <td class="text-nowrap">{{ p.executor|short_fio }}</td>
         <td class="text-nowrap">{{ p|grade_stars }}</td>
         <td class="text-nowrap">
-          {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
+          {% if p.work_section %}{{ p.work_section|typical_section_short }}{% else %}&mdash;{% endif %}
         </td>
         {% if not is_expert %}
           <td class="text-nowrap text-end perf-cost-cell" data-sum-actual="{{ p.actual_costs|default_if_none:'' }}" data-currency="{% if p.currency %}{{ p.currency.code_alpha }}{% endif %}"><span class="perf-cost-value">{% if p.actual_costs != None %}{{ p.actual_costs|money_fmt }}{% if p.currency %} {{ p.currency.code_alpha }}{% endif %}{% endif %}</span></td>
@@ -408,7 +408,7 @@
           <td class="text-nowrap cell-group-val">&mdash;</td>
           <td class="text-nowrap cell-asset-val">{{ row.asset_name }}</td>
           <td class="text-nowrap cell-typical-val">
-            {% if row.typical_section %}{{ row.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
+            {% if row.work_section %}{{ row.work_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
           <td class="text-nowrap cell-detail-val">{{ row.request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
           <td class="text-nowrap cell-detail-val">{{ row.deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
@@ -450,7 +450,7 @@
           <td class="text-nowrap cell-group-val">{{ row|grade_stars }}</td>
           <td class="text-nowrap cell-asset-val">{{ row.asset_name }}</td>
           <td class="text-nowrap cell-typical-val">
-            {% if row.typical_section %}{{ row.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
+            {% if row.work_section %}{{ row.work_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
           <td class="text-nowrap cell-detail-val">{{ row.participation_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
           <td class="text-nowrap cell-detail-val">{{ row.participation_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>
@@ -679,7 +679,7 @@
         <tr data-project-id="{{ p.registration_id }}"
             data-owning-project-id="{{ p.registration.owning_project_id }}"
             data-performer-id="{{ p.id }}"
-            data-section-id="{{ p.typical_section_id|default:'' }}"
+            data-section-id="{{ p.work_section_key }}"
             data-employee-user-id="{% if p.employee and p.employee.user_id %}{{ p.employee.user_id }}{% endif %}"
             data-info-request-sent="{% if p.info_request_sent_at %}1{% else %}0{% endif %}"
             data-info-approval-status="{{ p.info_approval_status|default:'' }}"
@@ -713,7 +713,7 @@
           <td class="text-nowrap cell-group-val">{{ p|grade_stars }}</td>
           <td class="text-nowrap cell-asset-val">{{ p.asset_name }}</td>
           <td class="text-nowrap cell-typical-val">
-            {% if p.typical_section %}{{ p.typical_section|typical_section_short }}{% else %}&mdash;{% endif %}
+            {% if p.work_section %}{{ p.work_section|typical_section_short }}{% else %}&mdash;{% endif %}
           </td>
           <td class="text-nowrap cell-detail-val">{{ p.info_request_sent_at|date:"d.m.Y H:i"|default:"—" }}</td>
           <td class="text-nowrap cell-detail-val">{{ p.info_request_deadline_at|date:"d.m.Y H:i"|default:"—" }}</td>

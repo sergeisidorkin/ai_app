@@ -3756,11 +3756,68 @@ section#templates .alert.alert-info .text-muted {
 #proposals-pane table.proposal-dispatch-table col.docx-name     { width: 16% !important; }
 #proposals-pane table.proposal-dispatch-table col.docx-link     { width: 4% !important; }
 #proposals-pane table.proposal-dispatch-table col.pdf-name      { width: 16% !important; }
+#proposals-pane table.proposal-dispatch-table col.scan          { width: 3% !important; }
 #proposals-pane table.proposal-dispatch-table col.pdf-link      { width: 4% !important; }
 #proposals-pane table.proposal-dispatch-table col.sent-date,
 #proposals-pane table.proposal-dispatch-table col.recipient,
 #proposals-pane table.proposal-dispatch-table col.contact-name,
 #proposals-pane table.proposal-dispatch-table col.contact-email { width: calc(40% / 4) !important; }
+
+#proposal-dispatch-table td.proposal-scan-cell {
+  position: relative;
+  text-align: left;
+  overflow: visible;
+}
+#proposal-dispatch-table .proposal-scan-link,
+#proposal-dispatch-table td.proposal-scan-cell > .bi-paperclip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0;
+  color: inherit;
+  text-decoration: none;
+  line-height: 1;
+  cursor: pointer;
+}
+#proposal-dispatch-table td.proposal-scan-cell > .bi-paperclip {
+  cursor: default;
+}
+#proposal-dispatch-table .proposal-scan-link .bi-paperclip,
+#proposal-dispatch-table td.proposal-scan-cell > .bi-paperclip {
+  font-size: 1.05rem;
+}
+#proposal-dispatch-table .proposal-scan-remove-btn {
+  position: absolute;
+  right: 0.15rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #6c757d;
+  line-height: 1;
+  font-size: 16px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+#proposal-dispatch-table tr.proposal-dispatch-group-hover .proposal-scan-remove-btn,
+#proposal-dispatch-table tbody tr:hover .proposal-scan-remove-btn {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+#proposal-dispatch-table .proposal-scan-remove-btn:hover {
+  color: #dc3545;
+}
 
 #proposals-pane table.proposals-table {
   table-layout: auto !important;

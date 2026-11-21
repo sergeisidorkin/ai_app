@@ -13889,3 +13889,206 @@ class ProposalVersionTests(TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(draft.status, ProposalRegistration.ProposalStatus.POSTPONED)
         self.assertEqual(draft.name, "Исходное ТКП")
+
+
+class ProposalDispatchScanTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-scan-staff",
+            email="scan-staff@example.com",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        self.product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        self.country = OKSMCountry.objects.create(
+            number=643,
+            code="643",
+            short_name="Россия",
+            full_name="Российская Федерация",
+            alpha2="RU",
+            alpha3="RUS",
+            position=1,
+        )
+        self.proposal = ProposalRegistration.objects.create(
+            number=3333,
+            group_member=self.group_member,
+            type=self.product,
+            name="Приморское",
+            year=2026,
+            position=1,
+            proposal_workspace_disk_path="/Corporate Root/ТКП/2026/333300RU DD Приморское",
+        )
+
+    def _dispatch_payload(self, **extra):
+        payload = {
+            "docx_file_name": self.proposal.docx_file_name,
+            "docx_file_link": self.proposal.docx_file_link,
+            "pdf_file_name": self.proposal.pdf_file_name,
+            "pdf_file_link": self.proposal.pdf_file_link,
+            "sent_date": "",
+            "recipient": "",
+            "recipient_country": str(self.country.pk),
+            "recipient_identifier": "",
+            "recipient_registration_number": "",
+            "recipient_registration_date": "",
+            "recipient_job_title": "",
+            "contact_last_name": "",
+            "contact_first_name": "",
+            "contact_middle_name": "",
+            "contact_email": "",
+        }
+        payload.update(extra)
+        return payload
+
+    def test_scan_upload_uses_pdf_folder_and_scan_suffix(self):
+        self.proposal.pdf_file_name = "ТКП_333300RU_DD_Приморское.pdf"
+        self.proposal.pdf_file_link = (
+            "/Corporate Root/ТКП/2026/333300RU DD Приморское/ТКП_333300RU_DD_Приморское.pdf"
+        )
+        self.proposal.save(update_fields=["pdf_file_name", "pdf_file_link"])
+        uploaded = SimpleUploadedFile("photo.PDF", b"%PDF-scan", content_type="application/pdf")
+
+        with patch("proposals_app.document_generation.is_nextcloud_primary", return_value=True), \
+                patch("proposals_app.document_generation.cloud_upload_file", return_value=True) as mocked_upload, \
+                patch("proposals_app.document_generation.cloud_publish_resource", return_value="https://cloud.example/scan"), \
+                patch("proposals_app.views._refresh_proposal_nextcloud_file_ids", return_value=[]):
+            response = self.client.post(
+                reverse("proposal_scan_upload", args=[self.proposal.pk]),
+                {"scan_file": uploaded},
+            )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scan_name"], "ТКП_333300RU_DD_Приморское_скан.PDF")
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.scan_file_name, "ТКП_333300RU_DD_Приморское_скан.PDF")
+        self.assertEqual(
+            self.proposal.scan_file_link,
+            "/Corporate Root/ТКП/2026/333300RU DD Приморское/ТКП_333300RU_DD_Приморское_скан.PDF",
+        )
+        mocked_upload.assert_called_once()
+        self.assertEqual(mocked_upload.call_args.args[1], self.proposal.scan_file_link)
+
+    def test_scan_upload_without_docx_or_pdf_uses_generated_document_name(self):
+        uploaded = SimpleUploadedFile("photo.pdf", b"%PDF-scan", content_type="application/pdf")
+        expected_name = f"{build_proposal_document_base_name(self.proposal)}_скан.pdf"
+
+        with patch("proposals_app.document_generation.is_nextcloud_primary", return_value=True), \
+                patch("proposals_app.document_generation.cloud_upload_file", return_value=True) as mocked_upload, \
+                patch("proposals_app.document_generation.cloud_publish_resource", return_value="https://cloud.example/scan"), \
+                patch("proposals_app.views._refresh_proposal_nextcloud_file_ids", return_value=[]):
+            response = self.client.post(
+                reverse("proposal_scan_upload", args=[self.proposal.pk]),
+                {"scan_file": uploaded},
+            )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.scan_file_name, expected_name)
+        self.assertEqual(
+            self.proposal.scan_file_link,
+            f"{self.proposal.proposal_workspace_disk_path}/{expected_name}",
+        )
+        self.assertEqual(mocked_upload.call_args.args[1], self.proposal.scan_file_link)
+
+    @patch("proposals_app.views.is_nextcloud_primary", return_value=False)
+    def test_dispatch_table_renders_gray_and_blue_scan_icons(self, _mocked_nextcloud):
+        empty = self.client.get(reverse("proposals_partial"))
+        self.assertContains(empty, 'data-col="scan"', html=False)
+        self.assertContains(empty, ">Скан<", html=False)
+        self.assertContains(empty, "js-proposal-scan-upload", html=False)
+        self.assertContains(empty, "color: #ccc", html=False)
+
+        self.proposal.pdf_file_name = "ТКП_333300RU_DD_Приморское.pdf"
+        self.proposal.scan_file_name = "ТКП_333300RU_DD_Приморское_скан.pdf"
+        self.proposal.scan_file_link = "https://files.example/scan.pdf"
+        self.proposal.save(update_fields=["pdf_file_name", "scan_file_name", "scan_file_link"])
+
+        loaded = self.client.get(reverse("proposals_partial"))
+        self.assertContains(loaded, 'href="https://files.example/scan.pdf"', html=False)
+        self.assertContains(loaded, 'target="_blank"', html=False)
+        self.assertContains(loaded, "bi bi-paperclip", html=False)
+        self.assertContains(loaded, "color: var(--bs-primary, #075D94)", html=False)
+        self.assertContains(loaded, "js-proposal-scan-remove", html=False)
+        self.assertNotContains(loaded, "js-proposal-scan-upload", html=False)
+
+    def test_scan_delete_clears_stored_fields(self):
+        self.proposal.scan_file_name = "ТКП_333300RU_DD_Приморское_скан.pdf"
+        self.proposal.scan_file_link = "https://files.example/scan.pdf"
+        self.proposal.scan_file_id = "99"
+        self.proposal.save(update_fields=["scan_file_name", "scan_file_link", "scan_file_id"])
+
+        response = self.client.post(reverse("proposal_scan_delete", args=[self.proposal.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.scan_file_name, "")
+        self.assertEqual(self.proposal.scan_file_link, "")
+        self.assertEqual(self.proposal.scan_file_id, "")
+
+    @patch("proposals_app.views.is_nextcloud_primary", return_value=False)
+    def test_dispatch_form_offers_scan_file_and_delete(self, _mocked_nextcloud):
+        self.proposal.pdf_file_name = "ТКП_333300RU_DD_Приморское.pdf"
+        self.proposal.scan_file_name = "ТКП_333300RU_DD_Приморское_скан.pdf"
+        self.proposal.scan_file_link = "https://files.example/scan.pdf"
+        self.proposal.save(update_fields=["pdf_file_name", "scan_file_name", "scan_file_link"])
+
+        opened = self.client.get(reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]))
+        self.assertEqual(opened.status_code, 200)
+        self.assertContains(opened, 'name="scan_file"', html=False)
+        self.assertContains(opened, "Удалить", html=False)
+        self.assertContains(opened, "Текущий файл", html=False)
+        self.assertContains(opened, "ТКП_333300RU_DD_Приморское_скан.pdf", html=False)
+
+        cleared = self.client.post(
+            reverse("proposal_dispatch_form_edit", args=[self.proposal.pk]),
+            self._dispatch_payload(**{"scan_file-clear": "on"}),
+        )
+        self.assertEqual(cleared.status_code, 200, cleared.content[:500])
+        self.proposal.refresh_from_db()
+        self.assertEqual(self.proposal.scan_file_name, "")
+        self.assertEqual(self.proposal.scan_file_link, "")
+
+    @override_settings(PROPOSAL_ALLOW_LOCAL_FOLDER=True)
+    def test_local_scan_is_saved_beside_pdf_and_opens_inline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(REPORT_CHECK_LOCAL_ROOTS=(tmp,)):
+                pdf_path = Path(tmp) / "Offer.pdf"
+                pdf_path.write_bytes(b"%PDF")
+                self.proposal.pdf_file_name = "Offer.pdf"
+                self.proposal.pdf_file_link = f"local:{pdf_path}"
+                self.proposal.save(update_fields=["pdf_file_name", "pdf_file_link"])
+                uploaded = SimpleUploadedFile("page.pdf", b"%PDF-scan", content_type="application/pdf")
+
+                response = self.client.post(
+                    reverse("proposal_scan_upload", args=[self.proposal.pk]),
+                    {"scan_file": uploaded},
+                )
+                self.assertEqual(response.status_code, 200, response.content)
+                self.proposal.refresh_from_db()
+                self.assertEqual(self.proposal.scan_file_name, "Offer_скан.pdf")
+                scan_path = Path(self.proposal.scan_file_link[len("local:"):])
+                self.assertEqual(scan_path.parent.resolve(), Path(tmp).resolve())
+                self.assertTrue(scan_path.is_file())
+
+                opened = self.client.get(reverse("proposal_generated_scan_download", args=[self.proposal.pk]))
+                self.assertEqual(opened.status_code, 200)
+                self.assertTrue(opened["Content-Disposition"].startswith("inline;"))

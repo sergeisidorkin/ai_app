@@ -507,7 +507,7 @@ def annotate_performers_report_section_lock(performers):
         {getattr(item, "registration_id", None) for item in items}
     )
     for item in items:
-        is_section = is_report_section_accounting(getattr(item, "typical_section", None))
+        is_section = is_report_section_accounting(performer_work_section(item))
         item.report_section_locked = (
             is_section and (item.registration_id, item.asset_name or "") in locked
         )
@@ -526,7 +526,7 @@ def annotate_performers_section_codes(performers):
         ordered = sorted(group, key=lambda performer: (performer.position or 0, performer.pk or 0))
         index = 0
         for item in ordered:
-            if is_report_section_accounting(getattr(item, "typical_section", None)):
+            if is_report_section_accounting(performer_work_section(item)):
                 index += 1
                 item.section_code = format_report_version(index)
             else:
@@ -540,13 +540,13 @@ def performer_section_code_ids_by_asset(performers=None) -> dict:
         if performers is not None
         else (
             Performer.objects
-            .select_related("typical_section", "typical_section__service_block")
+            .select_related("typical_section", "typical_section__service_block", "service_block")
             .order_by("registration_id", "position", "id")
         )
     )
     grouped = {}
     for item in items:
-        if not is_report_section_accounting(getattr(item, "typical_section", None)):
+        if not is_report_section_accounting(performer_work_section(item)):
             continue
         grouped.setdefault(str(item.registration_id), {}).setdefault(item.asset_name or "", []).append(item.pk)
     return grouped
@@ -1613,13 +1613,23 @@ def is_report_section_accounting(section) -> bool:
     return _section_accounting_type(section) in REPORT_SECTION_ACCOUNTING_TYPES
 
 
+def performer_work_section(performer):
+    return getattr(performer, "typical_section", None) or getattr(performer, "service_block", None)
+
+
 def report_table_performer_q() -> Q:
     """Строки таблицы «Отчеты» и общей нумерации: блоки услуг с типом учета «Разделы» или «Материалы»."""
-    return Q(typical_section__service_block__accounting_type__in=REPORT_SECTION_ACCOUNTING_TYPES)
+    return (
+        Q(typical_section__service_block__accounting_type__in=REPORT_SECTION_ACCOUNTING_TYPES)
+        | Q(
+            typical_section__isnull=True,
+            service_block__accounting_type__in=REPORT_SECTION_ACCOUNTING_TYPES,
+        )
+    )
 
 
 def _performer_section_code(performer) -> str:
-    section = getattr(performer, "typical_section", None)
+    section = performer_work_section(performer)
     return _sanitize(getattr(section, "code", "") or typical_section_short(section) or "раздел")
 
 
@@ -1633,7 +1643,7 @@ def grouped_report_performers(project, executor, asset_name="") -> list:
             executor=executor or "",
             asset_name=asset_name or "",
         )
-        .select_related("typical_section")
+        .select_related("typical_section", "service_block")
         .order_by("position", "id")
     )
 
@@ -1647,7 +1657,7 @@ def asset_report_section_performers(project, asset_name="") -> list:
             registration=project,
             asset_name=asset_name or "",
         )
-        .select_related("typical_section")
+        .select_related("typical_section", "service_block")
         .order_by("position", "id")
     )
 

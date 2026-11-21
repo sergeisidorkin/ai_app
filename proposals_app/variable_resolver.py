@@ -7,7 +7,7 @@ from html import escape
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from policy_app.models import ServiceGoalReport
+from policy_app.models import ServiceGoalReport, is_system_spec_product
 from projects_app.stage_terms import enabled_flag, term_to_days
 
 sys.modules.setdefault("proposals_app.variable_resolver", sys.modules[__name__])
@@ -218,7 +218,18 @@ def _proposal_purpose(proposal) -> str:
     return proposal.purpose or ""
 
 
+def _proposal_type_product(proposal):
+    product = getattr(proposal, "type", None)
+    if product is not None or not getattr(proposal, "type_id", None):
+        return product
+    from policy_app.models import Product
+
+    return Product.objects.filter(pk=proposal.type_id).only("id", "is_system", "short_name").first()
+
+
 def _proposal_service_goal_genitive(proposal) -> str:
+    if is_system_spec_product(_proposal_type_product(proposal)):
+        return ""
     if not getattr(proposal, "type_id", None):
         return ""
     item = (
@@ -247,14 +258,20 @@ def _service_goal_report_value(product_id, field_name: str) -> str:
 
 
 def _proposal_service_goal(proposal) -> str:
+    if is_system_spec_product(_proposal_type_product(proposal)):
+        return proposal.purpose or ""
     return _service_goal_report_value(getattr(proposal, "type_id", None), "service_goal")
 
 
 def _proposal_report_title(proposal) -> str:
+    if is_system_spec_product(_proposal_type_product(proposal)):
+        return proposal.proposal_project_name or ""
     return _service_goal_report_value(getattr(proposal, "type_id", None), "report_title")
 
 
 def _proposal_product_name(proposal) -> str:
+    if is_system_spec_product(_proposal_type_product(proposal)):
+        return proposal.proposal_project_name or ""
     return _service_goal_report_value(getattr(proposal, "type_id", None), "product_name")
 
 
@@ -396,7 +413,11 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
             source = indexed_source
         else:
             source = payload_by_product_id.get(product_id) or indexed_source
-        product_name = _service_goal_report_value(getattr(product, "pk", None), "product_name")
+        product_name = (
+            (getattr(proposal, "proposal_project_name", "") or "")
+            if is_system_spec_product(product)
+            else _service_goal_report_value(getattr(product, "pk", None), "product_name")
+        )
         result.append({"runs": [{"text": f"ЭТАП {index} — {product_name}.", "bold": True}]})
         result.append(strong_line("Состав услуг по этапу:"))
         result.extend(items_from_source(source, ordered_numbering_scope=f"scope_of_work_stage_{index}"))
@@ -1638,7 +1659,9 @@ def _payment_schedule_days(value) -> str:
     return "" if value in (None, "") else str(value)
 
 
-def _payment_schedule_product_name(product) -> str:
+def _payment_schedule_product_name(product, proposal=None) -> str:
+    if is_system_spec_product(product):
+        return str(getattr(proposal, "proposal_project_name", "") or "").strip()
     product_id = getattr(product, "pk", None)
     name = _service_goal_report_value(product_id, "product_name")
     if name:
@@ -1658,7 +1681,7 @@ def _proposal_product_name_list(proposal) -> list[str]:
     total = len(products)
     result: list[str] = []
     for index, product in enumerate(products, start=1):
-        product_name = _payment_schedule_product_name(product)
+        product_name = _payment_schedule_product_name(product, proposal)
         if total == 1:
             text = f"{product_name}."
         else:
@@ -1772,7 +1795,7 @@ def _proposal_payment_schedule(proposal) -> list[dict[str, object]]:
             source = indexed_source
         else:
             source = payload_by_product_id.get(product_id) or indexed_source
-        result.append({"runs": [{"text": f"Этап {index} — {_payment_schedule_product_name(product)}:"}]})
+        result.append({"runs": [{"text": f"Этап {index} — {_payment_schedule_product_name(product, proposal)}:"}]})
         result.extend(_payment_schedule_payment_paragraphs(source))
     return result
 

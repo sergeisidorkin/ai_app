@@ -74,6 +74,7 @@ from policy_app.models import (
     ServiceGoalReport,
     SpecialtyTariff,
     Tariff,
+    SYSTEM_DSC_SECTION_CODE,
     TypicalSection,
     TypicalSectionSpecialty,
     TypicalServiceComposition,
@@ -787,7 +788,7 @@ class PolicyStageFiveRoutingAndReorderTests(TestCase):
         self.assertLessEqual(len(queries), 8)
         self.assertEqual(
             list(Product.objects.order_by("position", "id").values_list("position", flat=True)),
-            list(range(1, 52)),
+            list(range(1, Product.objects.count() + 1)),
         )
         self.assertEqual(Product.objects.order_by("position", "id").first().pk, products[0].pk)
 
@@ -4123,7 +4124,8 @@ class PolicyFragmentMutationContractTests(TestCase):
         )
         caches["policy"].clear()
         catalog = self.client.get(reverse("policy_filter_catalog")).json()["products"]
-        self.assertEqual([item["id"] for item in catalog[:2]], [second.pk, self.product.pk])
+        catalog_ids = [item["id"] for item in catalog]
+        self.assertLess(catalog_ids.index(second.pk), catalog_ids.index(self.product.pk))
 
         section_response = self.client.post(
             reverse("section_delete", args=[self.section.pk]),
@@ -4285,9 +4287,12 @@ class ServiceBlockClassifierTableTests(TestCase):
             position=2,
         )
 
+    def _user_blocks(self):
+        return ServiceBlockClassifier.objects.exclude(code=SYSTEM_DSC_SECTION_CODE)
+
     def _ordered_codes(self):
         return list(
-            ServiceBlockClassifier.objects.order_by("position", "id").values_list("code", flat=True)
+            self._user_blocks().order_by("position", "id").values_list("code", flat=True)
         )
 
     def test_accounting_type_choices_match_requirements(self):
@@ -4675,7 +4680,7 @@ class ServiceBlockClassifierTableTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Retarget"], "#policy-modal .modal-content")
         self.assertContains(response, "Проверьте введённые данные.")
-        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._user_blocks().count(), 2)
 
     def test_code_must_be_unique_case_insensitively_on_create_and_edit(self):
         self.assertTrue(ServiceBlockClassifier._meta.get_field("code").unique)
@@ -4691,7 +4696,7 @@ class ServiceBlockClassifierTableTests(TestCase):
                 self.assertEqual(create.status_code, 200)
                 self.assertEqual(create["HX-Retarget"], "#policy-modal .modal-content")
                 self.assertContains(create, unique_message)
-        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._user_blocks().count(), 2)
 
         edit = self.client.post(
             reverse("service_block_classifier_form_edit", args=[self.second.pk]),
@@ -4745,7 +4750,7 @@ class ServiceBlockClassifierTableTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response["HX-Retarget"], "#policy-modal .modal-content")
                 self.assertContains(response, format_message)
-        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._user_blocks().count(), 2)
 
         for good_code in ("XYZ", "qwe"):
             with self.subTest(code=good_code):
@@ -4878,7 +4883,7 @@ class ServiceBlockClassifierTableTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(bulk.status_code, 403)
-        self.assertEqual(ServiceBlockClassifier.objects.count(), 2)
+        self.assertEqual(self._user_blocks().count(), 2)
         self.assertEqual(self._ordered_codes(), ["ABC", "DEF"])
         for url in (
             reverse("service_block_classifier_csv_download"),
@@ -4910,10 +4915,12 @@ class ServiceBlockClassifierTableTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["policy_pagination_enabled"])
-        self.assertEqual(response.context["paginator"].count, 30)
+        total = ServiceBlockClassifier.objects.count()
+        self.assertGreaterEqual(total, 30)
+        self.assertEqual(response.context["paginator"].count, total)
         self.assertEqual(len(response.context["service_block_classifiers"]), 25)
         self.assertContains(response, "Показано строк")
-        self.assertContains(response, "1–25 из 30")
+        self.assertContains(response, f"1–25 из {total}")
         self.assertContains(response, 'hx-target="#policy-service-block-classifiers-section"', html=False)
         self.assertContains(response, 'id="service-block-classifiers-csv-download-btn"', html=False)
         self.assertContains(response, 'id="service-block-classifiers-csv-upload-btn"', html=False)
@@ -4921,17 +4928,17 @@ class ServiceBlockClassifierTableTests(TestCase):
         self.assertNotContains(response, codes[-1])
 
         page_two = self.client.get(reverse("policy_service_block_classifiers_table"), {"page": 2})
-        self.assertEqual(len(page_two.context["service_block_classifiers"]), 5)
+        self.assertEqual(len(page_two.context["service_block_classifiers"]), total - 25)
         self.assertContains(page_two, codes[-1])
-        self.assertContains(page_two, "26–30 из 30")
+        self.assertContains(page_two, f"26–{total} из {total}")
         self.assertContains(page_two, 'data-policy-table-page="2"', html=False)
 
         wide = self.client.get(
             reverse("policy_service_block_classifiers_table"),
             {"page_size": 100},
         )
-        self.assertEqual(len(wide.context["service_block_classifiers"]), 30)
-        self.assertContains(wide, "1–30 из 30")
+        self.assertEqual(len(wide.context["service_block_classifiers"]), total)
+        self.assertContains(wide, f"1–{total} из {total}")
 
     def test_csv_download_exports_every_row_without_pagination(self):
         geology = ExpertSpecialty.objects.create(
@@ -4985,15 +4992,16 @@ class ServiceBlockClassifierTableTests(TestCase):
                 "Организация",
             ],
         )
-        self.assertEqual(len(rows), 29)
-        self.assertEqual(rows[1][0], "ABC")
-        self.assertEqual(rows[1][6], "ГЭ")
-        self.assertEqual(rows[1][7], "Геология блока\nГорное дело блока")
-        self.assertEqual(rows[1][8], "Горное направление")
-        self.assertEqual(rows[1][9], "SBC Co")
-        self.assertEqual(rows[2][0], "DEF")
-        self.assertEqual(rows[2][6], "")
-        self.assertEqual(rows[-1][0], "P26")
+        data_rows = [row for row in rows[1:] if row[0] != SYSTEM_DSC_SECTION_CODE]
+        self.assertEqual(
+            [row[0] for row in data_rows],
+            ["ABC", "DEF", *[f"P{index:02d}" for index in range(1, 27)]],
+        )
+        self.assertEqual(data_rows[0][6], "ГЭ")
+        self.assertEqual(data_rows[0][7], "Геология блока\nГорное дело блока")
+        self.assertEqual(data_rows[0][8], "Горное направление")
+        self.assertEqual(data_rows[0][9], "SBC Co")
+        self.assertEqual(data_rows[1][6], "")
 
     def test_csv_upload_creates_updates_and_skips_invalid_rows(self):
         geology = ExpertSpecialty.objects.create(
@@ -5879,30 +5887,35 @@ class TypicalSectionPaginationTests(TestCase):
     def test_zero_one_twenty_five_and_twenty_six_rows(self):
         endpoint = reverse("policy_typical_sections_table")
 
+        baseline = TypicalSection.objects.count()
         response = self.client.get(endpoint)
-        self.assertEqual(response.context["paginator"].count, 0)
-        self.assertContains(response, "0–0 из 0")
+        self.assertEqual(response.context["paginator"].count, baseline)
+        if baseline:
+            self.assertContains(response, f"1–{baseline} из {baseline}")
+        else:
+            self.assertContains(response, "0–0 из 0")
         self.assertNotContains(response, "Показаны")
         self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
 
         product = self._create_product("COUNT")
         self._create_sections(product, 1)
         response = self.client.get(endpoint)
-        self.assertEqual(response.context["paginator"].count, 1)
-        self.assertContains(response, "1–1 из 1")
+        self.assertEqual(response.context["paginator"].count, baseline + 1)
+        self.assertContains(response, f"1–{baseline + 1} из {baseline + 1}")
         self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
 
         self._create_sections(product, 24, prefix="MORE", start_position=2)
         response = self.client.get(endpoint)
-        self.assertEqual(response.context["paginator"].count, 25)
-        self.assertContains(response, "1–25 из 25")
+        self.assertEqual(response.context["paginator"].count, baseline + 25)
+        self.assertEqual(len(response.context["sections"]), 25)
+        self.assertContains(response, f"1–25 из {baseline + 25}")
         self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
 
         self._create_sections(product, 1, prefix="LAST", start_position=26)
         response = self.client.get(endpoint)
-        self.assertEqual(response.context["paginator"].count, 26)
+        self.assertEqual(response.context["paginator"].count, baseline + 26)
         self.assertEqual(len(response.context["sections"]), 25)
-        self.assertContains(response, "1–25 из 26")
+        self.assertContains(response, f"1–25 из {baseline + 26}")
         self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
         self.assertContains(
             response,
@@ -5916,9 +5929,15 @@ class TypicalSectionPaginationTests(TestCase):
         endpoint = reverse("policy_typical_sections_table")
 
         third_page = self.client.get(endpoint, {"page": "3"})
+        ordered_ids = list(
+            TypicalSection.objects.order_by("product__short_name", "position", "id").values_list("id", flat=True)
+        )
         self.assertEqual(third_page.context["page_obj"].number, 3)
-        self.assertEqual(list(third_page.context["sections"]), sections[50:])
-        self.assertContains(third_page, "51–68 из 68")
+        self.assertEqual(
+            [section.pk for section in third_page.context["sections"]],
+            ordered_ids[50:75],
+        )
+        self.assertContains(third_page, f"51–{len(ordered_ids)} из {len(ordered_ids)}")
         self.assertNotContains(third_page, "Показаны")
 
         invalid_page = self.client.get(endpoint, {"page": "invalid"})
@@ -6150,7 +6169,7 @@ class TypicalSectionPaginationTests(TestCase):
 
         self.assertEqual(
             [section.pk for section in response.context["sections"]],
-            [a_first_older.pk, a_first_newer.pk, a_second.pk, b_section.pk],
+            list(TypicalSection.objects.order_by("product__short_name", "position", "id").values_list("id", flat=True)),
         )
 
     def test_legacy_policy_partial_remains_unpaginated(self):
@@ -6160,7 +6179,10 @@ class TypicalSectionPaginationTests(TestCase):
         response = self.client.get(reverse("policy_partial"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(list(response.context["sections"]), sections)
+        self.assertEqual(
+            list(response.context["sections"]),
+            list(TypicalSection.objects.order_by("product__short_name", "position", "id")),
+        )
         self.assertNotContains(response, "1–25 из 51")
         self.assertContains(response, sections[-1].code)
 
@@ -6185,20 +6207,34 @@ class TypicalSectionPaginationTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual([item["id"] for item in payload["products"]], [first.pk, later.pk])
-        self.assertEqual(payload["products"][0]["label"], "CAT-FIRST CAT-FIRST display")
-        self.assertEqual(payload["products"][0]["consulting"], "Пилот Горный")
-        self.assertIn("consulting_ref_id", payload["products"][0])
-        self.assertIn("category_ref_id", payload["products"][0])
-        self.assertIn("subtype_ref_id", payload["products"][0])
-        self.assertEqual(payload["options"]["consulting"], ["Пилот Горный", "Пилот Финансовый"])
-        self.assertEqual(payload["options"]["category"], ["Пилот Аудит", "Пилот Оценка"])
-        self.assertEqual(payload["options"]["subtype"], ["Пилот Проверка", "Пилот Активы"])
+        ordered_products = list(Product.objects.order_by("position", "id"))
+        self.assertEqual(
+            [item["id"] for item in payload["products"]],
+            [product.pk for product in ordered_products],
+        )
+        catalog_product = next(item for item in payload["products"] if item["id"] == first.pk)
+        self.assertEqual(catalog_product["label"], "CAT-FIRST CAT-FIRST display")
+        self.assertEqual(catalog_product["consulting"], "Пилот Горный")
+        self.assertIn("consulting_ref_id", catalog_product)
+        self.assertIn("category_ref_id", catalog_product)
+        self.assertIn("subtype_ref_id", catalog_product)
+        self.assertEqual(
+            payload["options"]["consulting"],
+            list(dict.fromkeys(product.consulting_type for product in ordered_products)),
+        )
+        self.assertEqual(
+            payload["options"]["category"],
+            list(dict.fromkeys(product.service_category for product in ordered_products)),
+        )
+        self.assertEqual(
+            payload["options"]["subtype"],
+            list(dict.fromkeys(product.service_subtype for product in ordered_products)),
+        )
         self.assertEqual(
             payload["options"]["product"],
             [
-                {"id": first.pk, "label": "CAT-FIRST CAT-FIRST display"},
-                {"id": later.pk, "label": "CAT-LATER CAT-LATER display"},
+                {"id": product.pk, "label": f"{product.short_name} {product.display_name}"}
+                for product in ordered_products
             ],
         )
 
@@ -6331,9 +6367,13 @@ class PolicyManagedTablePaginationTests(TestCase):
 
     def test_reusable_paginator_boundaries_links_order_and_page_clamp(self):
         endpoint = reverse("policy_products_table")
+        baseline_products = Product.objects.count()
         response = self.client.get(endpoint)
-        self.assertEqual(response.context["paginator"].count, 0)
-        self.assertContains(response, "0–0 из 0")
+        self.assertEqual(response.context["paginator"].count, baseline_products)
+        if baseline_products:
+            self.assertContains(response, f"1–{baseline_products} из {baseline_products}")
+        else:
+            self.assertContains(response, "0–0 из 0")
         self.assertContains(response, 'aria-label="Страницы таблицы"', html=False)
 
         products = Product.objects.bulk_create(
@@ -6383,10 +6423,13 @@ class PolicyManagedTablePaginationTests(TestCase):
         self.assertContains(first_page, 'hx-target="#policy-products-section"', html=False)
 
         third_page = self.client.get(endpoint, {"page": 3})
+        ordered_ids = list(Product.objects.order_by("position", "id").values_list("id", flat=True))
         self.assertEqual(third_page.context["page_obj"].number, 3)
-        self.assertEqual(third_page.context["products"][0].position, 51)
-        self.assertEqual(len(third_page.context["products"]), 18)
-        self.assertContains(third_page, "51–68 из 68")
+        self.assertEqual(
+            [product.pk for product in third_page.context["products"]],
+            ordered_ids[50:75],
+        )
+        self.assertContains(third_page, f"51–{len(ordered_ids)} из {len(ordered_ids)}")
 
         invalid_page = self.client.get(endpoint, {"page": "invalid"})
         self.assertEqual(invalid_page.context["page_obj"].number, 1)
@@ -6592,7 +6635,7 @@ class PolicyManagedTablePaginationTests(TestCase):
 
         response = self.client.get(reverse("policy_partial"))
 
-        self.assertEqual(len(response.context["products"]), 51)
+        self.assertEqual(len(response.context["products"]), Product.objects.count())
         self.assertNotContains(response, "policy-table-pagination")
         self.assertContains(response, "LEGACY-MANAGED-051")
 
@@ -6765,8 +6808,9 @@ class ProductCsvUploadTests(TestCase):
                 "Групповой продукт",
             ],
         )
+        exported = {row[0]: row for row in rows[1:]}
         self.assertEqual(
-            rows[1],
+            exported["AUD"],
             [
                 "AUD",
                 "Audit",
@@ -12389,12 +12433,13 @@ class PolicyStageSixCacheTests(TestCase):
 
     def test_create_edit_delete_invalidate_after_commit(self):
         self._warm_catalog()
+        existing_ids = [item["id"] for item in self._catalog().json()["products"]]
 
         with self.captureOnCommitCallbacks(execute=True):
             product = self._create_product()
         created = self._catalog()
         self.assertEqual(created.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
-        self.assertEqual(created.json()["products"][0]["id"], product.pk)
+        self.assertIn(product.pk, [item["id"] for item in created.json()["products"]])
         self._warm_catalog()
 
         with self.captureOnCommitCallbacks(execute=True):
@@ -12402,14 +12447,15 @@ class PolicyStageSixCacheTests(TestCase):
             product.save(update_fields=["display_name"])
         edited = self._catalog()
         self.assertEqual(edited.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
-        self.assertEqual(edited.json()["products"][0]["label"], "CACHE-1 Changed cache product")
+        edited_row = next(item for item in edited.json()["products"] if item["id"] == product.pk)
+        self.assertEqual(edited_row["label"], "CACHE-1 Changed cache product")
         self._warm_catalog()
 
         with self.captureOnCommitCallbacks(execute=True):
             product.delete()
         deleted = self._catalog()
         self.assertEqual(deleted.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_MISS)
-        self.assertEqual(deleted.json()["products"], [])
+        self.assertEqual([item["id"] for item in deleted.json()["products"]], existing_ids)
 
     def test_m2m_and_external_display_dependency_invalidate(self):
         self.assertSetEqual(
@@ -12450,6 +12496,7 @@ class PolicyStageSixCacheTests(TestCase):
 
     def test_rollback_does_not_change_generation(self):
         self._warm_catalog()
+        existing_ids = [item["id"] for item in self._catalog().json()["products"]]
         generation_before = caches["policy"].get(policy_cache.POLICY_GENERATION_KEY)
 
         with self.assertRaises(RuntimeError):
@@ -12461,7 +12508,7 @@ class PolicyStageSixCacheTests(TestCase):
         response = self._catalog()
         self.assertEqual(generation_after, generation_before)
         self.assertEqual(response.headers["X-Policy-Cache"], policy_cache.POLICY_CACHE_HIT)
-        self.assertEqual(response.json()["products"], [])
+        self.assertEqual([item["id"] for item in response.json()["products"]], existing_ids)
 
     def test_reorder_and_import_helpers_invalidate_bulk_mutations(self):
         with self.captureOnCommitCallbacks(execute=True):

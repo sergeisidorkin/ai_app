@@ -4,7 +4,8 @@ import uuid
 from django.conf import settings
 from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
-from policy_app.models import Product, SYSTEM_DSC_SECTION_CODE, TypicalSection
+from policy_app.models import Product, SYSTEM_DSC_SECTION_CODE, ServiceBlockClassifier, TypicalSection
+from policy_app.spec_product import document_spec_section_codes, spec_blocks_by_code
 from classifiers_app.models import OKSMCountry, OKVCurrency
 from group_app.models import GroupMember
 from datetime import date as dt_date, timedelta
@@ -932,26 +933,97 @@ def _effective_work_asset_name(work_item):
     return (getattr(work_item, "asset_name", "") or getattr(work_item, "name", "") or "").strip()
 
 
-def _ordered_project_sections(project):
-    product_rank_map = getattr(project, "product_rank_map", {})
+class SpecCompositionSection:
+    """Раздел проекта SPEC: блок классификатора без строки TypicalSection."""
+
+    is_spec_block = True
+    is_system = False
+    id = None
+    pk = None
+
+    def __init__(self, block, product_id, sort_rank):
+        self.service_block = block
+        self.service_block_id = block.pk
+        self.product_id = product_id
+        self.sort_rank = sort_rank
+        self.position = sort_rank
+
+    def __getattr__(self, name):
+        return getattr(self.service_block, name)
+
+
+def _project_product_ids(project):
+    product_rank_map = dict(getattr(project, "product_rank_map", {}) or {})
     product_ids = list(product_rank_map.keys())
     if not product_ids and getattr(project, "type_id", None):
         product_ids = [project.type_id]
         product_rank_map = {project.type_id: 1}
+    return product_ids, product_rank_map
+
+
+def _project_spec_section_codes(project):
+    """Состав SPEC берётся из договора. Если договор не указан — из ТКП.
+
+    Пустой состав указанного договора не подменяется ТКП.
+    """
+    contract_id = getattr(project, "contract_project_registration_id", None)
+    if contract_id:
+        contract = getattr(project, "contract_project_registration", None)
+        if contract is None:
+            from contracts_app.models import ContractProjectRegistration
+
+            contract = ContractProjectRegistration.objects.filter(pk=contract_id).first()
+        return document_spec_section_codes(
+            contract,
+            Product.objects.filter(is_system=True).values_list("id", flat=True),
+        ) if contract is not None else []
+    proposal_id = getattr(project, "proposal_registration_id", None)
+    if not proposal_id:
+        return []
+    proposal = getattr(project, "proposal_registration", None)
+    if proposal is None:
+        from proposals_app.models import ProposalRegistration
+
+        proposal = ProposalRegistration.objects.filter(pk=proposal_id).first()
+    if proposal is None:
+        return []
+    return document_spec_section_codes(
+        proposal,
+        Product.objects.filter(is_system=True).values_list("id", flat=True),
+    )
+
+
+def _ordered_project_sections(project):
+    product_ids, product_rank_map = _project_product_ids(project)
     if not product_ids:
         return []
-    sections = list(
-        TypicalSection.objects
-        .filter(product_id__in=product_ids)
-        .exclude(models.Q(is_system=True) | models.Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
-        .select_related("product", "service_block", "service_block__expertise_dir")
-        .order_by("position", "id")
+    system_ids = set(
+        Product.objects.filter(pk__in=product_ids, is_system=True).values_list("pk", flat=True)
     )
+    ordinary_ids = [product_id for product_id in product_ids if product_id not in system_ids]
+    sections = []
+    if ordinary_ids:
+        sections = list(
+            TypicalSection.objects
+            .filter(product_id__in=ordinary_ids)
+            .exclude(models.Q(is_system=True) | models.Q(code__iexact=SYSTEM_DSC_SECTION_CODE))
+            .select_related("product", "service_block", "service_block__expertise_dir")
+            .order_by("position", "id")
+        )
+    if system_ids:
+        system_product_id = min(system_ids, key=lambda product_id: product_rank_map.get(product_id, 999999))
+        blocks = spec_blocks_by_code()
+        for index, code in enumerate(_project_spec_section_codes(project), start=1):
+            block = blocks.get(code)
+            if block is None:
+                continue
+            sections.append(SpecCompositionSection(block, system_product_id, index))
     sections.sort(
         key=lambda section: (
             product_rank_map.get(section.product_id, 999999),
-            section.position,
-            section.id,
+            1 if getattr(section, "is_spec_block", False) else 0,
+            section.position or 0,
+            section.id or 0,
         )
     )
     return sections
@@ -1211,7 +1283,7 @@ def remember_previous_work_state(sender, instance, **kwargs):
         instance._old_effective_asset_name = previous_asset
 
 
-def _ensure_performer_rows_for_work_item(instance):
+def _ensure_performer_rows_for_work_item(instance, catalog_sections=True):
     if not instance.project_id:
         return
 
@@ -1220,6 +1292,8 @@ def _ensure_performer_rows_for_work_item(instance):
     manager_name = _normalize_text_value(instance.manager)
 
     sections = _ordered_project_sections(instance.project)
+    if not catalog_sections:
+        sections = [section for section in sections if getattr(section, "is_spec_block", False)]
     if not sections:
         return
 
@@ -1246,7 +1320,8 @@ def _ensure_performer_rows_for_work_item(instance):
     from policy_app.models import Tariff, Grade
     tariff_map = {}
     tariff_hours_map = {}
-    for t in Tariff.objects.filter(section_id__in=[s.id for s in sections]):
+    catalog_section_ids = [section.id for section in sections if section.id]
+    for t in Tariff.objects.filter(section_id__in=catalog_section_ids):
         tariff_map[t.section_id] = float(t.base_rate_vpm)
         tariff_hours_map[t.section_id] = t.service_hours or 0
 
@@ -1294,6 +1369,12 @@ def _ensure_performer_rows_for_work_item(instance):
         )
         .values_list("typical_section_id", flat=True)
     )
+    existing_block_ids_for_asset = set(
+        Performer.objects
+        .filter(registration=instance.project, service_block__isnull=False)
+        .filter(models.Q(work_item=instance) | models.Q(asset_name=asset_name))
+        .values_list("service_block_id", flat=True)
+    )
 
     rub = (
         OKVCurrency.objects
@@ -1313,7 +1394,11 @@ def _ensure_performer_rows_for_work_item(instance):
 
     performers = []
     for section in sections:
-        if section.id in existing_section_ids_for_asset:
+        is_spec_block = getattr(section, "is_spec_block", False)
+        if is_spec_block:
+            if section.service_block_id in existing_block_ids_for_asset:
+                continue
+        elif section.id in existing_section_ids_for_asset:
             continue
         section_code = _normalize_section_code(section)
         if section_code == "PRJ" and project_manager_name == manager_name:
@@ -1385,7 +1470,8 @@ def _ensure_performer_rows_for_work_item(instance):
                 work_item=instance,
                 registration=instance.project,
                 asset_name=asset_name,
-                typical_section=section,
+                typical_section=None if is_spec_block else section,
+                service_block=section.service_block if is_spec_block else None,
                 position=next_position,
                 currency=rub,
                 prepayment=50,
@@ -1405,9 +1491,11 @@ def _ensure_performer_rows_for_work_item(instance):
 
 @receiver(post_save, sender=WorkVolume)
 def ensure_performer_rows(sender, instance, created, **kwargs):
-    if not created:
-        return
-    _ensure_performer_rows_for_work_item(instance)
+    if not created and instance.project_id:
+        old_asset_name = getattr(instance, "_old_effective_asset_name", None)
+        if old_asset_name is not None:
+            _sync_related_asset_name_updates(instance, old_asset_name)
+    _ensure_performer_rows_for_work_item(instance, catalog_sections=created)
 
 
 @receiver(post_save, sender=WorkVolume)
@@ -1474,6 +1562,25 @@ class Performer(models.Model):
         verbose_name="Типовой раздел",
         related_name="performer_items",
     )
+    service_block = models.ForeignKey(
+        ServiceBlockClassifier,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        verbose_name="Блок услуг спецпроекта",
+        related_name="spec_performer_items",
+    )
+
+    @property
+    def work_section(self):
+        return self.typical_section or self.service_block
+
+    @property
+    def work_section_key(self):
+        if self.typical_section_id:
+            return str(self.typical_section_id)
+        if self.service_block_id:
+            return f"block-{self.service_block_id}"
+        return ""
 
     actual_costs = models.DecimalField("Фактические затраты", max_digits=12, decimal_places=2, null=True, blank=True)
     estimated_costs = models.DecimalField("Расчетные затраты", max_digits=12, decimal_places=2, null=True, blank=True)

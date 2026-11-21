@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import posixpath
 import sys
 from types import SimpleNamespace
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 import jwt
 import requests
@@ -15,9 +16,11 @@ from django.urls import reverse
 
 from core.cloud_storage import (
     CloudStorageNotReadyError,
+    delete_file as cloud_delete_file,
     download_file as cloud_download_file,
     get_any_connected_service_user,
     is_nextcloud_primary,
+    publish_resource as cloud_publish_resource,
     sanitize_folder_name,
     upload_file as cloud_upload_file,
 )
@@ -34,9 +37,18 @@ LOCAL_PROPOSAL_PATH_PREFIX = "local:"
 sys.modules.setdefault("proposals_app.document_generation", sys.modules[__name__])
 sys.modules.setdefault("ai_app.proposals_app.document_generation", sys.modules[__name__])
 
+logger = logging.getLogger(__name__)
+
 
 class LocalProposalFolderError(Exception):
     """Путь локальной папки нельзя использовать для генерации ТКП."""
+
+
+class ProposalScanError(Exception):
+    """Скан ТКП нельзя сохранить или удалить."""
+
+
+PROPOSAL_SCAN_NAME_SUFFIX = "_скан"
 
 
 def local_proposal_folder_enabled() -> bool:
@@ -662,3 +674,143 @@ def store_generated_documents(user, proposal, docx_bytes: bytes, pdf_bytes: byte
         result["pdf_name"] = ""
         result["pdf_path"] = ""
     return result
+
+
+def proposal_scan_source_name(proposal) -> str:
+    pdf_name = str(getattr(proposal, "pdf_file_name", "") or "").strip()
+    if pdf_name:
+        return pdf_name
+    return str(getattr(proposal, "docx_file_name", "") or "").strip()
+
+
+def build_proposal_scan_file_name(proposal, uploaded_name: str) -> str:
+    source_name = proposal_scan_source_name(proposal)
+    extension = Path(str(uploaded_name or "").replace("\\", "/")).suffix
+    stem = Path(source_name).stem if source_name else build_proposal_document_base_name(proposal)
+    return f"{stem}{PROPOSAL_SCAN_NAME_SUFFIX}{extension}"
+
+
+def _proposal_link_storage_folder(raw_link: str):
+    raw = str(raw_link or "").strip()
+    if not raw or raw.startswith(("http://", "https://")):
+        return None
+    if is_local_proposal_path(raw):
+        return "local", _checked_local_proposal_file(raw).parent
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+    if media_url and raw.startswith(media_url):
+        relative_path = raw[len(media_url):].lstrip("/")
+        return "media", (Path(settings.MEDIA_ROOT) / relative_path).parent
+    folder = posixpath.dirname(raw.rstrip("/"))
+    if not folder:
+        return None
+    return "cloud", folder
+
+
+def proposal_scan_storage_folder(proposal):
+    pdf_name = str(getattr(proposal, "pdf_file_name", "") or "").strip()
+    primary_attr = "pdf_file_link" if pdf_name else "docx_file_link"
+    secondary_attr = "docx_file_link" if primary_attr == "pdf_file_link" else "pdf_file_link"
+    for attr in (primary_attr, secondary_attr):
+        located = _proposal_link_storage_folder(getattr(proposal, attr, ""))
+        if located is not None:
+            return located
+    workspace = str(getattr(proposal, "proposal_workspace_disk_path", "") or "").strip().rstrip("/")
+    if workspace:
+        return "cloud", workspace
+    raise ProposalScanError("Для ТКП не задана папка файлов DOCX или PDF.")
+
+
+def _media_file_from_link(raw: str) -> Path | None:
+    """Файл внутри MEDIA_ROOT по сохранённой media-ссылке.
+
+    Имя в ссылке закодировано. Перед проверкой границ каталога его нужно
+    раскодировать, иначе кириллический суффикс «_скан» не находится на диске.
+    """
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+    if not media_url or not str(raw or "").startswith(media_url):
+        return None
+    relative_path = unquote(str(raw)[len(media_url):].lstrip("/"))
+    if not relative_path or relative_path.startswith(("/", "\\")):
+        return None
+    parts = Path(relative_path).parts
+    if ".." in parts:
+        return None
+    root = Path(settings.MEDIA_ROOT).resolve()
+    path = (root / relative_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path
+
+
+def _media_url_for_path(path: Path) -> str:
+    relative = path.resolve().relative_to(Path(settings.MEDIA_ROOT).resolve())
+    media_base = str(settings.MEDIA_URL or "").rstrip("/")
+    return media_base + "/" + "/".join(quote(part) for part in relative.parts)
+
+
+def store_proposal_scan_bytes(user, proposal, file_bytes: bytes, uploaded_name: str) -> dict[str, str]:
+    scan_name = build_proposal_scan_file_name(proposal, uploaded_name)
+    kind, folder = proposal_scan_storage_folder(proposal)
+    if kind == "local":
+        path = _local_file_in_folder(folder, scan_name)
+        try:
+            path.write_bytes(file_bytes)
+        except OSError as exc:
+            raise ProposalScanError(f"Не удалось сохранить скан в локальную папку: {exc}") from exc
+        stored_path = encode_local_proposal_path(path)
+    elif kind == "media":
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / Path(scan_name).name
+        try:
+            path.write_bytes(file_bytes)
+        except OSError as exc:
+            raise ProposalScanError(f"Не удалось сохранить скан: {exc}") from exc
+        stored_path = _media_url_for_path(path)
+    else:
+        cloud_user = _get_cloud_upload_user(user)
+        if not cloud_user:
+            raise ProposalScanError("Не найден пользователь с подключенным облачным хранилищем для загрузки скана.")
+        stored_path = posixpath.join(str(folder).rstrip("/"), scan_name)
+        if not cloud_upload_file(cloud_user, stored_path, file_bytes):
+            raise ProposalScanError("Не удалось загрузить скан в папку ТКП.")
+        try:
+            cloud_publish_resource(cloud_user, stored_path)
+        except CloudStorageNotReadyError:
+            logger.warning("Cloud publish skipped: selected backend is not ready for proposal scans")
+        except Exception:
+            logger.warning("Could not publish proposal scan %s", stored_path, exc_info=True)
+    return {"scan_name": scan_name, "scan_path": stored_path}
+
+
+def delete_proposal_scan_file(user, stored_link: str) -> None:
+    raw = str(stored_link or "").strip()
+    if not raw or raw.startswith(("http://", "https://")):
+        return
+    if is_local_proposal_path(raw):
+        path = resolve_stored_local_proposal_file(raw)
+        if path is not None and path.is_file():
+            try:
+                path.unlink()
+            except OSError as exc:
+                raise ProposalScanError(f"Не удалось удалить скан из локальной папки: {exc}") from exc
+        return
+    media_url = str(getattr(settings, "MEDIA_URL", "") or "").strip()
+    if media_url and raw.startswith(media_url):
+        media_path = _media_file_from_link(raw)
+        if media_path is not None and media_path.is_file():
+            try:
+                media_path.unlink()
+            except OSError as exc:
+                raise ProposalScanError(f"Не удалось удалить скан: {exc}") from exc
+        return
+    cloud_user = _get_cloud_upload_user(user)
+    if not cloud_user:
+        raise ProposalScanError("Не найден пользователь с подключенным облачным хранилищем для удаления скана.")
+    if not cloud_delete_file(cloud_user, raw):
+        raise ProposalScanError("Не удалось удалить скан из облачного хранилища.")
+
+
+def get_generated_scan_path(proposal) -> Path | None:
+    return resolve_stored_local_proposal_file(str(getattr(proposal, "scan_file_link", "") or ""))

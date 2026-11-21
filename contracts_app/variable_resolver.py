@@ -1014,6 +1014,10 @@ def _service_goal_report_value(product_id, field_name: str) -> str:
 def _computed_service_goal_genitive(_ep, performer, all_performers) -> str:
     selected_performer = _selected_product_performer(performer, all_performers)
     product = _performer_product(selected_performer)
+    from policy_app.models import is_system_spec_product
+
+    if is_system_spec_product(product):
+        return ""
     return _service_goal_report_value(getattr(product, "pk", None), "service_goal_genitive")
 
 

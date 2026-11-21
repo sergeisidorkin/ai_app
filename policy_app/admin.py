@@ -79,7 +79,31 @@ class ConsultingDirectionAdmin(TimestampedAdmin):
 
 @admin.register(Product)
 class ProductAdmin(TimestampedAdmin):
-    readonly_fields = TimestampedAdmin.readonly_fields + ("service_code",)
+    readonly_fields = TimestampedAdmin.readonly_fields + ("service_code", "is_system")
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj and obj.is_system:
+            fields.extend([
+                "short_name",
+                "display_name",
+                "name_en",
+                "name_ru",
+                "consulting_type_ref",
+                "service_category_ref",
+                "service_subtype_ref",
+                "accuracy",
+                "is_group_owner",
+                "owners",
+                "is_product_group",
+                "group",
+            ])
+        return fields
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and obj.is_system:
+            return False
+        return super().has_delete_permission(request, obj)
 
     list_display = (
         "position",
@@ -122,6 +146,7 @@ class ProductAdmin(TimestampedAdmin):
                 "service_code",
                 "service_subtype_ref",
                 "accuracy",
+                "is_system",
             ),
         }),
         ("Владельцы", {

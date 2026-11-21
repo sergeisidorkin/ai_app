@@ -4612,6 +4612,32 @@
     return Array.isArray(entries) ? entries : [];
   }
 
+  function getProposalCatalogProducts(form) {
+    const owning = getProposalOwningForm(form) || form;
+    const products = [];
+    ['#proposal-type-meta', '#registration-type-meta'].forEach(function (selector) {
+      const element = owning.querySelector?.(selector);
+      if (!element) return;
+      let meta = {};
+      try {
+        meta = JSON.parse(element.textContent || '{}');
+      } catch (error) {
+        meta = {};
+      }
+      const list = Array.isArray(meta.products) ? meta.products : [];
+      list.forEach(function (product) { products.push(product); });
+    });
+    return products;
+  }
+
+  function isProposalSystemSpecProductId(form, productId) {
+    const key = String(productId || '').trim();
+    if (!key) return false;
+    return getProposalCatalogProducts(form).some(function (product) {
+      return String(product.id) === key && product.is_system === true;
+    });
+  }
+
   function isProposalSystemDscEntry(entry) {
     return String(entry?.code || '').trim().toUpperCase() === PROPOSAL_SYSTEM_DSC_CODE
       || entry?.is_system_dsc === true;
@@ -10545,6 +10571,17 @@
     function syncProposalTypeDefaults(force) {
       const projectNameInput = form.querySelector('#proposal-project-name-prefix');
       const purposeInput = form.querySelector('#proposal-purpose-prefix');
+      const productId = getProposalTypeId(form);
+      const previousProductId = form.dataset.proposalDefaultsProductId || '';
+      if (isProposalSystemSpecProductId(form, productId)) {
+        if (previousProductId && previousProductId !== productId) {
+          if (projectNameInput) projectNameInput.value = '';
+          if (purposeInput) purposeInput.value = '';
+        }
+        form.dataset.proposalDefaultsProductId = productId;
+        return;
+      }
+      form.dataset.proposalDefaultsProductId = productId;
       const entry = getProposalServiceGoalReportEntry(form);
       if (!projectNameInput || !purposeInput || !entry) return;
 
@@ -11176,12 +11213,13 @@
         if (select.value !== normalizedSelected) select.value = '';
       }
 
-      function filteredProducts(consultingType, serviceCategory, serviceSubtype) {
+      function filteredProducts(consultingType, serviceCategory, serviceSubtype, includeSystem) {
         return products.filter(function (product) {
-          if (consultingType && product.consulting_type !== consultingType) return false;
-          if (serviceCategory && product.service_category !== serviceCategory) return false;
-          if (serviceSubtype && product.service_subtype !== serviceSubtype) return false;
-          return true;
+          const matches = (!consultingType || product.consulting_type === consultingType)
+            && (!serviceCategory || product.service_category === serviceCategory)
+            && (!serviceSubtype || product.service_subtype === serviceSubtype);
+          if (matches) return true;
+          return includeSystem === true && product.is_system === true;
         });
       }
 
@@ -11557,7 +11595,7 @@
           subtypeValue = subtypeSelect?.value || '';
           buildOptions(
             productSelect,
-            filteredProducts(consultingValue, categoryValue, subtypeValue),
+            filteredProducts(consultingValue, categoryValue, subtypeValue, true),
             '— выберите продукт —',
             productValue,
             function (product) {
@@ -12545,16 +12583,22 @@
             const preliminaryUnitSelect = termsRow.querySelector('.proposal-stage-preliminary-term-unit');
             const finalUnitSelect = termsRow.querySelector('.proposal-stage-final-term-unit');
             const previousProductId = String(termsRow.dataset.productId || '');
+            const specProduct = isProposalSystemSpecProductId(form, productId);
+            if (specProduct && productId !== previousProductId) {
+              if (sourceInput) sourceInput.value = '';
+              if (monthsInput) monthsInput.value = '';
+              if (weeksInput) weeksInput.value = '';
+            }
             if (evaluationInput && !String(evaluationInput.value || '').trim()) {
               setDateFieldValue(evaluationInput, getSharedEvaluationDateValue());
             }
-            if (termEntry && sourceInput && !String(sourceInput.value || '').trim() && parseProposalTermDecimal(termEntry.source_data_term)) {
+            if (!specProduct && termEntry && sourceInput && !String(sourceInput.value || '').trim() && parseProposalTermDecimal(termEntry.source_data_term)) {
               if (sourceUnitSelect && termEntry.source_data_term_unit) {
                 sourceUnitSelect.value = termEntry.source_data_term_unit;
               }
               sourceInput.value = termEntry.source_data_term;
             }
-            if (termEntry && monthsInput && weeksInput) {
+            if (!specProduct && termEntry && monthsInput && weeksInput) {
               if (!String(monthsInput.value || '').trim() || productId !== previousProductId) {
                 if (preliminaryUnitSelect && termEntry.preliminary_report_term_unit) {
                   preliminaryUnitSelect.value = termEntry.preliminary_report_term_unit;
@@ -14646,6 +14690,137 @@
     if (event.target.id === 'proposal-dispatch-local-path' && window.UIPref) {
       UIPref.set('proposals:localFolder', event.target.value.trim());
     }
+  });
+
+  let proposalScanDeletePending = null;
+
+  function refreshProposalsPaneAfterScan() {
+    const root = document.getElementById('proposals-pane');
+    if (!root || !window.htmx) return;
+    const url = root.getAttribute('data-proposal-tables-url') || root.getAttribute('hx-get') || '';
+    if (!url) return;
+    window.htmx.ajax('GET', url, { target: '#proposals-pane', swap: 'outerHTML' });
+  }
+
+  function handleProposalScanUpload(inputEl) {
+    const file = inputEl.files && inputEl.files[0];
+    if (!file) return;
+    const url = inputEl.dataset.uploadUrl;
+    if (!url) return;
+    const modalEl = document.getElementById('proposal-scan-upload-progress-modal');
+    const progressBar = document.getElementById('proposal-scan-upload-progress-bar');
+    const statusEl = document.getElementById('proposal-scan-upload-status');
+    const closeBtn = document.getElementById('proposal-scan-upload-close-btn');
+    let uploadSucceeded = false;
+    if (progressBar) progressBar.style.width = '0%';
+    if (statusEl) statusEl.textContent = '';
+    if (closeBtn) closeBtn.disabled = true;
+    if (modalEl && window.bootstrap) {
+      window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+    const fd = new FormData();
+    fd.append('scan_file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('X-CSRFToken', getCookie('csrftoken'));
+    xhr.upload.addEventListener('progress', function (ev) {
+      if (ev.lengthComputable && progressBar) {
+        progressBar.style.width = Math.round(ev.loaded / ev.total * 100) + '%';
+      }
+    });
+    xhr.addEventListener('load', function () {
+      if (progressBar) progressBar.style.width = '100%';
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status >= 200 && xhr.status < 300 && data && data.ok) {
+        uploadSucceeded = true;
+        if (statusEl) {
+          const storageLabel = data.storage_label || 'облачное хранилище';
+          statusEl.textContent = 'Документ успешно загружен на ' + storageLabel
+            + ' и переименован в «' + (data.scan_name || '') + '».';
+        }
+      } else if (statusEl) {
+        statusEl.textContent = (data && data.error) || 'Ошибка при загрузке файла.';
+      }
+      if (closeBtn) closeBtn.disabled = false;
+    });
+    xhr.addEventListener('error', function () {
+      if (statusEl) statusEl.textContent = 'Ошибка сети при загрузке файла.';
+      if (closeBtn) closeBtn.disabled = false;
+    });
+    if (modalEl) {
+      modalEl.addEventListener('hidden.bs.modal', function onHidden() {
+        modalEl.removeEventListener('hidden.bs.modal', onHidden);
+        if (uploadSucceeded) refreshProposalsPaneAfterScan();
+      }, { once: true });
+    }
+    xhr.send(fd);
+    inputEl.value = '';
+  }
+
+  document.addEventListener('change', function (event) {
+    if (!(event.target instanceof Element)) return;
+    const inputEl = event.target.closest('.js-proposal-scan-upload');
+    if (!inputEl) return;
+    const root = pane();
+    if (!root || !root.contains(inputEl)) return;
+    handleProposalScanUpload(inputEl);
+  });
+
+  document.addEventListener('click', function (event) {
+    if (!(event.target instanceof Element)) return;
+    const removeBtn = event.target.closest('.js-proposal-scan-remove');
+    if (!removeBtn) return;
+    const root = pane();
+    if (!root || !root.contains(removeBtn)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const modalEl = document.getElementById('proposal-scan-delete-modal');
+    const messageEl = document.getElementById('proposal-scan-delete-message');
+    if (!modalEl || !messageEl || !window.bootstrap) return;
+    proposalScanDeletePending = {
+      url: removeBtn.dataset.deleteUrl || '',
+      fileName: removeBtn.dataset.fileName || '',
+    };
+    messageEl.classList.remove('text-danger');
+    messageEl.textContent = 'Удалить файл «' + proposalScanDeletePending.fileName + '»? Файл будет удалён и с диска.';
+    window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  });
+
+  document.addEventListener('click', function (event) {
+    if (!(event.target instanceof Element)) return;
+    const confirmBtn = event.target.closest('#proposal-scan-delete-confirm');
+    if (!confirmBtn || confirmBtn.disabled || !proposalScanDeletePending) return;
+    event.preventDefault();
+    const pending = proposalScanDeletePending;
+    confirmBtn.disabled = true;
+    fetch(pending.url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCookie('csrftoken') },
+    }).then(function (response) {
+      return response.json().then(function (data) {
+        if (!response.ok || !data || !data.ok) {
+          throw new Error((data && data.error) || 'Не удалось удалить файл.');
+        }
+        return data;
+      });
+    }).then(function () {
+      proposalScanDeletePending = null;
+      const modalEl = document.getElementById('proposal-scan-delete-modal');
+      if (modalEl && window.bootstrap) {
+        const instance = window.bootstrap.Modal.getInstance(modalEl);
+        if (instance) instance.hide();
+      }
+      refreshProposalsPaneAfterScan();
+    }).catch(function (err) {
+      const messageEl = document.getElementById('proposal-scan-delete-message');
+      if (messageEl) {
+        messageEl.classList.add('text-danger');
+        messageEl.textContent = err.message || 'Ошибка сети при удалении файла.';
+      }
+    }).finally(function () {
+      confirmBtn.disabled = false;
+    });
   });
 
   document.addEventListener('mouseover', function (event) {

@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from django.db.models import Q
+
 
 MANAGED_SOURCE_WORK_VOLUME = "work_volume"
 MANAGED_SOURCE_PERFORMER = "performer"
@@ -469,14 +471,25 @@ def _performers_by_work_volume(registration, product_id: int | None) -> dict[int
 
     qs = (
         Performer.objects
-        .select_related("work_item", "typical_section", "typical_section__product")
-        .filter(registration=registration, typical_section__isnull=False)
+        .select_related(
+            "work_item",
+            "typical_section",
+            "typical_section__product",
+            "service_block",
+            "service_block__expertise_dir",
+        )
+        .filter(registration=registration)
+        .filter(Q(typical_section__isnull=False) | Q(service_block__isnull=False))
         .exclude(typical_section__is_system=True)
         .exclude(typical_section__code__iexact="DSC")
+        .exclude(service_block__code__iexact="DSC")
         .order_by("position", "id")
     )
     if product_id:
-        qs = qs.filter(typical_section__product_id=product_id)
+        qs = qs.filter(
+            Q(typical_section__product_id=product_id)
+            | Q(service_block__isnull=False, typical_section__isnull=True)
+        )
     grouped: dict[int, list] = {}
     by_asset_name: dict[str, list] = {}
     for performer in qs:
@@ -619,7 +632,7 @@ def _placeholder_asset_task_from_template(
 
 
 def _section_task_from_template(template: dict, performer, asset_task: dict) -> dict:
-    section = performer.typical_section
+    section = performer.typical_section or performer.service_block
     section_label = _norm(getattr(section, "name_ru", "")) or _service_section_label(template)
     executor, specialty = _assignment_for_performer(performer, section)
     task = copy.deepcopy(template)
@@ -882,7 +895,7 @@ def sync_project_gantt_from_sources(registration, *, save: bool = True) -> bool:
             preliminary_tasks.append(asset_task)
             task_id_map = {str(asset_task.get("template_task_id") or ""): str(asset_task["id"])}
             for performer in performers_by_work_volume.get(work_item.pk, []):
-                section = getattr(performer, "typical_section", None)
+                section = performer.typical_section or performer.service_block
                 section_label = _norm(getattr(section, "name_ru", ""))
                 template = preliminary_section_templates_by_label.get(section_label)
                 if template is None:

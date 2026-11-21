@@ -21,6 +21,14 @@ from policy_app.models import (
     TypicalSection,
     ensure_system_dsc_section,
     is_system_dsc_code,
+    is_system_spec_product,
+    normalize_service_block_code,
+)
+from policy_app.spec_product import (
+    canonical_spec_service_section,
+    spec_block_job_title,
+    spec_block_service_name,
+    spec_blocks_by_code,
 )
 
 
@@ -2047,6 +2055,23 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             expected_type=list,
             default=[],
         )
+        if is_system_spec_product(product):
+            blocks = self._spec_blocks_by_code()
+            normalized = []
+            for item in items:
+                if not isinstance(item, dict) or _proposal_is_dsc_payload_item(item, product):
+                    continue
+                canonical = canonical_spec_service_section(item, blocks)
+                if canonical is None:
+                    continue
+                row = {
+                    "service_name": canonical["service_name"],
+                    "code": canonical["code"],
+                }
+                if _proposal_payload_bool(item.get("merge_without_code")):
+                    row["merge_without_code"] = True
+                normalized.append(row)
+            return self._prepend_system_dsc_service_section(normalized, product)
         sections_by_name = {}
         if product is not None:
             for section in TypicalSection.objects.filter(product=product).order_by("position", "id"):
@@ -2076,6 +2101,13 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 }
             )
         return self._prepend_system_dsc_service_section(normalized, product)
+
+    def _spec_blocks_by_code(self):
+        blocks = getattr(self, "_spec_block_map", None)
+        if blocks is None:
+            blocks = spec_blocks_by_code()
+            self._spec_block_map = blocks
+        return blocks
 
     def _normalize_stage_editor_state(self, raw, *, row_index, product=None, service_sections=None):
         items = self._load_stage_json(
@@ -2167,6 +2199,15 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             if not isinstance(asset_day_counts, list):
                 asset_day_counts = []
             is_travel_expenses_row = is_proposal_travel_expenses_name(service_name)
+            if is_system_spec_product(product) and not is_travel_expenses_row:
+                block = self._spec_blocks_by_code().get(normalize_service_block_code(code))
+                if block is None:
+                    continue
+                service_name = spec_block_service_name(block)
+                code = block.code
+                title = spec_block_job_title(block)
+                if title:
+                    job_title = title
             cleaned_day_counts = []
             if is_travel_expenses_row and travel_expenses_mode == PROPOSAL_TRAVEL_EXPENSES_MODE_CALCULATION:
                 for day_idx, raw_value in enumerate(asset_day_counts, start=1):
@@ -3725,6 +3766,11 @@ class DispatchRecipientFormRow:
 
 
 class ProposalDispatchForm(BootstrapMixin, forms.ModelForm):
+    scan_file = forms.FileField(
+        label="Скан",
+        required=False,
+        widget=_ProposalFileInput(attrs={"class": "form-control"}),
+    )
     recipient_country = forms.ModelChoiceField(
         label="Страна",
         queryset=OKSMCountry.objects.none(),
