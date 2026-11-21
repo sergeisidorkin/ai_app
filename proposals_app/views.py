@@ -1,6 +1,7 @@
 import calendar
 import json
 import logging
+import mimetypes
 import os
 import sys
 from datetime import date as dt_date, datetime, timedelta
@@ -42,8 +43,10 @@ from policy_app.models import (
     SpecialtyTariff,
     SYSTEM_DSC_SECTION_CODE,
     SYSTEM_DSC_SECTION_DEFAULTS,
+    ServiceBlockClassifier,
     ServiceBlockClassifierSpecialty,
     Tariff,
+    is_system_dsc_code,
     TypicalSection,
     TypicalServiceComposition,
     TypicalServiceTerm,
@@ -78,8 +81,11 @@ from .document_generation import (
     build_proposal_docx_source_url,
     convert_docx_bytes_to_pdf_locally,
     generate_and_store_proposal_pdf,
+    ProposalScanError,
+    delete_proposal_scan_file,
     get_generated_docx_path,
     get_generated_pdf_path,
+    get_generated_scan_path,
     get_proposal_docx_source_token_payload,
     is_local_proposal_path,
     is_onlyoffice_conversion_configured,
@@ -91,6 +97,7 @@ from .document_generation import (
     store_generated_documents,
     store_generated_documents_locally,
     store_generated_pdf_document,
+    store_proposal_scan_bytes,
 )
 from .models import (
     ProposalDispatchRecipient,
@@ -774,7 +781,7 @@ def _is_nextcloud_cloud_path(path: str) -> bool:
 def _refresh_proposal_nextcloud_file_ids(proposals) -> list:
     """Resolve and persist Nextcloud file ids for proposal resources.
 
-    Ensures ``docx_file_id`` / ``pdf_file_id`` / ``proposal_workspace_file_id``
+    Ensures ``docx_file_id`` / ``pdf_file_id`` / ``scan_file_id`` / ``proposal_workspace_file_id``
     columns reflect the latest state in Nextcloud so that viewer-side editor
     URLs and the workspace folder link stay valid after the session cache
     expires. Paths not stored in Nextcloud (empty, HTTP(S), MEDIA) are silently
@@ -847,6 +854,25 @@ def _refresh_proposal_nextcloud_file_ids(proposals) -> list:
             if file_id and getattr(proposal, "pdf_file_id", "") != file_id:
                 proposal.pdf_file_id = file_id
                 changed_fields.append("pdf_file_id")
+        scan_path = _stored_scan_link(proposal)
+        if _is_nextcloud_cloud_path(scan_path):
+            try:
+                file_id = _resolve_nextcloud_file_id(
+                    client,
+                    owner_user_id,
+                    scan_path,
+                    resource_cache=resource_cache,
+                )
+            except NextcloudApiError as exc:
+                logger.warning(
+                    "Could not resolve Nextcloud scan file id for proposal %s: %s",
+                    getattr(proposal, "pk", ""),
+                    exc,
+                )
+                file_id = ""
+            if file_id and getattr(proposal, "scan_file_id", "") != file_id:
+                proposal.scan_file_id = file_id
+                changed_fields.append("scan_file_id")
         if changed_fields:
             ProposalRegistration.objects.filter(pk=proposal.pk).update(
                 **{name: getattr(proposal, name) for name in changed_fields}
@@ -913,11 +939,11 @@ def _resolve_proposal_file_open_url(
     if not raw_link and not file_name:
         return ""
     if is_local_proposal_path(raw_link):
-        download_name = (
-            "proposal_generated_pdf_download"
-            if file_link_attr == "pdf_file_link"
-            else "proposal_generated_docx_download"
-        )
+        download_names = {
+            "pdf_file_link": "proposal_generated_pdf_download",
+            "scan_file_link": "proposal_generated_scan_download",
+        }
+        download_name = download_names.get(file_link_attr, "proposal_generated_docx_download")
         return reverse(download_name, args=[proposal.pk])
     if raw_link.startswith(("http://", "https://")):
         return raw_link
@@ -996,6 +1022,30 @@ def _resolve_proposal_pdf_open_url(
     )
 
 
+def _resolve_proposal_scan_open_url(
+    proposal,
+    *,
+    client=None,
+    viewer_has_nextcloud_link: bool = False,
+    resolved_workspace_target_path: str = "",
+    owner_file_id: str = "",
+) -> str:
+    return _resolve_proposal_file_open_url(
+        proposal,
+        file_name_attr="scan_file_name",
+        file_link_attr="scan_file_link",
+        file_id_attr="scan_file_id",
+        client=client,
+        viewer_has_nextcloud_link=viewer_has_nextcloud_link,
+        resolved_workspace_target_path=resolved_workspace_target_path,
+        owner_file_id=owner_file_id,
+    )
+
+
+def _stored_scan_link(proposal) -> str:
+    return _stored_proposal_file_link(proposal, "scan_file_link")
+
+
 def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_nextcloud_links=False):
     folder_cache = {}
     share_resolution_paths = set()
@@ -1014,12 +1064,14 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                 proposal.proposal_workspace_folder_url = _stored_public(proposal) or folder_cache.get(path, "")
             proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(proposal)
             proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(proposal)
+            proposal.proposal_scan_file_url = _resolve_proposal_scan_open_url(proposal)
 
     for proposal in proposals:
         path = getattr(proposal, "proposal_workspace_disk_path", "") or build_proposal_workspace_path(proposal)
         proposal.proposal_workspace_folder_url = _stored_public(proposal)
         proposal.proposal_docx_file_url = ""
         proposal.proposal_pdf_file_url = ""
+        proposal.proposal_scan_file_url = ""
         if path:
             folder_cache.setdefault(path, build_folder_url(path))
             share_resolution_paths.add(path)
@@ -1214,6 +1266,11 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     stored_attr="pdf_file_id",
                     cloud_path=_stored_pdf_link(proposal),
                 )
+                owner_scan_file_id = _maybe_resolve_owner_file_id(
+                    proposal,
+                    stored_attr="scan_file_id",
+                    cloud_path=_stored_scan_link(proposal),
+                )
                 proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
                     proposal,
                     client=client,
@@ -1227,6 +1284,13 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     viewer_has_nextcloud_link=True,
                     resolved_workspace_target_path=resolved_target_cache.get(path, ""),
                     owner_file_id=owner_pdf_file_id,
+                )
+                proposal.proposal_scan_file_url = _resolve_proposal_scan_open_url(
+                    proposal,
+                    client=client,
+                    viewer_has_nextcloud_link=True,
+                    resolved_workspace_target_path=resolved_target_cache.get(path, ""),
+                    owner_file_id=owner_scan_file_id,
                 )
                 if not resolved_cache.get(path):
                     _log_nextcloud_resolution_debug(
@@ -1254,6 +1318,11 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     stored_attr="pdf_file_id",
                     cloud_path=_stored_pdf_link(proposal),
                 )
+                owner_scan_file_id = _maybe_resolve_owner_file_id(
+                    proposal,
+                    stored_attr="scan_file_id",
+                    cloud_path=_stored_scan_link(proposal),
+                )
                 proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(
                     proposal,
                     client=client,
@@ -1264,9 +1333,15 @@ def _attach_proposal_folder_urls(proposals, user=None, request=None, *, debug_ne
                     client=client,
                     owner_file_id=owner_pdf_file_id,
                 )
+                proposal.proposal_scan_file_url = _resolve_proposal_scan_open_url(
+                    proposal,
+                    client=client,
+                    owner_file_id=owner_scan_file_id,
+                )
         else:
             proposal.proposal_docx_file_url = _resolve_proposal_docx_open_url(proposal, client=client)
             proposal.proposal_pdf_file_url = _resolve_proposal_pdf_open_url(proposal, client=client)
+            proposal.proposal_scan_file_url = _resolve_proposal_scan_open_url(proposal, client=client)
 
 
 def _proposal_schedule_decimal(value):
@@ -2607,6 +2682,7 @@ def _proposal_product_catalog():
                 "consulting_type": (product.consulting_type_display or "").strip(),
                 "service_category": (product.service_category_display or "").strip(),
                 "service_subtype": (product.service_subtype_display or "").strip(),
+                "is_system": bool(product.is_system),
                 **catalog_group_payload(product),
             }
             for product in products
@@ -2941,6 +3017,70 @@ def _proposal_product_autofill_data(product_ids=None, group_member=None):
                     "specialist_options": specialist_options,
                 }
             )
+    spec_product_ids = {
+        str(product_id)
+        for product_id in Product.objects.filter(is_system=True).values_list("id", flat=True)
+    }
+    if spec_product_ids:
+        spec_blocks = list(
+            ServiceBlockClassifier.objects.exclude(code__iexact=SYSTEM_DSC_SECTION_CODE)
+            .select_related("expertise_dir")
+            .prefetch_related(
+                Prefetch(
+                    "ranked_specialties",
+                    queryset=(
+                        ServiceBlockClassifierSpecialty.objects
+                        .select_related("specialty")
+                        .order_by("rank", "id")
+                    ),
+                )
+            )
+            .order_by("-usage_count", "position", "id")
+        )
+        for product_id in product_ids:
+            if product_id not in spec_product_ids:
+                continue
+            bucket = sections_map.setdefault(product_id, [_system_dsc_section_entry(product_id, section_tariff_map)])
+            seen_codes = {(item.get("code") or "").strip().upper() for item in bucket}
+            for block in spec_blocks:
+                block_code = (block.code or "").strip()
+                if not block_code or is_system_dsc_code(block_code) or block_code.upper() in seen_codes:
+                    continue
+                seen_codes.add(block_code.upper())
+                specialty_names = []
+                for link in block.ranked_specialties.all():
+                    specialty_name = str(getattr(getattr(link, "specialty", None), "specialty", "") or "").strip()
+                    if specialty_name and specialty_name not in specialty_names:
+                        specialty_names.append(specialty_name)
+                primary_specialty = specialty_names[0] if specialty_names else ""
+                specialist_options = list(specialty_candidates.get(primary_specialty, []))
+                default_candidate = specialty_defaults.get(
+                    primary_specialty, {"name": "", "professional_status": "", "base_rate_share": 0}
+                )
+                block_name = (block.name_ru or block.short_name_ru or block.short_name or block_code).strip()
+                bucket.append(
+                    {
+                        "name": block_name,
+                        "code": block_code,
+                        "select_key": _section_select_key(block_name, block_code),
+                        "display_name": _section_display_name(block_name, block_code),
+                        "is_system": False,
+                        "is_system_dsc": False,
+                        "accounting_type": str(block.accounting_type or "").strip(),
+                        "executor": "\n".join(specialty_names),
+                        "exclude_from_tkp_autofill": True,
+                        "default_specialist": default_candidate["name"],
+                        "default_professional_status": default_candidate["professional_status"],
+                        "default_base_rate_share": int(default_candidate.get("base_rate_share", 0) or 0),
+                        "specialty_tariff_rate_eur": "",
+                        "service_days_tkp": 0,
+                        "specialty_is_director": (
+                            not block.expertise_dir_id
+                            or (getattr(block.expertise_dir, "short_name", "") or "").strip() == "—"
+                        ),
+                        "specialist_options": specialist_options,
+                    }
+                )
     service_goal_reports_map = {}
     for item in service_goal_reports:
         product_id = str(item.product_id or "")
@@ -3079,10 +3219,21 @@ def _attach_dispatch_form_file_urls(proposal, user) -> None:
         resolved_workspace_target_path=stored_target_path,
         owner_file_id=_stored_proposal_file_id(proposal, "pdf_file_id"),
     )
+    proposal.proposal_scan_file_url = _resolve_proposal_scan_open_url(
+        proposal,
+        client=client,
+        viewer_has_nextcloud_link=viewer_has_nextcloud_link,
+        resolved_workspace_target_path=stored_target_path,
+        owner_file_id=_stored_proposal_file_id(proposal, "scan_file_id"),
+    )
 
 
 def _render_dispatch_form(request, *, form, proposal):
     _attach_dispatch_form_file_urls(proposal, request.user)
+    scan_field = form.fields.get("scan_file")
+    if scan_field is not None:
+        scan_field.widget.attrs["cloud_current_url"] = getattr(proposal, "proposal_scan_file_url", "") or ""
+        scan_field.widget.attrs["cloud_current_name"] = getattr(proposal, "scan_file_name", "") or ""
     recipient_identifier_record_id, recipient_identifier_selected = _autocomplete_link_state(
         form,
         "recipient_autocomplete",
@@ -3692,6 +3843,38 @@ def _sync_dispatch_recipient_registry(proposal, payloads, user):
     mirror_primary_dispatch_recipient(proposal)
 
 
+def _dispatch_form_modal_response(request, form, proposal):
+    response = _render_dispatch_form(request, form=form, proposal=proposal)
+    response["HX-Retarget"] = "#proposals-modal .modal-content"
+    response["HX-Reswap"] = "innerHTML"
+    return response
+
+
+def _persist_proposal_scan_change(user, proposal, scan_value):
+    if scan_value is False:
+        delete_proposal_scan_file(user, proposal.scan_file_link)
+        proposal.scan_file_name = ""
+        proposal.scan_file_link = ""
+        proposal.scan_file_id = ""
+        proposal.save(update_fields=["scan_file_name", "scan_file_link", "scan_file_id"])
+        return
+    if not scan_value:
+        return
+    old_link = str(proposal.scan_file_link or "")
+    scan_value.seek(0)
+    stored = store_proposal_scan_bytes(user, proposal, scan_value.read(), getattr(scan_value, "name", "") or "")
+    proposal.scan_file_name = stored["scan_name"]
+    proposal.scan_file_link = stored["scan_path"]
+    proposal.scan_file_id = ""
+    proposal.save(update_fields=["scan_file_name", "scan_file_link", "scan_file_id"])
+    if old_link and old_link != stored["scan_path"]:
+        try:
+            delete_proposal_scan_file(user, old_link)
+        except ProposalScanError:
+            logger.warning("Could not remove previous proposal scan %s", old_link)
+    _refresh_proposal_nextcloud_file_ids([proposal])
+
+
 @login_required
 @user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
@@ -3704,18 +3887,58 @@ def proposal_dispatch_form_edit(request, pk: int):
             proposal=proposal,
         )
 
-    form = ProposalDispatchForm(request.POST, instance=proposal)
+    form = ProposalDispatchForm(request.POST, request.FILES, instance=proposal)
     if not form.is_valid():
         return _render_dispatch_form(request, form=form, proposal=proposal)
 
-    with transaction.atomic():
-        proposal = form.save()
-        _sync_dispatch_recipient_registry(
-            proposal,
-            form.cleaned_dispatch_recipients,
-            request.user,
-        )
+    try:
+        with transaction.atomic():
+            proposal = form.save()
+            _sync_dispatch_recipient_registry(
+                proposal,
+                form.cleaned_dispatch_recipients,
+                request.user,
+            )
+            _persist_proposal_scan_change(request.user, proposal, form.cleaned_data.get("scan_file"))
+    except (ProposalScanError, LocalProposalFolderError, RuntimeError) as exc:
+        form.add_error("scan_file", str(exc))
+        proposal.refresh_from_db()
+        return _dispatch_form_modal_response(request, form, proposal)
     return _render_proposals_updated(request)
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def proposal_scan_upload(request, pk: int):
+    proposal = get_object_or_404(ProposalRegistration, pk=pk)
+    uploaded = request.FILES.get("scan_file")
+    if not uploaded:
+        return JsonResponse({"ok": False, "error": "Файл не выбран."}, status=400)
+    try:
+        _persist_proposal_scan_change(request.user, proposal, uploaded)
+    except (ProposalScanError, LocalProposalFolderError, RuntimeError) as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    proposal.refresh_from_db()
+    return JsonResponse(
+        {
+            "ok": True,
+            "scan_name": proposal.scan_file_name,
+            "storage_label": get_primary_cloud_storage_label(),
+        }
+    )
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def proposal_scan_delete(request, pk: int):
+    proposal = get_object_or_404(ProposalRegistration, pk=pk)
+    try:
+        _persist_proposal_scan_change(request.user, proposal, False)
+    except (ProposalScanError, LocalProposalFolderError, RuntimeError) as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    return JsonResponse({"ok": True})
 
 
 @login_required
@@ -4349,6 +4572,27 @@ def proposal_generated_pdf_download(request, pk: int):
     file_name = str(getattr(proposal, "pdf_file_name", "") or "").strip() or file_path.name
     response = FileResponse(open(file_path, "rb"), content_type="application/pdf")
     response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(file_name)}"
+    return response
+
+
+@login_required
+@require_GET
+def proposal_generated_scan_download(request, pk: int):
+    proposal = get_object_or_404(ProposalRegistration, pk=pk)
+    file_path = get_generated_scan_path(proposal)
+    if not file_path:
+        if is_local_proposal_path(getattr(proposal, "scan_file_link", "")):
+            raise Http404("Файл скана не найден")
+        _attach_proposal_folder_urls([proposal], user=request.user, request=request)
+        proposal_scan_file_url = str(getattr(proposal, "proposal_scan_file_url", "") or "").strip()
+        if proposal_scan_file_url:
+            return redirect(proposal_scan_file_url)
+        raise Http404("Файл скана не найден")
+
+    file_name = str(getattr(proposal, "scan_file_name", "") or "").strip() or file_path.name
+    content_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+    response = FileResponse(open(file_path, "rb"), content_type=content_type)
+    response["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(file_name)}"
     return response
 
 

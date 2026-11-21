@@ -255,6 +255,7 @@
         <col class="proposal-disk" data-col="cloud">
         <col class="docx-name" data-col="docx-name">
         <col class="pdf-name" data-col="pdf-name">
+        <col class="scan" data-col="scan">
         <col class="sent-date" data-col="sent-date">
         <col class="contact-name" data-col="contact-name">
         <col class="contact-email" data-col="contact-email">
@@ -393,6 +394,42 @@
                     <span class="proposal-file-name-text">{{ proposal.pdf_file_name }}</span>
                   </span>
                 {% endif %}
+              {% endif %}
+            </td>
+            <td class="proposal-scan-cell{% if request.user.is_authenticated and request.user.is_staff and proposal.scan_file_name %} proposal-scan-remove-host{% endif %}" data-col="scan" rowspan="{{ rows|length }}">
+              {% if proposal.scan_file_name %}
+                {% if proposal.proposal_scan_file_url %}
+                  <a href="{{ proposal.proposal_scan_file_url }}"
+                     target="_blank"
+                     rel="noopener"
+                     class="proposal-scan-link"
+                     title="Открыть скан">
+                    <i class="bi bi-paperclip" style="color: var(--bs-primary, #075D94);"></i>
+                  </a>
+                {% else %}
+                  <span class="proposal-scan-link" title="{{ proposal.scan_file_name }}">
+                    <i class="bi bi-paperclip" style="color: var(--bs-primary, #075D94);"></i>
+                  </span>
+                {% endif %}
+                {% if request.user.is_authenticated and request.user.is_staff %}
+                  <button type="button"
+                          class="proposal-scan-remove-btn js-proposal-scan-remove"
+                          data-delete-url="{% url 'proposal_scan_delete' proposal.pk %}"
+                          data-file-name="{{ proposal.scan_file_name }}"
+                          title="Удалить"
+                          aria-label="Удалить загруженный файл">
+                    <i class="bi bi-x-lg"></i>
+                  </button>
+                {% endif %}
+              {% elif request.user.is_authenticated and request.user.is_staff %}
+                <label class="proposal-scan-link" title="Загрузить скан">
+                  <i class="bi bi-paperclip" style="color: #ccc;"></i>
+                  <input type="file"
+                         class="d-none js-proposal-scan-upload"
+                         data-upload-url="{% url 'proposal_scan_upload' proposal.pk %}">
+                </label>
+              {% else %}
+                <i class="bi bi-paperclip" style="color: #ccc;" title="Скан не загружен"></i>
               {% endif %}
             </td>
             <td class="proposal-sent-date-cell" data-col="sent-date" rowspan="{{ rows|length }}">{{ proposal.sent_date }}</td>
@@ -636,6 +673,45 @@
 
       {% include "proposals_app/proposal_variables_section.html" %}
     {% endif %}
+  {% if request.user.is_authenticated and request.user.is_staff %}
+  <div class="modal fade" id="proposal-scan-upload-progress-modal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Загрузка скана</h5>
+        </div>
+        <div class="modal-body">
+          <div id="proposal-scan-upload-progress">
+            <div class="ws-progress-track">
+              <div class="ws-progress-fill" id="proposal-scan-upload-progress-bar" style="width:0%"></div>
+            </div>
+          </div>
+          <div id="proposal-scan-upload-status" class="small mt-2"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="proposal-scan-upload-close-btn" data-bs-dismiss="modal" disabled>Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="proposal-scan-delete-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Удаление файла</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-0" id="proposal-scan-delete-message"></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+          <button type="button" class="btn btn-danger btn-sm" id="proposal-scan-delete-confirm">Удалить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
   {{ proposal_year_options|json_script:"proposal-year-options" }}
 </div>
 {% endif %}

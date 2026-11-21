@@ -52,6 +52,7 @@ from .models import (
     build_consulting_catalog_meta,
     ensure_system_dsc_section,
     is_system_dsc_code,
+    is_system_spec_product,
     normalize_product_accuracy,
     normalize_service_block_code,
     with_product_group_mark,
@@ -3012,6 +3013,19 @@ def product_workspace_save(request, pk: int):
                 fields.pop(locked_field, None)
             if product.is_product_group and "short_name" in fields:
                 fields["short_name"] = with_product_group_mark(fields.get("short_name"))
+        if is_system_spec_product(product):
+            for locked_field in (
+                "display_name",
+                "short_name",
+                "name_en",
+                "name_ru",
+                "consulting_type_ref",
+                "service_category_ref",
+                "service_subtype_ref",
+                "accuracy",
+                "owner_ids",
+            ):
+                fields.pop(locked_field, None)
         product_form = ProductForm(_product_workspace_form_data(product, fields), instance=product)
         if not product_form.is_valid():
             errors.extend(_product_form_inline_errors(product_form, product.pk))
@@ -3467,6 +3481,8 @@ def product_form_edit(request, pk: int):
 @require_POST
 def product_delete(request, pk: int):
     product = get_object_or_404(Product, pk=pk)
+    if is_system_spec_product(product):
+        return JsonResponse({"ok": False, "error": "Системный продукт нельзя удалить."}, status=400)
     group_id = None if product.is_product_group else product.group_id
     product.delete()
     dissolve_product_group_if_sparse(group_id)
@@ -3780,8 +3796,12 @@ def _apply_product_csv_groups(pending_links):
         for product in Product.objects.filter(is_product_group=True).only("id", "short_name", "is_product_group")
     }
     for row_number, product_id, short_name, group_label in pending_links:
-        product = Product.objects.filter(pk=product_id).only("id", "short_name", "is_product_group", "group_id").first()
-        if product is None:
+        product = Product.objects.filter(pk=product_id).only(
+            "id", "short_name", "is_product_group", "is_system", "group_id"
+        ).first()
+        if product is None or is_system_spec_product(product):
+            if product is not None and is_system_spec_product(product):
+                warnings.append(f"Строка {row_number}: системный продукт «{short_name}» нельзя изменить через CSV.")
             continue
         if product_short_name_is_group(short_name) and not product.is_product_group:
             Product.objects.filter(pk=product.pk).update(is_product_group=True)

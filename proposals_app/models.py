@@ -51,6 +51,9 @@ class ProposalRegistration(models.Model):
         "pdf_file_name",
         "pdf_file_link",
         "pdf_file_id",
+        "scan_file_name",
+        "scan_file_link",
+        "scan_file_id",
         "sent_date",
         "transfer_to_contract_date",
         "recipient",
@@ -297,6 +300,14 @@ class ProposalRegistration(models.Model):
     pdf_file_link = models.CharField("Ссылка на PDF", max_length=500, blank=True, default="")
     pdf_file_id = models.CharField(
         "Идентификатор PDF в Nextcloud",
+        max_length=64,
+        blank=True,
+        default="",
+    )
+    scan_file_name = models.CharField("Наименование файла скана", max_length=255, blank=True, default="")
+    scan_file_link = models.CharField("Ссылка на скан", max_length=500, blank=True, default="")
+    scan_file_id = models.CharField(
+        "Идентификатор скана в Nextcloud",
         max_length=64,
         blank=True,
         default="",

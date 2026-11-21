@@ -1218,6 +1218,7 @@ def _registration_product_catalog():
                     "consulting_type": (product.consulting_type_display or "").strip(),
                     "service_category": (product.service_category_display or "").strip(),
                     "service_subtype": (product.service_subtype_display or "").strip(),
+                    "is_system": bool(product.is_system),
                     "service_goal_report": service_goal_reports.get(str(product.pk), {}),
                     "typical_service_terms": typical_terms.get(str(product.pk), {}),
                     **catalog_group_payload(product),

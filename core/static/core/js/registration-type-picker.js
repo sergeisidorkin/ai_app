@@ -403,7 +403,15 @@ function attachRegistrationProducts(node) {
         if (finalInput) finalInput.value = "";
         termRow.dataset.forceDatesFromTerms = "1";
       }
-      if (productId && productId !== previousProductId) {
+      if (productId && productId !== previousProductId && product?.is_system) {
+        if (sourceDataTermInput) sourceDataTermInput.value = "";
+        if (sourceDataTermUnitSelect) sourceDataTermUnitSelect.value = "weeks";
+        if (monthsInput) monthsInput.value = "";
+        if (preliminaryTermUnitSelect) preliminaryTermUnitSelect.value = "months";
+        if (weeksInput) weeksInput.value = "";
+        if (finalTermUnitSelect) finalTermUnitSelect.value = "weeks";
+        termRow.dataset.forceDatesFromTerms = "1";
+      } else if (productId && productId !== previousProductId) {
         if (
           sourceDataTermInput
           && terms.source_data_weeks !== undefined
@@ -480,13 +488,14 @@ function attachRegistrationProducts(node) {
     }
   };
 
-  const filteredProducts = (consultingType, serviceCategory, serviceSubtype) => (
+  const filteredProducts = (consultingType, serviceCategory, serviceSubtype, includeSystem) => (
     products.filter((product) => {
       if (product.is_group && !(window.ProductGroupPicker && ProductGroupPicker.allow(container))) return false;
-      if (consultingType && product.consulting_type !== consultingType) return false;
-      if (serviceCategory && product.service_category !== serviceCategory) return false;
-      if (serviceSubtype && product.service_subtype !== serviceSubtype) return false;
-      return true;
+      const matches = (!consultingType || product.consulting_type === consultingType)
+        && (!serviceCategory || product.service_category === serviceCategory)
+        && (!serviceSubtype || product.service_subtype === serviceSubtype);
+      if (matches) return true;
+      return includeSystem === true && product.is_system === true;
     })
   );
 
@@ -573,7 +582,7 @@ function attachRegistrationProducts(node) {
 
     buildOptions(
       productSelect,
-      filteredProducts(consultingValue, categoryValue, subtypeValue),
+      filteredProducts(consultingValue, categoryValue, subtypeValue, true),
       "— выберите продукт —",
       productValue,
       (product) => ({ value: product.id, label: product.label })

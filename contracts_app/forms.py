@@ -19,7 +19,9 @@ from policy_app.models import (
     TypicalServiceTerm,
     ensure_system_dsc_section,
     is_system_dsc_code,
+    is_system_spec_product,
 )
+from policy_app.spec_product import canonical_spec_service_section, spec_blocks_by_code
 from projects_app.forms import (
     BootstrapMixin,
     DATE_INPUT_FORMATS,
@@ -1550,6 +1552,24 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
             expected_type=list,
             default=[],
         )
+        if is_system_spec_product(product):
+            ensure_system_dsc_section(product)
+            blocks = self._spec_blocks_by_code()
+            normalized = []
+            for item in items:
+                if not isinstance(item, dict) or _contract_is_dsc_payload_item(item, product):
+                    continue
+                canonical = canonical_spec_service_section(item, blocks)
+                if canonical is None:
+                    continue
+                row = {
+                    "service_name": canonical["service_name"],
+                    "code": canonical["code"],
+                }
+                if _contract_payload_bool(item.get("merge_without_code")):
+                    row["merge_without_code"] = True
+                normalized.append(row)
+            return self._prepend_system_dsc_service_section(normalized, product)
         sections_by_name = {}
         if product is not None:
             ensure_system_dsc_section(product)
@@ -1580,6 +1600,13 @@ class ContractProjectRegistrationForm(BootstrapMixin, forms.ModelForm):
                 }
             )
         return self._prepend_system_dsc_service_section(normalized, product)
+
+    def _spec_blocks_by_code(self):
+        blocks = getattr(self, "_spec_block_map", None)
+        if blocks is None:
+            blocks = spec_blocks_by_code()
+            self._spec_block_map = blocks
+        return blocks
 
     def _normalize_contract_stage_editor_state(self, raw, *, row_index, product=None, service_sections=None):
         items = self._load_contract_stage_json(

@@ -38,6 +38,7 @@ from .models import (
     DIRECTOR_GROUPS,
     SERVICE_BLOCK_CODE_FORMAT_MESSAGE,
     is_system_dsc_code,
+    is_system_spec_product,
     normalize_service_block_code,
     resolve_copied_section_name,
 )
@@ -257,7 +258,14 @@ class ProductForm(forms.ModelForm):
             and self.instance.pk
             and (self.instance.is_product_group or self.instance.group_id)
         )
+        self.system_locked = bool(self.instance and self.instance.pk and is_system_spec_product(self.instance))
+        self.identity_locked = self.classification_locked or self.system_locked
         if self.classification_locked:
+            for field_name in ("consulting_type_ref", "service_category_ref", "service_subtype_ref"):
+                lock_field(self.fields[field_name], disabled=True, use_disabled_attr=True)
+        if self.system_locked:
+            for field_name in ("display_name", "short_name", "name_en", "name_ru", "accuracy"):
+                lock_field(self.fields[field_name], disabled=True)
             for field_name in ("consulting_type_ref", "service_category_ref", "service_subtype_ref"):
                 lock_field(self.fields[field_name], disabled=True, use_disabled_attr=True)
 
@@ -289,10 +297,27 @@ class ProductForm(forms.ModelForm):
             self.add_error("service_category_ref", "Выберите значение из списка для выбранного вида консалтинга.")
         if service_category and service_subtype and service_subtype.service_type_id != service_category.pk:
             self.add_error("service_subtype_ref", "Выберите значение из списка для выбранного типа услуг.")
+        if self.system_locked:
+            cleaned_data["display_name"] = self.instance.display_name
+            cleaned_data["short_name"] = self.instance.short_name
+            cleaned_data["name_en"] = self.instance.name_en
+            cleaned_data["name_ru"] = self.instance.name_ru
+            cleaned_data["consulting_type_ref"] = self.instance.consulting_type_ref
+            cleaned_data["service_category_ref"] = self.instance.service_category_ref
+            cleaned_data["service_subtype_ref"] = self.instance.service_subtype_ref
+            cleaned_data["accuracy"] = ""
         return cleaned_data
 
     def save(self, commit=True):
         obj = super().save(commit=False)
+        if self.system_locked:
+            obj.is_system = True
+            obj.is_group_owner = True
+            obj.accuracy = ""
+            if commit:
+                obj.save()
+                obj.owners.clear()
+            return obj
         if self.classification_locked:
             if commit:
                 obj.save()
@@ -790,6 +815,9 @@ class TypicalSectionForm(forms.ModelForm):
         product = cleaned.get("product")
         if product is None and self.instance.pk:
             product = self.instance.product
+        if is_system_spec_product(product) and not getattr(self.instance, "is_system_dsc", False):
+            self.add_error("product", "К системному продукту «Спецпроект» нельзя добавлять разделы.")
+            return cleaned
         if product and self._sections_with_same_block(product, block).exists():
             self.add_error("service_block", "У этого продукта уже есть раздел с таким кодом.")
         previous = None

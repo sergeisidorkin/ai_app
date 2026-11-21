@@ -52,6 +52,8 @@ def validate_group_members(products, expected_count=None):
         raise ValidationError("Выберите не меньше двух продуктов.")
     if any(product.is_product_group or product.group_id for product in products):
         raise ValidationError("В группу можно объединить только обычные продукты.")
+    if any(getattr(product, "is_system", False) for product in products):
+        raise ValidationError("Системный продукт нельзя объединять в группу.")
     signature = grouping_signature(products[0])
     if any(grouping_signature(product) != signature for product in products[1:]):
         raise ValidationError(
@@ -189,6 +191,9 @@ def product_short_name_is_group(short_name):
 def product_catalog_queryset():
     from django.db.models import Prefetch
 
+    from policy_app.models import ensure_system_spec_product
+
+    ensure_system_spec_product()
     return Product.objects.order_by("-usage_count", "position", "id").prefetch_related(
         Prefetch(
             "grouped_products",

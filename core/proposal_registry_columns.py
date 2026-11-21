@@ -545,6 +545,12 @@ PROPOSAL_DISPATCH_UI_COLUMNS = [
         "label": "Наименование файла PDF",
     },
     {
+        "picker_value": "scan",
+        "data_col": "scan",
+        "source_column": "scan_file_name",
+        "label": "Скан",
+    },
+    {
         "picker_value": "sent-date",
         "data_col": "sent-date",
         "source_column": "sent_date",

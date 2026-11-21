@@ -29,6 +29,21 @@ SUPERUSER_GROUPS = (
 )
 
 SYSTEM_DSC_SECTION_CODE = "DSC"
+SYSTEM_SPEC_PRODUCT_SHORT_NAME = "SPEC"
+SYSTEM_SPEC_CONSULTING_TYPE_NAME = "Спецуслуги"
+SYSTEM_SPEC_SERVICE_CATEGORY_NAME = "Спецуслуги"
+SYSTEM_SPEC_SERVICE_CODE = "X"
+SYSTEM_SPEC_SERVICE_SUBTYPE_NAME = "Прочее"
+SYSTEM_SPEC_PRODUCT_DEFAULTS = {
+    "short_name": SYSTEM_SPEC_PRODUCT_SHORT_NAME,
+    "display_name": "Спецпроект",
+    "name_en": "Special Project",
+    "name_ru": "Специальный проект",
+    "accuracy": "",
+    "is_group_owner": True,
+    "is_system": True,
+    "is_product_group": False,
+}
 SYSTEM_DSC_SECTION_DEFAULTS = {
     "code": SYSTEM_DSC_SECTION_CODE,
     "short_name": "Description",
@@ -86,6 +101,14 @@ def normalize_section_code(value) -> str:
 
 def is_system_dsc_code(value) -> bool:
     return normalize_section_code(value) == SYSTEM_DSC_SECTION_CODE
+
+
+def is_system_spec_product(product) -> bool:
+    if product is None:
+        return False
+    if getattr(product, "is_system", False):
+        return True
+    return (getattr(product, "short_name", "") or "").strip().upper() == SYSTEM_SPEC_PRODUCT_SHORT_NAME
 
 def _join_catalog_values(items) -> str:
     values = []
@@ -446,6 +469,7 @@ class Product(models.Model):
     )
     is_group_owner = models.BooleanField("Группа (все компании)", default=False)
     is_product_group = models.BooleanField("Групповой продукт", default=False)
+    is_system = models.BooleanField("Системный продукт", default=False, db_index=True)
     group = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,
@@ -515,6 +539,8 @@ class Product(models.Model):
             self.short_name = marked
         elif PRODUCT_GROUP_MARK in (self.short_name or ""):
             raise ValidationError({"short_name": "Знак ⧉ зарезервирован для группового продукта."})
+        if self.is_system and (self.is_product_group or self.group_id):
+            raise ValidationError("Системный продукт нельзя объединять в группу.")
 
     def _sync_catalog_refs_from_legacy_values(self):
         if not self.consulting_type_ref_id and self.consulting_type:
@@ -556,6 +582,11 @@ class Product(models.Model):
             if stored_usage is not None:
                 self.usage_count = stored_usage
         super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.is_system:
+            raise ValidationError("Системный продукт нельзя удалить.")
+        return super().delete(*args, **kwargs)
 
     @property
     def owner_display(self):
@@ -934,6 +965,138 @@ def ensure_system_dsc_section(product):
 def ensure_system_dsc_sections_for_all_products():
     for product in Product.objects.filter(is_product_group=False).order_by("position", "id"):
         ensure_system_dsc_section(product)
+
+
+def ensure_spec_service_subtype():
+    """Подтип «Прочее» только у вида и типа «Спецуслуги» с кодом X."""
+    consulting_type = (
+        ConsultingDirectionType.objects.filter(name=SYSTEM_SPEC_CONSULTING_TYPE_NAME)
+        .order_by("position", "id")
+        .first()
+    )
+    if consulting_type is None:
+        return None
+    service_type = (
+        ConsultingServiceType.objects.filter(
+            consulting_type=consulting_type,
+            name=SYSTEM_SPEC_SERVICE_CATEGORY_NAME,
+            code=SYSTEM_SPEC_SERVICE_CODE,
+        )
+        .order_by("position", "id")
+        .first()
+    )
+    if service_type is None:
+        service_type = (
+            ConsultingServiceType.objects.filter(
+                consulting_type=consulting_type,
+                name=SYSTEM_SPEC_SERVICE_CATEGORY_NAME,
+            )
+            .order_by("position", "id")
+            .first()
+        )
+    if service_type is None:
+        return None
+    subtype = (
+        ConsultingServiceSubtype.objects.filter(
+            service_type=service_type,
+            name=SYSTEM_SPEC_SERVICE_SUBTYPE_NAME,
+        )
+        .order_by("position", "id")
+        .first()
+    )
+    if subtype is not None:
+        return subtype
+    position = (
+        ConsultingServiceSubtype.objects.filter(service_type=service_type)
+        .order_by("-position")
+        .values_list("position", flat=True)
+        .first()
+        or 0
+    ) + 1
+    return ConsultingServiceSubtype.objects.create(
+        direction=service_type.direction,
+        service_type=service_type,
+        name=SYSTEM_SPEC_SERVICE_SUBTYPE_NAME,
+        position=position,
+    )
+
+
+def _system_spec_product_is_current(product) -> bool:
+    if product is None or not product.is_system:
+        return False
+    if product.group_id or product.is_product_group or not product.is_group_owner:
+        return False
+    if (product.accuracy or "") != "":
+        return False
+    expected = (
+        (SYSTEM_SPEC_PRODUCT_DEFAULTS["display_name"], product.display_name),
+        (SYSTEM_SPEC_PRODUCT_DEFAULTS["name_en"], product.name_en),
+        (SYSTEM_SPEC_PRODUCT_DEFAULTS["name_ru"], product.name_ru),
+        (SYSTEM_SPEC_CONSULTING_TYPE_NAME, product.consulting_type),
+        (SYSTEM_SPEC_SERVICE_CATEGORY_NAME, product.service_category),
+        (SYSTEM_SPEC_SERVICE_CODE, product.service_code),
+        (SYSTEM_SPEC_SERVICE_SUBTYPE_NAME, product.service_subtype),
+    )
+    if any((left or "") != (right or "") for left, right in expected):
+        return False
+    return TypicalSection.objects.filter(
+        product=product,
+        code=SYSTEM_DSC_SECTION_CODE,
+        is_system=True,
+    ).exists()
+
+
+def ensure_system_spec_product():
+    """Один системный продукт SPEC. Создаёт его, если карточки ещё нет, и чинит поля."""
+    existing = (
+        Product.objects.filter(short_name=SYSTEM_SPEC_PRODUCT_SHORT_NAME)
+        .order_by("id")
+        .first()
+    )
+    if _system_spec_product_is_current(existing):
+        return existing
+    subtype = ensure_spec_service_subtype()
+    if subtype is None:
+        return existing
+    service_type = subtype.service_type
+    consulting_type = service_type.consulting_type
+    with transaction.atomic():
+        product = (
+            Product.objects.select_for_update()
+            .filter(short_name=SYSTEM_SPEC_PRODUCT_SHORT_NAME)
+            .order_by("id")
+            .first()
+        )
+        defaults = {
+            "display_name": SYSTEM_SPEC_PRODUCT_DEFAULTS["display_name"],
+            "name_en": SYSTEM_SPEC_PRODUCT_DEFAULTS["name_en"],
+            "name_ru": SYSTEM_SPEC_PRODUCT_DEFAULTS["name_ru"],
+            "consulting_type_ref": consulting_type,
+            "service_category_ref": service_type,
+            "service_subtype_ref": subtype,
+            "accuracy": "",
+            "is_group_owner": True,
+            "is_system": True,
+            "is_product_group": False,
+            "group": None,
+        }
+        if product is None:
+            position = (Product.objects.order_by("-position").values_list("position", flat=True).first() or 0) + 1
+            product = Product(
+                short_name=SYSTEM_SPEC_PRODUCT_SHORT_NAME,
+                position=position,
+                **defaults,
+            )
+            product.save()
+        else:
+            for field, value in defaults.items():
+                setattr(product, field, value)
+            product.save()
+        if product.is_group_owner:
+            product.owners.clear()
+        ensure_system_dsc_section(product)
+    product.refresh_from_db()
+    return product
 
 
 class SectionStructure(models.Model):
