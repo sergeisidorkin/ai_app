@@ -5,11 +5,12 @@ import os
 import sys
 from datetime import date as dt_date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from django import forms
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.paginator import Page, Paginator
 from django.db import transaction
 from django.db.models import Max, Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
@@ -106,10 +107,13 @@ from .services import (
     proposal_dispatch_letter_preview,
     send_proposal_dispatch_emails,
 )
-from .variable_resolver import resolve_variables
-from .xlsx_export import build_commercial_xlsx
+from .variable_resolver import _proposal_final_report_term, resolve_variables
+from .xlsx_export import build_commercial_xlsx, parse_commercial_xlsx
 
 PROPOSALS_PARTIAL_TEMPLATE = "proposals_app/proposals_partial.html"
+PROPOSAL_REGISTRY_TEMPLATE = "proposals_app/_proposal_registry_section.html"
+PROPOSAL_REGISTRY_PAGE_SIZE = 25
+PROPOSAL_REGISTRY_PAGE_SIZE_OPTIONS = (25, 50, 100, 200)
 PROPOSAL_FORM_TEMPLATE = "proposals_app/proposal_form_page.html"
 PROPOSAL_DISPATCH_FORM_TEMPLATE = "proposals_app/proposal_dispatch_form.html"
 PROPOSAL_TEMPLATE_FORM_TEMPLATE = "proposals_app/proposal_template_form.html"
@@ -1481,7 +1485,7 @@ def _build_proposal_payment_schedule_rows(proposals):
         if not products and stage_payloads:
             products = [None for _ in stage_payloads]
 
-        rolling_start_date = _proposal_schedule_base_start_date()
+        rolling_start_date = getattr(proposal, "project_start_date", None) or _proposal_schedule_base_start_date()
         product_count = len(products)
         for index, product in enumerate(products, start=1):
             payload = _proposal_stage_payload_for_product(stage_payloads, product, index - 1)
@@ -2058,16 +2062,269 @@ def _apply_proposal_year_scope(queryset, years):
     return queryset.filter(Q(pk__in=matched.values("pk")) | Q(short_uid__in=sibling_uids))
 
 
+def _selected_proposal_catalog_values(request, key):
+    values = []
+    for value in _proposal_request_values(request, key):
+        if value == "__all__":
+            continue
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _proposal_registry_page_params(request):
+    if request is None:
+        return PROPOSAL_REGISTRY_PAGE_SIZE, None
+    url_name = getattr(getattr(request, "resolver_match", None), "url_name", "")
+    if url_name in {"proposal_registry_table", "proposal_row_order"}:
+        size_key, page_key = "page_size", "page"
+    else:
+        size_key, page_key = "registry_page_size", "registry_page"
+    raw_size = next(iter(_proposal_request_values(request, size_key)), None)
+    raw_page = next(iter(_proposal_request_values(request, page_key)), None)
+    try:
+        page_size = int(raw_size or PROPOSAL_REGISTRY_PAGE_SIZE)
+    except (TypeError, ValueError):
+        page_size = PROPOSAL_REGISTRY_PAGE_SIZE
+    if page_size not in PROPOSAL_REGISTRY_PAGE_SIZE_OPTIONS:
+        page_size = PROPOSAL_REGISTRY_PAGE_SIZE
+    return page_size, raw_page
+
+
+def _proposal_registry_rows_share_group(previous, row):
+    if previous.number == row.number:
+        return True
+    version_group = getattr(previous, "version_group", None)
+    return bool(version_group) and version_group == getattr(row, "version_group", None)
+
+
+def _proposal_registry_page_bounds(rows, page_size):
+    """Строки одного номера или одного ТКП ID не делятся между страницами."""
+    groups = []
+    for index, row in enumerate(rows):
+        if groups and _proposal_registry_rows_share_group(rows[index - 1], row):
+            groups[-1][1] = index + 1
+        else:
+            groups.append([index, index + 1])
+    bounds = []
+    for start, end in groups:
+        if bounds and end - bounds[-1][0] <= page_size:
+            bounds[-1] = (bounds[-1][0], end)
+        else:
+            bounds.append((start, end))
+    return bounds
+
+
+class _ProposalRegistryPage(Page):
+    def start_index(self):
+        if not self.object_list:
+            return 0
+        return self.paginator.bounds[self.number - 1][0] + 1
+
+    def end_index(self):
+        if not self.object_list:
+            return 0
+        return self.paginator.bounds[self.number - 1][1]
+
+
+class _ProposalRegistryPaginator(Paginator):
+    def __init__(self, rows, per_page):
+        super().__init__(rows, per_page)
+        self.bounds = _proposal_registry_page_bounds(rows, per_page)
+
+    @property
+    def num_pages(self):
+        return len(self.bounds) or 1
+
+    def page(self, number):
+        number = self.validate_number(number)
+        if not self.bounds:
+            return self._get_page([], number, self)
+        start, end = self.bounds[number - 1]
+        return self._get_page(self.object_list[start:end], number, self)
+
+    def _get_page(self, *args, **kwargs):
+        return _ProposalRegistryPage(*args, **kwargs)
+
+    def page_for_index(self, index):
+        for number, (start, end) in enumerate(self.bounds, start=1):
+            if start <= index < end:
+                return number
+        return None
+
+
+def _proposal_registry_focus_page(rows, paginator, focus_proposal_ids):
+    focus_ids = set()
+    for raw_id in focus_proposal_ids or []:
+        try:
+            focus_ids.add(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    if not focus_ids:
+        return None
+    for index, row in enumerate(rows):
+        if row.pk in focus_ids:
+            return paginator.page_for_index(index)
+    return None
+
+
+def _filter_proposal_registry_rows(rows, kinds, statuses):
+    if not kinds and not statuses:
+        return list(rows)
+    kind_set = set(kinds)
+    status_set = set(statuses)
+    return [
+        row
+        for row in rows
+        if (not kind_set or row.kind in kind_set) and (not status_set or row.status in status_set)
+    ]
+
+
+def _proposal_registry_pagination_urls(path, page_size, page_obj, paginator, extra_params):
+    def page_url(number):
+        query = [("page_size", page_size), ("page", number), *extra_params]
+        return f"{path}?{urlencode(query)}"
+
+    pages = []
+    for number in paginator.get_elided_page_range(page_obj.number):
+        if number == paginator.ELLIPSIS:
+            pages.append({"ellipsis": True})
+        else:
+            pages.append(
+                {
+                    "number": number,
+                    "url": page_url(number),
+                    "current": number == page_obj.number,
+                }
+            )
+    return {
+        "pages": pages,
+        "previous_url": page_url(page_obj.previous_page_number()) if page_obj.has_previous() else "",
+        "next_url": page_url(page_obj.next_page_number()) if page_obj.has_next() else "",
+    }
+
+
+def _proposal_registry_page(request, rows, *, years, kinds, statuses, focus_proposal_ids=None):
+    page_size, page_number = _proposal_registry_page_params(request)
+    show_all = bool(kinds or statuses)
+    if show_all:
+        paginator = Paginator(rows, max(len(rows), 1))
+        page_number = 1
+    else:
+        paginator = _ProposalRegistryPaginator(rows, page_size)
+        focus_page = _proposal_registry_focus_page(rows, paginator, focus_proposal_ids)
+        if focus_page:
+            page_number = focus_page
+    if not page_number:
+        page_number = paginator.num_pages or 1
+    page_obj = paginator.get_page(page_number)
+    extra_params = [("proposals_year", value) for value in _proposal_year_query_values(years)]
+    extra_params += [("proposals_kind", value) for value in kinds]
+    extra_params += [("proposals_status", value) for value in statuses]
+    urls = _proposal_registry_pagination_urls(
+        reverse("proposal_registry_table"),
+        page_size,
+        page_obj,
+        paginator,
+        extra_params,
+    )
+    # Смена числа строк не выбирает страницу: без page сервер снова открывает последнюю.
+    page_size_query = urlencode(extra_params)
+    page_size_url = reverse("proposal_registry_table")
+    if page_size_query:
+        page_size_url += f"?{page_size_query}"
+    order_params = list(extra_params)
+    if not show_all and paginator.num_pages > 1:
+        order_params.extend([("page_size", page_size), ("page", page_obj.number)])
+    return {
+        "registry_proposals": list(page_obj.object_list),
+        "registry_page_obj": page_obj,
+        "registry_paginator": paginator,
+        "registry_pagination_pages": urls["pages"],
+        "registry_pagination_previous_url": urls["previous_url"],
+        "registry_pagination_next_url": urls["next_url"],
+        "registry_pagination_start": page_obj.start_index(),
+        "registry_pagination_end": page_obj.end_index(),
+        "registry_page_size": page_size,
+        "registry_page_size_options": PROPOSAL_REGISTRY_PAGE_SIZE_OPTIONS,
+        "registry_page_size_url": page_size_url,
+        "registry_kinds": list(kinds),
+        "registry_statuses": list(statuses),
+        "registry_years": _proposal_year_query_values(years),
+        "registry_show_all": show_all,
+        "proposal_registry_order_query": urlencode(order_params),
+    }
+
+
+def _proposal_registry_visible_ids(items, request):
+    years = _selected_proposal_years(request)
+    kinds = _selected_proposal_catalog_values(request, "proposals_kind")
+    statuses = _selected_proposal_catalog_values(request, "proposals_status")
+    _groups, scoped_ids = _scoped_proposal_display_ids(items, years)
+    by_id = {item.pk: item for item in items}
+    ordered = [by_id[proposal_id] for proposal_id in scoped_ids if proposal_id in by_id]
+    filtered = _filter_proposal_registry_rows(ordered, kinds, statuses)
+    page = _proposal_registry_page(
+        request,
+        filtered,
+        years=years,
+        kinds=kinds,
+        statuses=statuses,
+    )
+    return [proposal.pk for proposal in page["registry_proposals"]], scoped_ids
+
+
+def _merge_visible_proposal_order(full_groups, ordered_visible_ids, by_id):
+    """Перестановка видимых строк встаёт в их места, скрытые группы остаются на своих позициях."""
+    normalized = _normalize_proposal_version_order(ordered_visible_ids, by_id)
+    members_by_key = {}
+    seen_order = []
+    for proposal_id in normalized:
+        key = _proposal_version_group_key(by_id[proposal_id])
+        if key not in members_by_key:
+            members_by_key[key] = []
+            seen_order.append(key)
+        members_by_key[key].append(proposal_id)
+    group_members = {key: member_ids for key, member_ids in full_groups}
+    pending = iter(seen_order)
+    seen = set(seen_order)
+    merged = []
+    for key, member_ids in full_groups:
+        if key not in seen:
+            merged.extend(member_ids)
+            continue
+        new_key = next(pending)
+        submitted = members_by_key[new_key]
+        original = group_members[new_key]
+        submitted_set = set(submitted)
+        if set(original) <= submitted_set and len(submitted) == len(original):
+            merged.extend(submitted)
+            continue
+        queue = list(submitted)
+        rebuilt = []
+        for proposal_id in original:
+            if proposal_id in submitted_set:
+                rebuilt.append(queue.pop(0))
+            else:
+                rebuilt.append(proposal_id)
+        merged.extend(rebuilt)
+    return merged
+
+
 def _proposals_context(
     request=None,
     user=None,
     *,
     debug_nextcloud_links=False,
     strict_nextcloud=True,
+    focus_proposal_ids=None,
+    registry_only=False,
 ):
     if request is not None and user is None:
         user = request.user
     selected_years = _selected_proposal_years(request)
+    selected_kinds = _selected_proposal_catalog_values(request, "proposals_kind")
+    selected_statuses = _selected_proposal_catalog_values(request, "proposals_status")
     proposals = ProposalRegistration.objects.select_related(
         "group_member",
         "country",
@@ -2088,6 +2345,26 @@ def _proposals_context(
             _proposal_identity_key,
         )
     )
+    for proposal in proposals:
+        proposal.overall_term_display = _proposal_final_report_term(proposal)
+    registry_page = _proposal_registry_page(
+        request,
+        _filter_proposal_registry_rows(proposals, selected_kinds, selected_statuses),
+        years=selected_years,
+        kinds=selected_kinds,
+        statuses=selected_statuses,
+        focus_proposal_ids=focus_proposal_ids,
+    )
+    if registry_only:
+        proposal_registry_ui_columns = get_proposal_registry_ui_columns()
+        visible_ids = [proposal.pk for proposal in registry_page["registry_proposals"]]
+        return {
+            **registry_page,
+            "proposal_registry_ui_columns": proposal_registry_ui_columns,
+            "proposal_order_signature": _proposal_order_signature(visible_ids),
+            "proposal_registry_empty_colspan": len(proposal_registry_ui_columns) + 3,
+            "proposal_registry_years": _proposal_year_query_values(selected_years),
+        }
     proposal_payment_schedule_rows = _annotate_payment_number_groups(
         _annotate_identity_groups(
             _build_proposal_payment_schedule_rows(proposals),
@@ -2146,8 +2423,9 @@ def _proposals_context(
     proposal_registry_ui_columns = get_proposal_registry_ui_columns()
     proposal_payment_schedule_ui_columns = get_proposal_payment_schedule_ui_columns()
     proposal_dispatch_ui_columns = get_proposal_dispatch_ui_columns()
-    proposal_order_ids = [proposal.pk for proposal in proposals]
+    visible_ids = [proposal.pk for proposal in registry_page["registry_proposals"]]
     return {
+        **registry_page,
         "proposals": proposals,
         "proposal_payment_schedule_rows": proposal_payment_schedule_rows,
         "proposal_templates": proposal_templates,
@@ -2155,7 +2433,7 @@ def _proposals_context(
         "proposal_registry_ui_columns": proposal_registry_ui_columns,
         "proposal_payment_schedule_ui_columns": proposal_payment_schedule_ui_columns,
         "proposal_dispatch_ui_columns": proposal_dispatch_ui_columns,
-        "proposal_order_signature": _proposal_order_signature(proposal_order_ids),
+        "proposal_order_signature": _proposal_order_signature(visible_ids),
         "proposal_registry_empty_colspan": len(proposal_registry_ui_columns) + 3,
         "proposal_payment_schedule_empty_colspan": len(proposal_payment_schedule_ui_columns) + 2,
         "proposal_dispatch_empty_colspan": len(proposal_dispatch_ui_columns) + 2,
@@ -2169,7 +2447,7 @@ def _proposals_context(
     }
 
 
-def _render_proposals_updated(request):
+def _render_proposals_updated(request, focus_proposal_ids=None):
     response = render(
         request,
         PROPOSALS_PARTIAL_TEMPLATE,
@@ -2177,6 +2455,7 @@ def _render_proposals_updated(request):
             request=request,
             debug_nextcloud_links=_proposal_link_debug_enabled(request),
             strict_nextcloud=False,
+            focus_proposal_ids=focus_proposal_ids,
         ),
     )
     response[HX_TRIGGER_HEADER] = HX_PROPOSALS_UPDATED_EVENT
@@ -2725,7 +3004,7 @@ def _save_locked_proposal_status(request, proposal):
     if status != proposal.status:
         proposal.status = status
         proposal.save(update_fields=["status"])
-    return _render_proposals_updated(request)
+    return _render_proposals_updated(request, focus_proposal_ids=[proposal.pk])
 
 
 def _render_proposal_form(request, *, form, action, proposal=None):
@@ -3012,6 +3291,24 @@ def proposals_partial(request):
 
 @login_required
 @user_passes_test(staff_required)
+@require_GET
+def proposal_registry_table(request):
+    try:
+        context = _proposals_context(
+            request=request,
+            debug_nextcloud_links=_proposal_link_debug_enabled(request),
+            registry_only=True,
+        )
+    except NextcloudApiError:
+        return HttpResponse(
+            "Nextcloud временно недоступен. Не удалось полностью загрузить ссылки на файлы.",
+            status=503,
+        )
+    return render(request, PROPOSAL_REGISTRY_TEMPLATE, context)
+
+
+@login_required
+@user_passes_test(staff_required)
 @require_http_methods(["GET", "POST"])
 def proposal_form_create(request):
     if request.method == "GET":
@@ -3034,7 +3331,7 @@ def proposal_form_create(request):
     form.save_commercial_offers(proposal, request.user)
     _maybe_create_nextcloud_proposal_workspace(request, proposal)
     assign_proposal_dispatch_letter(proposal, sender=request.user)
-    return _render_proposals_updated(request)
+    return _render_proposals_updated(request, focus_proposal_ids=[proposal.pk])
 
 
 @login_required
@@ -3065,6 +3362,35 @@ def proposal_commercial_xlsx_export(request):
     response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
     response["Cache-Control"] = "no-store"
     return response
+
+
+@login_required
+@user_passes_test(staff_required)
+@require_POST
+def proposal_commercial_xlsx_import(request):
+    upload = request.FILES.get("file")
+    if upload is None:
+        return JsonResponse({"ok": False, "message": "Файл не передан."}, status=400)
+    if upload.size > 5 * 1024 * 1024:
+        return JsonResponse({"ok": False, "message": "Файл коммерческого предложения слишком большой."}, status=400)
+    try:
+        assets = json.loads(request.POST.get("assets") or "[]")
+        payload = parse_commercial_xlsx(
+            upload.read(),
+            assets=assets,
+            stage_count=request.POST.get("stage_count"),
+        )
+    except json.JSONDecodeError:
+        return JsonResponse(
+            {"ok": False, "message": "Список активов передан в некорректном формате."},
+            status=400,
+        )
+    except (UnicodeDecodeError, ValueError) as error:
+        return JsonResponse(
+            {"ok": False, "message": str(error) or "Не удалось прочитать файл Excel."},
+            status=400,
+        )
+    return JsonResponse({"ok": True, "stages": payload["stages"]})
 
 
 @login_required
@@ -3147,7 +3473,7 @@ def proposal_form_edit(request, pk: int):
     form.save_objects(proposal, request.user)
     form.save_commercial_offers(proposal, request.user)
     assign_proposal_dispatch_letter(proposal, sender=request.user)
-    return _render_proposals_updated(request)
+    return _render_proposals_updated(request, focus_proposal_ids=[proposal.pk])
 
 
 @login_required
@@ -4238,26 +4564,31 @@ def proposal_row_order(request):
         )
         by_id = {item.pk: item for item in current_items}
         full_groups, current_proposal_ids = _scoped_proposal_display_ids(current_items, selected_years)
+        visible_ids, _scoped_ids = _proposal_registry_visible_ids(current_items, request)
+        visible_signature = _proposal_order_signature(visible_ids)
         current_signature = _proposal_order_signature(current_proposal_ids)
 
         conflict_payload = {
             "ok": False,
             "error": "Порядок ТКП был изменен. Таблица будет обновлена.",
             "current_proposal_ids": current_proposal_ids,
-            "order_signature": current_signature,
+            "order_signature": visible_signature,
         }
-        if base_signature and base_signature != current_signature:
-            if ordered_proposal_ids == current_proposal_ids:
-                return JsonResponse({"ok": True, "order_signature": current_signature})
+        if base_signature and base_signature != visible_signature:
+            if ordered_proposal_ids == visible_ids:
+                return JsonResponse({"ok": True, "order_signature": visible_signature})
             return JsonResponse(conflict_payload, status=409)
         if (
             any(proposal_id not in by_id for proposal_id in ordered_proposal_ids)
-            or set(ordered_proposal_ids) != set(current_proposal_ids)
+            or set(ordered_proposal_ids) != set(visible_ids)
         ):
             return JsonResponse(conflict_payload, status=409)
 
         normalized_ids = _normalize_proposal_version_order(ordered_proposal_ids, by_id)
-        merged_ids = _merge_scoped_proposal_order(full_groups, normalized_ids, by_id)
+        if set(normalized_ids) == set(current_proposal_ids):
+            merged_ids = _merge_scoped_proposal_order(full_groups, normalized_ids, by_id)
+        else:
+            merged_ids = _merge_visible_proposal_order(full_groups, normalized_ids, by_id)
         desired_signature = _proposal_order_signature(normalized_ids)
         _persist_proposal_positions(merged_ids)
     return JsonResponse({"ok": True, "order_signature": desired_signature})

@@ -19,6 +19,7 @@
         data-ler-search-url="{% url 'ler_search' %}"
         data-cbr-rate-refresh-url="{% url 'proposal_cbr_eur_rate' %}"
         data-commercial-xlsx-url="{% url 'proposal_commercial_xlsx_export' %}"
+        data-commercial-xlsx-import-url="{% url 'proposal_commercial_xlsx_import' %}"
         data-product-autofill-url-template="{% url 'proposal_product_autofill' 0 %}"
         {% if action == "create" %}
           hx-post="{% url 'proposal_form_create' %}"

@@ -225,8 +225,8 @@ def _proposal_document_version_token(proposal) -> str:
 
 def build_proposal_document_base_name(proposal) -> str:
     proposal_id = sanitize_folder_name(proposal.short_uid or f"proposal-{proposal.pk}")
-    product = ""
-    if proposal.type_id:
+    product = sanitize_folder_name(getattr(proposal, "type_short_display", "") or "")
+    if not product and proposal.type_id:
         product = sanitize_folder_name(proposal.type.short_name or str(proposal.type))
     label = sanitize_folder_name(proposal.name or proposal.customer or "TKP")
     parts = ["ТКП", proposal_id]

@@ -602,7 +602,7 @@
               </colgroup>
               <tbody id="registration-stage-terms-tbody">
                 {% for group in registration_stage_groups %}
-                  <tr class="registration-contract-terms-header" data-contract-id="{{ group.contract_id }}" {% if group.signed %}data-contract-signed="1"{% endif %} data-term-days="{{ group.term_days }}">
+                  <tr class="registration-contract-terms-header" data-contract-id="{{ group.contract_id }}" {% if group.signed %}data-contract-signed="1"{% endif %} data-term-days="{{ group.term_days }}" data-term-origin="{{ group.term_origin }}" data-term-end="{{ group.term_end }}">
                     <td colspan="7">
                       <div class="registration-contract-terms-labels">
                         <div class="form-label">Дата договора</div>

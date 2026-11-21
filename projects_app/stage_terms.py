@@ -657,39 +657,94 @@ def slim_contract_stage(raw):
     return slim
 
 
-def stage_term_days(stage):
-    """Исходные данные, предварительный и итоговый сроки в днях. Лаг не входит."""
-    if stage.get("source_data_term_enabled"):
-        source_days = term_to_days(stage.get("source_data_term"), stage.get("source_data_term_unit"))
-    else:
-        source_days = Decimal("0")
-    if stage.get("service_term_months_enabled"):
-        preliminary_days = term_to_days(stage.get("service_term_months"), stage.get("preliminary_report_term_unit"))
-    else:
-        preliminary_days = Decimal("0")
-    final_days = term_to_days(stage.get("final_report_term_weeks"), stage.get("final_report_term_unit"))
-    total = source_days + preliminary_days + final_days
-    if total < 0:
-        total = Decimal("0")
-    return total
+def _add_whole_months(value, months):
+    return _add_months(value, int(months))
 
 
-def stage_term_weeks(stage):
-    return days_to_term(stage_term_days(stage), "weeks")
+def _decimal_months_between(start, end):
+    if not start or not end or end <= start:
+        return Decimal("0")
+    whole_months = (end.year - start.year) * 12 + (end.month - start.month)
+    whole_date = _add_whole_months(start, whole_months)
+    while whole_months > 0 and whole_date > end:
+        whole_months -= 1
+        whole_date = _add_whole_months(start, whole_months)
+    remainder_days = max(0, (end - whole_date).days)
+    return Decimal(whole_months) + (Decimal(remainder_days) / Decimal("30"))
 
 
-def group_term_weeks(stages):
-    total_days = Decimal("0")
-    for stage in stages:
-        total_days += stage_term_days(stage)
-    return days_to_term(total_days, "weeks")
+def _format_calendar_amount(amount, unit):
+    if unit == "days":
+        return str(int(Decimal(amount).quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
+    text = format(Decimal(amount).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
 
 
-def group_term_days(stages):
-    total_days = Decimal("0")
-    for stage in stages:
-        total_days += stage_term_days(stage)
-    return int(total_days.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+def _add_present_term(cursor, amount, unit, default_unit):
+    parsed = parse_decimal(amount)
+    if parsed is None:
+        return cursor
+    return add_term(cursor, parsed, _unit(unit, SOURCE_DATA_UNITS, default_unit)) or cursor
+
+
+def _overall_delay_days(stage):
+    unit = _unit(stage.get("next_stage_delay_unit"), SOURCE_DATA_UNITS, "days")
+    return int(
+        term_to_days(stage.get("next_stage_delay_days") or 0, unit).quantize(
+            Decimal("1"),
+            rounding=ROUND_HALF_UP,
+        )
+    )
+
+
+def calendar_term_span(start, stages):
+    """Календарный общий срок, как поле «Срок» в реестре ТКП.
+
+    Контракт начинается после получения исходных данных, поэтому их срок
+    в сумму не входит. Предварительный и итоговый отчёты входят, если в
+    поле есть число. Лаг входит только между этапами: месяц лага — 30 дней,
+    неделя — 7. Месяцы задач идут по календарю, а длина всего промежутка
+    измеряется заново.
+    """
+    origin = parse_date(start)
+    if origin is None:
+        return {"origin": None, "end": None}
+    cursor = origin
+    stage_list = list(stages or [])
+    for index, stage in enumerate(stage_list):
+        source = stage if isinstance(stage, dict) else {}
+        cursor = _add_present_term(
+            cursor,
+            source.get("service_term_months"),
+            source.get("preliminary_report_term_unit"),
+            "months",
+        )
+        cursor = _add_present_term(
+            cursor,
+            source.get("final_report_term_weeks"),
+            source.get("final_report_term_unit"),
+            "weeks",
+        )
+        if index < len(stage_list) - 1:
+            cursor += timedelta(days=_overall_delay_days(source))
+    return {"origin": origin, "end": cursor}
+
+
+def group_calendar_term(start, stages):
+    span = calendar_term_span(start, stages)
+    origin = span["origin"]
+    end = span["end"]
+    if origin is None or end is None:
+        return {"weeks": "", "days": 0, "origin": "", "end": ""}
+    days = max((end - origin).days, 0)
+    return {
+        "weeks": _format_calendar_amount(Decimal(days) / Decimal("7"), "weeks"),
+        "days": days,
+        "origin": origin.isoformat(),
+        "end": end.isoformat(),
+    }
 
 
 def display_date(value):
@@ -834,8 +889,12 @@ def decorate_contract_term_groups(rows, contracts_by_id, project_start):
         group["final_date_disabled"] = column_disabled("final_report_date_enabled")
         group["completion_iso"] = format_date(_last_final_date(group["rows"]))
         group["completion_display"] = display_date(group["completion_iso"])
-        group["term_weeks"] = format(group_term_weeks(visible_rows), "f")
-        group["term_days"] = group_term_days(visible_rows)
+        term_start = group["contract_date"] if signed else project_start
+        term = group_calendar_term(term_start, visible_rows)
+        group["term_weeks"] = term["weeks"]
+        group["term_days"] = term["days"]
+        group["term_origin"] = term["origin"]
+        group["term_end"] = term["end"]
         if not group["signed"]:
             group["signed"] = False
     return groups

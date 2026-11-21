@@ -627,6 +627,27 @@ def _expand_response_anchor_ids(response: dict, payload: dict) -> dict:
     return response
 
 
+_CHUNK_REPLY_ID_RE = re.compile(r"^chunk-(\d+)(?:-([0-9a-f]+))?$", re.IGNORECASE)
+
+
+def _chunk_reply_belongs(returned: str, expected: str) -> bool:
+    """Ответ про этот фрагмент, даже если модель обрезала хвост хеша.
+
+    Номер в идентификаторе модель копирует устойчиво. Хеш после номера —
+    случайная строка, и локальная модель часто теряет последний символ.
+    Чужой номер по-прежнему означает другой фрагмент.
+    """
+    returned = str(returned or "").strip()
+    expected = str(expected or "").strip()
+    if not returned or returned == expected:
+        return True
+    got = _CHUNK_REPLY_ID_RE.fullmatch(returned)
+    want = _CHUNK_REPLY_ID_RE.fullmatch(expected)
+    if not got or not want:
+        return False
+    return int(got.group(1)) == int(want.group(1))
+
+
 def _read_chunk_response(
     path: Path,
     chunk_id: str,
@@ -651,8 +672,16 @@ def _read_chunk_response(
         raw = {"schema_version": 1, "chunk_id": chunk_id, "findings": raw}
     if not isinstance(raw, dict) or not isinstance(raw.get("findings"), list):
         raise ChunkSkillError("findings.json должен содержать объект с массивом findings.")
-    if str(raw.get("chunk_id") or chunk_id) != chunk_id:
+    returned = str(raw.get("chunk_id") or "")
+    if not _chunk_reply_belongs(returned, chunk_id):
         raise ChunkSkillError("Ответ модели относится к другому фрагменту.")
+    if returned and returned != chunk_id:
+        log.warning(
+            "Модель исказила chunk_id %s, ожидался %s. Ответ оставлен за этим фрагментом.",
+            returned,
+            chunk_id,
+        )
+    raw["chunk_id"] = chunk_id
     return raw
 
 
