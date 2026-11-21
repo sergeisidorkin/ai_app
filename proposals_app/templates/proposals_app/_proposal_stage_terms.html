@@ -1,13 +1,6 @@
 <div class="col-12 registration-terms-section">
   <label class="form-label mb-2">Сроки</label>
   <div class="proposal-assets-editor proposal-terms-editor is-source-date-collapsed is-preliminary-date-collapsed is-final-date-collapsed" data-proposal-registry-terms="1" data-terms-project-key="{{ form.terms_project_key }}">
-    <div class="contract-date-terms-field">
-      <label class="form-label registration-terms-label">
-        <span class="registration-terms-label-text">Дата начала проекта</span>
-        <i class="bi bi-unlock-fill js-proposal-report-date-lock" role="button" title="Заблокировать ввод дат"></i>
-      </label>
-      <input type="date" name="proposal_project_start_date" class="form-control readonly-field" data-project-start-locked="1" readonly tabindex="-1" aria-label="Дата начала проекта" value="{{ form.proposal_project_start_iso }}">
-    </div>
     <div class="table-responsive contract-stage-report-terms-group">
       <table class="table table-sm align-middle mb-0 proposal-assets-table proposal-terms-table proposal-report-terms-table">
         <colgroup>
@@ -20,6 +13,49 @@
           <col class="proposal-terms-final-date-col">
         </colgroup>
         <tbody id="proposal-stage-terms-tbody">
+          <tr class="proposal-overall-term-row">
+            <td colspan="2" class="proposal-overall-start-cell">
+              <div class="contract-date-terms-field">
+                <label class="form-label registration-terms-label">
+                  <span class="registration-terms-label-text">Дата начала проекта</span>
+                  <i class="bi bi-unlock-fill js-proposal-report-date-lock" role="button" title="Заблокировать ввод дат"></i>
+                </label>
+                <input type="hidden" name="proposal_project_start_custom" value="{% if form.proposal_project_start_custom %}1{% else %}0{% endif %}">
+                <input type="date" name="proposal_project_start_date" class="form-control readonly-field" data-project-start-locked="1" readonly tabindex="-1" aria-label="Дата начала проекта" value="{{ form.proposal_project_start_iso }}">
+              </div>
+            </td>
+            {% with overall_unit=form.overall_term_unit.value|default:"months" %}
+            <td class="proposal-overall-term-source-cell">
+              <label class="form-label registration-terms-label">
+                <span class="registration-terms-label-text">Срок</span>
+              </label>
+              <div class="form-control readonly-field proposal-stage-final-term-shell proposal-overall-term-shell">
+                <input type="number" class="proposal-stage-final-report-term-weeks proposal-overall-term" readonly tabindex="-1" aria-label="Срок">
+                <select name="overall_term_unit" class="form-select proposal-stage-final-term-unit proposal-overall-term-unit" aria-label="Единица срока" disabled>
+                  <option value="days"{% if overall_unit == "days" %} selected{% endif %}>дн.</option>
+                  <option value="weeks"{% if overall_unit == "weeks" %} selected{% endif %}>нед.</option>
+                  <option value="months"{% if overall_unit != "days" and overall_unit != "weeks" %} selected{% endif %}>мес.</option>
+                </select>
+              </div>
+            </td>
+            <td class="proposal-overall-term-preliminary-cell">
+              <label class="form-label registration-terms-label">
+                <span class="registration-terms-label-text">Срок</span>
+              </label>
+              <div class="form-control readonly-field proposal-stage-final-term-shell proposal-overall-term-shell">
+                <input type="number" class="proposal-stage-final-report-term-weeks proposal-overall-term" readonly tabindex="-1" aria-label="Срок">
+                <select name="overall_term_unit" class="form-select proposal-stage-final-term-unit proposal-overall-term-unit" aria-label="Единица срока">
+                  <option value="days"{% if overall_unit == "days" %} selected{% endif %}>дн.</option>
+                  <option value="weeks"{% if overall_unit == "weeks" %} selected{% endif %}>нед.</option>
+                  <option value="months"{% if overall_unit != "days" and overall_unit != "weeks" %} selected{% endif %}>мес.</option>
+                </select>
+              </div>
+            </td>
+            {% endwith %}
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
           <tr class="registration-stage-terms-columns">
             <th class="proposal-terms-stage-col">Этапы</th>
             <th>
@@ -57,7 +93,7 @@
             <th>
               <span class="registration-terms-label">
                 <span class="registration-terms-label-text">Итоговый отчёт</span>
-                <i class="bi bi-lock-fill js-proposal-report-terms-lock" role="button" title="Разблокировать ввод сроков"></i>
+                <i class="bi {% if form.terms_final_term_disabled %}bi-lock is-stage-lock-disabled{% else %}bi-lock-fill{% endif %} js-proposal-report-terms-lock" role="button" title="{% if form.terms_final_term_disabled %}Поле выключено{% else %}Разблокировать ввод сроков{% endif %}" data-stage-field-enabled-selector=".proposal-stage-final-report-term-enabled"></i>
               </span>
             </th>
             <th>
@@ -130,13 +166,19 @@
                 </div>
               </td>
               <td>
-                <div class="form-control readonly-field proposal-stage-final-term-shell">
-                  <input type="number" name="final_report_term_weeks" min="0" step="0.1" inputmode="decimal" class="proposal-stage-final-report-term-weeks" value="{{ stage.final_report_term_weeks }}" readonly tabindex="-1">
-                  <select name="final_report_term_unit" class="form-select proposal-stage-final-term-unit" aria-label="Единица срока подготовки Итогового отчёта" tabindex="-1">
-                    <option value="days"{% if stage.final_report_term_unit == "days" %} selected{% endif %}>дн.</option>
-                    <option value="weeks"{% if stage.final_report_term_unit == "weeks" %} selected{% endif %}>нед.</option>
-                    <option value="months"{% if stage.final_report_term_unit == "months" %} selected{% endif %}>мес.</option>
-                  </select>
+                <div class="proposal-stage-field-toggle-wrap{% if not stage.final_report_term_enabled %} is-stage-field-disabled{% endif %}">
+                  <div class="form-control readonly-field proposal-stage-final-term-shell">
+                    <input type="number" name="final_report_term_weeks" min="0" step="0.1" inputmode="decimal" class="proposal-stage-final-report-term-weeks" value="{{ stage.final_report_term_weeks }}" readonly tabindex="-1">
+                    <select name="final_report_term_unit" class="form-select proposal-stage-final-term-unit" aria-label="Единица срока подготовки Итогового отчёта" tabindex="-1">
+                      <option value="days"{% if stage.final_report_term_unit == "days" %} selected{% endif %}>дн.</option>
+                      <option value="weeks"{% if stage.final_report_term_unit == "weeks" %} selected{% endif %}>нед.</option>
+                      <option value="months"{% if stage.final_report_term_unit == "months" %} selected{% endif %}>мес.</option>
+                    </select>
+                  </div>
+                  <input type="hidden" name="final_report_term_enabled" class="proposal-stage-final-report-term-enabled" value="{% if stage.final_report_term_enabled %}true{% else %}false{% endif %}">
+                  <div class="form-check form-switch proposal-stage-field-toggle">
+                    <input type="checkbox" class="form-check-input js-proposal-stage-field-toggle proposal-stage-final-report-term-toggle" role="switch" aria-label="Включить поле Итоговый отчёт" data-target-selector=".proposal-stage-final-report-term-weeks" data-unit-selector=".proposal-stage-final-term-unit" data-shell-selector=".proposal-stage-final-term-shell" data-hidden-selector=".proposal-stage-final-report-term-enabled"{% if stage.final_report_term_enabled %} checked{% endif %}>
+                  </div>
                 </div>
               </td>
               <td class="proposal-stage-final-report-cell">

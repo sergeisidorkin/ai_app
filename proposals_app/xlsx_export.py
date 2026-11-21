@@ -1,15 +1,29 @@
 import io
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
+from .variable_resolver import _proposal_budget_direction
 
 
 TRAVEL_LABELS = {"Командировочные расходы", "Командировочные расходы, евро"}
 MAX_STAGES = 20
 MAX_ASSETS = 50
 MAX_ROWS_PER_BLOCK = 500
+SPECIALIST_COL = 1
+DIRECTION_COL = 2
+SEPARATOR_ROW_HEIGHT = 3.75
+SPECIALTY_COL = 3
+STATUS_COL = 4
+CODE_COL = 5
+SERVICE_COL = 6
+RATE_COL = 7
+HIDDEN_SOURCE_COLUMNS = (SPECIALTY_COL, STATUS_COL, CODE_COL, SERVICE_COL)
+RUB_TOTAL_LABEL = "ИТОГО, рубли без НДС"
+DISCOUNTED_TOTAL_LABEL = "ИТОГО, рубли без НДС с учетом скидки"
+DAY_COUNT_FORMAT = "0"
 
 
 def _text(value, limit=1000):
@@ -39,6 +53,29 @@ def _is_true(value):
 
 def _is_travel(row):
     return _text(row.get("service_name")) in TRAVEL_LABELS
+
+
+def _direction_text(row):
+    return _proposal_budget_direction(
+        row.get("job_title"),
+        row.get("professional_status"),
+        row.get("service_name"),
+    )
+
+
+def _direction_text_width(text, *, bold=False):
+    """Ширина столбца Excel в символах «0» шрифта Calibri 11, чтобы строка не переносилась."""
+    units = 0.0
+    for char in str(text or ""):
+        if char.isspace():
+            units += 0.6
+        elif ord(char) > 127 or char.isupper():
+            units += 1.3
+        else:
+            units += 1.05
+    if bold:
+        units *= 1.1
+    return units + 3
 
 
 def _group_key(row):
@@ -172,38 +209,75 @@ class CommercialWorkbookBuilder:
         self.row = 1
         self.stage_layouts = []
         self.thin_border = Border(
-            left=Side(style="thin", color="DEE2E6"),
-            right=Side(style="thin", color="DEE2E6"),
-            top=Side(style="thin", color="DEE2E6"),
-            bottom=Side(style="thin", color="DEE2E6"),
+            left=Side(style="thin", color="000000"),
+            right=Side(style="thin", color="000000"),
+            top=Side(style="thin", color="000000"),
+            bottom=Side(style="thin", color="000000"),
         )
-        self.title_fill = PatternFill("solid", fgColor="D9E7F5")
         self.header_fill = PatternFill("solid", fgColor="E8EEF6")
         self.total_fill = PatternFill("solid", fgColor="F3F6FA")
-        self.wrap = Alignment(wrap_text=True, vertical="top")
+        self.body_alignment = Alignment(wrap_text=False, vertical="center")
+        self.direction_alignment = Alignment(wrap_text=False, vertical="center")
+        self.header_right = Alignment(horizontal="right", vertical="center", wrap_text=True)
+        self.header_left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        self.header_direction = Alignment(horizontal="left", vertical="center", wrap_text=False)
+        self.header_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        self.header_vertical = Alignment(vertical="center", wrap_text=True)
+        self.day_alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
+        self.center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
+        self.day_cells = set()
+        self.percent_cells = set()
 
-    def _style_row(self, row, first_col, last_col, *, fill=None, bold=False):
+    def _style_row(self, row, first_col, last_col, *, fill=None, bold=False, day_cols=None):
         for column in range(first_col, last_col + 1):
             cell = self.sheet.cell(row=row, column=column)
             cell.border = self.thin_border
-            cell.alignment = self.wrap
+            cell.alignment = self.direction_alignment if column == DIRECTION_COL else self.body_alignment
             if fill:
                 cell.fill = fill
             if bold:
                 cell.font = Font(bold=True)
+        for column in day_cols or ():
+            cell = self.sheet.cell(row=row, column=column)
+            cell.alignment = self.day_alignment
+            cell.number_format = DAY_COUNT_FORMAT
+            self.day_cells.add((row, column))
 
-    def _write_title(self, title, last_col):
-        self.sheet.merge_cells(start_row=self.row, start_column=1, end_row=self.row, end_column=last_col)
-        cell = self.sheet.cell(self.row, 1, _excel_text(title))
-        cell.font = Font(bold=True, size=11)
-        cell.fill = self.title_fill
-        cell.alignment = self.wrap
-        self._style_row(self.row, 1, last_col, fill=self.title_fill, bold=True)
+    def _align_actual_travel_label(self, row, rate_col):
+        cell = self.sheet.cell(row=row, column=rate_col)
+        if cell.value == "по факту":
+            cell.alignment = self.center_alignment
+
+    def _write_blank_title_row(self):
         self.row += 1
+
+    def _write_separator_row(self):
+        self.sheet.row_dimensions[self.row].height = SEPARATOR_ROW_HEIGHT
+        self.row += 1
+
+    def _count_columns(self, columns):
+        return [*columns["day_cols"], columns["total_days_col"]]
+
+    def _apply_header_alignment(self, row, columns):
+        centered = set(columns["day_cols"]) | {columns["total_days_col"]}
+        right_aligned = {columns["rate_col"], columns["total_col"]}
+        for column in range(1, columns["last_col"] + 1):
+            cell = self.sheet.cell(row=row, column=column)
+            if column in centered:
+                cell.alignment = self.header_center
+            elif column == DIRECTION_COL:
+                cell.alignment = self.header_direction
+            elif column == SPECIALIST_COL:
+                cell.alignment = self.header_left
+            elif column in right_aligned:
+                cell.alignment = self.header_right
+            else:
+                cell.alignment = self.header_vertical
 
     def _write_headers(self, day_headers):
         headers = [
             "Специалист",
+            "Должность/направление",
             "Специальность",
             "Профессиональный статус",
             "Код",
@@ -215,27 +289,36 @@ class CommercialWorkbookBuilder:
         ]
         for column, value in enumerate(headers, 1):
             self.sheet.cell(self.row, column, value)
-        self._style_row(self.row, 1, len(headers), fill=self.header_fill, bold=True)
-        self.row += 1
-        return {
-            "rate_col": 6,
-            "day_cols": list(range(7, 7 + len(day_headers))),
-            "total_days_col": 7 + len(day_headers),
-            "total_col": 8 + len(day_headers),
+        day_start = RATE_COL + 1
+        day_cols = list(range(day_start, day_start + len(day_headers)))
+        columns = {
+            "direction_col": DIRECTION_COL,
+            "service_col": SERVICE_COL,
+            "rate_col": RATE_COL,
+            "day_cols": day_cols,
+            "total_days_col": day_start + len(day_headers),
+            "total_col": day_start + len(day_headers) + 1,
             "last_col": len(headers),
         }
+        self._style_row(self.row, 1, len(headers), fill=self.header_fill, bold=True, day_cols=self._count_columns(columns))
+        self._apply_header_alignment(self.row, columns)
+        self.row += 1
+        return columns
 
-    def _write_common_values(self, excel_row, row_data):
+    def _write_common_values(self, excel_row, row_data, *, service_in_direction=False):
+        direction = row_data["service_name"] if service_in_direction else _direction_text(row_data)
+        service_name = "" if service_in_direction else row_data["service_name"]
         values = [
             row_data["specialist"],
+            direction,
             row_data["job_title"],
             row_data["professional_status"],
             row_data["code"],
-            row_data["service_name"],
+            service_name,
             row_data["rate_eur_per_day"],
         ]
         for column, value in enumerate(values, 1):
-            self.sheet.cell(excel_row, column, _excel_text(value) if column < 6 else value)
+            self.sheet.cell(excel_row, column, _excel_text(value) if column < RATE_COL else value)
 
     def _write_financial_rows(self, columns, totals, data_rows, travel_layout):
         total_col_letter = get_column_letter(columns["total_col"])
@@ -243,29 +326,37 @@ class CommercialWorkbookBuilder:
         data_excel_rows = [item["excel_row"] for item in data_rows]
 
         summary_row = self.row
-        self.sheet.cell(summary_row, 5, "ИТОГО, по расчёту")
+        self.sheet.cell(summary_row, columns["direction_col"], "ИТОГО, по расчёту")
         for column, letter in zip(columns["day_cols"], day_letters):
             self.sheet.cell(summary_row, column, _formula_nonzero_sum(f"{letter}{r}" for r in data_excel_rows))
         day_range = f"{day_letters[0]}{summary_row}:{day_letters[-1]}{summary_row}"
         self.sheet.cell(summary_row, columns["total_days_col"], f'=IF(SUM({day_range})=0,"",SUM({day_range}))')
         total_refs = [f"{total_col_letter}{r}" for r in data_excel_rows]
         self.sheet.cell(summary_row, columns["total_col"], _formula_nonzero_sum(total_refs))
-        self._style_row(summary_row, 1, columns["last_col"], fill=self.total_fill, bold=True)
+        self._style_row(summary_row, 1, columns["last_col"], day_cols=self._count_columns(columns))
         self.row += 1
+        self._write_separator_row()
 
         with_travel_row = self.row
-        self.sheet.cell(with_travel_row, 5, "ИТОГО, евро с командировочными по расчёту")
+        self.sheet.cell(with_travel_row, columns["direction_col"], "ИТОГО, евро с командировочными по расчёту")
         self.sheet.cell(
             with_travel_row,
             columns["total_col"],
             f'=IF(SUM({total_col_letter}{summary_row},{total_col_letter}{travel_layout["excel_row"]})=0,"",'
             f'SUM({total_col_letter}{summary_row},{total_col_letter}{travel_layout["excel_row"]}))',
         )
-        self._style_row(with_travel_row, 1, columns["last_col"], fill=self.total_fill, bold=True)
+        self._style_row(
+            with_travel_row,
+            1,
+            columns["last_col"],
+            fill=self.total_fill,
+            bold=True,
+            day_cols=self._count_columns(columns),
+        )
         self.row += 1
 
         rub_row = self.row
-        self.sheet.cell(rub_row, 5, _excel_text(totals["rub_total_service_text"] or "Курс евро Банка России:"))
+        self.sheet.cell(rub_row, columns["direction_col"], RUB_TOTAL_LABEL)
         self.sheet.cell(rub_row, columns["rate_col"], totals["exchange_rate"])
         self.sheet.cell(
             rub_row,
@@ -273,23 +364,37 @@ class CommercialWorkbookBuilder:
             f'=IF(OR({total_col_letter}{with_travel_row}="",{get_column_letter(columns["rate_col"])}{rub_row}=""),"",'
             f'{total_col_letter}{with_travel_row}*{get_column_letter(columns["rate_col"])}{rub_row})',
         )
-        self._style_row(rub_row, 1, columns["last_col"], fill=self.total_fill, bold=True)
+        self._style_row(rub_row, 1, columns["last_col"], fill=self.total_fill, bold=True, day_cols=self._count_columns(columns))
         self.row += 1
 
         discounted_row = self.row
-        self.sheet.cell(discounted_row, 5, _excel_text(totals["discounted_total_service_text"] or "Размер скидки:"))
-        self.sheet.cell(discounted_row, columns["rate_col"], totals["discount_percent"] if totals["discount_percent"] is not None else 5)
+        self.sheet.cell(discounted_row, columns["direction_col"], DISCOUNTED_TOTAL_LABEL)
+        discount_percent = totals["discount_percent"] if totals["discount_percent"] is not None else 5
+        discount_cell = self.sheet.cell(discounted_row, columns["rate_col"], discount_percent / 100)
+        discount_cell.number_format = "0%"
+        self.percent_cells.add((discounted_row, columns["rate_col"]))
+        rate_letter = get_column_letter(columns["rate_col"])
         self.sheet.cell(
             discounted_row,
             columns["total_col"],
-            f'=IF({total_col_letter}{rub_row}="","",{total_col_letter}{rub_row}*'
-            f'(1-{get_column_letter(columns["rate_col"])}{discounted_row}/100))',
+            f'=IF({total_col_letter}{rub_row}="","",{total_col_letter}{rub_row}*(1-{rate_letter}{discounted_row}))',
         )
-        self._style_row(discounted_row, 1, columns["last_col"], fill=self.total_fill, bold=True)
+        self._style_row(
+            discounted_row,
+            1,
+            columns["last_col"],
+            fill=self.total_fill,
+            bold=True,
+            day_cols=self._count_columns(columns),
+        )
         self.row += 1
 
         contract_row = self.row
-        self.sheet.cell(contract_row, 5, "ИТОГО в договор, рубли без НДС с учётом дополнительной скидки")
+        self.sheet.cell(
+            contract_row,
+            columns["direction_col"],
+            "ИТОГО в договор, рубли без НДС с учётом дополнительной скидки",
+        )
         contract_total = totals["contract_total"]
         contract_auto = totals["contract_total_auto"]
         is_manual = contract_total is not None and (
@@ -303,7 +408,14 @@ class CommercialWorkbookBuilder:
                 f'ROUNDDOWN({total_col_letter}{discounted_row}/100000,0)*100000)'
             )
         self.sheet.cell(contract_row, columns["total_col"], contract_value)
-        self._style_row(contract_row, 1, columns["last_col"], fill=self.total_fill, bold=True)
+        self._style_row(
+            contract_row,
+            1,
+            columns["last_col"],
+            fill=self.total_fill,
+            bold=True,
+            day_cols=self._count_columns(columns),
+        )
         self.row += 1
         return {
             "summary_row": summary_row,
@@ -315,8 +427,7 @@ class CommercialWorkbookBuilder:
 
     def _write_stage(self, stage, stage_index):
         assets = self.snapshot["assets"]
-        columns_count = 8 + len(assets)
-        self._write_title(stage["label"], columns_count)
+        self._write_blank_title_row()
         columns = self._write_headers(assets)
         data_rows = []
         travel_data = next((item for item in stage["rows"] if _is_travel(item)), None)
@@ -332,7 +443,7 @@ class CommercialWorkbookBuilder:
             day_total = get_column_letter(columns["total_days_col"])
             self.sheet.cell(excel_row, columns["total_days_col"], f'=IF(SUM({day_start}{excel_row}:{day_end}{excel_row})=0,"",SUM({day_start}{excel_row}:{day_end}{excel_row}))')
             self.sheet.cell(excel_row, columns["total_col"], f'=IF(OR({rate}{excel_row}="",{day_total}{excel_row}=""),"",{rate}{excel_row}*{day_total}{excel_row})')
-            self._style_row(excel_row, 1, columns["last_col"])
+            self._style_row(excel_row, 1, columns["last_col"], day_cols=self._count_columns(columns))
             data_rows.append({"data": row_data, "excel_row": excel_row})
             self.row += 1
 
@@ -346,8 +457,9 @@ class CommercialWorkbookBuilder:
             "asset_day_counts": [None] * len(assets),
             "total_eur_without_vat": None,
         }
+        self._write_separator_row()
         travel_row = self.row
-        self._write_common_values(travel_row, travel_data)
+        self._write_common_values(travel_row, travel_data, service_in_direction=True)
         mode = stage["totals"]["travel_expenses_mode"]
         if mode == "calculation":
             for column, value in zip(columns["day_cols"], travel_data["asset_day_counts"]):
@@ -360,8 +472,10 @@ class CommercialWorkbookBuilder:
         else:
             self.sheet.cell(travel_row, columns["rate_col"], "по факту")
             self.sheet.cell(travel_row, columns["total_col"], travel_data["total_eur_without_vat"])
-        self._style_row(travel_row, 1, columns["last_col"])
+        self._style_row(travel_row, 1, columns["last_col"], day_cols=self._count_columns(columns))
+        self._align_actual_travel_label(travel_row, columns["rate_col"])
         self.row += 1
+        self._write_separator_row()
 
         fixed_rows = self._write_financial_rows(
             columns,
@@ -399,8 +513,7 @@ class CommercialWorkbookBuilder:
         for stage_index, asset_index in day_specs:
             stage_label = self.snapshot["stages"][stage_index]["product_label"] or f"Этап {stage_index + 1}"
             day_headers.append(f"{stage_label}: {assets[asset_index]}")
-        columns_count = 8 + len(day_headers)
-        self._write_title(summary["label"], columns_count)
+        self._write_blank_title_row()
         columns = self._write_headers(day_headers)
         data_rows = []
         travel_data = next((item for item in summary["rows"] if _is_travel(item)), None)
@@ -429,7 +542,7 @@ class CommercialWorkbookBuilder:
             total_days_col = get_column_letter(columns["total_days_col"])
             self.sheet.cell(excel_row, columns["total_days_col"], f'=IF(SUM({first_day}{excel_row}:{last_day}{excel_row})=0,"",SUM({first_day}{excel_row}:{last_day}{excel_row}))')
             self.sheet.cell(excel_row, columns["total_col"], f'=IF(OR({rate_col}{excel_row}="",{total_days_col}{excel_row}=""),"",{rate_col}{excel_row}*{total_days_col}{excel_row})')
-            self._style_row(excel_row, 1, columns["last_col"])
+            self._style_row(excel_row, 1, columns["last_col"], day_cols=self._count_columns(columns))
             data_rows.append({"data": row_data, "excel_row": excel_row})
             self.row += 1
 
@@ -443,8 +556,9 @@ class CommercialWorkbookBuilder:
             "asset_day_counts": [None] * len(assets),
             "total_eur_without_vat": None,
         }
+        self._write_separator_row()
         travel_row = self.row
-        self._write_common_values(travel_row, travel_data)
+        self._write_common_values(travel_row, travel_data, service_in_direction=True)
         travel_total_refs = []
         for target_column, (stage_index, asset_index) in zip(columns["day_cols"], day_specs):
             source_layout = self.stage_layouts[stage_index]
@@ -462,8 +576,10 @@ class CommercialWorkbookBuilder:
         else:
             self.sheet.cell(travel_row, columns["rate_col"], "по факту")
         self.sheet.cell(travel_row, columns["total_col"], _formula_nonzero_sum(travel_total_refs))
-        self._style_row(travel_row, 1, columns["last_col"])
+        self._style_row(travel_row, 1, columns["last_col"], day_cols=self._count_columns(columns))
+        self._align_actual_travel_label(travel_row, columns["rate_col"])
         self.row += 1
+        self._write_separator_row()
 
         self._write_financial_rows(
             columns,
@@ -474,19 +590,35 @@ class CommercialWorkbookBuilder:
 
     def _finish(self):
         self.sheet.freeze_panes = "A3"
-        widths = {1: 20, 2: 24, 3: 24, 4: 12, 5: 42, 6: 20}
+        widths = {1: 20, 3: 24, 4: 24, 5: 12, 6: 28, 7: 20}
         for column, width in widths.items():
             self.sheet.column_dimensions[get_column_letter(column)].width = width
-        for column in range(7, self.sheet.max_column + 1):
+        self.sheet.column_dimensions[get_column_letter(DIRECTION_COL)].width = self._direction_column_width()
+        for column in HIDDEN_SOURCE_COLUMNS:
+            self.sheet.column_dimensions[get_column_letter(column)].hidden = True
+        for column in range(RATE_COL + 1, self.sheet.max_column + 1):
             self.sheet.column_dimensions[get_column_letter(column)].width = 18
         for row in self.sheet.iter_rows():
             for cell in row:
-                if cell.column >= 6 and (isinstance(cell.value, (int, float)) or (isinstance(cell.value, str) and cell.value.startswith("="))):
+                if (cell.row, cell.column) in self.day_cells or (cell.row, cell.column) in self.percent_cells:
+                    continue
+                if cell.column >= RATE_COL and (isinstance(cell.value, (int, float)) or (isinstance(cell.value, str) and cell.value.startswith("="))):
                     cell.number_format = '#,##0.00'
         self.sheet.auto_filter.ref = None
         self.workbook.calculation.calcMode = "auto"
         self.workbook.calculation.fullCalcOnLoad = True
         self.workbook.calculation.forceFullCalc = True
+
+    def _direction_column_width(self):
+        widest = _direction_text_width("Должность/направление", bold=True)
+        for (cell,) in self.sheet.iter_rows(min_col=DIRECTION_COL, max_col=DIRECTION_COL):
+            value = cell.value
+            if not isinstance(value, str) or not value or value.startswith(("=", "'")):
+                continue
+            bold = bool(cell.font and cell.font.bold)
+            for line in value.splitlines():
+                widest = max(widest, _direction_text_width(line, bold=bold))
+        return min(widest, 255)
 
     def build(self):
         for index, stage in enumerate(self.snapshot["stages"]):
@@ -502,3 +634,282 @@ def build_commercial_xlsx(snapshot):
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+HEADER_SPECIALIST = "Специалист"
+HEADER_DIRECTION = "Должность/направление"
+HEADER_RATE = "Ставка, евро / день"
+HEADER_TOTAL_DAYS = "Всего"
+HEADER_TOTAL = "Итого, евро без НДС"
+HEADER_SPECIALTY = "Специальность"
+HEADER_STATUS = "Профессиональный статус"
+HEADER_CODE = "Код"
+HEADER_SERVICE = "Услуги"
+ACTUAL_TRAVEL_LABEL = "по факту"
+IMPORT_SHEET_TITLE = "Коммерческое предложение"
+
+
+def _cell_text(cell):
+    value = cell.value
+    if value is None or (isinstance(value, str) and value.startswith("=")):
+        return ""
+    return _text(value)
+
+
+def _plain_number(value, *, integer=False, places="0.0001"):
+    if value is None or (isinstance(value, str) and (not str(value).strip() or str(value).startswith("="))):
+        return ""
+    if isinstance(value, str):
+        number = _number(value)
+        if number is None:
+            return ""
+        decimal_value = Decimal(str(number))
+    elif isinstance(value, Decimal):
+        decimal_value = value
+    elif isinstance(value, bool):
+        return ""
+    elif isinstance(value, (int, float)):
+        decimal_value = Decimal(str(value))
+    else:
+        return ""
+    if integer:
+        return str(int(decimal_value.to_integral_value(rounding=ROUND_HALF_UP)))
+    quantized = decimal_value.quantize(Decimal(places))
+    text = format(quantized, "f").rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _split_direction(text):
+    raw = _text(text)
+    if not raw:
+        return "", "", ""
+    service = ""
+    head = raw
+    separator = "; " if "; " in raw else (";" if ";" in raw else "")
+    if separator:
+        head, service = raw.split(separator, 1)
+        head = head.strip()
+        service = service.strip()
+    parts = [part.strip() for part in head.split(", ") if part.strip()]
+    job_title = parts[0] if parts else ""
+    status = ", ".join(parts[1:]) if len(parts) > 1 else ""
+    return job_title, status, service
+
+
+def _header_columns(sheet, header_row):
+    labels = {}
+    for column in range(1, (sheet.max_column or 0) + 1):
+        label = _cell_text(sheet.cell(header_row, column))
+        if label and label not in labels:
+            labels[label] = column
+    rate_col = labels.get(HEADER_RATE)
+    total_days_col = labels.get(HEADER_TOTAL_DAYS)
+    if not rate_col or not total_days_col or total_days_col <= rate_col + 1:
+        raise ValueError("Не удалось прочитать заголовки таблицы коммерческого предложения.")
+    day_cols = list(range(rate_col + 1, total_days_col))
+    assets = [_cell_text(sheet.cell(header_row, column)) for column in day_cols]
+    if not assets or any(not name for name in assets):
+        raise ValueError("В таблице есть пустой заголовок актива.")
+    return {
+        "rate_col": rate_col,
+        "day_cols": day_cols,
+        "total_col": labels.get(HEADER_TOTAL, total_days_col + 1),
+        "assets": assets,
+        "specialty_col": labels.get(HEADER_SPECIALTY),
+        "status_col": labels.get(HEADER_STATUS),
+        "code_col": labels.get(HEADER_CODE),
+        "service_col": labels.get(HEADER_SERVICE),
+    }
+
+
+def _row_has_values(sheet, row_index, columns):
+    watched = [SPECIALIST_COL, DIRECTION_COL, columns["rate_col"], *columns["day_cols"]]
+    for key in ("specialty_col", "status_col", "code_col", "service_col"):
+        if columns.get(key):
+            watched.append(columns[key])
+    for column in watched:
+        cell = sheet.cell(row_index, column)
+        if _cell_text(cell) or _plain_number(cell.value):
+            return True
+    return False
+
+
+def _specialist_row(sheet, row_index, columns):
+    job_title = _cell_text(sheet.cell(row_index, columns["specialty_col"])) if columns.get("specialty_col") else ""
+    status = _cell_text(sheet.cell(row_index, columns["status_col"])) if columns.get("status_col") else ""
+    code = _cell_text(sheet.cell(row_index, columns["code_col"])) if columns.get("code_col") else ""
+    service_name = _cell_text(sheet.cell(row_index, columns["service_col"])) if columns.get("service_col") else ""
+    if not any((job_title, status, service_name)):
+        parsed_title, parsed_status, parsed_service = _split_direction(_cell_text(sheet.cell(row_index, DIRECTION_COL)))
+        job_title = job_title or parsed_title
+        status = status or parsed_status
+        service_name = service_name or parsed_service
+    return {
+        "specialist": _cell_text(sheet.cell(row_index, SPECIALIST_COL)),
+        "job_title": job_title,
+        "professional_status": status,
+        "code": code,
+        "service_name": service_name,
+        "merge_without_code": False,
+        "rate_eur_per_day": _plain_number(sheet.cell(row_index, columns["rate_col"]).value, places="0.01"),
+        "asset_day_counts": [
+            _plain_number(sheet.cell(row_index, column).value, integer=True)
+            for column in columns["day_cols"]
+        ],
+    }
+
+
+def _travel_row(sheet, row_index, columns):
+    rate_cell = sheet.cell(row_index, columns["rate_col"])
+    actual = _cell_text(rate_cell).casefold() == ACTUAL_TRAVEL_LABEL
+    if actual:
+        day_counts = [""] * len(columns["day_cols"])
+        total = _plain_number(sheet.cell(row_index, columns["total_col"]).value, places="0.01")
+        mode = "actual"
+    else:
+        day_counts = [
+            _plain_number(sheet.cell(row_index, column).value, places="0.01")
+            for column in columns["day_cols"]
+        ]
+        total = ""
+        mode = "calculation"
+    return {
+        "row": {
+            "specialist": "",
+            "job_title": "",
+            "professional_status": "",
+            "code": "",
+            "service_name": "Командировочные расходы, евро",
+            "merge_without_code": False,
+            "rate_eur_per_day": "",
+            "asset_day_counts": day_counts,
+            "total_eur_without_vat": total,
+        },
+        "travel_expenses_mode": mode,
+    }
+
+
+def _percent_points(cell):
+    number = _plain_number(cell.value, places="0.0001")
+    if not number:
+        return ""
+    if "%" in str(cell.number_format or ""):
+        points = (Decimal(number) * Decimal("100")).quantize(Decimal("0.01"))
+        return format(points, "f").rstrip("0").rstrip(".") or "0"
+    return number
+
+
+def _read_block(sheet, header_row, end_row):
+    columns = _header_columns(sheet, header_row)
+    rows = []
+    travel = None
+    rub_row = None
+    discount_row = None
+    contract_row = None
+    for row_index in range(header_row + 1, end_row):
+        direction = _cell_text(sheet.cell(row_index, DIRECTION_COL))
+        service = _cell_text(sheet.cell(row_index, columns["service_col"])) if columns.get("service_col") else ""
+        if direction in TRAVEL_LABELS or service in TRAVEL_LABELS:
+            if travel is not None:
+                raise ValueError("В блоке этапа несколько строк командировочных расходов.")
+            travel = _travel_row(sheet, row_index, columns)
+            continue
+        if travel is None:
+            if not _row_has_values(sheet, row_index, columns):
+                continue
+            rows.append(_specialist_row(sheet, row_index, columns))
+            if len(rows) > MAX_ROWS_PER_BLOCK:
+                raise ValueError("Слишком много строк коммерческого предложения.")
+            continue
+        if direction == RUB_TOTAL_LABEL:
+            rub_row = row_index
+        elif direction == DISCOUNTED_TOTAL_LABEL:
+            discount_row = row_index
+        elif direction.startswith("ИТОГО в договор"):
+            contract_row = row_index
+    if travel is None:
+        raise ValueError("В блоке этапа нет строки командировочных расходов.")
+    if rub_row is None or discount_row is None:
+        raise ValueError("В блоке этапа нет обязательных итоговых строк.")
+    contract_value = ""
+    contract_manual = False
+    if contract_row is not None:
+        contract_cell = sheet.cell(contract_row, columns["total_col"])
+        if not (isinstance(contract_cell.value, str) and contract_cell.value.startswith("=")):
+            contract_value = _plain_number(contract_cell.value, places="0.01")
+            contract_manual = bool(contract_value) and Decimal(contract_value) != 0
+            if not contract_manual:
+                contract_value = ""
+    rows.append(travel["row"])
+    return {
+        "assets": columns["assets"],
+        "rows": rows,
+        "totals": {
+            "exchange_rate": _plain_number(sheet.cell(rub_row, columns["rate_col"]).value, places="0.0001"),
+            "discount_percent": _percent_points(sheet.cell(discount_row, columns["rate_col"])),
+            "contract_total": contract_value if contract_manual else "",
+            "contract_total_manual": contract_manual,
+            "travel_expenses_mode": travel["travel_expenses_mode"],
+        },
+    }
+
+
+def _commercial_sheet(workbook):
+    if IMPORT_SHEET_TITLE in workbook.sheetnames:
+        return workbook[IMPORT_SHEET_TITLE]
+    return workbook.active
+
+
+def parse_commercial_xlsx(content, *, assets, stage_count):
+    if not isinstance(assets, list) or not assets:
+        raise ValueError("Нет активов для загрузки.")
+    if len(assets) > MAX_ASSETS:
+        raise ValueError("Слишком много активов для загрузки.")
+    expected_assets = [_text(value, 255) or f"Актив {index + 1}" for index, value in enumerate(assets)]
+    try:
+        stage_count = int(stage_count)
+    except (TypeError, ValueError):
+        raise ValueError("Нет этапов для загрузки.") from None
+    if stage_count < 1:
+        raise ValueError("Нет этапов для загрузки.")
+    if stage_count > MAX_STAGES:
+        raise ValueError("Слишком много этапов для загрузки.")
+
+    from openpyxl import load_workbook
+    from openpyxl.utils.exceptions import InvalidFileException
+
+    try:
+        workbook = load_workbook(io.BytesIO(content), data_only=False)
+    except (InvalidFileException, OSError, ValueError, KeyError):
+        raise ValueError("Не удалось прочитать файл Excel.") from None
+    sheet = _commercial_sheet(workbook)
+    if (sheet.max_row or 0) > 5000:
+        raise ValueError("Файл коммерческого предложения слишком большой.")
+    header_rows = [
+        row_index
+        for row_index in range(1, (sheet.max_row or 0) + 1)
+        if _cell_text(sheet.cell(row_index, SPECIALIST_COL)) == HEADER_SPECIALIST
+        and _cell_text(sheet.cell(row_index, DIRECTION_COL)) == HEADER_DIRECTION
+    ]
+    if not header_rows:
+        raise ValueError("В файле нет таблицы коммерческого предложения.")
+    blocks = []
+    for index, header_row in enumerate(header_rows):
+        end_row = header_rows[index + 1] if index + 1 < len(header_rows) else (sheet.max_row or header_row) + 1
+        blocks.append(_read_block(sheet, header_row, end_row))
+    if blocks and blocks[-1]["assets"] != expected_assets:
+        blocks = blocks[:-1]
+    if len(blocks) != stage_count:
+        raise ValueError("Число этапов в файле не совпадает с проектом.")
+    for block in blocks:
+        if block["assets"] != expected_assets:
+            raise ValueError("Заголовки активов в файле не совпадают с активами проекта.")
+    return {
+        "stages": [
+            {
+                "rows": block["rows"],
+                "totals": block["totals"],
+            }
+            for block in blocks
+        ]
+    }

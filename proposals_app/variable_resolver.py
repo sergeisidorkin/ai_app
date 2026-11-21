@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from policy_app.models import ServiceGoalReport
+from projects_app.stage_terms import enabled_flag, term_to_days
 
 sys.modules.setdefault("proposals_app.variable_resolver", sys.modules[__name__])
 sys.modules.setdefault("ai_app.proposals_app.variable_resolver", sys.modules[__name__])
@@ -366,6 +367,8 @@ def _proposal_scope_of_work(proposal) -> list[dict[str, object] | str]:
         value = _format_date(source_value(source, "evaluation_date", ""))
         if not value:
             return None
+        if not _proposal_stage_flag(source, "evaluation_date_enabled", True):
+            return None
         return {"runs": [{"text": f"Дата оценки: {value}."}]}
 
     products = list(proposal.ordered_products()) if getattr(proposal, "pk", None) else []
@@ -456,6 +459,25 @@ def _proposal_multi_asset_column_widths_pct(asset_count: int) -> list[float]:
     asset_width = (Decimal("100.0") - fixed_total) / Decimal(str(asset_count))
     widths = fixed_columns + [asset_width] * asset_count + trailing_columns
     return [float(width) for width in widths]
+
+
+_BUDGET_DAY_COLUMN_START = 3
+_BUDGET_LANDSCAPE_DAY_COLUMN_LIMIT = 3
+
+
+def _budget_wide_table_options(day_label_count: int) -> dict[str, object]:
+    """Альбомный лист, когда столбцов дней по этапам и активам больше трёх.
+
+    Итоговый столбец «Всего» / «Кол-во дней» в этот счёт не входит.
+    """
+    if day_label_count <= _BUDGET_LANDSCAPE_DAY_COLUMN_LIMIT:
+        return {}
+    return {
+        "landscape_section": True,
+        "fit_label_columns": list(
+            range(_BUDGET_DAY_COLUMN_START, _BUDGET_DAY_COLUMN_START + day_label_count)
+        ),
+    }
 
 
 def _proposal_multistage_column_widths_pct(day_column_count: int) -> list[float]:
@@ -914,6 +936,7 @@ def _proposal_multistage_budget_table(proposal) -> dict | None:
         "font_size_pt": 7,
         "style": "Table Grid",
         "column_widths_pct": _proposal_multistage_column_widths_pct(day_column_count),
+        **_budget_wide_table_options(day_column_count - 1),
     }
 
 
@@ -1125,11 +1148,24 @@ def _proposal_budget_table(proposal) -> dict:
         "font_size_pt": 8 if not show_asset_columns else 7,
         "style": "Table Grid",
         "column_widths_pct": [18, 46, 12, 12, 12] if not show_asset_columns else _proposal_multi_asset_column_widths_pct(asset_count),
+        **_budget_wide_table_options(asset_count if show_asset_columns else 0),
     }
 
 
 def _proposal_evaluation_date(proposal) -> str:
-    return _format_date(proposal.evaluation_date)
+    payloads = [
+        item
+        for item in (getattr(proposal, "stage_payloads_json", None) or [])
+        if isinstance(item, dict)
+    ]
+    if payloads:
+        source = payloads[-1]
+        if not _proposal_stage_flag(source, "evaluation_date_enabled", True):
+            return ""
+        stage_value = _format_date(_source_value(source, "evaluation_date"))
+        if stage_value:
+            return stage_value
+    return _format_date(getattr(proposal, "evaluation_date", None))
 
 
 def _parse_proposal_date(value) -> date | None:
@@ -1165,19 +1201,6 @@ def _add_decimal_months(value: date, months: Decimal) -> date:
     return _add_whole_months(value, whole_months) + timedelta(days=fractional_days)
 
 
-def _subtract_decimal_months(value: date, months: Decimal) -> date:
-    safe_months = max(months, Decimal("0"))
-    whole_months = int(safe_months)
-    fractional_days = int(((safe_months - whole_months) * Decimal("30")) + Decimal("0.5"))
-    base = value - timedelta(days=fractional_days)
-    return _add_whole_months(base, -whole_months)
-
-
-def _subtract_decimal_weeks(value: date, weeks: Decimal) -> date:
-    safe_weeks = max(weeks, Decimal("0"))
-    return value - timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
-
-
 def _add_decimal_weeks(value: date, weeks: Decimal) -> date:
     safe_weeks = max(weeks, Decimal("0"))
     return value + timedelta(days=int((safe_weeks * Decimal("7")) + Decimal("0.5")))
@@ -1186,11 +1209,6 @@ def _add_decimal_weeks(value: date, weeks: Decimal) -> date:
 def _add_decimal_days(value: date, days: Decimal) -> date:
     safe_days = max(days, Decimal("0"))
     return value + timedelta(days=int(safe_days + Decimal("0.5")))
-
-
-def _subtract_decimal_days(value: date, days: Decimal) -> date:
-    safe_days = max(days, Decimal("0"))
-    return value - timedelta(days=int(safe_days + Decimal("0.5")))
 
 
 def _normalize_preliminary_term_unit(value) -> str:
@@ -1213,25 +1231,6 @@ def _add_term(value: date, amount: Decimal, unit: str) -> date:
     if unit == "weeks":
         return _add_decimal_weeks(value, amount)
     return _add_decimal_months(value, amount)
-
-
-def _subtract_term(value: date, amount: Decimal, unit: str) -> date:
-    if unit == "days":
-        return _subtract_decimal_days(value, amount)
-    if unit == "weeks":
-        return _subtract_decimal_weeks(value, amount)
-    return _subtract_decimal_months(value, amount)
-
-
-def _duration_in_unit(start: date, end: date, unit: str) -> Decimal:
-    if end <= start:
-        return Decimal("0")
-    if unit == "months":
-        return _decimal_months_between(start, end)
-    days = Decimal(max(0, (end - start).days))
-    if unit == "weeks":
-        return days / Decimal("7")
-    return days
 
 
 def _format_term_with_unit(amount: Decimal, unit: str) -> str:
@@ -1297,56 +1296,49 @@ def _proposal_preliminary_report_term_month(proposal) -> str:
     return f"{_format_decimal(amount, precision=1, strip_trailing_zeros=True)} {suffix}"
 
 
-def _proposal_last_stage_final_report_date(proposal) -> date | None:
-    stage_payloads = [
-        item
-        for item in (getattr(proposal, "stage_payloads_json", None) or [])
-        if isinstance(item, dict)
-    ]
-    for payload in reversed(stage_payloads):
-        parsed = _parse_proposal_date(payload.get("final_report_date"))
-        if parsed:
-            return parsed
-    return _parse_proposal_date(getattr(proposal, "final_report_date", None))
-
-
-def _proposal_first_stage_start_date(proposal) -> date | None:
-    stage_payloads = [
-        item
-        for item in (getattr(proposal, "stage_payloads_json", None) or [])
-        if isinstance(item, dict)
-    ]
-    sources = stage_payloads or [proposal]
-    source = sources[0]
+def _proposal_stage_flag(source, key: str, default: bool) -> bool:
     if isinstance(source, dict):
-        preliminary_report_date = _parse_proposal_date(source.get("preliminary_report_date"))
-        final_report_date = _parse_proposal_date(source.get("final_report_date"))
-        service_term_months = _parse_decimal(source.get("service_term_months"))
-        final_report_term_weeks = _parse_decimal(source.get("final_report_term_weeks"))
-        preliminary_unit = _normalize_preliminary_term_unit(source.get("preliminary_report_term_unit"))
-        final_unit = _normalize_final_term_unit(source.get("final_report_term_unit"))
-    else:
-        preliminary_report_date = _parse_proposal_date(getattr(source, "preliminary_report_date", None))
-        final_report_date = _parse_proposal_date(getattr(source, "final_report_date", None))
-        service_term_months = _parse_decimal(getattr(source, "service_term_months", None))
-        final_report_term_weeks = _parse_decimal(getattr(source, "final_report_term_weeks", None))
-        preliminary_unit = _normalize_preliminary_term_unit(getattr(source, "preliminary_report_term_unit", None))
-        final_unit = _normalize_final_term_unit(getattr(source, "final_report_term_unit", None))
-
-    if not preliminary_report_date and final_report_date and final_report_term_weeks is not None:
-        preliminary_report_date = _subtract_term(final_report_date, final_report_term_weeks, final_unit)
-    if preliminary_report_date and service_term_months is not None:
-        return _subtract_term(preliminary_report_date, service_term_months, preliminary_unit)
-    return None
+        if key not in source:
+            return default
+        return enabled_flag(source.get(key), default)
+    if not hasattr(source, key):
+        return default
+    return enabled_flag(getattr(source, key), default)
 
 
-def _proposal_final_report_term_month(proposal) -> str:
-    final_report_date = _proposal_last_stage_final_report_date(proposal)
-    if not final_report_date:
-        return ""
-    start_date = _proposal_first_stage_start_date(proposal) or _proposal_base_start_date()
-    months = _decimal_months_between(start_date, final_report_date)
-    return _format_month_term_short(months)
+def _proposal_source_term_unit(value) -> str:
+    raw = str(value or "").strip()
+    if raw in {"days", "weeks", "months"}:
+        return raw
+    return "weeks"
+
+
+def _proposal_stage_delay_days(source) -> int:
+    raw_unit = str(_source_value(source, "next_stage_delay_unit") or "").strip()
+    unit = raw_unit if raw_unit in {"days", "weeks", "months"} else "days"
+    days = term_to_days(_source_value(source, "next_stage_delay_days") or 0, unit)
+    return int(days.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _proposal_overall_term_unit(proposal) -> str:
+    raw = str(getattr(proposal, "overall_term_unit", "") or "").strip()
+    if raw in {"days", "weeks", "months"}:
+        return raw
+    return "months"
+
+
+def _format_overall_term(origin: date, end: date, unit: str) -> str:
+    if unit == "days":
+        return f"{max((end - origin).days, 0)} дн."
+    if unit == "weeks":
+        weeks = Decimal(max((end - origin).days, 0)) / Decimal("7")
+        return _format_term_with_unit(weeks, "weeks")
+    return _format_month_term_short(_decimal_months_between(origin, end))
+
+
+def _proposal_final_report_term(proposal) -> str:
+    span = _proposal_term_span(proposal)
+    return _format_overall_term(span["origin"], span["end"], _proposal_overall_term_unit(proposal))
 
 
 def _proposal_stages(proposal) -> str:
@@ -1471,98 +1463,167 @@ def _proposal_stage_term_sources(proposal) -> list[dict[str, object]]:
     return result
 
 
-def _proposal_stage_term_values(source, fallback_start_date: date | None = None) -> dict[str, object]:
-    preliminary_unit = _normalize_preliminary_term_unit(_source_value(source, "preliminary_report_term_unit"))
-    final_unit = _normalize_final_term_unit(_source_value(source, "final_report_term_unit"))
-    preliminary_amount = _parse_decimal(_source_value(source, "service_term_months")) or Decimal("0")
-    final_amount = _parse_decimal(_source_value(source, "final_report_term_weeks")) or Decimal("0")
-    preliminary_date = _parse_proposal_date(_source_value(source, "preliminary_report_date"))
-    final_date = _parse_proposal_date(_source_value(source, "final_report_date"))
+def _source_has_flag(source, key: str) -> bool:
+    if isinstance(source, dict):
+        return key in source
+    return hasattr(source, key)
 
-    start_date = None
-    if preliminary_date:
-        start_date = _subtract_term(preliminary_date, preliminary_amount, preliminary_unit)
-    elif final_date:
-        preliminary_date = _subtract_term(final_date, final_amount, final_unit)
-        start_date = _subtract_term(preliminary_date, preliminary_amount, preliminary_unit)
-    elif fallback_start_date:
-        start_date = fallback_start_date
 
-    if start_date and not preliminary_date:
-        preliminary_date = _add_term(start_date, preliminary_amount, preliminary_unit)
-    if preliminary_date and not final_date:
-        final_date = _add_term(preliminary_date, final_amount, final_unit)
+def _stage_phrase_enabled(source, key: str, *, missing_default: bool, has_value: bool) -> bool:
+    if not has_value:
+        return False
+    if not _source_has_flag(source, key):
+        return missing_default
+    return _proposal_stage_flag(source, key, missing_default)
 
-    if start_date and preliminary_date:
-        preliminary_amount = _duration_in_unit(start_date, preliminary_date, preliminary_unit)
-    if preliminary_date and final_date:
-        final_amount = _duration_in_unit(preliminary_date, final_date, final_unit)
-    total_months = _decimal_months_between(start_date, final_date) if start_date and final_date else Decimal("0")
+
+def _stage_task_line(
+    source,
+    *,
+    label: str,
+    term_flag: str,
+    term_missing_default: bool,
+    amount: Decimal | None,
+    unit: str,
+    date_flag: str,
+    date_missing_default: bool,
+    raw_date,
+) -> str | None:
+    parts: list[str] = []
+    if _stage_phrase_enabled(
+        source,
+        term_flag,
+        missing_default=term_missing_default,
+        has_value=amount is not None,
+    ):
+        parts.append(f"в течение {_format_term_with_unit(amount, unit)}")
+    deadline = _parse_proposal_date(raw_date)
+    if _stage_phrase_enabled(
+        source,
+        date_flag,
+        missing_default=date_missing_default,
+        has_value=deadline is not None,
+    ):
+        parts.append(f"не позднее {_format_date(deadline)}")
+    if not parts:
+        return None
+    return f"{label} — {' '.join(parts)}"
+
+
+def _advance_term(cursor: date, amount: Decimal | None, unit: str) -> date:
+    if amount is None:
+        return cursor
+    return _add_term(cursor, amount, unit)
+
+
+def _proposal_term_span(proposal) -> dict[str, object]:
+    """Сумма сроков задач от даты начала проекта.
+
+    Контракт начинается после получения исходных данных, поэтому срок
+    исходных данных не входит ни в общий срок, ни в сумму месяцев этапа.
+    Строка исходных данных при этом по-прежнему выводится. Даты-дедлайны
+    и тогглы на длительность не влияют. Лаг входит только в общий срок
+    и только между этапами.
+    """
+    sources = _proposal_stage_term_sources(proposal)
+    origin = getattr(proposal, "project_start_date", None) or _proposal_base_start_date()
+    cursor = origin
+    stages: list[dict[str, object]] = []
+    for index, item in enumerate(sources):
+        source = item["source"]
+        source_amount = _parse_decimal(_source_value(source, "source_data_term"))
+        source_unit = _proposal_source_term_unit(_source_value(source, "source_data_term_unit"))
+        preliminary_amount = _parse_decimal(_source_value(source, "service_term_months"))
+        preliminary_unit = _normalize_preliminary_term_unit(
+            _source_value(source, "preliminary_report_term_unit")
+        )
+        final_amount = _parse_decimal(_source_value(source, "final_report_term_weeks"))
+        final_unit = _normalize_final_term_unit(_source_value(source, "final_report_term_unit"))
+        stage_start = cursor
+        cursor = _advance_term(cursor, preliminary_amount, preliminary_unit)
+        cursor = _advance_term(cursor, final_amount, final_unit)
+        lines = [
+            _stage_task_line(
+                source,
+                label="получение Исходных данных",
+                term_flag="source_data_term_enabled",
+                term_missing_default=False,
+                amount=source_amount,
+                unit=source_unit,
+                date_flag="source_data_date_enabled",
+                date_missing_default=False,
+                raw_date=_source_value(source, "source_data_date"),
+            ),
+            _stage_task_line(
+                source,
+                label="сдача Предварительного отчёта",
+                term_flag="service_term_months_enabled",
+                term_missing_default=True,
+                amount=preliminary_amount,
+                unit=preliminary_unit,
+                date_flag="preliminary_report_date_enabled",
+                date_missing_default=True,
+                raw_date=_source_value(source, "preliminary_report_date"),
+            ),
+            _stage_task_line(
+                source,
+                label="сдача Итогового отчёта",
+                term_flag="final_report_term_enabled",
+                term_missing_default=True,
+                amount=final_amount,
+                unit=final_unit,
+                date_flag="final_report_date_enabled",
+                date_missing_default=True,
+                raw_date=_source_value(source, "final_report_date"),
+            ),
+        ]
+        stages.append(
+            {
+                "months": _decimal_months_between(stage_start, cursor),
+                "lines": [line for line in lines if line],
+            }
+        )
+        if index < len(sources) - 1:
+            cursor += timedelta(days=_proposal_stage_delay_days(source))
     return {
-        "start_date": start_date,
-        "preliminary_date": preliminary_date,
-        "final_date": final_date,
-        "preliminary_amount": preliminary_amount,
-        "preliminary_unit": preliminary_unit,
-        "final_amount": final_amount,
-        "final_unit": final_unit,
-        "total_months": total_months,
-        "next_stage_delay_days": _parse_decimal(_source_value(source, "next_stage_delay_days")) or Decimal("0"),
+        "stages": stages,
+        "origin": origin,
+        "end": cursor,
+        "total_months": _decimal_months_between(origin, cursor),
     }
 
 
 def _proposal_stage_terms(proposal) -> list[dict[str, object]]:
-    sources = _proposal_stage_term_sources(proposal)
+    stages = _proposal_term_span(proposal)["stages"]
     result: list[dict[str, object]] = []
-    rolling_start_date = _proposal_first_stage_start_date(proposal) or _proposal_base_start_date()
-    has_multiple_stages = len(sources) > 1
-    bullet_format = {"list_type": "bullet"}
-
-    for index, item in enumerate(sources, start=1):
-        values = _proposal_stage_term_values(item["source"], rolling_start_date)
+    has_multiple_stages = len(stages) > 1
+    bullet_format = {"list_type": "bullet", "paragraph_style": "bullet"}
+    for index, stage in enumerate(stages, start=1):
         if has_multiple_stages:
             result.append(
                 {
                     "runs": [
                         {
-                            "text": f"Этап {index}: {_format_month_term_short(values['total_months'])}",
+                            "text": f"Этап {index}: {_format_month_term_short(stage['months'])}",
                         }
                     ]
                 }
             )
-        result.append(
-            {
-                "runs": [
-                    {
-                        "text": (
-                            "сдача Предварительного отчёта — в течение "
-                            f"{_format_term_with_unit(values['preliminary_amount'], values['preliminary_unit'])} до "
-                            f"{_format_date(values['preliminary_date'])},"
-                        )
-                    }
-                ],
-                **bullet_format,
-            }
-        )
-        result.append(
-            {
-                "runs": [
-                    {
-                        "text": (
-                            "сдача Итогового отчёта — в течение "
-                            f"{_format_term_with_unit(values['final_amount'], values['final_unit'])} до "
-                            f"{_format_date(values['final_date'])}."
-                        )
-                    }
-                ],
-                **bullet_format,
-            }
-        )
-
-        stage_end_date = values["final_date"] or values["preliminary_date"] or values["start_date"]
-        if stage_end_date:
-            rolling_start_date = stage_end_date + timedelta(days=int(values["next_stage_delay_days"]))
-
+        lines = stage["lines"]
+        for line_index, text in enumerate(lines):
+            is_last = line_index == len(lines) - 1
+            if not is_last:
+                ending = ","
+            elif "не позднее" in text:
+                ending = "."
+            else:
+                ending = ""
+            result.append(
+                {
+                    "runs": [{"text": f"{text}{ending}"}],
+                    **bullet_format,
+                }
+            )
     return result
 
 
@@ -1762,7 +1823,7 @@ FIELD_MAP = {
     ("proposals", "registry", "term"): _proposal_service_term_months,
     ("proposals", "registry", "preliminary_report_date"): _proposal_preliminary_report_date,
     ("proposals", "registry", "final_report_term_weeks"): _proposal_final_report_term_weeks,
-    ("proposals", "registry", "final_report_term_month"): _proposal_final_report_term_month,
+    ("proposals", "registry", "final_report_term_month"): _proposal_final_report_term,
     ("proposals", "registry", "final_report_date"): _proposal_final_report_date,
     ("proposals", "registry", "report_languages"): _proposal_report_languages,
     ("proposals", "registry", "service_cost"): _proposal_service_cost,
@@ -1792,7 +1853,8 @@ COMPUTED_MAP = {
     "{{tkp_preliminary}}": _proposal_tkp_preliminary,
     "{{preliminary_payment_percentage_full}}": _proposal_preliminary_payment_percentage_full,
     "{{preliminary_report_term_month}}": _proposal_preliminary_report_term_month,
-    "{{final_report_term_month}}": _proposal_final_report_term_month,
+    "{{final_report_term}}": _proposal_final_report_term,
+    "{{final_report_term_month}}": _proposal_final_report_term,
     "{{stages}}": _proposal_stages,
     "{{owner_country_full_name}}": _proposal_asset_owner_country_full_name,
     "{{country_full_name}}": _proposal_country_full_name,
@@ -1817,6 +1879,8 @@ VARIABLE_ALIASES = {
     "{{country_full_name}}": ["{{client_country_full_name}}"],
     "{{evaluation_date}}": ["{{effective_date}}"],
     "{{effective_date}}": ["{{evaluation_date}}"],
+    "{{final_report_term}}": ["{{final_report_term_month}}"],
+    "{{final_report_term_month}}": ["{{final_report_term}}"],
     "{{service_cost}}": ["{{total_price}}"],
     "{{total_price}}": ["{{service_cost}}"],
 }

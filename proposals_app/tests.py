@@ -590,6 +590,58 @@ class ProposalDocumentGenerationTests(TestCase):
         self.assertEqual(template.version, "5")
         self.assertEqual(set(template.group_members.values_list("pk", flat=True)), {second_group.pk})
 
+    def test_document_base_name_uses_registry_type_column(self):
+        self.assertEqual(
+            build_proposal_document_base_name(self.proposal),
+            "ТКП_333300RU_DD_Приморское_v01",
+        )
+
+        second = Product.objects.create(
+            short_name="JORC",
+            name_en="JORC",
+            name_ru="JORC",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=2,
+        )
+        third = Product.objects.create(
+            short_name="CPR",
+            name_en="CPR",
+            name_ru="CPR",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=3,
+        )
+        fourth = Product.objects.create(
+            short_name="PFS",
+            name_en="PFS",
+            name_ru="PFS",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=4,
+        )
+        ProposalRegistrationProduct.objects.bulk_create([
+            ProposalRegistrationProduct(proposal=self.proposal, product=self.product, rank=1),
+            ProposalRegistrationProduct(proposal=self.proposal, product=second, rank=2),
+            ProposalRegistrationProduct(proposal=self.proposal, product=third, rank=3),
+        ])
+
+        self.assertEqual(self.proposal.type_short_display, "DD-JORC-CPR")
+        self.assertEqual(
+            build_proposal_document_base_name(self.proposal),
+            "ТКП_333300RU_DD-JORC-CPR_Приморское_v01",
+        )
+
+        ProposalRegistrationProduct.objects.create(proposal=self.proposal, product=fourth, rank=4)
+        self.assertEqual(self.proposal.type_short_display, "4 этапа")
+        self.assertEqual(
+            build_proposal_document_base_name(self.proposal),
+            "ТКП_333300RU_4 этапа_Приморское_v01",
+        )
+
     @patch("ai_app.proposals_app.document_generation._get_cloud_upload_user")
     @patch("ai_app.proposals_app.document_generation.cloud_upload_file", return_value=True)
     def test_create_documents_generates_docx_and_uploads_it_to_workspace_folder(
@@ -1082,6 +1134,53 @@ class ProposalDocumentGenerationTests(TestCase):
             self.assertNotIn("w:numPr", paragraph._element.xml)
             self.assertNotIn("w:pStyle", paragraph._element.xml)
             self.assertIn('w:lang w:val="ru-RU"', paragraph._element.xml)
+
+    def test_stage_terms_bullet_lines_use_russian_bullet_list_style(self):
+        template_doc = Document()
+        template_doc.styles.add_style("Маркированный список", WD_STYLE_TYPE.PARAGRAPH)
+        template_doc.add_paragraph("[[stage_terms]]")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            {},
+            list_replacements={
+                "[[stage_terms]]": [
+                    {"runs": [{"text": "Этап 1: 1,5 мес."}]},
+                    {
+                        "runs": [{"text": "сдача Предварительного отчёта — в течение 1 мес."}],
+                        "list_type": "bullet",
+                        "paragraph_style": "bullet",
+                    },
+                    {"runs": [{"text": "Этап 2: 2,7 мес."}]},
+                    {
+                        "runs": [{"text": "сдача Итогового отчёта — в течение 3 нед."}],
+                        "list_type": "bullet",
+                        "paragraph_style": "bullet",
+                    },
+                ]
+            },
+            default_language_code="ru-RU",
+        )
+
+        generated_doc = Document(BytesIO(generated_bytes))
+        paragraphs = {paragraph.text: paragraph for paragraph in generated_doc.paragraphs}
+
+        for header_text in ("Этап 1: 1,5 мес.", "Этап 2: 2,7 мес."):
+            header = paragraphs[header_text]
+            self.assertNotEqual(header.style.name, "Маркированный список")
+            self.assertNotIn("w:numPr", header._element.xml)
+            self.assertNotIn("w:pStyle", header._element.xml)
+
+        for bullet_text in (
+            "сдача Предварительного отчёта — в течение 1 мес.",
+            "сдача Итогового отчёта — в течение 3 нед.",
+        ):
+            bullet = paragraphs[bullet_text]
+            self.assertEqual(bullet.style.name, "Маркированный список")
+            self.assertNotIn("w:numPr", bullet._element.xml)
+            self.assertIn('w:lang w:val="ru-RU"', bullet._element.xml)
 
     def test_process_template_inserts_payment_schedule_with_indented_payment_lines(self):
         template_doc = Document()
@@ -1773,6 +1872,8 @@ class ProposalDocumentGenerationTests(TestCase):
         ]
         self.assertTrue(budget_run_sizes)
         self.assertTrue(all(size == 7 for size in budget_run_sizes))
+        self.assertEqual(len(generated_doc.sections), 1)
+        self.assertNotIn('w:orient w:val="landscape"', generated_doc.element.xml)
 
     def test_process_template_inserts_single_asset_budget_table_with_pct_widths(self):
         proposal = ProposalRegistration.objects.create(
@@ -1836,6 +1937,215 @@ class ProposalDocumentGenerationTests(TestCase):
         ]
         self.assertTrue(budget_run_sizes)
         self.assertTrue(all(size == 8 for size in budget_run_sizes))
+        self.assertEqual(len(generated_doc.sections), 1)
+
+    def _budget_section_marks(self, document):
+        marks = []
+        for child in document.element.body:
+            if child.tag == qn("w:p"):
+                text = "".join(node.text or "" for node in child.iter(qn("w:t")))
+                p_pr = child.find(qn("w:pPr"))
+                sect = None if p_pr is None else p_pr.find(qn("w:sectPr"))
+                if sect is not None:
+                    page_size = sect.find(qn("w:pgSz"))
+                    section_type = sect.find(qn("w:type"))
+                    marks.append((
+                        "sect",
+                        None if page_size is None else page_size.get(qn("w:orient")),
+                        None if section_type is None else section_type.get(qn("w:val")),
+                    ))
+                elif text:
+                    marks.append(("p", text))
+            elif child.tag == qn("w:tbl"):
+                marks.append(("tbl",))
+        return marks
+
+    def _cell_width_fiftieths(self, table, text):
+        partial = None
+        for row in table.rows:
+            for cell in row.cells:
+                if cell.text.strip() == text:
+                    width = cell._tc.tcPr.find(qn("w:tcW"))
+                    return int(width.get(qn("w:w"))), cell
+                if partial is None and text in cell.text:
+                    partial = cell
+        if partial is not None:
+            width = partial._tc.tcPr.find(qn("w:tcW"))
+            return int(width.get(qn("w:w"))), partial
+        self.fail(f"ячейка {text!r} не найдена")
+
+    def _render_budget_table(self, proposal, *, a4=False):
+        from docx.shared import Cm
+
+        template_doc = Document()
+        if a4:
+            section = template_doc.sections[0]
+            section.page_width = Cm(21.0)
+            section.page_height = Cm(29.7)
+            section.left_margin = Cm(2)
+            section.right_margin = Cm(2)
+        template_doc.add_paragraph("До таблицы")
+        template_doc.add_paragraph("[[budget_table]]")
+        template_doc.add_paragraph("После таблицы")
+        buffer = BytesIO()
+        template_doc.save(buffer)
+        replacements, lists, tables = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[budget_table]]", is_computed=True)],
+        )
+        generated_bytes = process_template(
+            buffer.getvalue(),
+            replacements,
+            table_replacements=tables,
+            list_replacements=lists,
+            default_language_code="ru-RU",
+        )
+        return tables["[[budget_table]]"], Document(BytesIO(generated_bytes))
+
+    def test_budget_table_with_four_assets_uses_landscape_section(self):
+        from docx.enum.section import WD_ORIENT
+
+        proposal = ProposalRegistration.objects.create(
+            number=5601,
+            group_member=self.group_member,
+            type=self.product,
+            name="Четыре актива",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            customer='ООО "Приморское"',
+        )
+        for position, short_name in enumerate(
+            ["А", "Рудник", "Фабрика", "Месторождение Приморское"],
+            start=1,
+        ):
+            ProposalAsset.objects.create(proposal=proposal, short_name=short_name, position=position)
+
+        table_spec, generated_doc = self._render_budget_table(proposal)
+
+        self.assertEqual(table_spec["fit_label_columns"], [3, 4, 5, 6])
+        self.assertTrue(table_spec["landscape_section"])
+        self.assertEqual(len(generated_doc.sections), 3)
+        self.assertNotEqual(generated_doc.sections[0].orientation, WD_ORIENT.LANDSCAPE)
+        self.assertEqual(generated_doc.sections[1].orientation, WD_ORIENT.LANDSCAPE)
+        self.assertGreater(generated_doc.sections[1].page_width, generated_doc.sections[1].page_height)
+        self.assertNotEqual(generated_doc.sections[2].orientation, WD_ORIENT.LANDSCAPE)
+        self.assertLess(generated_doc.sections[0].page_width, generated_doc.sections[0].page_height)
+        self.assertLess(generated_doc.sections[2].page_width, generated_doc.sections[2].page_height)
+        self.assertEqual(
+            self._budget_section_marks(generated_doc),
+            [
+                ("p", "До таблицы"),
+                ("sect", None, "nextPage"),
+                ("tbl",),
+                ("sect", "landscape", "nextPage"),
+                ("p", "После таблицы"),
+            ],
+        )
+        short_width, _short_cell = self._cell_width_fiftieths(generated_doc.tables[0], "А")
+        long_width, long_cell = self._cell_width_fiftieths(generated_doc.tables[0], "Месторождение Приморское")
+        self.assertGreater(long_width, short_width)
+        self.assertIsNotNone(long_cell._tc.tcPr.find(qn("w:noWrap")))
+
+    def test_budget_table_with_four_stages_uses_landscape_section(self):
+        from docx.enum.section import WD_ORIENT
+
+        short_names = ["A", "BB", "CC", "LONG"]
+        products = [
+            Product.objects.create(
+                short_name=short_name,
+                name_en=short_name,
+                name_ru=short_name,
+                consulting_type="Горный",
+                service_category="Аудит",
+                service_subtype="Аудит соответствия стандартам",
+                position=index,
+            )
+            for index, short_name in enumerate(short_names, start=1)
+        ]
+        proposal = ProposalRegistration.objects.create(
+            number=5602,
+            group_member=self.group_member,
+            type=products[-1],
+            name="Четыре этапа",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            customer='ООО "Приморское"',
+            stage_payloads_json=[
+                {"rank": index, "product_id": product.pk, "commercial_offer_payload": []}
+                for index, product in enumerate(products, start=1)
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=product, rank=index)
+                for index, product in enumerate(products, start=1)
+            ]
+        )
+        ProposalAsset.objects.create(proposal=proposal, short_name="Единственный", position=1)
+
+        table_spec, generated_doc = self._render_budget_table(proposal, a4=True)
+
+        self.assertEqual(table_spec["fit_label_columns"], [3, 4, 5, 6])
+        self.assertTrue(table_spec["landscape_section"])
+        self.assertEqual(len(generated_doc.sections), 3)
+        self.assertEqual(generated_doc.sections[1].orientation, WD_ORIENT.LANDSCAPE)
+        self.assertEqual(
+            self._budget_section_marks(generated_doc),
+            [
+                ("p", "До таблицы"),
+                ("sect", None, "nextPage"),
+                ("tbl",),
+                ("sect", "landscape", "nextPage"),
+                ("p", "После таблицы"),
+            ],
+        )
+        short_width, _short_cell = self._cell_width_fiftieths(generated_doc.tables[0], "Этап 1 A: кол-во дней")
+        long_width, long_cell = self._cell_width_fiftieths(
+            generated_doc.tables[0],
+            "Этап 4 LONG: кол-во дней",
+        )
+        self.assertGreater(long_width, short_width)
+        self.assertIsNotNone(long_cell._tc.tcPr.find(qn("w:noWrap")))
+
+    def test_budget_table_with_two_stages_stays_portrait(self):
+        second_product = Product.objects.create(
+            short_name="TDD",
+            name_en="Technical Due Diligence",
+            name_ru="ТДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=5603,
+            group_member=self.group_member,
+            type=second_product,
+            name="Два этапа",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.DRAFT,
+            customer='ООО "Приморское"',
+            stage_payloads_json=[
+                {"rank": 1, "product_id": self.product.pk, "commercial_offer_payload": []},
+                {"rank": 2, "product_id": second_product.pk, "commercial_offer_payload": []},
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=self.product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+        ProposalAsset.objects.create(proposal=proposal, short_name="Актив 1", position=1)
+
+        table_spec, generated_doc = self._render_budget_table(proposal)
+
+        self.assertNotIn("landscape_section", table_spec)
+        self.assertEqual(len(generated_doc.sections), 1)
+        self.assertNotIn('w:orient w:val="landscape"', generated_doc.element.xml)
+        budget_xml = generated_doc.tables[0]._tbl.xml
+        for width in table_spec["column_widths_pct"]:
+            self.assertIn(f'w:tcW w:type="pct" w:w="{int(round(width * 50))}"', budget_xml)
 
     def test_insert_floating_image_at_placeholder_replaces_marker_with_anchor(self):
         template_doc = Document()
@@ -4304,6 +4614,31 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(form.fields["number"].widget.attrs["max"], 9999)
         self.assertEqual(form.fields["number"].widget.attrs["placeholder"], "0001")
 
+    def test_disabled_term_toggle_keeps_the_term_value(self):
+        form = ProposalRegistrationForm(
+            data=self._base_form_payload(
+                source_data_term="2.0",
+                source_data_term_unit="weeks",
+                source_data_term_enabled="false",
+                service_term_months="3.5",
+                service_term_months_enabled="false",
+                final_report_term_weeks="2",
+                final_report_term_unit="weeks",
+                final_report_term_enabled="false",
+            )
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+
+        stage = proposal.stage_payloads_json[0]
+        self.assertFalse(stage["source_data_term_enabled"])
+        self.assertEqual(stage["source_data_term"], "2.0")
+        self.assertFalse(stage["service_term_months_enabled"])
+        self.assertEqual(stage["service_term_months"], "3.5")
+        self.assertFalse(stage["final_report_term_enabled"])
+        self.assertEqual(stage["final_report_term_weeks"], "2")
+
     def test_document_kind_field_offers_final_and_preliminary(self):
         form = ProposalRegistrationForm()
 
@@ -4987,8 +5322,168 @@ class ProposalRegistrationFormTests(TestCase):
                 "purpose",
                 "service_composition",
                 "report_languages",
+                "overall_term",
             },
         )
+
+    def test_registry_overall_term_column_uses_modal_term_and_is_hidden_by_default(self):
+        user = get_user_model().objects.create_user(
+            username="proposal-overall-term-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(user)
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=8801,
+            group_member=group_member,
+            type=product,
+            name="Срок в реестре",
+            year=2026,
+            overall_term_unit="months",
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "service_term_months": "1.0",
+                    "preliminary_report_term_unit": "months",
+                    "final_report_term_weeks": "2",
+                    "final_report_term_unit": "weeks",
+                }
+            ],
+        )
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 1, 1)):
+            response = self.client.get(reverse("proposals_partial") + "?tables=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'id="proposal-col-overall-term" data-default-hidden="true"',
+            html=False,
+        )
+        html = response.content.decode()
+        registry = html.split('id="proposal-registry-table"', 1)[1].split("</table>", 1)[0]
+        self.assertLess(
+            registry.find('<th data-col="overall-term">Срок</th>'),
+            registry.find('<th data-col="service-cost">Стоимость услуг</th>'),
+        )
+        self.assertIn(
+            '<td data-col="overall-term" class="text-nowrap">1,5 мес.</td>',
+            registry,
+        )
+        self.assertEqual(proposal.overall_term_unit, "months")
+
+    def test_project_start_stays_empty_until_a_date_is_set_manually(self):
+        form = ProposalRegistrationForm()
+        self.assertFalse(form.proposal_project_start_custom)
+
+        saved = ProposalRegistrationForm(
+            data=self._base_form_payload(
+                proposal_project_start_custom="0",
+                proposal_project_start_date="2026-03-02",
+            )
+        )
+        self.assertTrue(saved.is_valid(), saved.errors)
+        proposal = saved.save()
+
+        self.assertIsNone(proposal.project_start_date)
+        self.assertFalse(saved.proposal_project_start_custom)
+
+    def test_manual_project_start_is_kept_when_date_toggles_are_off(self):
+        payload = self._base_form_payload(
+            proposal_project_start_custom="1",
+            proposal_project_start_date="2026-03-02",
+            source_data_date_enabled="false",
+            preliminary_report_date_enabled="false",
+            final_report_date_enabled="false",
+        )
+        form = ProposalRegistrationForm(data=payload)
+        self.assertTrue(form.is_valid(), form.errors)
+        proposal = form.save()
+
+        self.assertEqual(proposal.project_start_date, date(2026, 3, 2))
+        self.assertFalse(proposal.stage_payloads_json[0]["source_data_date_enabled"])
+        self.assertFalse(proposal.stage_payloads_json[0]["preliminary_report_date_enabled"])
+        self.assertFalse(proposal.stage_payloads_json[0]["final_report_date_enabled"])
+
+        reopened = ProposalRegistrationForm(instance=proposal)
+        self.assertTrue(reopened.proposal_project_start_custom)
+        self.assertEqual(reopened.proposal_project_start_iso, "2026-03-02")
+
+        again = ProposalRegistrationForm(data=payload, instance=proposal)
+        self.assertTrue(again.is_valid(), again.errors)
+        again.save()
+        proposal.refresh_from_db()
+        self.assertEqual(proposal.project_start_date, date(2026, 3, 2))
+
+    def test_invalid_manual_project_start_is_rejected(self):
+        form = ProposalRegistrationForm(
+            data=self._base_form_payload(
+                proposal_project_start_custom="1",
+                proposal_project_start_date="not-a-date",
+            )
+        )
+
+        self.assertFalse(form.is_valid())
+
+    def test_payment_schedule_fallback_uses_stored_project_start(self):
+        from proposals_app.views import _build_proposal_payment_schedule_rows
+
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        product = Product.objects.create(
+            short_name="DD",
+            name_en="Due Diligence",
+            name_ru="ДД",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=8802,
+            group_member=group_member,
+            type=product,
+            name="Фиксированное начало",
+            year=2026,
+            project_start_date=date(2026, 1, 23),
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": product.pk,
+                    "source_data_date_enabled": False,
+                    "preliminary_report_date_enabled": False,
+                    "service_term_months": "1.0",
+                    "preliminary_report_term_unit": "months",
+                    "final_report_date_enabled": False,
+                }
+            ],
+        )
+
+        rows = _build_proposal_payment_schedule_rows([proposal])
+
+        self.assertEqual(rows[0]["start_date"], date(2026, 1, 23))
+        self.assertEqual(rows[0]["preliminary_report_date"], date(2026, 2, 23))
 
     def test_payment_schedule_columns_mark_requested_fields_hidden_by_default(self):
         default_hidden_sources = {
@@ -5692,7 +6187,7 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(replacements["{{tkp_preliminary}}"], "(предварительное)")
         self.assertEqual(replacements["{{preliminary_payment_percentage_full}}"], "70%")
         self.assertEqual(replacements["{{preliminary_report_term_month}}"], "4,5 месяца")
-        self.assertEqual(replacements["{{final_report_term_month}}"], "5,7 мес.")
+        self.assertEqual(replacements["{{final_report_term_month}}"], "5 мес.")
         self.assertEqual(replacements["{{stages}}"], "1 этап")
         self.assertEqual(replacements["{{owner_country_full_name}}"], "Российская Федерация")
         self.assertEqual(replacements["{{year}}"], "2026")
@@ -5849,7 +6344,7 @@ class ProposalRegistrationFormTests(TestCase):
 
                 self.assertEqual(replacements["{{stages}}"], expected)
 
-    def test_resolve_final_report_term_month_uses_last_stage_final_report_date(self):
+    def test_resolve_final_report_term_month_ignores_dates_and_sums_terms(self):
         proposal = ProposalRegistration(
             final_report_date=date(2026, 4, 1),
             stage_payloads_json=[
@@ -5869,7 +6364,147 @@ class ProposalRegistrationFormTests(TestCase):
                 [ProposalVariable(key="{{final_report_term_month}}", is_computed=True)],
             )
 
-        self.assertEqual(replacements["{{final_report_term_month}}"], "3,5 мес.")
+        self.assertEqual(replacements["{{final_report_term_month}}"], "1 мес.")
+
+    def test_resolve_final_report_term_month_derives_dates_when_date_fields_disabled(self):
+        proposal = ProposalRegistration(
+            service_term_months="1.0",
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "source_data_term_enabled": False,
+                    "service_term_months_enabled": True,
+                    "service_term_months": "1.0",
+                    "preliminary_report_term_unit": "months",
+                    "preliminary_report_date_enabled": False,
+                    "preliminary_report_date": "",
+                    "final_report_term_weeks": "2.0",
+                    "final_report_term_unit": "weeks",
+                    "final_report_date_enabled": False,
+                    "final_report_date": "",
+                }
+            ],
+        )
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 2, 1)):
+            replacements, _, _ = resolve_variables(
+                proposal,
+                [ProposalVariable(key="{{final_report_term_month}}", is_computed=True)],
+            )
+
+        self.assertEqual(replacements["{{final_report_term_month}}"], "1,5 мес.")
+
+    def test_resolve_final_report_term_month_starts_after_source_data_term(self):
+        proposal = ProposalRegistration(
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "source_data_term_enabled": True,
+                    "source_data_term": "2.0",
+                    "source_data_term_unit": "weeks",
+                    "source_data_date_enabled": False,
+                    "service_term_months_enabled": True,
+                    "service_term_months": "3.5",
+                    "preliminary_report_term_unit": "months",
+                    "preliminary_report_date_enabled": False,
+                    "preliminary_report_date": "",
+                    "final_report_term_weeks": "2.0",
+                    "final_report_term_unit": "weeks",
+                    "final_report_date_enabled": False,
+                    "final_report_date": "",
+                }
+            ],
+        )
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 11, 19)):
+            replacements, _, _ = resolve_variables(
+                proposal,
+                [ProposalVariable(key="{{final_report_term_month}}", is_computed=True)],
+            )
+
+        self.assertEqual(replacements["{{final_report_term_month}}"], "4 мес.")
+
+    def test_resolve_final_report_term_month_excludes_source_term_when_toggle_is_off(self):
+        proposal = ProposalRegistration(
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "source_data_term_enabled": False,
+                    "source_data_term": "2.0",
+                    "source_data_term_unit": "weeks",
+                    "service_term_months_enabled": False,
+                    "service_term_months": "3.5",
+                    "preliminary_report_term_unit": "months",
+                    "final_report_term_enabled": False,
+                    "final_report_term_weeks": "2.0",
+                    "final_report_term_unit": "weeks",
+                    "final_report_date_enabled": True,
+                    "final_report_date": "01.01.2020",
+                }
+            ],
+        )
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 11, 19)):
+            replacements, _, _ = resolve_variables(
+                proposal,
+                [ProposalVariable(key="{{final_report_term_month}}", is_computed=True)],
+            )
+
+        self.assertEqual(replacements["{{final_report_term_month}}"], "4 мес.")
+
+    def test_resolve_final_report_term_uses_selected_unit_and_keeps_month_alias(self):
+        proposal = ProposalRegistration(
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "source_data_term": "2.0",
+                    "source_data_term_unit": "weeks",
+                    "service_term_months": "3.5",
+                    "preliminary_report_term_unit": "months",
+                    "final_report_term_weeks": "2.0",
+                    "final_report_term_unit": "weeks",
+                }
+            ],
+        )
+        variable = ProposalVariable(key="{{final_report_term}}", is_computed=True)
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 11, 19)):
+            proposal.overall_term_unit = "months"
+            months, _, _ = resolve_variables(proposal, [variable])
+            proposal.overall_term_unit = "days"
+            days, _, _ = resolve_variables(proposal, [variable])
+            proposal.overall_term_unit = "weeks"
+            weeks, _, _ = resolve_variables(proposal, [variable])
+
+        self.assertEqual(months["{{final_report_term}}"], "4 мес.")
+        self.assertEqual(months["{{final_report_term_month}}"], "4 мес.")
+        self.assertTrue(days["{{final_report_term}}"].endswith(" дн."))
+        day_count = int(days["{{final_report_term}}"].split()[0])
+        expected_weeks = (Decimal(day_count) / Decimal("7")).quantize(Decimal("0.1"))
+        week_text = f"{expected_weeks:.1f}".replace(".", ",").rstrip("0").rstrip(",")
+        self.assertEqual(weeks["{{final_report_term}}"], f"{week_text} нед.")
+
+    def test_final_report_term_uses_stored_project_start(self):
+        from proposals_app.variable_resolver import _proposal_final_report_term
+
+        proposal = ProposalRegistration(
+            overall_term_unit="days",
+            project_start_date=date(2026, 1, 23),
+            stage_payloads_json=[
+                {
+                    "service_term_months": "1.0",
+                    "preliminary_report_term_unit": "months",
+                }
+            ],
+        )
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 11, 19)):
+            anchored = _proposal_final_report_term(proposal)
+            proposal.project_start_date = None
+            floating = _proposal_final_report_term(proposal)
+
+        self.assertEqual(anchored, "31 дн.")
+        self.assertEqual(floating, "30 дн.")
 
     def test_resolve_product_name_list_uses_stage_order_and_punctuation(self):
         group_member = GroupMember.objects.create(
@@ -6007,12 +6642,103 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(
             texts,
             [
-                "сдача Предварительного отчёта — в течение 1 мес. до 19.02.2026,",
-                "сдача Итогового отчёта — в течение 2 нед. до 05.03.2026.",
+                "сдача Предварительного отчёта — в течение 1 мес. не позднее 19.02.2026,",
+                "сдача Итогового отчёта — в течение 2 нед. не позднее 05.03.2026.",
             ],
         )
         self.assertEqual(items[0]["list_type"], "bullet")
         self.assertEqual(items[1]["list_type"], "bullet")
+        self.assertEqual(items[0]["paragraph_style"], "bullet")
+        self.assertEqual(items[1]["paragraph_style"], "bullet")
+
+    def test_resolve_stage_terms_does_not_add_period_after_term_only_last_line(self):
+        proposal = ProposalRegistration(
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "service_term_months_enabled": True,
+                    "service_term_months": "1.0",
+                    "preliminary_report_date_enabled": False,
+                    "final_report_term_enabled": True,
+                    "final_report_term_weeks": "2.0",
+                    "final_report_term_unit": "weeks",
+                    "final_report_date_enabled": False,
+                }
+            ],
+        )
+
+        _, lists, _ = resolve_variables(
+            proposal,
+            [ProposalVariable(key="[[stage_terms]]", is_computed=True)],
+        )
+        texts = [item["runs"][0]["text"] for item in lists["[[stage_terms]]"]]
+
+        self.assertEqual(
+            texts,
+            [
+                "сдача Предварительного отчёта — в течение 1 мес.,",
+                "сдача Итогового отчёта — в течение 2 нед.",
+            ],
+        )
+
+    def test_resolve_stage_terms_respects_term_and_date_toggles(self):
+        proposal = ProposalRegistration(
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "source_data_term_enabled": True,
+                    "source_data_term": "2.0",
+                    "source_data_term_unit": "weeks",
+                    "source_data_date_enabled": True,
+                    "source_data_date": "14.12.2026",
+                    "service_term_months_enabled": False,
+                    "service_term_months": "3.5",
+                    "preliminary_report_date_enabled": True,
+                    "preliminary_report_date": "29.03.2027",
+                    "final_report_term_enabled": False,
+                    "final_report_term_weeks": "2.0",
+                    "final_report_date_enabled": False,
+                    "final_report_date": "12.04.2027",
+                    "next_stage_delay_days": 10,
+                },
+                {
+                    "rank": 2,
+                    "source_data_term_enabled": False,
+                    "source_data_date_enabled": False,
+                    "service_term_months_enabled": True,
+                    "service_term_months": "1.0",
+                    "preliminary_report_date_enabled": False,
+                    "final_report_term_enabled": True,
+                    "final_report_term_weeks": "3",
+                    "final_report_term_unit": "days",
+                    "final_report_date_enabled": True,
+                    "final_report_date": "01.06.2027",
+                },
+            ],
+        )
+
+        with patch("proposals_app.variable_resolver._today", return_value=date(2026, 11, 19)):
+            replacements, lists, _ = resolve_variables(
+                proposal,
+                [
+                    ProposalVariable(key="[[stage_terms]]", is_computed=True),
+                    ProposalVariable(key="{{final_report_term_month}}", is_computed=True),
+                ],
+            )
+        self.assertEqual(replacements["{{final_report_term_month}}"], "5,4 мес.")
+        texts = [item["runs"][0]["text"] for item in lists["[[stage_terms]]"]]
+
+        self.assertEqual(
+            texts,
+            [
+                "Этап 1: 4 мес.",
+                "получение Исходных данных — в течение 2 нед. не позднее 14.12.2026,",
+                "сдача Предварительного отчёта — не позднее 29.03.2027.",
+                "Этап 2: 1,1 мес.",
+                "сдача Предварительного отчёта — в течение 1 мес.,",
+                "сдача Итогового отчёта — в течение 3 дн. не позднее 01.06.2027.",
+            ],
+        )
 
     def test_resolve_stage_terms_for_multistage_uses_stage_dates(self):
         group_member = GroupMember.objects.create(
@@ -6084,19 +6810,25 @@ class ProposalRegistrationFormTests(TestCase):
             texts,
             [
                 "Этап 1: 1,5 мес.",
-                "сдача Предварительного отчёта — в течение 1 мес. до 19.02.2026,",
-                "сдача Итогового отчёта — в течение 2 нед. до 05.03.2026.",
+                "сдача Предварительного отчёта — в течение 1 мес. не позднее 19.02.2026,",
+                "сдача Итогового отчёта — в течение 2 нед. не позднее 05.03.2026.",
                 "Этап 2: 2,7 мес.",
-                "сдача Предварительного отчёта — в течение 2 мес. до 05.05.2026,",
-                "сдача Итогового отчёта — в течение 3 нед. до 26.05.2026.",
+                "сдача Предварительного отчёта — в течение 2 мес. не позднее 05.05.2026,",
+                "сдача Итогового отчёта — в течение 3 нед. не позднее 26.05.2026.",
             ],
         )
         self.assertNotIn("list_type", items[0])
+        self.assertNotIn("paragraph_style", items[0])
         self.assertEqual(items[1]["list_type"], "bullet")
+        self.assertEqual(items[1]["paragraph_style"], "bullet")
         self.assertEqual(items[2]["list_type"], "bullet")
+        self.assertEqual(items[2]["paragraph_style"], "bullet")
         self.assertNotIn("list_type", items[3])
+        self.assertNotIn("paragraph_style", items[3])
         self.assertEqual(items[4]["list_type"], "bullet")
+        self.assertEqual(items[4]["paragraph_style"], "bullet")
         self.assertEqual(items[5]["list_type"], "bullet")
+        self.assertEqual(items[5]["paragraph_style"], "bullet")
 
     def test_resolve_stage_terms_uses_selected_units(self):
         product = Product.objects.create(
@@ -6127,8 +6859,8 @@ class ProposalRegistrationFormTests(TestCase):
         self.assertEqual(
             texts,
             [
-                "сдача Предварительного отчёта — в течение 10 дн. до 09.02.2026,",
-                "сдача Итогового отчёта — в течение 1,5 мес. до 24.03.2026.",
+                "сдача Предварительного отчёта — в течение 10 дн. не позднее 09.02.2026,",
+                "сдача Итогового отчёта — в течение 1,5 мес. не позднее 24.03.2026.",
             ],
         )
 
@@ -7487,6 +8219,95 @@ class ProposalRegistrationFormTests(TestCase):
         budget_rows = tables["[[budget_table]]"]["rows"]
         self.assertEqual(budget_rows[1][0]["text"], "Summary expert")
         self.assertEqual(budget_rows[1][1]["text"], "Сводная роль, SUM; Сводная услуга")
+
+    def test_scope_of_work_omits_evaluation_date_line_when_toggle_is_off(self):
+        group_member = GroupMember.objects.create(
+            short_name="IMC Montan",
+            country_name="Россия",
+            country_code="643",
+            country_alpha2="RU",
+            position=1,
+        )
+        first_product = Product.objects.create(
+            short_name="FIRST",
+            name_en="First Product",
+            name_ru="Первый продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Аудит соответствия стандартам",
+            position=1,
+        )
+        second_product = Product.objects.create(
+            short_name="SECOND",
+            name_en="Second Product",
+            name_ru="Второй продукт",
+            consulting_type="Горный",
+            service_category="Аудит",
+            service_subtype="Оптимизация",
+            position=2,
+        )
+        proposal = ProposalRegistration.objects.create(
+            number=3361,
+            group_member=group_member,
+            type=second_product,
+            name="Дата оценки",
+            year=2026,
+            evaluation_date="2026-02-05",
+            stage_payloads_json=[
+                {
+                    "rank": 1,
+                    "product_id": first_product.pk,
+                    "service_composition_mode": "sections",
+                    "service_composition": "Состав 1",
+                    "evaluation_date": "01.01.2026",
+                    "evaluation_date_enabled": False,
+                },
+                {
+                    "rank": 2,
+                    "product_id": second_product.pk,
+                    "service_composition_mode": "sections",
+                    "service_composition": "Состав 2",
+                    "evaluation_date": "05.02.2026",
+                    "evaluation_date_enabled": True,
+                },
+            ],
+        )
+        ProposalRegistrationProduct.objects.bulk_create(
+            [
+                ProposalRegistrationProduct(proposal=proposal, product=first_product, rank=1),
+                ProposalRegistrationProduct(proposal=proposal, product=second_product, rank=2),
+            ]
+        )
+
+        def texts_for(current):
+            replacements, lists, _tables = resolve_variables(
+                current,
+                [
+                    ProposalVariable(
+                        key="{{evaluation_date}}",
+                        source_section="proposals",
+                        source_table="registry",
+                        source_column="evaluation_date",
+                    ),
+                    ProposalVariable(key="[[scope_of_work]]", is_computed=True),
+                ],
+            )
+            texts = [
+                item["runs"][0]["text"]
+                for item in lists["[[scope_of_work]]"]
+                if isinstance(item, dict) and item.get("runs")
+            ]
+            return replacements, texts
+
+        replacements, texts = texts_for(proposal)
+        self.assertNotIn("Дата оценки: 01.01.2026.", texts)
+        self.assertIn("Дата оценки: 05.02.2026.", texts)
+        self.assertEqual(replacements["{{evaluation_date}}"], "05.02.2026")
+
+        proposal.stage_payloads_json[1]["evaluation_date_enabled"] = False
+        replacements, texts = texts_for(proposal)
+        self.assertNotIn("Дата оценки: 05.02.2026.", texts)
+        self.assertEqual(replacements["{{evaluation_date}}"], "")
 
     def test_multistage_summary_fallback_groups_by_code_unless_disabled(self):
         group_member = GroupMember.objects.create(
@@ -9365,6 +10186,9 @@ class ProposalFormContextTests(TestCase):
         self.assertContains(response, 'id="proposal-typical-service-terms-data"', html=False)
         self.assertContains(response, 'name="proposal_project_start_date"', html=False)
         self.assertContains(response, "Дата начала проекта", html=False)
+        self.assertContains(response, 'class="proposal-overall-term-row"', html=False)
+        self.assertContains(response, 'name="overall_term_unit"', html=False)
+        self.assertContains(response, 'aria-label="Срок"', html=False)
         self.assertContains(response, "Исходные данные", html=False)
         self.assertContains(response, "Общая для всех этапов", html=False)
         self.assertContains(response, 'data-project-start-locked="1"', html=False)
@@ -9830,6 +10654,189 @@ class ProposalYearFilterTests(TestCase):
         self.assertIn("detail.parameters.proposals_year = years.join(',');", source)
         self.assertIn("function reloadProposalsForYears()", source)
         self.assertIn("function initProposalYearFilter()", source)
+
+
+class ProposalRegistryPaginationTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="proposal-registry-page-staff",
+            password="secret",
+            is_staff=True,
+        )
+        self.client.force_login(self.user)
+        self.proposals = [
+            ProposalRegistration.objects.create(
+                number=7000 + index,
+                name=f"Реестр {index:02d}",
+                year=2026,
+            )
+            for index in range(1, 25)
+        ]
+        self.version_old = ProposalRegistration.objects.create(
+            number=8001,
+            version=1,
+            name="Этап А",
+            year=2026,
+        )
+        self.version_new = ProposalRegistration.objects.create(
+            number=8001,
+            version=2,
+            name="Этап Б",
+            year=2024,
+        )
+        self.other_year = ProposalRegistration.objects.create(
+            number=8002,
+            name="Другой год",
+            year=2023,
+        )
+        self.sent = ProposalRegistration.objects.create(
+            number=8003,
+            name="Отправленное ТКП",
+            year=2026,
+            status=ProposalRegistration.ProposalStatus.SENT,
+        )
+        self.owed = ProposalRegistration.objects.create(
+            number=8004,
+            name="Должны нам",
+            year=2026,
+            kind=ProposalRegistration.ProposalKind.OWED_TO_US,
+        )
+
+    def _table_html(self, response):
+        html = response.content.decode()
+        start = html.find('id="proposal-registry-table"')
+        self.assertGreaterEqual(start, 0)
+        end = html.find('class="policy-table-footer"', start)
+        self.assertGreater(end, start)
+        return html[start:end]
+
+    def test_registry_footer_paginates_like_projects_and_keeps_other_tables(self):
+        response = self.client.get(reverse("proposals_partial"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn('id="proposal-registry-section"', html)
+        self.assertIn('class="policy-table-footer"', html)
+        self.assertIn('id="policy-page-size-proposal-registry"', html)
+        self.assertIn("Показано строк", html)
+        self.assertIn(">25</option>", html)
+        self.assertIn(">50</option>", html)
+        self.assertIn(">100</option>", html)
+        self.assertIn(">200</option>", html)
+        self.assertIn('data-registry-page="2"', html)
+        table = self._table_html(response)
+        self.assertIn("Этап А", table)
+        self.assertIn("Этап Б", table)
+        self.assertNotIn("Реестр 01", table)
+        dispatch = html[html.find('id="proposal-dispatch-table"'):]
+        self.assertIn("Реестр 01", dispatch)
+
+        table_url = reverse("proposal_registry_table")
+        self.assertIn(f'hx-get="{table_url}?page_size=25&amp;page=1"', html)
+        self.assertIn('hx-target="#proposal-registry-section"', html)
+
+        first = self.client.get(table_url, {"page": 1, "page_size": 25})
+        self.assertEqual(first.status_code, 200)
+        first_html = first.content.decode()
+        self.assertIn('id="proposal-registry-section"', first_html)
+        self.assertNotIn("Сроки и порядок платежей", first_html)
+        first_table = self._table_html(first)
+        self.assertIn("Реестр 01", first_table)
+        self.assertIn("Реестр 24", first_table)
+        self.assertNotIn("Этап А", first_table)
+        self.assertNotIn("Этап Б", first_table)
+        self.assertIn("1\u201324 из 29", first_html)
+
+        wide = self.client.get(table_url, {"page_size": 200})
+        wide_html = wide.content.decode()
+        self.assertIn("1\u201329 из 29", wide_html)
+        wide_table = self._table_html(wide)
+        self.assertIn("Реестр 01", wide_table)
+        self.assertIn("Этап Б", wide_table)
+
+        invalid = self.client.get(table_url, {"page_size": "abc"})
+        self.assertIn('id="policy-page-size-proposal-registry"', invalid.content.decode())
+
+        root = Path(__file__).resolve().parents[1]
+        css = (root / "core" / "static" / "core" / "css" / "site.css").read_text()
+        js = (root / "core" / "static" / "core" / "js" / "proposals-panels.js").read_text()
+        self.assertIn("#proposal-registry-section .policy-table-footer {\n  position: sticky;", css)
+        self.assertIn("#proposals-pane #proposal-registry-section .policy-table-footer.is-stuck", css)
+        self.assertIn("function initProposalRegistryFooterSticky()", js)
+        self.assertIn("detail.parameters.proposals_status = statuses.join(',');", js)
+        self.assertIn("detail.parameters.proposals_kind = kinds.join(',');", js)
+
+    def test_version_group_stays_on_one_page(self):
+        page = self.client.get(reverse("proposal_registry_table"), {"page": 2, "page_size": 25})
+        table = self._table_html(page)
+        self.assertIn("Этап А", table)
+        self.assertIn("Этап Б", table)
+        self.assertNotIn("Реестр 24", table)
+        self.assertEqual(self.version_old.short_uid, self.version_new.short_uid)
+
+    def test_year_alone_keeps_pagination(self):
+        response = self.client.get(
+            reverse("proposal_registry_table"),
+            {"proposals_year": "2026", "page_size": 25},
+        )
+        html = response.content.decode()
+        self.assertIn('data-registry-show-all="0"', html)
+        self.assertIn('data-registry-years="2026"', html)
+        self.assertIn('id="policy-page-size-proposal-registry"', html)
+        self.assertIn("proposals_year=2026", html)
+        table = self._table_html(response)
+        self.assertIn("Этап А", table)
+        self.assertIn("Этап Б", table)
+        self.assertNotIn("Другой год", table)
+
+    def test_status_filter_shows_matches_without_pagination(self):
+        response = self.client.get(
+            reverse("proposal_registry_table"),
+            {"proposals_status": "sent", "page_size": 25},
+        )
+        html = response.content.decode()
+        table = self._table_html(response)
+        self.assertIn("Отправленное ТКП", table)
+        self.assertNotIn("Реестр 01", table)
+        self.assertIn('data-registry-statuses="sent"', html)
+        self.assertIn('data-registry-show-all="1"', html)
+        self.assertIn("Отфильтровано строк: 1", html)
+        self.assertNotIn('id="policy-page-size-proposal-registry"', html)
+
+    def test_kind_filter_shows_matches_without_pagination(self):
+        response = self.client.get(
+            reverse("proposal_registry_table"),
+            {"proposals_kind": "owed_to_us"},
+        )
+        html = response.content.decode()
+        table = self._table_html(response)
+        self.assertIn("Должны нам", table)
+        self.assertNotIn("Реестр 01", table)
+        self.assertIn('data-registry-kinds="owed_to_us"', html)
+        self.assertIn('data-registry-show-all="1"', html)
+        self.assertIn("Отфильтровано строк: 1", html)
+
+    def test_page_reorder_merges_into_the_full_registry(self):
+        page = self.client.get(reverse("proposal_registry_table"), {"page": 1, "page_size": 25})
+        table = self._table_html(page)
+        self.assertIn("Реестр 01", table)
+        self.assertIn("Реестр 24", table)
+        ordered = [self.proposals[1].pk, self.proposals[0].pk] + [item.pk for item in self.proposals[2:]]
+        signature = ":".join(str(item.pk) for item in self.proposals)
+        response = self.client.post(
+            reverse("proposal_row_order") + "?page=1&page_size=25",
+            data=json.dumps(
+                {
+                    "ordered_proposal_ids": ordered,
+                    "base_order_signature": signature,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        refreshed = list(ProposalRegistration.objects.order_by("position", "id").values_list("pk", flat=True))
+        self.assertEqual(refreshed[:2], [self.proposals[1].pk, self.proposals[0].pk])
+        self.assertIn(self.version_old.pk, refreshed)
+        self.assertIn(self.sent.pk, refreshed)
 
 
 class ProposalNextcloudWorkspaceHookTests(TestCase):
@@ -11549,17 +12556,78 @@ class ProposalCommercialXlsxExportTests(TestCase):
         workbook = load_workbook(BytesIO(response.content), data_only=False)
         self.assertEqual(workbook.sheetnames, ["Коммерческое предложение"])
         sheet = workbook.active
-        self.assertEqual(sheet["A1"].value, "Коммерческое предложение: Этап 1 DD")
-        self.assertEqual(sheet["A12"].value, "Коммерческое предложение: Этап 2 VAL")
-        self.assertEqual(sheet["A23"].value, "Коммерческое предложение: все этапы")
-        self.assertTrue(sheet["I3"].value.startswith("=IF(SUM("))
-        self.assertIn("F3*I3", sheet["J3"].value)
-        self.assertIn("G3", sheet["G25"].value)
-        self.assertIn("G14", sheet["I25"].value)
-        self.assertIn("J4", sheet["L26"].value)
-        self.assertIn("J15", sheet["L26"].value)
-        self.assertTrue(sheet["J9"].value.startswith("=IF("))
-        self.assertTrue(sheet["L31"].value.startswith("=IF("))
+        self.assertIsNone(sheet["A1"].value)
+        self.assertIsNone(sheet["A1"].fill.patternType)
+        self.assertIsNone(sheet["A15"].value)
+        self.assertIsNone(sheet["A29"].value)
+        self.assertEqual(sheet["A2"].value, "Специалист")
+        self.assertEqual(sheet["A2"].alignment.horizontal, "left")
+        self.assertEqual(sheet["A2"].alignment.vertical, "center")
+        self.assertEqual(sheet["B2"].value, "Должность/направление")
+        self.assertEqual(sheet["B2"].alignment.horizontal, "left")
+        self.assertEqual(sheet["B2"].alignment.vertical, "center")
+        self.assertFalse(sheet["B2"].alignment.wrap_text)
+        self.assertEqual(sheet["G2"].alignment.horizontal, "right")
+        self.assertEqual(sheet["G2"].alignment.vertical, "center")
+        self.assertEqual(sheet["H2"].alignment.horizontal, "center")
+        self.assertEqual(sheet["J2"].value, "Всего")
+        self.assertEqual(sheet["J2"].alignment.horizontal, "center")
+        self.assertEqual(sheet["J2"].alignment.vertical, "center")
+        self.assertEqual(sheet["K2"].alignment.horizontal, "right")
+        self.assertEqual(sheet["K2"].alignment.vertical, "center")
+        self.assertFalse(sheet["B3"].alignment.wrap_text)
+        self.assertFalse(sheet["A3"].alignment.wrap_text)
+        self.assertFalse(sheet["C3"].alignment.wrap_text)
+        self.assertTrue(sheet["H2"].alignment.wrap_text)
+        self.assertFalse(sheet["B12"].alignment.wrap_text)
+        contract_label = "ИТОГО в договор, рубли без НДС с учётом дополнительной скидки"
+        self.assertEqual(sheet["B12"].value, contract_label)
+        self.assertGreaterEqual(sheet.column_dimensions["B"].width, len(contract_label))
+        self.assertEqual(sheet["B3"].value, "Эксперт, Старший; Анализ")
+        self.assertEqual(sheet.row_dimensions[4].height, 3.75)
+        self.assertIsNone(sheet["B4"].value)
+        self.assertEqual(sheet["B5"].value, "Командировочные расходы, евро")
+        self.assertEqual(sheet.row_dimensions[6].height, 3.75)
+        self.assertIsNone(sheet["B6"].value)
+        self.assertFalse(sheet["F5"].value)
+        self.assertEqual(sheet["B7"].value, "ИТОГО, по расчёту")
+        self.assertFalse(sheet["B7"].font.bold)
+        self.assertIsNone(sheet["B7"].fill.patternType)
+        self.assertIsNone(sheet["H7"].fill.patternType)
+        self.assertEqual(sheet.row_dimensions[8].height, 3.75)
+        self.assertIsNone(sheet["B8"].value)
+        self.assertEqual(sheet["B10"].value, "ИТОГО, рубли без НДС")
+        self.assertEqual(sheet["B11"].value, "ИТОГО, рубли без НДС с учетом скидки")
+        self.assertEqual(sheet["G11"].value, 0.05)
+        self.assertEqual(sheet["G11"].number_format, "0%")
+        self.assertIn("K10*(1-G11)", sheet["K11"].value)
+        self.assertNotIn("/100", sheet["K11"].value)
+        for letter in "CDEF":
+            self.assertTrue(sheet.column_dimensions[letter].hidden)
+        self.assertEqual(sheet["A2"].border.left.color.rgb[-6:], "000000")
+        self.assertEqual(sheet["K5"].border.bottom.color.rgb[-6:], "000000")
+        self.assertEqual(sheet["H3"].number_format, "0")
+        self.assertEqual(sheet["I3"].number_format, "0")
+        self.assertEqual(sheet["J3"].number_format, "0")
+        self.assertEqual(sheet["H3"].alignment.horizontal, "center")
+        self.assertEqual(sheet["J3"].alignment.horizontal, "center")
+        self.assertEqual(sheet["J3"].alignment.vertical, "center")
+        self.assertEqual(sheet["I3"].alignment.vertical, "center")
+        self.assertEqual(sheet["H7"].number_format, "0")
+        self.assertEqual(sheet["J7"].number_format, "0")
+        self.assertEqual(sheet["H31"].number_format, "0")
+        self.assertEqual(sheet["L31"].number_format, "0")
+        self.assertEqual(sheet["J31"].alignment.horizontal, "center")
+        self.assertEqual(sheet["G3"].number_format, '#,##0.00')
+        self.assertEqual(sheet["K3"].number_format, '#,##0.00')
+        self.assertTrue(sheet["J3"].value.startswith("=IF(SUM("))
+        self.assertIn("G3*J3", sheet["K3"].value)
+        self.assertIn("H3", sheet["H31"].value)
+        self.assertIn("H17", sheet["J31"].value)
+        self.assertIn("K5", sheet["M33"].value)
+        self.assertIn("K19", sheet["M33"].value)
+        self.assertTrue(sheet["K12"].value.startswith("=IF("))
+        self.assertTrue(sheet["M40"].value.startswith("=IF("))
         self.assertEqual(workbook.calculation.calcMode, "auto")
         self.assertTrue(workbook.calculation.fullCalcOnLoad)
 
@@ -11592,9 +12660,29 @@ class ProposalCommercialXlsxExportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("commercial_offer_draft.xlsx", response["Content-Disposition"])
         sheet = load_workbook(BytesIO(response.content), data_only=False).active
-        self.assertEqual(sheet["F4"].value, "по факту")
-        self.assertEqual(sheet["J4"].value, 125.5)
-        self.assertEqual(sheet["J9"].value, 123456)
+        self.assertIsNone(sheet["A1"].value)
+        self.assertEqual(sheet.row_dimensions[4].height, 3.75)
+        self.assertEqual(sheet["B5"].value, "Командировочные расходы, евро")
+        self.assertEqual(sheet.row_dimensions[6].height, 3.75)
+        self.assertEqual(sheet["B7"].value, "ИТОГО, по расчёту")
+        self.assertFalse(sheet["B7"].font.bold)
+        self.assertIsNone(sheet["B7"].fill.patternType)
+        self.assertEqual(sheet.row_dimensions[8].height, 3.75)
+        self.assertEqual(sheet["B10"].value, "ИТОГО, рубли без НДС")
+        self.assertEqual(sheet["B11"].value, "ИТОГО, рубли без НДС с учетом скидки")
+        self.assertEqual(sheet["G11"].value, 0.05)
+        self.assertEqual(sheet["G11"].number_format, "0%")
+        self.assertIn("(1-G11)", sheet["K11"].value)
+        self.assertNotIn("/100", sheet["K11"].value)
+        self.assertNotIn("Курс евро", str(sheet["B10"].value))
+        self.assertNotIn("Размер скидки", str(sheet["B11"].value))
+        self.assertEqual(sheet["G5"].value, "по факту")
+        self.assertEqual(sheet["G5"].alignment.horizontal, "center")
+        self.assertEqual(sheet["G5"].alignment.vertical, "center")
+        self.assertEqual(sheet["J5"].number_format, "0")
+        self.assertEqual(sheet["J5"].alignment.horizontal, "center")
+        self.assertEqual(sheet["K5"].value, 125.5)
+        self.assertEqual(sheet["K12"].value, 123456)
 
     def test_export_rejects_malformed_payload(self):
         response = self.client.post(
@@ -11627,8 +12715,134 @@ class ProposalCommercialXlsxExportTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-commercial-xlsx-url="', html=False)
+        self.assertContains(response, 'data-commercial-xlsx-import-url="', html=False)
         self.assertContains(response, 'data-proposal-commercial-xlsx="1"', html=False)
+        self.assertContains(response, 'data-proposal-commercial-xlsx-import="1"', html=False)
         self.assertContains(response, "bi bi-arrow-down-circle me-2", html=False)
+        self.assertContains(response, "bi bi-arrow-up-circle me-2", html=False)
+        self.assertContains(response, "Загрузить XLSX", html=False)
+
+    def test_import_roundtrip_reads_stage_rows_and_skips_summary(self):
+        from proposals_app.xlsx_export import build_commercial_xlsx, parse_commercial_xlsx
+
+        parsed = parse_commercial_xlsx(
+            build_commercial_xlsx(self._multistage_payload()),
+            assets=["Актив 1", "Актив 2"],
+            stage_count=2,
+        )
+
+        self.assertEqual(len(parsed["stages"]), 2)
+        first_row = parsed["stages"][0]["rows"][0]
+        self.assertEqual(first_row["specialist"], "Иванов")
+        self.assertEqual(first_row["job_title"], "Эксперт")
+        self.assertEqual(first_row["professional_status"], "Старший")
+        self.assertEqual(first_row["code"], "A-1")
+        self.assertEqual(first_row["service_name"], "Анализ")
+        self.assertEqual(first_row["rate_eur_per_day"], "100")
+        self.assertEqual(first_row["asset_day_counts"], ["2", "3"])
+        self.assertFalse(first_row["merge_without_code"])
+        travel = parsed["stages"][0]["rows"][1]
+        self.assertEqual(travel["service_name"], "Командировочные расходы, евро")
+        self.assertEqual(travel["asset_day_counts"], ["10", "20"])
+        self.assertEqual(parsed["stages"][0]["totals"]["travel_expenses_mode"], "calculation")
+        self.assertEqual(parsed["stages"][0]["totals"]["exchange_rate"], "90")
+        self.assertEqual(parsed["stages"][0]["totals"]["discount_percent"], "5")
+        self.assertFalse(parsed["stages"][0]["totals"]["contract_total_manual"])
+        self.assertEqual(parsed["stages"][1]["totals"]["travel_expenses_mode"], "actual")
+        self.assertEqual(parsed["stages"][1]["rows"][1]["total_eur_without_vat"], "40")
+
+    def test_import_accepts_added_direction_row_and_deleted_specialist(self):
+        from openpyxl import load_workbook
+        from proposals_app.xlsx_export import build_commercial_xlsx, parse_commercial_xlsx
+
+        workbook = load_workbook(BytesIO(build_commercial_xlsx(self._multistage_payload())))
+        sheet = workbook.active
+        for column in range(1, 12):
+            sheet.cell(3, column).value = None
+        sheet.insert_rows(4)
+        sheet["A4"] = "Петров"
+        sheet["B4"] = "Геолог, Партнер; Раздел 1"
+        sheet["G4"] = 80
+        sheet["H4"] = 1
+        sheet["I4"] = 2
+        buffer = BytesIO()
+        workbook.save(buffer)
+
+        parsed = parse_commercial_xlsx(buffer.getvalue(), assets=["Актив 1", "Актив 2"], stage_count=2)
+
+        specialists = [row for row in parsed["stages"][0]["rows"] if row["specialist"]]
+        self.assertEqual(len(specialists), 1)
+        self.assertEqual(specialists[0]["specialist"], "Петров")
+        self.assertEqual(specialists[0]["job_title"], "Геолог")
+        self.assertEqual(specialists[0]["professional_status"], "Партнер")
+        self.assertEqual(specialists[0]["service_name"], "Раздел 1")
+        self.assertEqual(specialists[0]["code"], "")
+        self.assertFalse(specialists[0]["merge_without_code"])
+        self.assertEqual(specialists[0]["asset_day_counts"], ["1", "2"])
+
+    def test_import_rejects_asset_mismatch(self):
+        from proposals_app.xlsx_export import build_commercial_xlsx, parse_commercial_xlsx
+
+        with self.assertRaisesMessage(ValueError, "активами проекта"):
+            parse_commercial_xlsx(
+                build_commercial_xlsx(self._multistage_payload()),
+                assets=["Другой актив", "Актив 2"],
+                stage_count=2,
+            )
+
+    def test_import_endpoint_returns_stage_rows(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from proposals_app.xlsx_export import build_commercial_xlsx
+
+        content = build_commercial_xlsx(self._multistage_payload())
+        response = self.client.post(
+            reverse("proposal_commercial_xlsx_import"),
+            data={
+                "file": SimpleUploadedFile(
+                    "offer.xlsx",
+                    content,
+                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+                "assets": json.dumps(["Актив 1", "Актив 2"]),
+                "stage_count": "2",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["stages"][0]["rows"][0]["specialist"], "Иванов")
+        self.assertEqual(response.json()["stages"][0]["totals"]["discount_percent"], "5")
+
+    def test_import_endpoint_rejects_foreign_assets(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from proposals_app.xlsx_export import build_commercial_xlsx
+
+        response = self.client.post(
+            reverse("proposal_commercial_xlsx_import"),
+            data={
+                "file": SimpleUploadedFile(
+                    "offer.xlsx",
+                    build_commercial_xlsx(self._multistage_payload()),
+                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+                "assets": json.dumps(["Чужой актив"]),
+                "stage_count": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.json()["message"])
+
+    def test_import_requires_staff(self):
+        user = get_user_model().objects.create_user(
+            username="proposal-xlsx-import-nonstaff",
+            password="secret",
+            is_staff=False,
+        )
+        self.client.force_login(user)
+
+        response = self.client.post(reverse("proposal_commercial_xlsx_import"), data={})
+
+        self.assertEqual(response.status_code, 302)
 
 
 @override_settings(ROOT_URLCONF="proposals_app.urls")

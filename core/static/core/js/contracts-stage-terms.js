@@ -456,16 +456,20 @@
     let isSyncingContractDate = false;
 
     function syncContractDateFromCalculatedStart(date) {
-      if (!contractDateInput || !date || contractDateInput.dataset.projectStartLocked === "1") return;
+      if (!contractDateInput || !date) return;
       const nextValue = formatDateIso(date);
       const currentDate = parseDate(contractDateInput.value);
-      if (currentDate && formatDateIso(currentDate) === nextValue) return;
-      isSyncingContractDate = true;
-      try {
-        setDateFieldValue(contractDateInput, nextValue);
-      } finally {
-        isSyncingContractDate = false;
+      if (!currentDate || formatDateIso(currentDate) !== nextValue) {
+        isSyncingContractDate = true;
+        try {
+          setDateFieldValue(contractDateInput, nextValue);
+        } finally {
+          isSyncingContractDate = false;
+        }
       }
+      if (contractDateInput.dataset.projectStartLocked !== "1") return;
+      const custom = node.querySelector('[name="proposal_project_start_custom"]');
+      if (custom) custom.value = "1";
     }
 
     function syncStageEvaluationDates() {
@@ -589,7 +593,10 @@
         || target?.classList.contains("proposal-stage-preliminary-report-date")
         || target?.classList.contains("proposal-stage-final-report-date")
       );
-      if (!enabled && options?.clear && !keepStageDate) {
+      const keepTermAmount = target?.classList.contains("proposal-stage-source-data-term")
+        || target?.classList.contains("proposal-stage-service-term-months")
+        || target?.classList.contains("proposal-stage-final-report-term-weeks");
+      if (!enabled && options?.clear && !keepStageDate && !keepTermAmount) {
         if (target?.classList.contains("js-date")) {
           setDateFieldValue(target, "");
         } else if (target) {
@@ -735,6 +742,7 @@
       "preliminary_report_date_enabled",
       "final_report_term_weeks",
       "final_report_term_unit",
+      "final_report_term_enabled",
       "final_report_date",
       "final_report_date_enabled",
       "next_stage_delay_days",
@@ -753,6 +761,7 @@
       preliminary_report_date_enabled: ".proposal-stage-preliminary-report-date-enabled",
       final_report_term_weeks: ".proposal-stage-final-report-term-weeks",
       final_report_term_unit: ".proposal-stage-final-term-unit",
+      final_report_term_enabled: ".proposal-stage-final-report-term-enabled",
       final_report_date: ".proposal-stage-final-report-date",
       final_report_date_enabled: ".proposal-stage-final-report-date-enabled",
     };
@@ -947,24 +956,21 @@
 
     function renderHeaderTerm(header) {
       if (!header) return;
-      const days = Number(header.dataset.termDays || 0);
       const unitSelect = header.querySelector(".registration-contract-group-term-unit");
       const unit = ["days", "weeks", "months"].includes(unitSelect?.value) ? unitSelect.value : "weeks";
       const input = header.querySelector(".registration-contract-group-term");
       if (!input) return;
-      input.value = formatPreliminaryTermValue(daysToTermValue(days, unit), unit);
-    }
-
-    function headerTermDays(states) {
-      return (states || []).reduce((sum, state) => {
-        const source = state.sourceDataTermEnabled
-          ? termValueToDays(state.sourceDataTerm, state.sourceDataTermUnit)
-          : 0;
-        const preliminary = state.preliminaryTermEnabled
-          ? termValueToDays(state.preliminaryTerm, state.preliminaryTermUnit)
-          : 0;
-        return sum + source + preliminary + termValueToDays(state.finalTerm, state.finalTermUnit);
-      }, 0);
+      const origin = parseDate(header.dataset.termOrigin);
+      const end = parseDate(header.dataset.termEnd);
+      if (!origin || !end) {
+        input.value = "";
+        return;
+      }
+      const spanDays = Math.max(0, daysBetweenDates(origin, end));
+      let amount = spanDays;
+      if (unit === "weeks") amount = spanDays / 7;
+      else if (unit === "months") amount = decimalMonthsBetween(origin, end);
+      input.value = formatOverallTermNumber(amount, unit);
     }
 
     function updateSingleContractHeader(states) {
@@ -974,8 +980,10 @@
       const lastFinal = [...(states || [])].reverse().find((state) => state.calculatedFinalDate);
       const completion = header.querySelector(".registration-contract-group-completion");
       if (completion) completion.value = lastFinal ? formatDisplayDate(lastFinal.calculatedFinalDate) : "";
-      header.dataset.termDays = String(headerTermDays(states));
-      renderHeaderTerm(header);
+      const start = parseDate(contractDateInput?.value);
+      const rows = getStageTermRows();
+      if (!start) setHeaderTermSpan(header, null, null);
+      else setHeaderTermSpan(header, start, advanceOverallCursor(start, rows));
     }
 
     function formatDisplayDate(date) {
@@ -1104,6 +1112,105 @@
           }
         });
       });
+    }
+
+    function daysBetweenDates(start, end) {
+      const utc = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+      return Math.round((utc(end) - utc(start)) / 86400000);
+    }
+
+    function decimalMonthsBetween(start, end) {
+      const startDay = startOfDay(start);
+      const endDay = startOfDay(end);
+      if (endDay <= startDay) return 0;
+      let wholeMonths = (endDay.getFullYear() - startDay.getFullYear()) * 12 + (endDay.getMonth() - startDay.getMonth());
+      const addWholeMonths = (months) => {
+        const monthIndex = startDay.getMonth() + months;
+        const year = startDay.getFullYear() + Math.floor(monthIndex / 12);
+        const month = ((monthIndex % 12) + 12) % 12;
+        const day = Math.min(startDay.getDate(), new Date(year, month + 1, 0).getDate());
+        return new Date(year, month, day);
+      };
+      let wholeDate = addWholeMonths(wholeMonths);
+      while (wholeMonths > 0 && wholeDate > endDay) {
+        wholeMonths -= 1;
+        wholeDate = addWholeMonths(wholeMonths);
+      }
+      return wholeMonths + Math.max(0, daysBetweenDates(wholeDate, endDay)) / 30;
+    }
+
+    function overallDelayDays(value, unit) {
+      const parsed = parseDecimal(value);
+      if (parsed === null) return 0;
+      const safe = Math.max(parsed, 0);
+      if (unit === "months") return Math.round(safe * 30);
+      if (unit === "weeks") return Math.round(safe * 7);
+      return Math.round(safe);
+    }
+
+    function formatOverallTermNumber(value, unit) {
+      if (!Number.isFinite(value)) return "";
+      if (unit === "days") return String(Math.round(Math.max(value, 0)));
+      const text = formatDecimal(Math.max(value, 0));
+      return text.endsWith(".0") ? text.slice(0, -2) : text;
+    }
+
+    function advanceOverallCursor(start, rows) {
+      let cursor = startOfDay(start);
+      rows.forEach((row, index) => {
+        const preliminaryAmount = parseDecimal(row.querySelector(".proposal-stage-service-term-months")?.value);
+        if (preliminaryAmount !== null) {
+          cursor = addPreliminaryTerm(cursor, preliminaryAmount, getPreliminaryTermUnit(row.querySelector(".proposal-stage-preliminary-term-unit")));
+        }
+        const finalAmount = parseDecimal(row.querySelector(".proposal-stage-final-report-term-weeks:not(.proposal-overall-term)")?.value);
+        if (finalAmount !== null) {
+          cursor = addFinalTerm(cursor, finalAmount, getFinalTermUnit(row.querySelector(".proposal-stage-final-term-unit:not(.proposal-overall-term-unit)")));
+        }
+        if (index < rows.length - 1) {
+          const delayRow = getStageDelayRowForTermRow(row);
+          const delayUnit = getDelayUnit(delayRow?.querySelector("select.proposal-stage-delay-unit"));
+          cursor = addDays(cursor, overallDelayDays(delayRow?.querySelector(".proposal-stage-next-delay-days")?.value, delayUnit));
+        }
+      });
+      return cursor;
+    }
+
+    function setHeaderTermSpan(header, start, end) {
+      if (!header) return;
+      if (!start || !end) {
+        delete header.dataset.termOrigin;
+        delete header.dataset.termEnd;
+        header.dataset.termDays = "0";
+      } else {
+        const origin = startOfDay(start);
+        const finish = startOfDay(end);
+        header.dataset.termOrigin = formatDateIso(origin);
+        header.dataset.termEnd = formatDateIso(finish);
+        header.dataset.termDays = String(Math.max(0, daysBetweenDates(origin, finish)));
+      }
+      renderHeaderTerm(header);
+    }
+
+    function updateProposalOverallTerm() {
+      const editor = node.querySelector("[data-proposal-registry-terms='1']");
+      if (!editor) return;
+      const inputs = editor.querySelectorAll(".proposal-overall-term");
+      if (!inputs.length) return;
+      const start = parseDate(contractDateInput?.value);
+      const unitSelect = Array.from(editor.querySelectorAll(".proposal-overall-term-unit")).find((select) => !select.disabled)
+        || editor.querySelector(".proposal-overall-term-unit");
+      const unit = ["days", "weeks", "months"].includes(unitSelect?.value) ? unitSelect.value : "months";
+      if (!start) {
+        inputs.forEach((input) => { input.value = ""; });
+        return;
+      }
+      const end = advanceOverallCursor(start, getStageTermRows());
+      const spanDays = Math.max(0, daysBetweenDates(start, end));
+      let amount = spanDays;
+      if (unit === "weeks") amount = spanDays / 7;
+      else if (unit === "months") amount = decimalMonthsBetween(start, end);
+      const text = formatOverallTermNumber(amount, unit);
+      inputs.forEach((input) => { input.value = text; });
     }
 
     function syncStageTerms() {
@@ -1497,19 +1604,14 @@
           const lastFinal = [...group.states].reverse().find((state) => state.calculatedFinalDate);
           const completion = header.querySelector(".registration-contract-group-completion");
           if (completion) completion.value = lastFinal ? formatDisplayDate(lastFinal.calculatedFinalDate) : "";
-          const days = group.states.reduce((sum, state) => {
-            const source = state.sourceDataTermEnabled
-              ? termValueToDays(state.sourceDataTerm, state.sourceDataTermUnit)
-              : 0;
-            const preliminary = state.preliminaryTermEnabled
-              ? termValueToDays(state.preliminaryTerm, state.preliminaryTermUnit)
-              : 0;
-            return sum + source + preliminary + termValueToDays(state.finalTerm, state.finalTermUnit);
-          }, 0);
-          header.dataset.termDays = String(days);
-          renderHeaderTerm(header);
+          const signed = header.dataset.contractSigned === "1" || Boolean(contract.signed);
+          const start = signed ? contractDate : projectDate;
+          const rows = group.states.map((state) => state.row);
+          if (!start) setHeaderTermSpan(header, null, null);
+          else setHeaderTermSpan(header, start, advanceOverallCursor(start, rows));
         });
         updateTotals();
+        updateProposalOverallTerm();
         applyLockState();
         return;
       }
@@ -1526,6 +1628,7 @@
         });
         updateSingleContractHeader(states);
         updateTotals();
+        updateProposalOverallTerm();
         return;
       }
 
@@ -1676,6 +1779,7 @@
 
       updateSingleContractHeader(states);
       updateTotals();
+      updateProposalOverallTerm();
     }
 
     function bindTermsRows() {
@@ -2052,6 +2156,14 @@
       refreshFromContracts,
     };
 
+    node.querySelectorAll(".proposal-overall-term-unit").forEach((select) => {
+      select.addEventListener("change", () => {
+        node.querySelectorAll(".proposal-overall-term-unit").forEach((other) => {
+          other.value = select.value;
+        });
+        updateProposalOverallTerm();
+      });
+    });
     bindTermsRows();
     bindEvaluationRows();
     bindStageDelayRows();
@@ -2096,6 +2208,20 @@
       item.title = title;
       item.setAttribute("aria-label", title);
     });
+    syncProposalOverallTermUnitState(editor);
+  }
+
+  function syncProposalOverallTermUnitState(editor) {
+    const selects = Array.from(editor.querySelectorAll(".proposal-overall-term-unit"));
+    if (!selects.length) return;
+    const current = selects.find((select) => !select.disabled) || selects[0];
+    const value = current.value;
+    const sourceCollapsed = editor.classList.contains("is-source-date-collapsed");
+    selects.forEach((select) => {
+      select.value = value;
+      const inSourceCell = Boolean(select.closest(".proposal-overall-term-source-cell"));
+      select.disabled = inSourceCell ? sourceCollapsed : !sourceCollapsed;
+    });
   }
 
   function restoreRegistrationTermsColumns(editor) {
@@ -2106,6 +2232,7 @@
     Object.keys(registrationTermsColumnToggles).forEach((column) => {
       if (typeof state[column] === "boolean") applyRegistrationTermsColumn(editor, column, state[column]);
     });
+    syncProposalOverallTermUnitState(editor);
   }
 
   function persistRegistrationTermsColumns(editor) {

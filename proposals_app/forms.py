@@ -440,6 +440,7 @@ def _proposal_stage_terms_from_payload(payload):
         "source_data_date_enabled": flag("source_data_date_enabled", False),
         "service_term_months_enabled": flag("service_term_months_enabled", True),
         "preliminary_report_date_enabled": flag("preliminary_report_date_enabled", True),
+        "final_report_term_enabled": flag("final_report_term_enabled", True),
         "final_report_date_enabled": flag("final_report_date_enabled", True),
         "next_stage_delay_unit": _proposal_delay_unit(payload.get("next_stage_delay_unit")),
     }
@@ -783,6 +784,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "preliminary_report_date",
             "final_report_term_weeks",
             "final_report_date",
+            "overall_term_unit",
             "report_languages",
             "service_cost",
             "currency",
@@ -1361,6 +1363,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "preliminary_report_date_enabled": False,
             "final_report_term_weeks": "",
             "final_report_term_unit": ProposalRegistration.FinalReportTermUnit.WEEKS,
+            "final_report_term_enabled": True,
             "final_report_date": "",
             "final_report_date_enabled": False,
             "next_stage_delay_days": "",
@@ -1389,7 +1392,6 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def _refresh_proposal_terms_display(self):
         from projects_app.stage_terms import evaluation_dates_are_common
-        from proposals_app.views import _proposal_schedule_base_start_date
 
         rows = list(self.stage_rows or [])
 
@@ -1400,6 +1402,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         self.terms_source_data_date_disabled = column_disabled("source_data_date_enabled", False)
         self.terms_preliminary_term_disabled = column_disabled("service_term_months_enabled", True)
         self.terms_preliminary_date_disabled = column_disabled("preliminary_report_date_enabled", True)
+        self.terms_final_term_disabled = column_disabled("final_report_term_enabled", True)
         self.terms_final_date_disabled = column_disabled("final_report_date_enabled", True)
         self.terms_evaluation_dates_disabled = column_disabled("evaluation_date_enabled", True)
         posted_common = self._posted_proposal_common_flag()
@@ -1408,7 +1411,37 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
         else:
             self.terms_evaluation_date_common = posted_common
         self.terms_project_key = (getattr(self.instance, "short_uid", "") or "") or "new-proposal"
-        self.proposal_project_start_iso = _proposal_schedule_base_start_date().isoformat()
+        self._assign_project_start_display()
+
+    def _assign_project_start_display(self):
+        from proposals_app.views import _proposal_schedule_base_start_date
+
+        fallback = _proposal_schedule_base_start_date().isoformat()
+        stored = getattr(self.instance, "project_start_date", None)
+        if self.is_bound and "proposal_project_start_custom" in self.data:
+            custom = str(self.data.get("proposal_project_start_custom") or "").strip() == "1"
+            posted = _parse_proposal_form_date(self.data.get("proposal_project_start_date")) if custom else None
+            self.proposal_project_start_custom = custom
+            if posted:
+                self.proposal_project_start_iso = posted.isoformat()
+            elif custom and stored:
+                self.proposal_project_start_iso = stored.isoformat()
+            else:
+                self.proposal_project_start_iso = fallback
+            return
+        self.proposal_project_start_custom = bool(stored)
+        self.proposal_project_start_iso = stored.isoformat() if stored else fallback
+
+    def _clean_project_start_date(self):
+        custom = str(self.data.get("proposal_project_start_custom") or "").strip() == "1"
+        if not custom:
+            self.cleaned_project_start_date = None
+            return
+        parsed = _parse_proposal_form_date(self.data.get("proposal_project_start_date"))
+        if parsed is None:
+            self.add_error(None, "Поле «Дата начала проекта» заполнено некорректно.")
+            return
+        self.cleaned_project_start_date = parsed
 
     def _build_stage_rows_from_bound_data(self):
         field_names = (
@@ -1439,6 +1472,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
             "preliminary_report_date_enabled",
             "final_report_term_weeks",
             "final_report_term_unit",
+            "final_report_term_enabled",
             "final_report_date",
             "final_report_date_enabled",
             "next_stage_delay_days",
@@ -1563,6 +1597,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     if index < len(rows_map["final_report_term_unit"])
                     else ""
                 ),
+                "final_report_term_enabled": self._bound_stage_flag("final_report_term_enabled", index, True),
                 "final_report_date": (
                     rows_map["final_report_date"][index] if index < len(rows_map["final_report_date"]) else ""
                 ).strip(),
@@ -2651,15 +2686,11 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                     ),
                     "source_data_term_enabled": bool(row.get("source_data_term_enabled", False)),
                     "source_data_term_unit": _proposal_source_data_term_unit(row.get("source_data_term_unit")),
-                    "source_data_term": (
-                        self._parse_stage_term_amount(
-                            row.get("source_data_term"),
-                            unit=_proposal_source_data_term_unit(row.get("source_data_term_unit")),
-                            row_index=rank,
-                            field_label="Исходные данные",
-                        )
-                        if row.get("source_data_term_enabled", False)
-                        else None
+                    "source_data_term": self._parse_stage_term_amount(
+                        row.get("source_data_term"),
+                        unit=_proposal_source_data_term_unit(row.get("source_data_term_unit")),
+                        row_index=rank,
+                        field_label="Исходные данные",
                     ),
                     "source_data_date_enabled": bool(row.get("source_data_date_enabled", False)),
                     "source_data_date": (
@@ -2676,18 +2707,14 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row.get("preliminary_report_term_unit"),
                         row_index=rank,
                     ),
-                    "service_term_months": (
-                        self._parse_stage_term_amount(
-                            row.get("service_term_months"),
-                            unit=self._parse_stage_preliminary_term_unit(
-                                row.get("preliminary_report_term_unit"),
-                                row_index=rank,
-                            ),
+                    "service_term_months": self._parse_stage_term_amount(
+                        row.get("service_term_months"),
+                        unit=self._parse_stage_preliminary_term_unit(
+                            row.get("preliminary_report_term_unit"),
                             row_index=rank,
-                            field_label="Предварительный отчёт",
-                        )
-                        if row.get("service_term_months_enabled", True)
-                        else None
+                        ),
+                        row_index=rank,
+                        field_label="Предварительный отчёт",
                     ),
                     "preliminary_report_date_enabled": bool(row.get("preliminary_report_date_enabled", True)),
                     "preliminary_report_date": (
@@ -2703,6 +2730,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                         row.get("final_report_term_unit"),
                         row_index=rank,
                     ),
+                    "final_report_term_enabled": bool(row.get("final_report_term_enabled", True)),
                     "final_report_term_weeks": self._parse_stage_term_amount(
                         row.get("final_report_term_weeks"),
                         unit=self._parse_stage_final_term_unit(
@@ -2751,6 +2779,9 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
+        self._clean_project_start_date()
+        unit = str(cleaned.get("overall_term_unit") or "").strip()
+        cleaned["overall_term_unit"] = unit if unit in {"days", "weeks", "months"} else "months"
         if cleaned.get("sub_number") in (None, ""):
             cleaned["sub_number"] = 0
         if self.errors.get("advance_percent") or self.errors.get("preliminary_report_percent"):
@@ -2859,6 +2890,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
 
     def save(self, commit=True):
         instance = super().save(commit=False)
+        instance.project_start_date = getattr(self, "cleaned_project_start_date", None)
         stage_payloads = list(getattr(self, "cleaned_stage_payloads", []))
         last_stage = stage_payloads[-1] if stage_payloads else None
         if last_stage:
@@ -2938,6 +2970,7 @@ class ProposalRegistrationForm(BootstrapMixin, forms.ModelForm):
                 "preliminary_report_date": _format_stage_date(item["preliminary_report_date"]),
                 "final_report_term_weeks": str(item["final_report_term_weeks"] or ""),
                 "final_report_term_unit": item["final_report_term_unit"],
+                "final_report_term_enabled": bool(item.get("final_report_term_enabled", True)),
                 "final_report_date_enabled": bool(item["final_report_date_enabled"]),
                 "final_report_date": _format_stage_date(item["final_report_date"]),
                 "evaluation_date_common": bool(item["evaluation_date_common"]),

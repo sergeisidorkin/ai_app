@@ -224,6 +224,14 @@ class ProposalRegistration(models.Model):
         choices=FinalReportTermUnit.choices,
         default=FinalReportTermUnit.WEEKS,
     )
+    overall_term_unit = models.CharField(
+        "Единица общего срока",
+        max_length=10,
+        choices=FinalReportTermUnit.choices,
+        default=FinalReportTermUnit.MONTHS,
+        blank=True,
+    )
+    project_start_date = models.DateField("Дата начала проекта", null=True, blank=True)
     final_report_date = models.DateField("Дата Итогового отчёта", null=True, blank=True)
     report_languages = models.CharField("Языки отчёта", max_length=255, blank=True, default="")
     service_cost = models.DecimalField(
