@@ -56,6 +56,36 @@ server {
         proxy_set_header Connection "";
     }
 
+    # Public PDF page links: /pdf-view/<token>/<file>.pdf#page=N
+    location ~ ^/pdf-view/(o6KWy93tkcPDgrw|QTfTn8BHq3izyno)/(.+\.[pP][dD][fF])$ {
+        limit_except GET HEAD { deny all; }
+        rewrite ^/pdf-view/(o6KWy93tkcPDgrw|QTfTn8BHq3izyno)/(.+)$ /public.php/dav/files/$1/$2 break;
+        proxy_pass http://127.0.0.1:8091;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_set_header Host $host;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_set_header Connection "";
+        proxy_hide_header Content-Disposition;
+        proxy_hide_header Set-Cookie;
+        proxy_hide_header Content-Security-Policy;
+        proxy_hide_header Content-Type;
+        proxy_hide_header X-Frame-Options;
+        add_header Content-Disposition "inline" always;
+        add_header Content-Type "application/pdf" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Content-Security-Policy "default-src 'self';" always;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:8091;
         proxy_http_version 1.1;
