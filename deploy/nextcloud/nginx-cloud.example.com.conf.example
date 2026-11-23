@@ -83,9 +83,7 @@ server {
         add_header Content-Disposition "inline" always;
         add_header Content-Type "application/pdf" always;
         add_header X-Content-Type-Options "nosniff" always;
-        add_header Content-Security-Policy "default-src 'none'; sandbox; base-uri 'none'; form-action 'none'" always;
-        add_header X-Frame-Options "DENY" always;
-        add_header Referrer-Policy "no-referrer" always;
+        add_header Content-Security-Policy "default-src 'self';" always;
     }
 
     location / {
