@@ -13,7 +13,8 @@ server {
     # listener to that trusted proxy and replace the $scheme header below with
     # a fixed trusted "https"; never trust a public client-supplied value.
 
-    client_max_body_size 50m;
+    # Reports, scans and contracts. Keep in step with DATA_UPLOAD_MAX_MEMORY_SIZE.
+    client_max_body_size 100m;
 
     gzip on;
     gzip_static on;

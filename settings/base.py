@@ -29,9 +29,11 @@ elif env.bool("READ_DOTENV", False) or (
     environ.Env.read_env(BASE_DIR / ".env")
 
 # Сканы печати, файлы договоров и отчёты больше стандартных 2.5 МБ Django.
+# Для файлов в multipart этот предел не считается, его держит nginx
+# (deploy/nginx.ai_app.example, client_max_body_size). Значения должны совпадать.
 DATA_UPLOAD_MAX_MEMORY_SIZE = env.int(
     "DATA_UPLOAD_MAX_MEMORY_SIZE",
-    default=50 * 1024 * 1024,
+    default=100 * 1024 * 1024,
 )
 
 # On local macOS development, make Python SMTP TLS use certifi by default.
